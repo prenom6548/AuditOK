@@ -1,0 +1,2 @@
+add_subdirectory(ipc_lite)
+add_subdirectory(dsoftbus)

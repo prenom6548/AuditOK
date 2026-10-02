@@ -1,0 +1,1104 @@
+From: Wei Wei <wangweinan@kylinos.cn>
+Date: Thu, 23 May 2024 19:02:03 +0800
+Subject: debian: update changlog to 1.0.0.0-ok0.6
+
+---
+ src/datamanagement/datamanagementdatabase.cpp |   8 +-
+ src/utils/autotokenizer.cpp                   |   4 +-
+ src/utils/parser/officepyparserwrapper.cpp    | 127 +++++++++-
+ src/utils/parser/pdfparser.cpp                |   3 +-
+ src/utils/pythonutil.cpp                      | 112 ++++++---
+ src/utils/vectordb/vectordb.cpp               | 331 ++++++++++++++------------
+ src/utils/vectordb/vectordb.h                 |  17 +-
+ 7 files changed, 391 insertions(+), 211 deletions(-)
+
+diff --git a/src/datamanagement/datamanagementdatabase.cpp b/src/datamanagement/datamanagementdatabase.cpp
+index 153c8fb..434ffae 100644
+--- a/src/datamanagement/datamanagementdatabase.cpp
++++ b/src/datamanagement/datamanagementdatabase.cpp
+@@ -157,13 +157,13 @@ void DataManagementDatabase::addDatas(const std::vector<DBFileInfo> &fileinfos,
+     }
+ 
+     // 分别向两个collection添加数据，若有一方添加失败则撤回操作
+-    auto filesResult = database_.addData(FILE_INFO_COLLECTION_NAME, fileDatas);
+-    if (filesResult != VectorDBErrorCode::Success) {
++    bool filesResult = database_.addData(FILE_INFO_COLLECTION_NAME, fileDatas);
++    if (!filesResult) {
+         std::cerr << "Add file data failed." << std::endl;
+         return;
+     }
+-    auto vectorResult = database_.addData(collection, vectorDatas);
+-    if (vectorResult != VectorDBErrorCode::Success) {
++    bool vectorResult = database_.addData(collection, vectorDatas);
++    if (!vectorResult) {
+         std::cerr << "Add vector data failed." << std::endl;
+         std::vector<std::string> ids;
+         for (const auto& data : fileDatas) {
+diff --git a/src/utils/autotokenizer.cpp b/src/utils/autotokenizer.cpp
+index e942de7..6839cff 100644
+--- a/src/utils/autotokenizer.cpp
++++ b/src/utils/autotokenizer.cpp
+@@ -55,7 +55,7 @@ AutoTokenizer::~AutoTokenizer()
+     PythonThreadLocker pythonThreadLocker;
+ 
+     if (tokenizer_ != nullptr)
+-        Py_DECREF(tokenizer_);
++        Py_XDECREF(tokenizer_);
+ }
+ 
+ Token AutoTokenizer::tokenize(const std::string &text)
+@@ -77,7 +77,7 @@ Token AutoTokenizer::tokenize(const std::string &text)
+     if (!tokenizeFunc || !PyCallable_Check(tokenizeFunc)) {
+         std::cout << "Don't found function tokenize_text" << std::endl;
+ 
+-        Py_DECREF(tokenizeFunc);
++        Py_XDECREF(tokenizeFunc);
+         return result;
+     }
+ 
+diff --git a/src/utils/parser/officepyparserwrapper.cpp b/src/utils/parser/officepyparserwrapper.cpp
+index 7cf0896..9c09636 100644
+--- a/src/utils/parser/officepyparserwrapper.cpp
++++ b/src/utils/parser/officepyparserwrapper.cpp
+@@ -32,6 +32,11 @@ OfficePyParserWrapper::OfficePyParserWrapper()
+ 
+ FileInfo OfficePyParserWrapper::parse(const std::string &filePath, const std::string &module, const std::string &className)
+ {
++    if (filePath.empty() || module.empty() || className.empty()) {
++        std::cerr << "Input strings cannot be empty." << std::endl;
++        return FileInfo();
++    }
++
+     PythonThreadLocker locker;
+     FileInfo fileinfo;
+ 
+@@ -43,42 +48,142 @@ FileInfo OfficePyParserWrapper::parse(const std::string &filePath, const std::st
+     }
+ 
+     PyObject* constructor = PyObject_GetAttrString(parserModule, className.c_str());
++    if (!constructor) {
++        std::cerr << "Get constructor for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        return FileInfo();
++    }
+     PyObject* parserObject = PyObject_CallFunction(constructor, "s", filePath.c_str());
+     if (!parserObject) {
+         std::cerr << "Create parser object for module " << module << " failed." << std::endl;
+         PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
+         return FileInfo();
+     }
+ 
+     PyObject* getContent = PyObject_GetAttrString(parserObject, "contents");
++    if (!getContent) {
++        std::cerr << "Get contents for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        return FileInfo();
++    }
+     PyObject* contentList = PyObject_CallObject(getContent, nullptr);
++    if (!contentList) {
++        std::cerr << "Get contents for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        Py_XDECREF(getContent);
++        return FileInfo();
++    }
+     fileinfo.contents = pythonutil::convertPythonStringListToStd(contentList);
+ 
+     PyObject* getTitle = PyObject_GetAttrString(parserObject, "title");
++    if (!getTitle) {
++        std::cerr << "Get title for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        Py_XDECREF(getContent);
++        Py_XDECREF(contentList);
++        return FileInfo();
++    }
+     PyObject* title = PyObject_CallObject(getTitle, nullptr);
++    if (!title) {
++        std::cerr << "Get title for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        Py_XDECREF(getContent);
++        Py_XDECREF(contentList);
++        Py_XDECREF(getTitle);
++        return FileInfo();
++    }
+     fileinfo.title = pythonutil::convertPythonStringToStd(title);
+ 
+     PyObject* getAuthor = PyObject_GetAttrString(parserObject, "author");
++    if (!getAuthor) {
++        std::cerr << "Get author for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        Py_XDECREF(getContent);
++        Py_XDECREF(contentList);
++        Py_XDECREF(getTitle);
++        Py_XDECREF(title);
++        return FileInfo();
++    }
+     PyObject* author = PyObject_CallObject(getAuthor, nullptr);
++    if (!author) {
++        std::cerr << "Get author for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        Py_XDECREF(getContent);
++        Py_XDECREF(contentList);
++        Py_XDECREF(getTitle);
++        Py_XDECREF(title);
++        Py_XDECREF(getAuthor);
++        return FileInfo();
++    }
+     fileinfo.author = pythonutil::convertPythonStringToStd(author);
+ 
+     PyObject* getPages = PyObject_GetAttrString(parserObject, "pages");
++    if (!getPages) {
++        std::cerr << "Get pages for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        Py_XDECREF(getContent);
++        Py_XDECREF(contentList);
++        Py_XDECREF(getTitle);
++        Py_XDECREF(title);
++        Py_XDECREF(getAuthor);
++        Py_XDECREF(author);
++        return FileInfo();
++    }
+     PyObject* pages = PyObject_CallObject(getPages, nullptr);
++    if (!pages) {
++        std::cerr << "Get pages for module " << module << " failed." << std::endl;
++        PyErr_Print();
++        Py_XDECREF(parserModule);
++        Py_XDECREF(constructor);
++        Py_XDECREF(parserObject);
++        Py_XDECREF(getContent);
++        Py_XDECREF(contentList);
++        Py_XDECREF(getTitle);
++        Py_XDECREF(title);
++        Py_XDECREF(getAuthor);
++        Py_XDECREF(author);
++        Py_XDECREF(getPages);
++        return FileInfo();
++    }
+     fileinfo.pages = pythonutil::convertPythonIntToStd(pages);
+ 
+     fileinfo.modifyTime = Parser::modifyTime(filePath);
+ 
+-    Py_DECREF(parserModule);
+-    Py_DECREF(constructor);
+-    Py_DECREF(parserObject);
+-    Py_DECREF(getContent);
+-    Py_DECREF(contentList);
+-    Py_DECREF(getTitle);
+-    Py_DECREF(title);
+-    Py_DECREF(getAuthor);
+-    Py_DECREF(author);
+-    Py_DECREF(getPages);
+-    Py_DECREF(pages);
++    Py_XDECREF(parserModule);
++    Py_XDECREF(constructor);
++    Py_XDECREF(parserObject);
++    Py_XDECREF(getContent);
++    Py_XDECREF(contentList);
++    Py_XDECREF(getTitle);
++    Py_XDECREF(title);
++    Py_XDECREF(getAuthor);
++    Py_XDECREF(author);
++    Py_XDECREF(getPages);
++    Py_XDECREF(pages);
+ 
+     return fileinfo;
+ }
+diff --git a/src/utils/parser/pdfparser.cpp b/src/utils/parser/pdfparser.cpp
+index d806040..837818a 100644
+--- a/src/utils/parser/pdfparser.cpp
++++ b/src/utils/parser/pdfparser.cpp
+@@ -33,6 +33,7 @@ FileInfo PDFParser::parse(const std::string &filePath)
+     }
+ 
+     auto doc = std::unique_ptr<poppler::document>(poppler::document::load_from_file(filePath));
++
+     if (doc.get() == nullptr) {
+         std::cerr << "Poppler open file: " << filePath << " failed." << std::endl;
+         return info;
+@@ -48,7 +49,7 @@ FileInfo PDFParser::parse(const std::string &filePath)
+     info.modifyTime = modifyTime(filePath);
+ 
+     for (int i = 0; i < doc->pages(); ++i) {
+-        poppler::page* page = doc->create_page(i);
++        auto page = std::unique_ptr<poppler::page>(doc->create_page(i));
+         if (!page)
+             continue;
+ 
+diff --git a/src/utils/pythonutil.cpp b/src/utils/pythonutil.cpp
+index 817fbbc..71a7ec0 100644
+--- a/src/utils/pythonutil.cpp
++++ b/src/utils/pythonutil.cpp
+@@ -24,6 +24,10 @@ std::map<std::string, std::vector<int64_t>>
+ convertPythonTokenDictToMap(PyObject* dictObject) {
+     std::map<std::string, std::vector<int64_t>> resultMap;
+ 
++    if (nullptr == dictObject) {
++        return resultMap;
++    }
++
+     PyObject *keys = PyDict_Keys(dictObject);
+     Py_ssize_t size = PyList_Size(keys);
+ 
+@@ -43,7 +47,7 @@ convertPythonTokenDictToMap(PyObject* dictObject) {
+         }
+     }
+ 
+-    Py_DECREF(keys);
++    Py_XDECREF(keys);
+ 
+     return resultMap;
+ }
+@@ -51,6 +55,10 @@ convertPythonTokenDictToMap(PyObject* dictObject) {
+ std::vector<std::string> convertPythonStringListToStd(PyObject* listObject) {
+     std::vector<std::string> resultVector;
+ 
++    if (nullptr == listObject) {
++        return resultVector;
++    }
++
+     Py_ssize_t size = PyList_Size(listObject);
+ 
+     for (Py_ssize_t i = 0; i < size; ++i) {
+@@ -68,6 +76,9 @@ std::vector<std::string> convertPythonStringListToStd(PyObject* listObject) {
+ }
+ 
+ std::string convertPythonStringToStd(PyObject* strObject) {
++    if (nullptr == strObject) {
++        return std::string();
++    }
+     if (!PyUnicode_Check(strObject)) {
+         std::cerr << "Type check error, object isn't string type" << std::endl;
+         return std::string();
+@@ -77,6 +88,9 @@ std::string convertPythonStringToStd(PyObject* strObject) {
+ }
+ 
+ int convertPythonIntToStd(PyObject* intObject) {
++    if (nullptr == intObject) {
++        return -1;
++    }
+     if (!PyLong_Check(intObject)) {
+         std::cerr << "Type check error, object isn't int type" << std::endl;
+         return -1;
+@@ -98,9 +112,9 @@ PyObject* convertVectorStringToPyObject(const std::vector<std::string>& vec)
+ 
+     for (size_t i = 0; i < vec.size(); ++i) {
+         PyObject* py_str = PyUnicode_DecodeFSDefault(vec[i].c_str());
+-        if (!py_str) {
+-            Py_DECREF(list);
+-            return nullptr;
++        if (nullptr == py_str) {
++            Py_XDECREF(list);
++            return Py_None;
+         }
+ 
+         PyList_SET_ITEM(list, i, py_str);
+@@ -111,7 +125,7 @@ PyObject* convertVectorStringToPyObject(const std::vector<std::string>& vec)
+ PyObject* convertVectorDoubleToPyObject(const std::vector<double>& vec) {
+     if (vec.empty()) {
+          std::cout << "vec is empty" << std::endl;
+-        Py_RETURN_NONE;
++        return Py_None;
+     }
+     PyObject* list = PyList_New(vec.size());
+     if(!list) {
+@@ -127,19 +141,18 @@ PyObject* convertVectorDoubleToPyObject(const std::vector<double>& vec) {
+ PyObject* convertVectorVectorDoubleToPyObject(const std::vector<std::vector<double>>& vec_vec)
+ {
+     if (vec_vec.empty()) {
+-        Py_RETURN_NONE;
++        return Py_None;
+     }
+     PyObject* list = PyList_New(vec_vec.size());
+-    if(!list) {
++    if(nullptr == list) {
+         std::cout << "convertVectorVectorDoubleToPyObject error!!!" << std::endl;
+     }
+ 
+     for (size_t i = 0; i < vec_vec.size(); ++i) {
+         if (vec_vec[i].empty()) {
+-            Py_RETURN_NONE ;
+-        } else {
+-            PyList_SET_ITEM(list, i, convertVectorDoubleToPyObject(vec_vec[i]));
++            return Py_None;
+         }
++        PyList_SET_ITEM(list, i, convertVectorDoubleToPyObject(vec_vec[i]));
+     }
+ 
+     return list;
+@@ -154,32 +167,36 @@ PyObject* convertVariantToPyObject(const std::variant<std::string, int64_t>& var
+         return PyLong_FromLongLong(std::get<int64_t>(var));
+     }
+     // 如果variant中不是预期的类型，返回None或抛出异常
+-    Py_RETURN_NONE;
++    return Py_None;
+ }
+ 
+ // 将std::map<std::string, std::variant<std::string, int64_t>>转换为Python字典对象
+ PyObject* convertMapVariantToPyObject(const std::map<std::string, std::variant<std::string, int64_t>>& map_var) {
+     PyObject* dict = PyDict_New();
++    if (!dict) {
++        std::cerr << "Failed to create Python dictionary" << std::endl;
++        return Py_None;
++    }
++
+     for (const auto& entry : map_var) {
+         PyObject* key = PyUnicode_FromString(entry.first.c_str());
+         PyObject* value = convertVariantToPyObject(entry.second);
+-        if (key && value) {
+-            PyDict_SetItem(dict, key, value);
+-            Py_DECREF(key);
+-            Py_DECREF(value);
+-        } else {
+-            // 如果有错误发生，释放已分配的对象并返回NULL
+-            Py_XDECREF(key);
+-            Py_XDECREF(value);
+-            Py_DECREF(dict);
+-            return nullptr;
++        if (!key || !value) {
++            Py_XDECREF(dict);
++            return Py_None;
+         }
++        PyDict_SetItem(dict, key, value);
++        Py_XDECREF(key);
++        Py_XDECREF(value);
+     }
+     return dict;
+ }
+ 
+ // 将std::vector<std::map<std::string, std::variant<std::string, int64_t>>>转换为Python列表对象
+ PyObject* convertVectorMapToPyObject(const std::vector<std::map<std::string, std::variant<std::string, int64_t>>>& vec_map_var) {
++    if (vec_map_var.empty()) {
++        return Py_None;
++    }
+     PyObject* list = PyList_New(vec_map_var.size());
+     for (size_t i = 0; i < vec_map_var.size(); ++i) {
+         PyList_SET_ITEM(list, i, convertMapVariantToPyObject(vec_map_var[i]));
+@@ -190,6 +207,10 @@ PyObject* convertVectorMapToPyObject(const std::vector<std::map<std::string, std
+ std::vector<std::string> convertPythonListToStringVector(PyObject* ids_obj)
+ {
+     std::vector<std::string> ids={};
++
++    if (nullptr == ids_obj) {
++        return ids;
++    }
+     if (!PyList_Check(ids_obj)) {
+         return ids;
+     }
+@@ -203,10 +224,10 @@ std::vector<std::string> convertPythonListToStringVector(PyObject* ids_obj)
+         }
+ 
+         PyObject* unicode_str = PyUnicode_AsUTF8String(item);
+-        const char* c_str = PyBytes_AsString(unicode_str);
++        const char* cstr = PyBytes_AsString(unicode_str);
+ 
+-        ids.push_back(std::string(c_str));
+-        Py_DECREF(unicode_str);
++        ids.push_back(std::string(cstr));
++        Py_XDECREF(unicode_str);
+     }
+ 
+     return ids;
+@@ -214,16 +235,24 @@ std::vector<std::string> convertPythonListToStringVector(PyObject* ids_obj)
+ 
+ std::vector<std::vector<double>> convertPythonListToVectorOfVectors(PyObject* embeddings_obj) {
+     std::vector<std::vector<double>> embeddings;
+-    if (PyList_Check(embeddings_obj)) {
+-        embeddings = extractInnerVectors(embeddings_obj);
+-    } else {
++    if (nullptr == embeddings_obj) {
++        return embeddings;
++    }
++    if (!PyList_Check(embeddings_obj)) {
+         std::cerr << "The embeddings object is not a list." << std::endl;
++        return embeddings;
+     }
++
++    embeddings = extractInnerVectors(embeddings_obj);
++
+     return embeddings;
+ }
+ 
+ std::vector<std::vector<double>> extractInnerVectors(PyObject* outer_list) {
+     std::vector<std::vector<double>> embeddings;
++    if (nullptr == outer_list) {
++        return embeddings;
++    }
+     Py_ssize_t outer_size = PyList_Size(outer_list);
+     for (Py_ssize_t i = 0; i < outer_size; ++i) {
+         PyObject* inner_list = PyList_GetItem(outer_list, i);
+@@ -239,6 +268,9 @@ std::vector<std::vector<double>> extractInnerVectors(PyObject* outer_list) {
+ 
+ std::vector<double> extractDoubles(PyObject* inner_list) {
+     std::vector<double> inner_vec;
++    if (nullptr == inner_list) {
++        return inner_vec;
++    }
+     Py_ssize_t inner_size = PyList_Size(inner_list);
+     for (Py_ssize_t j = 0; j < inner_size; ++j) {
+         PyObject* item = PyList_GetItem(inner_list, j);
+@@ -254,6 +286,9 @@ std::vector<double> extractDoubles(PyObject* inner_list) {
+ 
+ std::vector<std::map<std::string, std::variant<std::string, int64_t>>> convertPythonListToMapOfVariant(PyObject* metadatas_obj) {
+     std::vector<std::map<std::string, std::variant<std::string, int64_t>>> metadatas;
++    if (nullptr == metadatas_obj) {
++        return metadatas;
++    }
+     if (!PyList_Check(metadatas_obj)) {
+         return metadatas;
+     }
+@@ -271,6 +306,10 @@ std::vector<std::map<std::string, std::variant<std::string, int64_t>>> convertPy
+ 
+ std::map<std::string, std::variant<std::string, int64_t>> extractMapFromDict(PyObject* dict_obj) {
+     std::map<std::string, std::variant<std::string, int64_t>> metadata_map;
++    if (nullptr == dict_obj) {
++        return metadata_map;
++    }
++
+     PyObject* keys = PyDict_Keys(dict_obj);
+     Py_ssize_t key_count = PyList_Size(keys);
+     for (Py_ssize_t j = 0; j < key_count; ++j) {
+@@ -282,20 +321,27 @@ std::map<std::string, std::variant<std::string, int64_t>> extractMapFromDict(PyO
+             metadata_map[key] = value;
+         }
+     }
+-    Py_DECREF(keys);
++    Py_XDECREF(keys);
+     return metadata_map;
+ }
+ 
+ std::string extractStringFromUnicode(PyObject* unicode_obj) {
++    if (nullptr == unicode_obj) {
++        return std::string();
++    }
++
+     PyObject* unicode_as_utf8 = PyUnicode_AsUTF8String(unicode_obj);
+     const char* c_str = PyBytes_AsString(unicode_as_utf8);
+     std::string str(c_str);
+-    Py_DECREF(unicode_as_utf8);
++    Py_XDECREF(unicode_as_utf8);
+     return str;
+ }
+ 
+ std::variant<std::string, int64_t> extractVariantFromObj(PyObject* value_obj) {
+     std::variant<std::string, int64_t> value;
++    if (nullptr == value_obj) {
++        return value;
++    }
+     if (PyUnicode_Check(value_obj)) {
+         value = extractStringFromUnicode(value_obj);
+     } else if (PyLong_Check(value_obj)) {
+@@ -308,21 +354,21 @@ std::variant<std::string, int64_t> extractVariantFromObj(PyObject* value_obj) {
+ std::vector<float> convertPythonListToVectorFloat(PyObject* obj)
+ {
+     std::vector<float> result;
++    if (nullptr == obj) {
++        return result;
++    }
+     if (!PySequence_Check(obj)) {
+-        PyErr_SetString(PyExc_TypeError, "Input object is not a sequence");
+         return result;
+     }
+     Py_ssize_t length = PySequence_Size(obj);
+     result.reserve(length);
+     for (Py_ssize_t i = 0; i < length; ++i) {
+         PyObject* item = PySequence_GetItem(obj, i);
+-        if (item == NULL) {
++        if (nullptr == item) {
+             PyErr_Print();
+-            Py_XDECREF(item);
+             return result;
+         }
+         if (!PyFloat_Check(item)) {
+-            PyErr_Format(PyExc_TypeError, "Sequence item %zd is not a float", i);
+             Py_XDECREF(item);
+             return result;
+         }
+diff --git a/src/utils/vectordb/vectordb.cpp b/src/utils/vectordb/vectordb.cpp
+index b87764a..771bf60 100644
+--- a/src/utils/vectordb/vectordb.cpp
++++ b/src/utils/vectordb/vectordb.cpp
+@@ -31,12 +31,11 @@ VectorDB::VectorDB(const std::string& databasePath)
+ VectorDB::~VectorDB() {
+     PythonThreadLocker locker;
+     if (dbInstance_ != nullptr) {
+-        Py_DECREF(dbInstance_);
++        Py_XDECREF(dbInstance_);
+     }
+ }
+ 
+ void VectorDB::initializeChromaDB(const std::string& databasePath) {
+-    std::cout << "Initializing Python..." << std::endl;
+     // 初始化Python解释器
+     if (!Py_IsInitialized())
+         Py_Initialize();
+@@ -50,7 +49,7 @@ void VectorDB::initializeChromaDB(const std::string& databasePath) {
+     // 导入模块
+     std::cout << "Creating ChromaDB instance..." << std::endl;
+     PyObject* pModule = PyImport_ImportModule("chroma_db");
+-    if (pModule == nullptr) {
++    if (nullptr == pModule) {
+         std::cerr << "Failed to load module: chroma_db" << std::endl;
+         PyErr_Print();
+         return;
+@@ -58,15 +57,17 @@ void VectorDB::initializeChromaDB(const std::string& databasePath) {
+ 
+     // 获取ChromaDB类
+     PyObject* pChromaDBClass = PyObject_GetAttrString(pModule, "ChromaDB");
+-    if (pChromaDBClass == nullptr) {
++    if (nullptr == pChromaDBClass) {
+         std::cerr << "Failed to get ChromaDB class" << std::endl;
++        PyErr_Print();
++
+         Py_XDECREF(pModule);
+         return;
+     }
+ 
+     // 创建ChromaDB实例
+     PyObject* args = Py_BuildValue("(s)", databasePath.c_str());
+-    if(args == nullptr) {
++    if(nullptr == args) {
+         std::cerr << "Error: Could not create argument tuple." << std::endl;
+         PyErr_Print();
+ 
+@@ -76,70 +77,79 @@ void VectorDB::initializeChromaDB(const std::string& databasePath) {
+     }
+     dbInstance_ = PyObject_CallObject(pChromaDBClass, args);
+ 
+-    Py_DECREF(pModule);
+-    Py_DECREF(args);
+-    Py_DECREF(pChromaDBClass);
++    Py_XDECREF(pModule);
++    Py_XDECREF(args);
++    Py_XDECREF(pChromaDBClass);
+ }
+ 
+-VectorDBErrorCode VectorDB::createCollection(const std::string& collectionName,  const std::string& searchAlgorithm)
++bool VectorDB::createCollection(const std::string& collectionName,  const std::string& searchAlgorithm)
+ {
+     PythonThreadLocker locker;
+-    if (dbInstance_ == nullptr) {
+-        return VectorDBErrorCode::ValidDataBase;
++    if (nullptr == dbInstance_) {
++        std::cerr << "ChromaDB instance is not initialized." << std::endl;
++        return false;
+     }
+ 
+     PyObject* args = Py_BuildValue("(ss)", collectionName.c_str(), searchAlgorithm.c_str());
+-    if (!args) {
+-        std::cerr << "Error: Could not create argument tuple." << std::endl;
+-        Py_XDECREF(args);
+-        return VectorDBErrorCode::ArgumentError;
++    if (nullptr == args) {
++        std::cerr << "Could not create argument tuple." << std::endl;
++        PyErr_Print();
++        return false;
+     }
+ 
+     PyObject* result = PyObject_CallMethod(dbInstance_, "get_or_create_collection", "O", args);
+-    if (result == nullptr) {
+-        // 处理错误
++    if (nullptr == result) {
++        std::cerr << "Failed to call method: get_or_create_collection" << std::endl;
+         PyErr_Print();
+         Py_XDECREF(args);
+-        Py_XDECREF(result);
+-        return VectorDBErrorCode::PyObjectCallMethodError;
++        return false;
+     }
+ 
+     Py_XDECREF(args);
+     Py_XDECREF(result);
+-    std::cout << "createCollection success" << std::endl;
+-    return VectorDBErrorCode::Success;
++    return true;
+ }
+ 
+ std::vector<std::string> VectorDB::collections()
+ {
+     PythonThreadLocker locker;
+     std::vector<std::string> collectionLists={};
+-    if (dbInstance_ == nullptr) {
++    if (nullptr == dbInstance_) {
++        std::cerr << "ChromaDB instance is not initialized." << std::endl;
+         return collectionLists;
+     }
+     PyObject* func = PyObject_GetAttrString(dbInstance_, "list_collections");
+-    if (func == NULL) {
++    if (nullptr == func) {
+         std::cerr << "Could not find function 'list_collections'" << std::endl;
+         return collectionLists;
+     }
+ 
+-    PyObject* result = PyObject_CallObject(func, NULL); // 假设list_collections不接受任何参数
+-    Py_DECREF(func); // 减少对函数的引用计数
++    PyObject* result = PyObject_CallObject(func, NULL);\
++    if (nullptr == result) {
++        std::cerr << "Failed to call method: list_collections" << std::endl;
++        PyErr_Print();
++        Py_XDECREF(func);
++        return collectionLists;
++    }
+     collectionLists = pythonutil::convertPythonListToStringVector(result);
++
++    Py_XDECREF(func);
++    Py_XDECREF(result);
+     return collectionLists;
+ }
+ 
+-VectorDBErrorCode VectorDB::addData(const std::string& collectionName, const std::vector<VectorData>& data)
++bool VectorDB::addData(const std::string& collectionName, const std::vector<VectorData>& data)
+ {
+     PythonThreadLocker locker;
+     std::cout << "Adding data to ChromaDB..." << std::endl;
+-    if (dbInstance_ == nullptr) {
+-        return VectorDBErrorCode::ValidDataBase;
++    if (nullptr == dbInstance_) {
++        std::cerr << "ChromaDB instance is not initialized." << std::endl;
++        return false;
+     }
+ 
+     if (data.empty()) {
+-        std::cerr << "Warning: Attempted to addData with an empty data vector." << std::endl;
+-        return VectorDBErrorCode::EmptyDataVector;
++        std::cerr << "Attempted to addData with an empty data vector." << std::endl;
++        return false;
+     }
+ 
+     std::vector<std::string> ids;
+@@ -155,7 +165,7 @@ VectorDBErrorCode VectorDB::addData(const std::string& collectionName, const std
+         if (it != data[i].metadata.end()) {
+             documents.push_back(std::get<std::string>(it->second));
+         } else {
+-            documents.emplace_back();
++            documents.emplace_back(std::string()); // documents 的长度需要和其他参数相等
+         }
+     }
+ 
+@@ -165,47 +175,48 @@ VectorDBErrorCode VectorDB::addData(const std::string& collectionName, const std
+     PyObject* pyDocuments = pythonutil::convertVectorStringToPyObject(documents);
+ 
+     // 创建包含所有参数的元组
+-    PyObject* args_tuple = PyTuple_New(5);
+-    PyTuple_SET_ITEM(args_tuple, 0, PyUnicode_FromString(collectionName.c_str()));
+-    PyTuple_SET_ITEM(args_tuple, 1, pyIds);
+-    PyTuple_SET_ITEM(args_tuple, 2, pyMetadatas);
+-    PyTuple_SET_ITEM(args_tuple, 3, pyEmbeddings);
+-    PyTuple_SET_ITEM(args_tuple, 4, pyDocuments);
+-
+-    PyObject* result = PyObject_CallObject(PyObject_GetAttrString(dbInstance_, "add_data"), args_tuple);
+-    if (result == nullptr) {
++    PyObject* tuple = PyTuple_New(5);
++    PyTuple_SET_ITEM(tuple, 0, PyUnicode_FromString(collectionName.c_str()));
++    PyTuple_SET_ITEM(tuple, 1, pyIds);
++    PyTuple_SET_ITEM(tuple, 2, pyMetadatas);
++    PyTuple_SET_ITEM(tuple, 3, pyEmbeddings);
++    PyTuple_SET_ITEM(tuple, 4, pyDocuments);
++
++    PyObject* func = PyObject_GetAttrString(dbInstance_, "add_data");
++    if (nullptr == func) {
++        std::cerr << "Could not find function 'add_data'" << std::endl;
+         PyErr_Print();
++        Py_XDECREF(tuple);
++        return false;
++    }
+ 
+-        Py_XDECREF(pyIds);
+-        Py_XDECREF(pyEmbeddings);
+-        Py_XDECREF(pyMetadatas);
+-        Py_XDECREF(pyDocuments);
+-        Py_XDECREF(args_tuple);
+-        Py_XDECREF(result);
+-
+-        return VectorDBErrorCode::PyObjectCallMethodError;
++    PyObject* result = PyObject_CallObject(func, tuple);
++    if (nullptr == result) {
++        std::cerr << "Failed to call method: add_data" << std::endl;
++        PyErr_Print();
++        Py_XDECREF(tuple);
++        Py_XDECREF(func);
++        return false;
+     }
+ 
+-    Py_XDECREF(pyIds);
+-    Py_XDECREF(pyEmbeddings);
+-    Py_XDECREF(pyMetadatas);
+-    Py_XDECREF(pyDocuments);
+-    Py_XDECREF(args_tuple);
++    Py_XDECREF(tuple);
+     Py_XDECREF(result);
++    Py_XDECREF(func);
+ 
+-    return VectorDBErrorCode::Success;
++    return true;
+ }
+ 
+-VectorDBErrorCode VectorDB::updateData(const std::string& collectionName, const std::vector<VectorData>& data)
++bool VectorDB::updateData(const std::string& collectionName, const std::vector<VectorData>& data)
+ {
+     PythonThreadLocker locker;
+-    if (dbInstance_ == nullptr) {
+-        return VectorDBErrorCode::ValidDataBase;
++    if (nullptr == dbInstance_) {
++        std::cerr << "ChromaDB instance is not initialized." << std::endl;
++        return false;
+     }
+ 
+     if (data.empty()) {
+         std::cerr << "Warning: Attempted to updateData with an empty data vector." << std::endl;
+-        return VectorDBErrorCode::EmptyDataVector;
++        return false;
+     }
+     std::vector<std::string> ids;
+     std::vector<std::vector<double>> embeddings;
+@@ -220,7 +231,7 @@ VectorDBErrorCode VectorDB::updateData(const std::string& collectionName, const
+         if (it != data[i].metadata.end()) {
+             documents.push_back(std::get<std::string>(it->second));
+         } else {
+-            documents.emplace_back();
++            documents.emplace_back(std::string()); // documents 的长度需要和其他参数相等
+         }
+     }
+ 
+@@ -230,35 +241,36 @@ VectorDBErrorCode VectorDB::updateData(const std::string& collectionName, const
+     PyObject* pyDocuments = pythonutil::convertVectorStringToPyObject(documents);
+ 
+     // 创建包含所有参数的元组
+-    PyObject* args_tuple = PyTuple_New(5);
+-    PyTuple_SET_ITEM(args_tuple, 0, PyUnicode_FromString(collectionName.c_str()));
+-    PyTuple_SET_ITEM(args_tuple, 1, pyIds);
+-    PyTuple_SET_ITEM(args_tuple, 2, pyMetadatas);
+-    PyTuple_SET_ITEM(args_tuple, 3, pyEmbeddings);
+-    PyTuple_SET_ITEM(args_tuple, 4, pyDocuments);
+-
+-    PyObject* result = PyObject_CallObject(PyObject_GetAttrString(dbInstance_, "update_data"), args_tuple);
+-    if (result == nullptr) {
++    PyObject* tuple = PyTuple_New(5);
++    PyTuple_SET_ITEM(tuple, 0, PyUnicode_FromString(collectionName.c_str()));
++    PyTuple_SET_ITEM(tuple, 1, pyIds);
++    PyTuple_SET_ITEM(tuple, 2, pyMetadatas);
++    PyTuple_SET_ITEM(tuple, 3, pyEmbeddings);
++    PyTuple_SET_ITEM(tuple, 4, pyDocuments);
++
++    PyObject* func = PyObject_GetAttrString(dbInstance_, "update_data");
++    if (nullptr == func) {
++        std::cerr << "Could not find function 'update_data'" << std::endl;
+         PyErr_Print();
++        Py_XDECREF(tuple);
++        return false;
++    }
+ 
+-        Py_XDECREF(pyIds);
+-        Py_XDECREF(pyEmbeddings);
+-        Py_XDECREF(pyMetadatas);
+-        Py_XDECREF(pyDocuments);
+-        Py_XDECREF(args_tuple);
+-        Py_XDECREF(result);
++    PyObject* result = PyObject_CallObject(func, tuple);
++    if (nullptr == result) {
++        std::cerr << "Failed to call method: update_data" << std::endl;
++        PyErr_Print();
++        Py_XDECREF(tuple);
++        Py_XDECREF(func);
+ 
+-        return VectorDBErrorCode::PyObjectCallMethodError;
++        return false;
+     }
+ 
+-    Py_XDECREF(pyIds);
+-    Py_XDECREF(pyEmbeddings);
+-    Py_XDECREF(pyMetadatas);
+-    Py_XDECREF(pyDocuments);
+-    Py_XDECREF(args_tuple);
++    Py_XDECREF(tuple);
+     Py_XDECREF(result);
++    Py_XDECREF(func);
+ 
+-    return VectorDBErrorCode::Success;
++    return true;
+ }
+ 
+ std::vector<VectorData> VectorDB::getData(const std::string& collectionName, const std::vector<std::string>& ids,
+@@ -266,58 +278,75 @@ std::vector<VectorData> VectorDB::getData(const std::string& collectionName, con
+ {
+     PythonThreadLocker locker;
+     std::vector<VectorData> vectorDates={};
+-    if (dbInstance_ == nullptr) {
++    if (nullptr == dbInstance_) {
+         return vectorDates;
+     }
+-    PyObject* pyIds = pythonutil::convertVectorStringToPyObject(ids);
+-
+-    PyObject* args_tuple = PyTuple_New(3);
+-    PyTuple_SET_ITEM(args_tuple, 0, PyUnicode_FromString(collectionName.c_str()));
+-    PyTuple_SET_ITEM(args_tuple, 1, pyIds);
+-    PyTuple_SET_ITEM(args_tuple, 2, PyUnicode_FromString(source.c_str()));
+ 
+-    PyObject* result = PyObject_CallObject(PyObject_GetAttrString(dbInstance_, "get_data"), args_tuple);
+-    if (result == nullptr) {
+-        // 处理错误
++    PyObject* pyIds = pythonutil::convertVectorStringToPyObject(ids);
++    PyObject* tuple = PyTuple_New(3);
++    PyTuple_SET_ITEM(tuple, 0, PyUnicode_FromString(collectionName.c_str()));
++    PyTuple_SET_ITEM(tuple, 1, pyIds);
++    PyTuple_SET_ITEM(tuple, 2, PyUnicode_FromString(source.c_str()));
++
++    PyObject* func = PyObject_GetAttrString(dbInstance_, "get_data");
++    if (nullptr == func) {
++        std::cerr << "Could not find function 'get_data'" << std::endl;
++        PyErr_Print();
++        Py_XDECREF(tuple);
++        return vectorDates;
++    }
++    PyObject* result = PyObject_CallObject(func, tuple);
++    if (nullptr == result) {
++        std::cerr << "Failed to call method: get_data" << std::endl;
+         PyErr_Print();
+-        Py_XDECREF(pyIds);
+-        Py_XDECREF(args_tuple);
++        Py_XDECREF(tuple);
++        Py_XDECREF(func);
+         return vectorDates;
+     }
+ 
+-    Py_XDECREF(pyIds);
+-    Py_XDECREF(args_tuple);
+     vectorDates = convertPyObjectToVectorVectorData(result);
++
++    Py_XDECREF(tuple);
++    Py_XDECREF(func);
++    Py_XDECREF(result);
+     return vectorDates;
+ }
+ 
+-VectorDBErrorCode VectorDB::deleteData(const std::string& collectionName, const std::vector<std::string>& sourceIds, const std::vector<std::string>& ids)
++bool VectorDB::deleteData(const std::string& collectionName, const std::vector<std::string>& sourceIds, const std::vector<std::string>& ids)
+ {
+     PythonThreadLocker locker;
+-    if (dbInstance_ == nullptr) {
+-        return VectorDBErrorCode::ValidDataBase;
++    if (nullptr == dbInstance_) {
++        return false;
+     }
+     PyObject* pySourceIds = pythonutil::convertVectorStringToPyObject(sourceIds);
+     PyObject* pyIds = pythonutil::convertVectorStringToPyObject(ids);
+-    PyObject* args_tuple = PyTuple_New(3);
+-    PyTuple_SET_ITEM(args_tuple, 0, PyUnicode_FromString(collectionName.c_str()));
+-    PyTuple_SET_ITEM(args_tuple, 1, pySourceIds);
+-    PyTuple_SET_ITEM(args_tuple, 2, pyIds);
+-
+-    if (PyObject_CallObject(PyObject_GetAttrString(dbInstance_, "delete_data"), args_tuple) == nullptr) {
++    PyObject* tuple = PyTuple_New(3);
++    PyTuple_SET_ITEM(tuple, 0, PyUnicode_FromString(collectionName.c_str()));
++    PyTuple_SET_ITEM(tuple, 1, pySourceIds);
++    PyTuple_SET_ITEM(tuple, 2, pyIds);
++
++    PyObject* func = PyObject_GetAttrString(dbInstance_, "delete_data");
++    if (nullptr == func) {
++        std::cerr << "Could not find function 'delete_data'" << std::endl;
+         PyErr_Print();
+ 
+-        Py_XDECREF(pySourceIds);
+-        Py_XDECREF(pyIds);
+-        Py_XDECREF(args_tuple);
+-        return VectorDBErrorCode::PyObjectCallMethodError;
++        Py_XDECREF(tuple);
++        return false;
+     }
++    PyObject* result = PyObject_CallObject(func, tuple);
++    if (nullptr == result) {
++        std::cerr << "Call function delete_data failed" << std::endl;
++        PyErr_Print();
+ 
+-    Py_XDECREF(pySourceIds);
+-    Py_XDECREF(pyIds);
+-    Py_XDECREF(args_tuple);
++        Py_XDECREF(tuple);
++        Py_XDECREF(func);
++        return false;
++    }
+ 
+-    return VectorDBErrorCode::Success;
++    Py_XDECREF(tuple);
++    Py_XDECREF(func);
++    Py_XDECREF(result);
++    return true;
+ }
+ 
+ std::vector<std::pair<VectorData, float>> VectorDB::queryData(const std::string& collectionName, std::vector<std::vector<double>> vectors,
+@@ -325,7 +354,7 @@ std::vector<std::pair<VectorData, float>> VectorDB::queryData(const std::string&
+ {
+     PythonThreadLocker locker;
+     std::vector<std::pair<VectorData, float>> queryDatas={};
+-    if (dbInstance_ == nullptr) {
++    if (nullptr == dbInstance_) {
+         return queryDatas;
+     }
+     std::vector<std::string> ids;
+@@ -335,27 +364,33 @@ std::vector<std::pair<VectorData, float>> VectorDB::queryData(const std::string&
+ 
+     PyObject* pyEmbeddings = pythonutil::convertVectorVectorDoubleToPyObject(vectors);
+ 
+-    PyObject* args_tuple = PyTuple_New(3);
+-    PyTuple_SET_ITEM(args_tuple, 0, PyUnicode_FromString(collectionName.c_str()));
+-    PyTuple_SET_ITEM(args_tuple, 1, pyEmbeddings);
+-    PyTuple_SET_ITEM(args_tuple, 2, PyLong_FromLongLong(numResults));
++    PyObject* tuple = PyTuple_New(3);
++    PyTuple_SET_ITEM(tuple, 0, PyUnicode_FromString(collectionName.c_str()));
++    PyTuple_SET_ITEM(tuple, 1, pyEmbeddings);
++    PyTuple_SET_ITEM(tuple, 2, PyLong_FromLongLong(numResults));
+ 
+-    PyObject* result = PyObject_CallObject(PyObject_GetAttrString(dbInstance_, "query_data"), args_tuple);
+-    if (result == nullptr) {
+-        // 处理错误
++    PyObject* func = PyObject_GetAttrString(dbInstance_, "query_data");
++    if (nullptr == func) {
++        std::cerr << "Could not find function 'query_data'" << std::endl;
+         PyErr_Print();
+-        Py_XDECREF(pyEmbeddings);
+-        Py_XDECREF(args_tuple);
++        Py_XDECREF(tuple);
++        return queryDatas;
++    }
++    PyObject* result = PyObject_CallObject(func, tuple);
++    if (nullptr == result) {
++        std::cerr << "Call function query_data failed" << std::endl;
++        PyErr_Print();
++        Py_XDECREF(tuple);
++        Py_XDECREF(func);
+         return queryDatas;
+     }
+ 
+-    PyObject* ids_obj = PyDict_GetItemString(result, "ids");
+-    PyObject* metadatas_obj = PyDict_GetItemString(result, "metadatas");
+-    PyObject* distances_obj = PyDict_GetItemString(result, "distances");
+-
+-    ids = pythonutil::convertPythonListToStringVector(ids_obj);
+-    metadatas = pythonutil::convertPythonListToMapOfVariant(metadatas_obj);
+-    distances = pythonutil::convertPythonListToVectorFloat(distances_obj);
++    PyObject* idsObj = PyDict_GetItemString(result, "ids");
++    PyObject* metadatasObj = PyDict_GetItemString(result, "metadatas");
++    PyObject* distancesObj = PyDict_GetItemString(result, "distances");
++    ids = pythonutil::convertPythonListToStringVector(idsObj);
++    metadatas = pythonutil::convertPythonListToMapOfVariant(metadatasObj);
++    distances = pythonutil::convertPythonListToVectorFloat(distancesObj);
+ 
+     for (size_t i = 0; i < ids.size(); ++i) {
+         std::pair<VectorData, float> queryData;
+@@ -370,8 +405,9 @@ std::vector<std::pair<VectorData, float>> VectorDB::queryData(const std::string&
+         queryDatas.push_back(queryData);
+     }
+ 
+-    Py_XDECREF(pyEmbeddings);
+-    Py_XDECREF(args_tuple);
++    Py_XDECREF(func);
++    Py_XDECREF(result);
++    Py_XDECREF(tuple);
+     return queryDatas;
+ }
+ 
+@@ -382,25 +418,26 @@ std::vector<VectorData> VectorDB::convertPyObjectToVectorVectorData(PyObject* py
+     std::vector<std::vector<double>> embeddings;
+     std::vector<std::map<std::string, std::variant<std::string, int64_t>>> metadatas;
+ 
+-    PyObject* ids_obj = PyDict_GetItemString(pyObject, "ids");
+-    PyObject* embeddings_obj = PyDict_GetItemString(pyObject, "embeddings");
+-    PyObject* metadatas_obj = PyDict_GetItemString(pyObject, "metadatas");
++    PyObject* idsObj = PyDict_GetItemString(pyObject, "ids");
++    PyObject* embeddingsObj = PyDict_GetItemString(pyObject, "embeddings");
++    PyObject* metadatasObj = PyDict_GetItemString(pyObject, "metadatas");
+ 
+-    ids = pythonutil::convertPythonListToStringVector(ids_obj);
+-    embeddings = pythonutil::convertPythonListToVectorOfVectors(embeddings_obj);
+-    metadatas = pythonutil::convertPythonListToMapOfVariant(metadatas_obj);
++    ids = pythonutil::convertPythonListToStringVector(idsObj);
++    embeddings = pythonutil::convertPythonListToVectorOfVectors(embeddingsObj);
++    metadatas = pythonutil::convertPythonListToMapOfVariant(metadatasObj);
+ 
+-    if (ids.size() == embeddings.size() && ids.size() == metadatas.size()) {
+-        for (size_t i = 0; i < ids.size(); ++i) {
+-            VectorData data;
+-            data.id = ids[i];
+-            data.embedding = embeddings[i];
+-            data.metadata = metadatas[i];
++    if (ids.size() != embeddings.size() || ids.size() != metadatas.size() || embeddings.size() != metadatas.size()) {
++        std::cerr << "The size of ids, embeddings and metadatas are not equal" << std::endl;
++        return vectorDats;
++    }
+ 
+-            vectorDats.push_back(data);
+-        }
+-    } else {
+-        std::cout << "ids, embeddings, 和 metadatas的大小不匹配 " << std::endl;
++    for (size_t i = 0; i < ids.size(); ++i) {
++        VectorData data;
++        data.id = ids[i];
++        data.embedding = embeddings[i];
++        data.metadata = metadatas[i];
++
++        vectorDats.push_back(data);
+     }
+ 
+     return vectorDats;
+diff --git a/src/utils/vectordb/vectordb.h b/src/utils/vectordb/vectordb.h
+index a51c84d..ec3052e 100644
+--- a/src/utils/vectordb/vectordb.h
++++ b/src/utils/vectordb/vectordb.h
+@@ -23,15 +23,6 @@
+ #include <map>
+ #include <variant>
+ 
+-enum class VectorDBErrorCode
+-{
+-    Success,
+-    ArgumentError,
+-    PyObjectCallMethodError,
+-    ValidDataBase,
+-    EmptyDataVector
+-};
+-
+ struct VectorData{
+     std::string id;
+     std::vector<double> embedding = {};
+@@ -44,15 +35,15 @@ public:
+     ~VectorDB();
+     std::string engineName() const {return "ChromaDB";}
+ 
+-    VectorDBErrorCode createCollection(const std::string& collectionName, const std::string& searchAlgorithm);
++    bool createCollection(const std::string& collectionName, const std::string& searchAlgorithm);
+     std::vector<std::string> collections();
+-    VectorDBErrorCode addData(const std::string& collectionName, const std::vector<VectorData>& data);
+-    VectorDBErrorCode updateData(const std::string& collectionName, const std::vector<VectorData>& data);
++    bool addData(const std::string& collectionName, const std::vector<VectorData>& data);
++    bool updateData(const std::string& collectionName, const std::vector<VectorData>& data);
+ 
+     std::vector<VectorData> getData(const std::string& collectionName,
+                                     const std::vector<std::string>& ids={}, const std::string& source="");
+ 
+-    VectorDBErrorCode deleteData(const std::string& collectionName,
++    bool deleteData(const std::string& collectionName,
+                     const std::vector<std::string>& sourceIds={}, const std::vector<std::string>& ids={});
+ 
+     std::vector<std::pair<VectorData, float>> queryData(const std::string& collectionName,

@@ -1,0 +1,469 @@
+From: shangxiaoyang <shangxiaoyang@kylinos.cn>
+Date: Thu, 6 Jun 2024 12:46:57 +0000
+Subject: =?utf-8?b?ITE3IGZpeCBXbGNvbeS4i+aXpeWOhuaYvuekuuS9jee9rumUmeivryBN?=
+ =?utf-8?b?ZXJnZSBwdWxsIHJlcXVlc3QgITE3IGZyb20gamlhd2VpL29wZW5reWxpbi9uaWxl?=
+
+---
+ lunarcalendarwidget/frmlunarcalendarwidget.cpp |  18 +-
+ lunarcalendarwidget/lunarcalendarwidget.cpp    | 328 +++++++++++++------------
+ lunarcalendarwidget/lunarcalendarwidget.h      |   5 +-
+ 3 files changed, 190 insertions(+), 161 deletions(-)
+
+diff --git a/lunarcalendarwidget/frmlunarcalendarwidget.cpp b/lunarcalendarwidget/frmlunarcalendarwidget.cpp
+index 57349a8..a191c07 100644
+--- a/lunarcalendarwidget/frmlunarcalendarwidget.cpp
++++ b/lunarcalendarwidget/frmlunarcalendarwidget.cpp
+@@ -48,8 +48,7 @@ const int SCHEDULE_ITEM = 30;
+ #define THREE_SCHEDULE_HEIGHT 845
+ #define FOUR_MORE_SCHEDULE_HEIGHT 925
+ //#define YIJI_HEIGHT 75
+-
+-#define YIJI_HEIGHT 75
++#define YIJI_HEIGHT 55
+ #define WIDGET_GAP 8
+ static const QString NotificationsDBusService = "org.ukui.calendar.Notifications";
+ static const QString NotificationsDBusPath = "/org/ukui/calendar/Notifications";
+@@ -77,6 +76,7 @@ frmLunarCalendarWidget::frmLunarCalendarWidget(QWidget *parent) : QWidget(parent
+     KWindowSystem::setState(m_widget->winId(),NET::SkipPager|NET::SkipTaskbar|NET::SkipSwitcher);
+     connect(ui->lunarCalendarWidget,&LunarCalendarWidget::almanacChanged,this,&frmLunarCalendarWidget::showAlmanac);
+     connect(this, &frmLunarCalendarWidget::onShowToday,ui->lunarCalendarWidget,&LunarCalendarWidget::showToday);
++
+     this->initForm();
+     if(QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
+         //        qputenv("QT_QPA_PLATFORM", "wayland"); //openKylin
+@@ -164,6 +164,10 @@ void frmLunarCalendarWidget::initPanelGSettings()
+         connect(m_panelGSettings, &QGSettings::changed, this, [&] (const QString &key) {
+             if (key == PANEL_SIZE_KEY) {
+                 m_panelSize = m_panelGSettings->get(PANEL_SIZE_KEY).toInt();
++
++//                m_widget->onGSettingsChanged(key);
++            }else if(key == PANEL_POSITION_KEY){
++                m_panelPosition = m_panelGSettings->get(PANEL_POSITION_KEY).toInt();
+             }
+         });
+     }
+@@ -491,21 +495,21 @@ void frmLunarCalendarWidget::changeWidowposFromClickButton(bool restore)
+         rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,
+                      qApp->screenAt(QCursor::pos())->geometry().y()+m_panelSize+WIDGET_GAP,
+                      ORIGIN_CALENDAR_WIDTH,
+-                     this->height());
++                     LESSTWOSHCEDULE_CALENDAR_HEIGHT);
+ 
+     }
+      else if(m_panelPosition ==2){
+         rect.setRect(qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,
+-                     totalHeight-m_widget->height()-WIDGET_GAP,
++                     totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
+                      ORIGIN_CALENDAR_WIDTH,
+-                     this->height());
++                     LESSTWOSHCEDULE_CALENDAR_HEIGHT);
+ 
+     }
+     else{
+         rect.setRect(totalWidth-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,
+-                     totalHeight-m_widget->height()-WIDGET_GAP,
++                     totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
+                      ORIGIN_CALENDAR_WIDTH,
+-                     this->height());
++                     LESSTWOSHCEDULE_CALENDAR_HEIGHT);
+     }
+ 
+ 
+diff --git a/lunarcalendarwidget/lunarcalendarwidget.cpp b/lunarcalendarwidget/lunarcalendarwidget.cpp
+index 36ae0f1..449d133 100644
+--- a/lunarcalendarwidget/lunarcalendarwidget.cpp
++++ b/lunarcalendarwidget/lunarcalendarwidget.cpp
+@@ -99,7 +99,7 @@ const int WIDGET_GAP = 8;
+ #define KYSDK_DATEPATH "/com/kylin/kysdk/Date"
+ #define KYSDK_DATEINTERFACE "com.kylin.kysdk.DateInterface"
+ #include "customscrollarea.h"
+-
++#define YIJI_HEIGHT 55
+ #include "calendardatabase.h"
+ class CalendarDataBase;
+ class schedule_item;
+@@ -117,7 +117,6 @@ LunarCalendarWidget::LunarCalendarWidget(QWidget *parent) : QWidget(parent)
+     }
+     CalendarDataBase::getInstance().deleteschedule();//删除已经过期的日程
+ 
+-
+     CalendarDataBase::getInstance().searchDataSlot(date);
+     updateAllSchedule();
+     if(QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
+@@ -142,144 +141,8 @@ LunarCalendarWidget::LunarCalendarWidget(QWidget *parent) : QWidget(parent)
+     lunarlabel = new QLabel(this);
+     screen = QApplication::primaryScreen();
+     primaryScreenHeight = qApp->screenAt(QCursor::pos())->size().height() + qApp->screenAt(QCursor::pos())->geometry().y();
+-    qDebug()<<"primaryScreenHeight"<<primaryScreenHeight;
+-    const QByteArray id(PANEL_SETTINGS);
+-    if (QGSettings::isSchemaInstalled(id)) {
+-        m_panelGsettings = new QGSettings(id);
+-            panelSize = m_panelGsettings->get(PANEL_SIZE_KEY).toInt();
+-            screenHeight = qApp->screenAt(QCursor::pos())->size().height() + qApp->screenAt(QCursor::pos())->geometry().y();
+-            panelHeight = primaryScreenHeight-panelSize;//这个值就是屏幕到任务栏的高度
+-            connect(m_panelGsettings, &QGSettings::changed, this, &LunarCalendarWidget::onGSettingsChanged);
++    initGsettings();
+ 
+-    }
+-    connect(screen, &QScreen::geometryChanged, this, &LunarCalendarWidget::onPrimaryScreenChanged);
+-    widgetTime->setObjectName("widgetTime");
+-    timeShow->setContentsMargins(16, 16, 16, 0);
+-
+-    const QByteArray calendar_id(PANEL_CONTROL_IN_CALENDAR);
+-    if(QGSettings::isSchemaInstalled(calendar_id)){
+-        calendar_gsettings = new QGSettings(calendar_id);
+-    }
+-    initWidget();
+-    if(calendar_gsettings!=nullptr){
+-        //农历切换监听与日期显示格式
+-        connect(calendar_gsettings, &QGSettings::changed, this, [=] (const QString &key){
+-            if(key == LUNAR_KEY){
+-                m_showLunar = getShowLunar();
+-                setShowLunar(m_showLunar);
+-                controlDownLine();
+-                _timeUpdate();
+-            }
+-            else if(key == "date") {
+-            } else if (key == FIRST_DAY_KEY) {
+-                setWeekNameFormat(calendar_gsettings->get(FIRST_DAY_KEY).toString() == "sunday");
+-            }
+-        });
+-        m_showLunar = getShowLunar();
+-        setShowLunar(m_showLunar);
+-        setWeekNameFormat(calendar_gsettings->get(FIRST_DAY_KEY).toString() == "sunday");
+-        //监听12/24小时制
+-        connect(calendar_gsettings, &QGSettings::changed, this, [=] (const QString &keys){
+-            timemodel = calendar_gsettings->get("hoursystem").toString();
+-            _timeUpdate();
+-        });
+-        timemodel = calendar_gsettings->get("hoursystem").toString();
+-
+-    } else {
+-        //无设置默认公历
+-        lunarstate = true;
+-    }
+-
+-    //使用系统提供的sdk刷新时间显示
+-    QDBusConnection::sessionBus().connect(KYSDK_DATESERVER,
+-                                          KYSDK_DATEPATH,
+-                                          KYSDK_DATEINTERFACE,
+-                                          "ShortDateSignal",
+-                                          this,
+-                                          SLOT([](QString){
+-                                              updateYearMonthString(QDateTime::currentDateTime().date().year(),QDateTime::currentDateTime().date().month());
+-                                          }
+-                                          )
+-            );
+-
+-    //判断图形字体是否存在,不存在则加入
+-    QFontDatabase fontDb;
+-    if (!fontDb.families().contains("FontAwesome")) {
+-        int fontId = fontDb.addApplicationFont(":/image/fontawesome-webfont.ttf");
+-        QStringList fontName = fontDb.applicationFontFamilies(fontId);
+-        if (fontName.count() == 0) {
+-            qDebug() << "load fontawesome-webfont.ttf error";
+-        }
+-    }
+-
+-    if (fontDb.families().contains("FontAwesome")) {
+-        iconFont = QFont("FontAwesome");
+-#if (QT_VERSION >= QT_VERSION_CHECK(4,8,0))
+-        iconFont.setHintingPreference(QFont::PreferNoHinting);
+-#endif
+-    }
+-    //切换主题
+-    const QByteArray style_id(ORG_UKUI_STYLE);
+-    QStringList stylelist;
+-    stylelist<<STYLE_NAME_KEY_DARK<<STYLE_NAME_KEY_BLACK;
+-    if(QGSettings::isSchemaInstalled(style_id)) {
+-        style_settings = new QGSettings(style_id);
+-        dark_style=stylelist.contains(style_settings->get(STYLE_NAME).toString());
+-        setColor(dark_style);
+-        m_fontName = style_settings->get(SYSTEM_FONT).toString();
+-        m_font.setFamily(m_fontName);
+-    }
+-    cboxYearandMonthLabel->setFont(m_font);
+-    connect(style_settings, &QGSettings::changed, this, [=] (const QString &key){
+-        if(key==STYLE_NAME){
+-            dark_style=stylelist.contains(style_settings->get(STYLE_NAME).toString());
+-            _timeUpdate();
+-            setColor(dark_style);
+-        }else if(key == SYSTEM_FONT){
+-            m_fontName = style_settings->get(SYSTEM_FONT).toString();
+-            m_font.setFamily(m_fontName);
+-        }else{
+-            qDebug()<<"key!=STYLE_NAME";
+-        }
+-    });
+-
+-    timer = new QTimer();
+-    connect(timer,SIGNAL(timeout()),this,SLOT(timerUpdate()));
+-    timer->start(1000);
+-
+-    locale = QLocale::system().name();
+-
+-    setLocaleCalendar();//设置某区域下日历的显示
+-    initTransparency();
+-    setWindowOpacity(1);
+-    setAttribute(Qt::WA_TranslucentBackground,true);//设置窗口背景透明
+-    setProperty("useSystemStyleBlur", true);   //设置毛玻璃效果
+-    setProperty("useStyleWindowManager",false);
+-
+-    KWindowEffects::enableBlurBehind(winId(),true);
+-    KWindowSystem::setState(winId(),NET::SkipPager|NET::SkipTaskbar|NET::SkipSwitcher);
+-    kdk::UkuiStyleHelper::self()->removeHeader(this);
+-    updateYearMonthString(QDateTime::currentDateTime().date().year(),QDateTime::currentDateTime().date().month());
+-    _timeUpdate();
+-
+-    //加载繁中宜忌字典
+-    if (locale != "zh_HK") {
+-        return;
+-    }
+-    QFile dict("/usr/share/ukui-panel/plugin-calendar/html/zh_HK.html");
+-    if (!dict.open(QIODevice::ReadOnly | QIODevice::Text)) {
+-        qDebug()<<"open field : /usr/share/ukui-panel/plugin-calendar/html/zh_HK.html";
+-        return;
+-    }
+-    QString orig = dict.readLine();
+-    QString trans = dict.readLine();
+-    orig.remove("\n");
+-    for (int i=0;i< orig.length();i++) {
+-        if (i >= trans.length()) {
+-            break;
+-        }
+-        m_zh_HK_dict.insert(orig.at(i),trans.at(i));
+-    }
+ }
+ //原样式
+ void LunarCalendarWidget::noSchedule()
+@@ -2655,7 +2518,9 @@ void LunarCalendarWidget::onPrimaryScreenChanged(const QRect &newGeometry) {
+     updatePrimaryScreenHeight();
+ 
+ }
+-void LunarCalendarWidget::onGSettingsChanged(const QString &key) {
++void LunarCalendarWidget::onGSettingsChanged(const QString &key)
++{
++    qDebug()<<"onGSettingsChanged";
+     if(key == PANEL_POSITION_KEY){
+         int calendar_height = LESSTWOSHCEDULE_CALENDAR_HEIGHT;
+         if(panelHeight < this->height() || panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT || isExceedScreenHeight){
+@@ -2664,22 +2529,34 @@ void LunarCalendarWidget::onGSettingsChanged(const QString &key) {
+         int width = screen->size().width();
+         int height = primaryScreenHeight;
+         int m_panelPoistion = m_panelGsettings->get(PANEL_POSITION_KEY).toInt();
++        qDebug()<<"-----------------m_panelPoistion"<<m_panelPoistion;
++        position = m_panelPoistion;
+         int  m_panelSize = m_panelGsettings->get(PANEL_SIZE_KEY).toInt();
+-        //width-m_panelSize-ORIGIN_CALENDAR_WIDTH+WIDGET_GAP , qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP
+-        //3右 0下 2左边 1上
+-        if(m_panelPoistion == 2){
+-            qDebug()<<"移动到了2";
+-//            if(panelHeight < this->height() || panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT || isExceedScreenHeight){
+-
+-//            }
+-            this->move(qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,height-calendar_height-WIDGET_GAP);
+-        }
+-        else if(m_panelPoistion == 0){
++        //3右 0下 2左 1上
++        switch (m_panelPoistion) {
++        case 0:
+             this->move(width - ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,panelHeight-calendar_height-WIDGET_GAP);
+-        } else if(m_panelPoistion ==3){
+-            this->move(width-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,height-calendar_height-WIDGET_GAP);
+-        } else if(m_panelPoistion == 1){
++            if(yijistate){
++              this->move(width - ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,panelHeight-calendar_height -YIJI_HEIGHT -WIDGET_GAP);
++            }
++            break;
++        case 1:
+             this->move(width-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,m_panelSize+WIDGET_GAP);
++            break;
++        case 2:
++            this->move(qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,height-calendar_height-WIDGET_GAP);
++            if(yijistate){
++              this->move(qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,height-calendar_height-YIJI_HEIGHT -WIDGET_GAP);
++            }
++            break;
++        case 3:
++            this->move(width-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,height-calendar_height-WIDGET_GAP);
++            if(yijistate){
++              this->move(width-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,height-calendar_height - YIJI_HEIGHT-WIDGET_GAP);
++            }
++            break;
++        default:
++            break;
+         }
+     }
+     if(key == PANEL_SIZE_KEY){
+@@ -2852,3 +2729,148 @@ void LunarCalendarWidget::PrimaryScreenHeight(int height)
+ 
+     updatePrimaryScreenHeight();
+ }
++void LunarCalendarWidget::initGsettings()
++{
++    const QByteArray id(PANEL_SETTINGS);
++    if (QGSettings::isSchemaInstalled(id)) {
++        m_panelGsettings = new QGSettings(id);
++        if (m_panelGsettings != nullptr) {
++            panelSize = m_panelGsettings->get(PANEL_SIZE_KEY).toInt();
++            screenHeight = qApp->screenAt(QCursor::pos())->size().height() + qApp->screenAt(QCursor::pos())->geometry().y();
++            panelHeight = primaryScreenHeight-panelSize;//这个值就是屏幕到任务栏的高度
++            position = m_panelGsettings->get(PANEL_POSITION_KEY).toInt();
++            connect(m_panelGsettings, &QGSettings::changed, this, &LunarCalendarWidget::onGSettingsChanged);
++        }
++    }
++    connect(screen, &QScreen::geometryChanged, this, &LunarCalendarWidget::onPrimaryScreenChanged);
++    widgetTime->setObjectName("widgetTime");
++    timeShow->setContentsMargins(16, 16, 16, 0);
++
++    const QByteArray calendar_id(PANEL_CONTROL_IN_CALENDAR);
++    if(QGSettings::isSchemaInstalled(calendar_id)){
++        calendar_gsettings = new QGSettings(calendar_id);
++    }
++    initWidget();
++    if(calendar_gsettings!=nullptr){
++        //农历切换监听与日期显示格式
++        connect(calendar_gsettings, &QGSettings::changed, this, [=] (const QString &key){
++            if(key == LUNAR_KEY){
++                m_showLunar = getShowLunar();
++                setShowLunar(m_showLunar);
++                controlDownLine();
++                _timeUpdate();
++            }
++            else if(key == "date") {
++            } else if (key == FIRST_DAY_KEY) {
++                setWeekNameFormat(calendar_gsettings->get(FIRST_DAY_KEY).toString() == "sunday");
++            }
++        });
++        m_showLunar = getShowLunar();
++        setShowLunar(m_showLunar);
++        setWeekNameFormat(calendar_gsettings->get(FIRST_DAY_KEY).toString() == "sunday");
++        //监听12/24小时制
++        connect(calendar_gsettings, &QGSettings::changed, this, [=] (const QString &keys){
++            timemodel = calendar_gsettings->get("hoursystem").toString();
++            _timeUpdate();
++        });
++        timemodel = calendar_gsettings->get("hoursystem").toString();
++
++    } else {
++        //无设置默认公历
++        lunarstate = true;
++    }
++
++    //使用系统提供的sdk刷新时间显示
++    QDBusConnection::sessionBus().connect(KYSDK_DATESERVER,
++                                          KYSDK_DATEPATH,
++                                          KYSDK_DATEINTERFACE,
++                                          "ShortDateSignal",
++                                          this,
++                                          SLOT([](QString){
++                                              updateYearMonthString(QDateTime::currentDateTime().date().year(),QDateTime::currentDateTime().date().month());
++                                          }
++                                          )
++            );
++
++    //判断图形字体是否存在,不存在则加入
++    QFontDatabase fontDb;
++    if (!fontDb.families().contains("FontAwesome")) {
++        int fontId = fontDb.addApplicationFont(":/image/fontawesome-webfont.ttf");
++        QStringList fontName = fontDb.applicationFontFamilies(fontId);
++        if (fontName.count() == 0) {
++            qDebug() << "load fontawesome-webfont.ttf error";
++        }
++    }
++
++    if (fontDb.families().contains("FontAwesome")) {
++        iconFont = QFont("FontAwesome");
++#if (QT_VERSION >= QT_VERSION_CHECK(4,8,0))
++        iconFont.setHintingPreference(QFont::PreferNoHinting);
++#endif
++    }
++    //切换主题
++    const QByteArray style_id(ORG_UKUI_STYLE);
++    QStringList stylelist;
++    stylelist<<STYLE_NAME_KEY_DARK<<STYLE_NAME_KEY_BLACK;
++    if(QGSettings::isSchemaInstalled(style_id)) {
++        style_settings = new QGSettings(style_id);
++        if (style_settings != nullptr) {
++            dark_style=stylelist.contains(style_settings->get(STYLE_NAME).toString());
++            setColor(dark_style);
++            m_fontName = style_settings->get(SYSTEM_FONT).toString();
++            m_font.setFamily(m_fontName);
++        }
++    }
++    cboxYearandMonthLabel->setFont(m_font);
++    if (style_settings != nullptr) {
++        connect(style_settings, &QGSettings::changed, this, [=] (const QString &key){
++            if(key==STYLE_NAME){
++                dark_style=stylelist.contains(style_settings->get(STYLE_NAME).toString());
++                _timeUpdate();
++                setColor(dark_style);
++            }else if(key == SYSTEM_FONT){
++                m_fontName = style_settings->get(SYSTEM_FONT).toString();
++                m_font.setFamily(m_fontName);
++            }else{
++                qDebug()<<"key!=STYLE_NAME";
++            }
++        });
++    }
++    timer = new QTimer();
++    connect(timer,SIGNAL(timeout()),this,SLOT(timerUpdate()));
++    timer->start(1000);
++
++    locale = QLocale::system().name();
++
++    setLocaleCalendar();//设置某区域下日历的显示
++    initTransparency();
++    setWindowOpacity(1);
++    setAttribute(Qt::WA_TranslucentBackground,true);//设置窗口背景透明
++    setProperty("useSystemStyleBlur", true);   //设置毛玻璃效果
++    setProperty("useStyleWindowManager",false);
++
++    KWindowEffects::enableBlurBehind(winId(),true);
++    KWindowSystem::setState(winId(),NET::SkipPager|NET::SkipTaskbar|NET::SkipSwitcher);
++    kdk::UkuiStyleHelper::self()->removeHeader(this);
++    updateYearMonthString(QDateTime::currentDateTime().date().year(),QDateTime::currentDateTime().date().month());
++    _timeUpdate();
++
++    //加载繁中宜忌字典
++    if (locale != "zh_HK") {
++        return;
++    }
++    QFile dict("/usr/share/ukui-panel/plugin-calendar/html/zh_HK.html");
++    if (!dict.open(QIODevice::ReadOnly | QIODevice::Text)) {
++        qDebug()<<"open field : /usr/share/ukui-panel/plugin-calendar/html/zh_HK.html";
++        return;
++    }
++    QString orig = dict.readLine();
++    QString trans = dict.readLine();
++    orig.remove("\n");
++    for (int i=0;i< orig.length();i++) {
++        if (i >= trans.length()) {
++            break;
++        }
++        m_zh_HK_dict.insert(orig.at(i),trans.at(i));
++    }
++}
+diff --git a/lunarcalendarwidget/lunarcalendarwidget.h b/lunarcalendarwidget/lunarcalendarwidget.h
+index d94bc50..66e26d4 100644
+--- a/lunarcalendarwidget/lunarcalendarwidget.h
++++ b/lunarcalendarwidget/lunarcalendarwidget.h
+@@ -160,6 +160,10 @@ public:
+     int m_num=0;
+     bool isClicked  = false;
+     bool getBool();
++    void initGsettings();
++    bool yijistate = false;
++
++    int position;
+     explicit LunarCalendarWidget(QWidget *parent = 0);
+     ~LunarCalendarWidget();
+     void getFontInfo(QString &fontName, int &fontSize);
+@@ -232,7 +236,6 @@ private:
+     QProcess *myProcess = nullptr;
+     QWidget *m_widgetTop = nullptr;
+     QString timemodel = 0;
+-    bool yijistate = false;
+     bool lunarstate =false;
+     bool oneRun = true;
+ //    IUKUIPanelPlugin *mPlugin;

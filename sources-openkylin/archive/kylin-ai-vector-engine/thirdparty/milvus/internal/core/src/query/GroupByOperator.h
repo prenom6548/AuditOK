@@ -1,0 +1,148 @@
+// Licensed to the LF AI & Data foundation under one
+// or more contributor license agreements. See the NOTICE file
+// distributed with this work for additional information
+// regarding copyright ownership. The ASF licenses this file
+// to you under the Apache License, Version 2.0 (the
+// "License"); you may not use this file except in compliance
+// with the License. You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#pragma once
+
+#include "common/QueryInfo.h"
+#include "knowhere/index/index_node.h"
+#include "segcore/SegmentInterface.h"
+#include "segcore/SegmentGrowingImpl.h"
+#include "segcore/ConcurrentVector.h"
+#include "common/Span.h"
+
+namespace milvus {
+namespace query {
+
+template <typename T>
+class DataGetter {
+ public:
+    virtual T
+    Get(int64_t idx) const = 0;
+};
+
+template <typename T>
+class GrowingDataGetter : public DataGetter<T> {
+ public:
+    const segcore::ConcurrentVector<T>* growing_raw_data_;
+    GrowingDataGetter(const segcore::SegmentGrowingImpl& segment,
+                      FieldId fieldId) {
+        growing_raw_data_ =
+            segment.get_insert_record().get_field_data<T>(fieldId);
+    }
+
+    GrowingDataGetter(const GrowingDataGetter<T>& other)
+        : growing_raw_data_(other.growing_raw_data_) {
+    }
+
+    T
+    Get(int64_t idx) const {
+        return growing_raw_data_->operator[](idx);
+    }
+};
+
+template <typename T>
+static const std::shared_ptr<DataGetter<T>>
+GetDataGetter(const segcore::SegmentInternalInterface& segment,
+              FieldId fieldId) {
+    if (const segcore::SegmentGrowingImpl* growing_segment =
+            dynamic_cast<const segcore::SegmentGrowingImpl*>(&segment)) {
+        return std::make_shared<GrowingDataGetter<T>>(*growing_segment,
+                                                      fieldId);
+    } else {
+        PanicInfo(UnexpectedError,
+                  "The segment used to init data getter is neither growing or "
+                  "sealed, wrong state");
+    }
+}
+
+static bool
+PrepareVectorIteratorsFromIndex(const SearchInfo& search_info,
+                                int nq,
+                                const DatasetPtr dataset,
+                                SearchResult& search_result,
+                                const BitsetView& bitset,
+                                const index::VectorIndex& index) {
+    if (search_info.group_by_field_id_.has_value()) {
+        try {
+            auto search_conf = search_info.search_params_;
+            if (search_conf.contains(knowhere::indexparam::EF)) {
+                search_conf[knowhere::indexparam::SEED_EF] =
+                    search_conf[knowhere::indexparam::EF];
+            }
+            knowhere::expected<
+                std::vector<std::shared_ptr<knowhere::IndexNode::iterator>>>
+                iterators_val =
+                    index.VectorIterators(dataset, search_conf, bitset);
+            if (iterators_val.has_value()) {
+                search_result.AssembleChunkVectorIterators(
+                    nq, 1, -1, iterators_val.value());
+            } else {
+                LOG_ERROR(
+                    "Returned knowhere iterator has non-ready iterators "
+                    "inside, terminate group_by operation:{}",
+                    knowhere::Status2String(iterators_val.error()));
+                PanicInfo(ErrorCode::Unsupported,
+                          "Returned knowhere iterator has non-ready iterators "
+                          "inside, terminate group_by operation");
+            }
+            search_result.total_nq_ = dataset->GetRows();
+            search_result.unity_topK_ = search_info.topk_;
+        } catch (const std::runtime_error& e) {
+            LOG_ERROR(
+                "Caught error:{} when trying to initialize ann iterators for "
+                "group_by: "
+                "group_by operation will be terminated",
+                e.what());
+            throw std::runtime_error(
+                "Failed to groupBy, current index:" + index.GetIndexType() +
+                " doesn't support search_group_by");
+        }
+        return true;
+    }
+    return false;
+}
+
+void
+GroupBy(const std::vector<std::shared_ptr<VectorIterator>>& iterators,
+        const SearchInfo& searchInfo,
+        std::vector<GroupByValueType>& group_by_values,
+        const segcore::SegmentInternalInterface& segment,
+        std::vector<int64_t>& seg_offsets,
+        std::vector<float>& distances);
+
+template <typename T>
+void
+GroupIteratorsByType(
+    const std::vector<std::shared_ptr<VectorIterator>>& iterators,
+    int64_t topK,
+    const DataGetter<T>& data_getter,
+    std::vector<GroupByValueType>& group_by_values,
+    std::vector<int64_t>& seg_offsets,
+    std::vector<float>& distances,
+    const knowhere::MetricType& metrics_type);
+
+template <typename T>
+void
+GroupIteratorResult(const std::shared_ptr<VectorIterator>& iterator,
+                    int64_t topK,
+                    const DataGetter<T>& data_getter,
+                    std::vector<GroupByValueType>& group_by_values,
+                    std::vector<int64_t>& offsets,
+                    std::vector<float>& distances,
+                    const knowhere::MetricType& metrics_type);
+
+}  // namespace query
+}  // namespace milvus

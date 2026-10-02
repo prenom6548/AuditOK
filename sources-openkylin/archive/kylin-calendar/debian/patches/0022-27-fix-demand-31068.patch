@@ -1,0 +1,111 @@
+From: =?utf-8?b?5ZWG5pmT6Ziz?= <shangxiaoyang@kylinos.cn>
+Date: Fri, 12 Jul 2024 08:45:35 +0000
+Subject: =?utf-8?q?!27_fix_demand_31068_Merge_pull_request_!27_from_?=
+ =?utf-8?q?=E8=B4=BE=E5=A8=81/openkylin/nile?=
+
+---
+ lunarcalendarwidget/notificationsadaptor.cpp | 49 ++++++++++++++++++++--------
+ lunarcalendarwidget/notificationsadaptor.h   |  4 +--
+ 2 files changed, 38 insertions(+), 15 deletions(-)
+
+diff --git a/lunarcalendarwidget/notificationsadaptor.cpp b/lunarcalendarwidget/notificationsadaptor.cpp
+index 58ccd6d..2538867 100644
+--- a/lunarcalendarwidget/notificationsadaptor.cpp
++++ b/lunarcalendarwidget/notificationsadaptor.cpp
+@@ -63,38 +63,61 @@ NotificationsAdaptor::~NotificationsAdaptor()
+  * @param markId id QDateTime::currentDateTime().toString("yyyyMMddhhmmss");获取
+  * @return
+  */
+-void NotificationsAdaptor::ScheduleNotification(int hour, int minute, int day, int month,QString shangwu,int end_minute,int end_hour, const QString m_descript)
++void NotificationsAdaptor::ScheduleNotification(int hour, int minute, int day, int month,int  year,int end_minute,int end_hour, const QString m_descript)
+ {
++    //2024.7.12日程新需求 31068 如果开始时间结束时间都是空 按照全天处理
+     qDebug()<<"开始通过Dbus添加到日程";
+ //    display = getenv("DISPLAY");
+ //    userName = getenv("USER"); //获取当前用户名
+ //    xdg_runtime_dir = getenv("XDG_RUNTIME_DIR");
+     MarkInfo info;
+-    info.hour= info.Alarm_end_hour= hour;
++    QDate beginDate(year, month, day);
++    info.m_markId = QDateTime::currentDateTime().toString("yyyyMMddhhmmss");
++    info.m_descript = m_descript;
+     info.minute= info.Alarm_end_minute = minute;
++    info.hour= info.Alarm_end_hour= hour;
+     info.day = day;
++    info.week = beginDate.dayOfWeek();
+     info.month = month;
+-    info.m_descript = m_descript;
+-    info.m_markId = QDateTime::currentDateTime().toString("yyyyMMddhhmmss");
+-    info.shangwu = shangwu;
+-
+-    QDate date(QDate::currentDate().year(),month,day);//仅仅适合今年
+-    info.m_markStartDate=date;
+-    info.m_markEndDate=QDate::currentDate();
++    info.m_markStartDate = beginDate;
++    if(hour <= 12){
++        info.shangwu = tr("morning");
++    }else{
++        info.shangwu = tr("afternoon");
++    }
++//    info.shangwu = shangwu;
+     info.end_hour = end_hour;
+     info.end_minute=end_minute;
++    if(hour == 0 && minute ==0 && end_hour == 0 && end_minute == 0 ||hour == 0 && minute ==0 || end_hour == 0 && end_minute == 0 ){
++        info.m_isAllDay = true;
++        CalendarDataBase::getInstance().AlarmType = 10;
++//        info.remind=tr("At 9am on the same day of the schedule");
++        info.AlldayRemind=tr("At 9am on the same day of the schedule");
++        info.hour = info.Alarm_end_hour= 0;
++        info.minute= info.Alarm_end_minute = 0;
++        info.end_hour = 23;
++        info.end_minute = 59;
++    }else{
++         info.m_isAllDay = false;
++         CalendarDataBase::getInstance().AlarmType = 1;
++         info.remind=tr("Schedule Begin");
++    }
++//    QDate date(QDate::currentDate().year(),month,day);//仅仅适合今年
++//    info.m_markStartDate=date;
++//    info.m_markEndDate=QDate::currentDate();
++
+     info.end_day=0;
+     info.end_month=0;
+     info.timeLong="";
+-    info.remind="";
+-    info.repeat="";
++//    info.remind=tr("Schedule Begin");
++    info.repeat=tr("No Repeat");
+     info.beginrepeat="";
+     info.endrepeat= QDateTime::currentDateTime();
+     info.beginDateTime= QDateTime::currentDateTime();
+     info.endDateTime= QDateTime::currentDateTime();
+-    info.m_isAllDay = false;
++
+     info.m_isLunar = false;
+-    info.AlldayRemind="";
++//    info.AlldayRemind="";
+     CalendarDataBase::getInstance().add(info);
+     CalendarDataBase::getInstance().insertDataSlot(info);
+     qDebug()<<"通过Dbus添加成功了";
+diff --git a/lunarcalendarwidget/notificationsadaptor.h b/lunarcalendarwidget/notificationsadaptor.h
+index 72745b3..b5ec185 100644
+--- a/lunarcalendarwidget/notificationsadaptor.h
++++ b/lunarcalendarwidget/notificationsadaptor.h
+@@ -47,7 +47,7 @@ class NotificationsAdaptor : public QDBusAbstractAdaptor
+             "    <arg direction=\"in\" type=\"i\" name=\"minute\"/>\n"
+             "    <arg direction=\"in\" type=\"i\" name=\"day\"/>\n"
+             "    <arg direction=\"in\" type=\"i\" name=\"month\"/>\n"
+-            "    <arg direction=\"in\" type=\"s\" name=\"shangwu\"/>\n"
++            "    <arg direction=\"in\" type=\"i\" name=\"year\"/>\n"
+             "    <arg direction=\"in\" type=\"i\" name=\"end_minute\"/>\n"
+             "    <arg direction=\"in\" type=\"i\" name=\"end_hour\"/>\n"
+             "    <arg direction=\"in\" type=\"s\" name=\"m_descript\"/>\n"
+@@ -68,7 +68,7 @@ public:
+ public:
+     void changeWidowpos(bool restore = false);// PROPERTIES
+ public Q_SLOTS: // METHODS
+-    void ScheduleNotification(int hour, int minute, int day, int month,QString shangwu,int end_minute,int end_hour, const QString m_descript);
++    void ScheduleNotification(int hour, int minute, int day, int month,int year,int end_minute,int end_hour, const QString m_descript);
+     void OpenSchedule(int day,int month,int year);
+ Q_SIGNALS:
+     void isShow(bool isV);

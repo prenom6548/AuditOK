@@ -1,0 +1,1535 @@
+From: =?utf-8?b?6YKT5aW9?= <denghao@kylinos.cn>
+Date: Fri, 12 Jul 2024 05:41:25 +0000
+Subject: =?utf-8?b?ITIzICMyNDA5NTEg44CQ6ZyA5rGCMjg0MTTjgJHjgJBBSeWKqeaJiw==?=
+ =?utf-8?b?44CR44CQ5paw5bu65pel56iL44CR5re75Yqg5pel56iL5ZCO5Zyo5LiL5pa55pel?=
+ =?utf-8?b?5Y6G5Lit5ZyG54K55pi+56S65LiN5piO5pi+IE1lcmdlIHB1bGwgcmVxdWVzdCAh?=
+ =?utf-8?b?MjMgZnJvbSDokovog5zovr4vb3Blbmt5bGluL25pbGU=?=
+
+---
+ lunarcalendarwidget/frmlunarcalendarwidget.cpp | 186 ++++--
+ lunarcalendarwidget/frmlunarcalendarwidget.h   |   2 +-
+ lunarcalendarwidget/frmlunarcalendarwidget.ui  |  12 +
+ lunarcalendarwidget/lunarcalendaritem.cpp      |  41 +-
+ lunarcalendarwidget/lunarcalendarwidget.cpp    | 837 ++++++++++++++-----------
+ lunarcalendarwidget/lunarcalendarwidget.h      |  19 +-
+ 6 files changed, 682 insertions(+), 415 deletions(-)
+
+diff --git a/lunarcalendarwidget/frmlunarcalendarwidget.cpp b/lunarcalendarwidget/frmlunarcalendarwidget.cpp
+index c47f31f..a1fe4d6 100644
+--- a/lunarcalendarwidget/frmlunarcalendarwidget.cpp
++++ b/lunarcalendarwidget/frmlunarcalendarwidget.cpp
+@@ -29,11 +29,12 @@
+ #include <QTranslator>
+ #include <QScreen>
+ 
+-const int CALENDAR_WIDTH = 440;
++const int CALENDAR_WIDTH = 452;
+ const int CALENDAR_HEIGHT = 780;
+ const int CALENDAR_LUNAR_HEIGHT = 75;
+ const int CALENDAR_LUNAR_HEIGHT_PLUSE = 77; //852
+ const int SCHEDULE_ITEM = 30;
++const int WAYLAND_WIDGET_GAP = 22;
+ 
+ #define CALENDAR_BUTTON_WIDTH  300
+ #define SCROLLA 100
+@@ -43,7 +44,7 @@ const int SCHEDULE_ITEM = 30;
+ #define ORIGIN_CALENDAR_HEIGHT 600
+ #define LESSTWOSHCEDULE_CALENDAR_HEIGHT 740
+ #define ONE_CALENDAR_SCHEDULE 690
+-#define ORIGIN_CALENDAR_WIDTH 440
++#define ORIGIN_CALENDAR_WIDTH 452
+ #define TWO_MORE_SCHEDULE_HEIGHT 835
+ #define THREE_SCHEDULE_HEIGHT 845
+ #define FOUR_MORE_SCHEDULE_HEIGHT 925
+@@ -407,7 +408,7 @@ void frmLunarCalendarWidget::paintEvent(QPaintEvent *)
+ 
+     QColor color = palette().color(QPalette::Base);
+     color.setAlpha(tran);
+-    QBrush brush =QBrush(color);
++    QBrush brush = QBrush(color);
+     p.setBrush(brush);
+     p.setPen(Qt::NoPen);
+     p.setRenderHint(QPainter::Antialiasing);
+@@ -464,53 +465,160 @@ void frmLunarCalendarWidget::changeWidowposFromClickButton(bool restore)
+     m_isshow = false;
+     ll = false;
+     if(m_panelPosition == 0){
+-        rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
+-                     totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
+-                     ORIGIN_CALENDAR_WIDTH,
+-                     LESSTWOSHCEDULE_CALENDAR_HEIGHT);//设计稿1080下
+-
+-        if(totalHeight-m_panelSize< LESSTWOSHCEDULE_CALENDAR_HEIGHT){
+-            rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
+-                         SCROLLA-WIDGET_GAP,
+-                         ORIGIN_CALENDAR_WIDTH,
+-                         totalHeight-SCROLLA);
++        if(!isWayland){
++            if(!m_widget->yijistate){
++                setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                        ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++
++                if(totalHeight-m_panelSize< LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    m_widget->ScrollbarUnderTheResolution = true;
++                    setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,SCROLLA-WIDGET_GAP,ORIGIN_CALENDAR_WIDTH,totalHeight-m_panelSize-SCROLLA);
++
++                }
++                else if(LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT > totalHeight-m_panelSize && totalHeight-m_panelSize > LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    //点击yiji后超出屏幕的时候，这个时候就固定是LESSTWOSHCEDULE_CALENDAR_HEIGHT，只不过滑动区域少了
++                    m_widget->ScrollAreaNeedChange = false;
++                    rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
++                                 totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                                 ORIGIN_CALENDAR_WIDTH,
++                                 LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++                    if(m_num >= 2){
++                        m_widget->scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
++                    }
++                }
++            }
++            else{
++                if(totalHeight-m_panelSize< LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    m_widget->ScrollbarUnderTheResolution = true;
++                    setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,SCROLLA-WIDGET_GAP,ORIGIN_CALENDAR_WIDTH,totalHeight-m_panelSize-SCROLLA);
+ 
++                }
++                else if(LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT > totalHeight-m_panelSize && totalHeight-m_panelSize > LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    //点击yiji后超出屏幕的时候，这个时候就固定是LESSTWOSHCEDULE_CALENDAR_HEIGHT，只不过滑动区域少了
++                    m_widget->ScrollAreaNeedChange = true;
++                    rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
++                                 totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                                 ORIGIN_CALENDAR_WIDTH,
++                                 LESSTWOSHCEDULE_CALENDAR_HEIGHT);//设计稿1080下
++                    //m_widget->scrollArea->setFixedSize(420,100);
++                    m_widget->scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
++                    if(m_num >= 2){
++                        m_widget->scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
++                    }
++
++                }
++                else{
++                    setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-YIJI_HEIGHT-WIDGET_GAP,
++                            ORIGIN_CALENDAR_WIDTH, TWO_MORE_SCHEDULE_HEIGHT+YIJI_HEIGHT);
++
++                }
++            }
+         }
+-        //因为Wayland下totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP比X11下要大14导致Wayland下同样的算法下Wayland贴着任务栏了，减去后和主线X11对齐了
+         if(isWayland)
+         {
+-            if(totalHeight-m_panelSize - 14< LESSTWOSHCEDULE_CALENDAR_HEIGHT){
+-                rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
+-                             SCROLLA-WIDGET_GAP,
+-                             ORIGIN_CALENDAR_WIDTH,
+-                             totalHeight-m_panelSize-SCROLLA-14);
+-            }else{
+-            rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
+-                         totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
+-                         ORIGIN_CALENDAR_WIDTH,
+-                         LESSTWOSHCEDULE_CALENDAR_HEIGHT);
+-           }
++            if(!m_widget->yijistate){
++                if(totalHeight-m_panelSize - 14< LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    m_widget->ScrollbarUnderTheResolution = false;
++                    setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,SCROLLA-WIDGET_GAP,ORIGIN_CALENDAR_WIDTH,totalHeight-m_panelSize-SCROLLA);
++                    m_widget->scrollArea->setFixedSize(420,100);
++                    m_widget->scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
++
++                }
++                else if(LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT > totalHeight-m_panelSize-14 && totalHeight-m_panelSize-14 > LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    //点击yiji后超出屏幕的时候，这个时候就固定是LESSTWOSHCEDULE_CALENDAR_HEIGHT，只不过滑动区域少了
++                    m_widget->ScrollAreaNeedChange = false;
++                    rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
++                                 totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WAYLAND_WIDGET_GAP,
++                                 ORIGIN_CALENDAR_WIDTH,
++                                 LESSTWOSHCEDULE_CALENDAR_HEIGHT);//设计稿1080下
++                    if(m_num >= 2){
++                        m_widget->scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
++                    }
++                }
++                else
++                {
++                setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                       ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++               }
++            }
++
++            else{
++                if(totalHeight-m_panelSize - 14< LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    m_widget->ScrollbarUnderTheResolution = true;
++                    m_widget->scrollArea->setFixedSize(420,100);
++                    m_widget->scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
++                    setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,SCROLLA-WIDGET_GAP,ORIGIN_CALENDAR_WIDTH,totalHeight-m_panelSize-SCROLLA);
++                }
++                else if(LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT > totalHeight-m_panelSize -14 && totalHeight-m_panelSize -14 > LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++                    //点击yiji后超出屏幕的时候，这个时候就固定是LESSTWOSHCEDULE_CALENDAR_HEIGHT，只不过滑动区域少了
++                    m_widget->ScrollAreaNeedChange = true;
++                    rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,
++                                 totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WAYLAND_WIDGET_GAP,
++                                 ORIGIN_CALENDAR_WIDTH,
++                                 LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++                    m_widget->scrollArea->setFixedSize(420,100);
++                    if(m_num >= 2){
++                        m_widget->scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
++                    }
++
++                }
++                else{
++                    setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-YIJI_HEIGHT-WIDGET_GAP,
++                            ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++               }
++            }
+         }
++
+     }
+     else if(m_panelPosition ==1){
+-        rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,
+-                     qApp->screenAt(QCursor::pos())->geometry().y()+m_panelSize+WIDGET_GAP,
+-                     ORIGIN_CALENDAR_WIDTH,
+-                     LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++        if(isWayland){
++            if(!m_widget->yijistate){
++                setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,qApp->screenAt(QCursor::pos())->geometry().y()+m_panelSize+WAYLAND_WIDGET_GAP,
++                        ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++
++            }
++            else{
++                setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,qApp->screenAt(QCursor::pos())->geometry().y()+m_panelSize+WAYLAND_WIDGET_GAP,
++                        ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++            }
++        }else{
++            setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,qApp->screenAt(QCursor::pos())->geometry().y()+m_panelSize+WIDGET_GAP,
++                    ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++        }
+ 
+     }
+      else if(m_panelPosition ==2){
+-        rect.setRect(qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,
+-                     totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
+-                     ORIGIN_CALENDAR_WIDTH,
+-                     LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++        if(isWayland){
++            if(!m_widget->yijistate){
++                setRect(rect,qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                        ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++            }
++            else{
++                setRect(rect,qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP-YIJI_HEIGHT,
++                        ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++            }
++        }else{
++            rect.setRect(qApp->screenAt(QCursor::pos())->geometry().x()+m_panelSize+WIDGET_GAP,
++                         totalHeight-m_widget->height()-WIDGET_GAP,
++                         ORIGIN_CALENDAR_WIDTH,
++                         LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++        }
+ 
+     }
+     else{
+-        rect.setRect(totalWidth-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,
+-                     totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
+-                     ORIGIN_CALENDAR_WIDTH,
+-                     LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++        if(isWayland){
++            if(!m_widget->yijistate){
++                setRect(rect,totalWidth-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                        ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++            }
++            else{
++                setRect(rect,totalWidth-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP-YIJI_HEIGHT,
++                       ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++            }
++        }else{
++            setRect(rect,totalWidth-m_panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,totalHeight-m_widget->height()-WIDGET_GAP,
++                     ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++        }
+     }
+ 
+ 
+@@ -556,3 +664,7 @@ void frmLunarCalendarWidget::slotdayWantToChange(int day,int month,int year)
+         isWidgetVisible = true; // 更新状态
+     }
+ }
++void frmLunarCalendarWidget::setRect(QRect &rect, int x, int y, int width, int height)
++{
++    rect.setRect(x,y,width,height);
++}
+diff --git a/lunarcalendarwidget/frmlunarcalendarwidget.h b/lunarcalendarwidget/frmlunarcalendarwidget.h
+index 37d5a19..bfb8f24 100644
+--- a/lunarcalendarwidget/frmlunarcalendarwidget.h
++++ b/lunarcalendarwidget/frmlunarcalendarwidget.h
+@@ -48,7 +48,7 @@ public:
+     void checkSingle(QStringList path);
+     LunarCalendarWidget *m_widget;
+     bool isWayland;
+-
++    void setRect(QRect &rect , int x, int y,int width , int height);
+     void changeWidowposFromClickButton(bool restore = false);
+     bool status;
+ //    ShowMoreLabel *label;
+diff --git a/lunarcalendarwidget/frmlunarcalendarwidget.ui b/lunarcalendarwidget/frmlunarcalendarwidget.ui
+index 04b4869..7b17597 100644
+--- a/lunarcalendarwidget/frmlunarcalendarwidget.ui
++++ b/lunarcalendarwidget/frmlunarcalendarwidget.ui
+@@ -14,6 +14,18 @@
+    <string>Form</string>
+   </property>
+   <layout class="QVBoxLayout" name="verticalLayout">
++   <property name="leftMargin">
++    <number>0</number>
++   </property>
++   <property name="topMargin">
++    <number>0</number>
++   </property>
++   <property name="rightMargin">
++    <number>0</number>
++   </property>
++   <property name="bottomMargin">
++    <number>0</number>
++   </property>
+    <item>
+     <widget class="LunarCalendarWidget" name="lunarCalendarWidget" native="true">
+      <property name="sizePolicy">
+diff --git a/lunarcalendarwidget/lunarcalendaritem.cpp b/lunarcalendarwidget/lunarcalendaritem.cpp
+index 2d87b5f..88a6f79 100644
+--- a/lunarcalendarwidget/lunarcalendaritem.cpp
++++ b/lunarcalendarwidget/lunarcalendaritem.cpp
+@@ -30,8 +30,8 @@
+ #include <QGSettings>
+ 
+ //日历字号
+-const int day_font_size = 18;
+-const int lunar_font_size = 14;
++const int day_font_size = 16;
++const int lunar_font_size = 12;
+ const int other_font_size = 12;
+ 
+ LunarCalendarItem::LunarCalendarItem(QString font,bool isHaveSchedule,QWidget *parent) : QWidget(parent),m_font(font),hasSchedule(isHaveSchedule)
+@@ -202,23 +202,26 @@ void LunarCalendarItem::paintEvent(QPaintEvent *)
+           }
+         });
+ 
+-    if(hasSchedule){
++    if(hasSchedule)
++    {
+         painter.setPen(Qt::NoPen);
+         painter.setBrush(selectBgColor);
+-        int dotSize =3;
+-        int dotX = width() /2 -dotSize/2;
+-        int dotY = height() -5;
+-        painter.drawEllipse(dotX,dotY,dotSize,dotSize);
++        int dotSize = 6;
++        int dotX = width() /2 - dotSize/2;
++        int dotY = height() - 8;
++        painter.drawEllipse(dotX, dotY, 6, 4);
+ 
+     }
+-    if(isToday){
+-        if(hasSchedule){
++    if(isToday)
++    {
++        if(hasSchedule)
++        {
+             painter.setPen(Qt::NoPen);
+             painter.setBrush(Qt::white);
+-            int dotSize =3;
+-            int dotX = width() /2 -dotSize/2;
+-            int dotY = height() -5;
+-            painter.drawEllipse(dotX,dotY,dotSize,dotSize);
++            int dotSize = 6;
++            int dotX = width() /2 - dotSize/2;
++            int dotY = height() - 8;
++            painter.drawEllipse(dotX, dotY, 6, 4);
+         }
+ 
+     }
+@@ -285,11 +288,13 @@ void LunarCalendarItem::drawDay(QPainter *painter)
+     //代码复用率待优化
+     if (showLunar) {
+         QRect dayRect;
+-        if(locale == QLocale::Chinese){
+-             dayRect = QRect(0, 0, width, height / 1.7);
++        if(locale == QLocale::Chinese)
++        {
++            dayRect = QRect(0, height / 8 - 2, width, height / 2.3);
+         }
+-        else {
+-             dayRect = QRect(0, 0, width, height);
++        else
++        {
++            dayRect = QRect(0, 0, width, height);
+         }
+         painter->drawText(dayRect, Qt::AlignHCenter | Qt::AlignVCenter, QString::number(date.day()));
+         if (handleJsMap(date.toString("yyyy"),date.toString("MMdd")) == "2") {
+@@ -372,7 +377,7 @@ void LunarCalendarItem::drawLunar(QPainter *painter)
+             font.setPixelSize(lunar_font_size);
+             painter->setFont(font);
+ 
+-            QRect lunarRect(0, height / 2 + 4, width, height / 2);
++            QRect lunarRect(0, 30 - 2, width, height / 3.1);
+             painter->drawText(lunarRect, Qt::AlignTop|Qt::AlignHCenter, lunar);
+             }
+         }
+diff --git a/lunarcalendarwidget/lunarcalendarwidget.cpp b/lunarcalendarwidget/lunarcalendarwidget.cpp
+index fbd5801..7e60030 100644
+--- a/lunarcalendarwidget/lunarcalendarwidget.cpp
++++ b/lunarcalendarwidget/lunarcalendarwidget.cpp
+@@ -69,7 +69,7 @@
+ #define LESSTWOSHCEDULE_CALENDAR_HEIGHT 740
+ #define ONE_CALENDAR_SCHEDULE 690
+ #define FENBIANLV 800
+-#define ORIGIN_CALENDAR_WIDTH 440
++#define ORIGIN_CALENDAR_WIDTH 452
+ #define TWO_MORE_SCHEDULE_HEIGHT 845
+ #define THREE_SCHEDULE_HEIGHT 890
+ #define FOUR_MORE_SCHEDULE_HEIGHT 925
+@@ -133,36 +133,73 @@ LunarCalendarWidget::LunarCalendarWidget(QWidget *parent) : QWidget(parent)
+     calendarStyle = CalendarStyle_Red;
+     date = QDate::currentDate();
+     //    CalendarDataBase::getInstance().searchDataSlot(date);
+-    widgetTime = new QWidget;
+-    timeShow = new QVBoxLayout(widgetTime);
+-
+-    datelabel =new QLabel(this);
++    widgetTime = new QWidget();
++    m_verLayoutTopLeft = new QVBoxLayout(widgetTime);
++    datelabel = new QLabel(this);
++    datelabel->setFixedSize(290,30);
+     timelabel = new QLabel(this);
++    timelabel->setFixedSize(290,20);
+     lunarlabel = new QLabel(this);
+     screen = QApplication::primaryScreen();
+     primaryScreenHeight = qApp->screenAt(QCursor::pos())->size().height() + qApp->screenAt(QCursor::pos())->geometry().y();
+     initGsettings();
+-
++    QString vertical = "#666666";
++    QString hover = "#ffffff";
++    if (styleGsettings != nullptr) {
++        QString currentTheme = styleGsettings->get(COLOR_THEME).toString();
++        if(currentTheme == "ukui-light"){
++            vertical = "#ffffff";
++            hover = "#999999";
++        }
++    }
++    ScrollAreaStyleSheet = QString("\
++                                   QScrollBar:vertical {\
++                                       background: transparent; /* 滚动条背景颜色 */\
++                                       width: 5px; /* 滚动条宽度 */\
++                                       margin: 0px 0px 0px 0px; /* 外边距 */\
++                                       border-radius: 10px; /* 滚动条的整体圆角 */\
++                                   }\
++                                   QScrollBar::handle:vertical {\
++                                       background: %1; /* 滚动条滑块背景颜色 */\
++                                       min-height: 30px; /* 滑块最小高度 */\
++                                       border-radius: 10px; /* 滑块圆角半径 */\
++                                   }\
++                                   QScrollBar::handle:vertical:hover {\
++                                       background: %2; /* 滚动条滑块背景颜色（悬停时）*/\
++                                       min-height: 30px; /* 滑块最小高度 */\
++                                       border-radius: 10px; /* 悬停时的滑块圆角半径 */\
++                                   }\
++                                   QScrollBar::add-line:vertical {\
++                                       background: transparent; /* 上方按钮背景颜色 */\
++                                       border-radius: 10px; /* 上方按钮圆角半径 */\
++                                   }\
++                                   QScrollBar::sub-line:vertical {\
++                                       background: transparent; /* 下方按钮背景颜色 */\
++                                       border-radius: 10px; /* 下方按钮圆角半径 */\
++                                   }\
++                                   QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {\
++                                       background: transparent; /* 滚动条轨道背景颜色 */\
++                                       border-radius: 10px; /* 轨道圆角半径 */\
++                                   }").arg(vertical).arg(hover);
+ }
++
+ //原样式
+ void LunarCalendarWidget::noSchedule()
+ {
+     m_scheduleWidget = new QWidget(this);
+-
+     m_scheduleWidget->setContentsMargins(0,0,0,23);
+     m_scheduleWidget->setStyleSheet("background-color: transparent;");
+     m_scheduleWidget->setFixedSize(ORIGIN_CALENDAR_WIDTH,100);
+-    scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, 140);
++    //scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, 140);
++    scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
+     scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+-        scheduleWidget = new schedule_item(this,false);
+-        scheduleWidget->setStartTime("");
+-        scheduleWidget->setDescription("");
+-
+-//        scheduleWidget->setFixedHeight(140);
+-        item_layout->addWidget(scheduleWidget);
+-        item_layout->addSpacing(2);
+-   int position;
+-
++    scheduleWidget = new schedule_item(this,false);
++    scheduleWidget->setStartTime("");
++    scheduleWidget->setDescription("");
++    labWidget->setContentsMargins(16,0,16,0);
++    yijiWidget->setContentsMargins(16,0,16,0);
++    item_layout->addWidget(scheduleWidget);
++    item_layout->addSpacing(2);
+     m_scheduleWidget->setLayout(item_layout);
+     scrollArea->setWidget(m_scheduleWidget);
+     if(panelHeight < this->height() || panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT || isExceedScreenHeight){
+@@ -172,63 +209,81 @@ void LunarCalendarWidget::noSchedule()
+         scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+         this->setFixedSize(ORIGIN_CALENDAR_WIDTH,panelHeight-SCROLLA);
+         m_scheduleWidget->setFixedHeight(100);
+-        scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, height*0.1);
++        //scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, height*0.1);
++        scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
+         this->move(currentPos.x(), SCROLLA-WIDGET_GAP);
+         isExceedScreenHeight = false;
+     }else{
+-        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);//无日程的时候，日历高度固定600,不会根据分辨率变化大小
+-        if (m_panelGsettings!=nullptr) {
+-            position = m_panelGsettings->get(PANEL_POSITION_KEY).toInt();
+-           }
+-        if(position == 0){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),panelHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-        }else if(position == 2){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),primaryScreenHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-        }else if(position == 3){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),primaryScreenHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-        }else if(position == 1){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),m_panelGsettings->get(PANEL_SIZE_KEY).toInt()+WIDGET_GAP);
++        QPoint currentPos = this->pos();
++        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++        if(yijistate){
++            this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++        }
++        if(ScrollAreaNeedChange){
++            //scrollArea->setFixedSize(420,100);
++            scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
++            this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++            this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
+         }
++        else
++        {
++            switch(position) {
++            case 0:
++                this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
++                if(yijistate){
++                    this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT -YIJI_HEIGHT - WIDGET_GAP);
++                }
++                break;
++            case 1:
++                this->move(currentPos.x(), m_panelGsettings->get(PANEL_SIZE_KEY).toInt() + WIDGET_GAP);
++                if(yijistate){
++                    this->move(currentPos.x(), m_panelGsettings->get(PANEL_SIZE_KEY).toInt() + WIDGET_GAP);
+ 
++                }
++                break;
++            case 2:
++            case 3: //这里position 2 和 3 的行为是相同的
++                this->move(currentPos.x(), primaryScreenHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
++                if(yijistate){
++                    this->move(currentPos.x(), primaryScreenHeight - this->height() - WIDGET_GAP);
++
++                }
++                break;
++            default:
++                break;
++            }
++        }
+ 
+     }
+-    widgetTop = new QHBoxLayout(this);
+-    verLayoutCalendar->setMargin(10);
+-    verLayoutCalendar->setSpacing(0);
+-
+-    widgetTop->addWidget(widgetTime);
+-    widgetTop->addWidget(m_createScheduleButton);
+-    verLayoutCalendar->addLayout(widgetTop);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(lineUp);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(m_widgetTop);
+-    verLayoutCalendar->addWidget(widgetWeek);
+-    verLayoutCalendar->addWidget(m_widgetDayBody, 1);
+-    verLayoutCalendar->addWidget(widgetYearBody, 1);
+-    verLayoutCalendar->addWidget(widgetmonthBody, 1);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(lineDown);
++    m_horLayoutWidgetTop = new QHBoxLayout(this);
++    m_horLayoutWidgetTop->setContentsMargins(26,0,24,0);
++    m_horLayoutWidgetTop->addWidget(widgetTime);
++    m_horLayoutWidgetTop->addWidget(m_createScheduleButton);
++
++    m_verLayoutCalendar->setMargin(0);
++    m_verLayoutCalendar->setSpacing(0);
++    m_verLayoutCalendar->addLayout(m_horLayoutWidgetTop);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(lineUp);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(m_widgetTop);
++    m_verLayoutCalendar->addSpacing(18);
++    m_verLayoutCalendar->addWidget(widgetWeek);
++    m_verLayoutCalendar->addWidget(m_widgetDayBody, 1);
++    m_verLayoutCalendar->addWidget(widgetYearBody, 1);
++    m_verLayoutCalendar->addWidget(widgetmonthBody, 1);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(lineDown);
+     controlDownLine();
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(labWidget);
+-    //    if(yijistate){
+-    verLayoutCalendar->addWidget(yijiWidget);
+-    //    }
+-
+-    //yiji框的下划线分割
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(lineSchedule);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-//    verLayoutCalendar->addSpacing(5);
+-    verLayoutCalendar->addWidget(scrollArea);
+-
+-
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(labWidget);
++    m_verLayoutCalendar->addWidget(yijiWidget);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    lineSchedule->setFixedHeight(1);
+ 
++    m_verLayoutCalendar->addWidget(lineSchedule);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(scrollArea);
+ 
+ 
+ }
+@@ -270,86 +325,82 @@ void LunarCalendarWidget::twoLessSchedule()
+ {
+ 
+     int num = m_markInfoList.count();
+-//    QPoint currentPos = this->pos();
+-    int position;
+-
+-    this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);//根据设计稿的高度，770
+-//    this->move(currentPos.x(),panelHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-    if (m_panelGsettings!=nullptr) {
+-        position = m_panelGsettings->get(PANEL_POSITION_KEY).toInt();
+-       }
+-    if(position == 0){
+-        QPoint currentPos = this->pos();
+-        this->move(currentPos.x(),panelHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-    }else if(position == 2){
+-        QPoint currentPos = this->pos();
+-        this->move(currentPos.x(),primaryScreenHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-    }else if(position == 3){
+-        QPoint currentPos = this->pos();
+-        this->move(currentPos.x(),primaryScreenHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-    }else if(position == 1){
+-        QPoint currentPos = this->pos();
+-        this->move(currentPos.x(),m_panelGsettings->get(PANEL_SIZE_KEY).toInt()+WIDGET_GAP);
+-    }
+     m_scheduleWidget = new QWidget(this);
+     m_scheduleWidget->setContentsMargins(0,0,0,23);
+     m_scheduleWidget->setStyleSheet("background-color: transparent;");
+     if(num ==1){
+         m_scheduleWidget->setFixedHeight(100);
+-        scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, 140);//80是一个日程时候的日程区域高度
++        //scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, 140);//80是一个日程时候的日程区域高度
++        scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
+     }else if(num ==2){
+         m_scheduleWidget->setFixedHeight(160);
+-        scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, 140);//140是2个日程时候的日程区域高度
++        //scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, 140);//140是2个日程时候的日程区域高度
++        scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
+     }
+     scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+     //panelHeight 是除了任务栏之外的高度
+-    if(panelHeight < this->height() || panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT || isExceedScreenHeight){
+-        qDebug()<<"分辨率支持";
+-        QString vertical = "#666666";
+-        QString hover = "#ffffff";
+-        const QByteArray style_id(THEME_SCHAME);
+-        if (QGSettings::isSchemaInstalled(style_id)) {
+-            styleGsettings = new QGSettings(style_id, QByteArray(), this);
+-            QString currentTheme = styleGsettings->get(COLOR_THEME).toString();
+-            if(currentTheme == "ukui-light"){
+-                vertical = "#ffffff";
+-                hover = "#666666";
++    QPoint currentPos = this->pos();
++    //如果需要调整滑动区域大小了 如果当前只有一个日程 无需滑动条，2个日程就需要了
++    if(ScrollAreaNeedChange){
++        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);//根据设计稿的高度，770
++        this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
++        //scrollArea->setFixedSize(420,100);
++        scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
++        if(num == 2){
++            scrollArea->verticalScrollBar()->setStyleSheet(ScrollAreaStyleSheet);
++
++            scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);//滑动条样式还没处理
++        }
++    }
++    else
++    {
++        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);//根据设计稿的高度，770
++        if(yijistate){
++            this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++        }
++        switch(position) {
++        case 0:
++            this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
++            if(yijistate){
++                this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT -YIJI_HEIGHT - WIDGET_GAP);
+             }
++            break;
++        case 1:
++            this->move(currentPos.x(), m_panelGsettings->get(PANEL_SIZE_KEY).toInt() + WIDGET_GAP);
++            if(yijistate){
++                this->move(currentPos.x(), m_panelGsettings->get(PANEL_SIZE_KEY).toInt() + WIDGET_GAP);
++            }
++            break;
++        case 2:
++        case 3: //这里position 2 和 3 的行为是相同的
++            this->move(currentPos.x(), primaryScreenHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
++            if(yijistate){
++                this->move(currentPos.x(), primaryScreenHeight - this->height() - WIDGET_GAP);
+ 
++            }
++            break;
++        default:
++            break;
+         }
+-        QString styleSheet = QString("\
+-                                     QScrollBar:vertical {\
+-                                         background: transparent; /* 滚动条背景颜色 */\
+-                                         width: 13px; /* 滚动条宽度 */\
+-                                         margin: 0px 0px 0px 0px; /* 外边距 */\
+-                                     }\
+-                                     QScrollBar::handle:vertical {\
+-                                         background: %1; /* 滚动条滑块背景颜色 */\
+-                                         min-height: 30px; /* 滑块最小高度 */\
+-                                     }\
+-                                     QScrollBar::handle:vertical:hover {\
+-                                         background: %2; /* 滚动条滑块背景颜色 */\
+-                                         min-height: 30px; /* 滑块最小高度 */\
+-                                     }\
+-                                     QScrollBar::add-line:vertical {\
+-                                         background: transparent; /* 上方按钮背景颜色 */\
+-                                     }\
+-                                     QScrollBar::sub-line:vertical {\
+-                                         background: transparent; /* 下方按钮背景颜色 */\
+-                                     }\
+-                                     QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {\
+-                                         background: transparent; /* 滚动条轨道背景颜色 */\
+-                                     }").arg(vertical).arg(hover);
++    }
+ 
+-        int height = qApp->screenAt(QCursor::pos())->size().height() + qApp->screenAt(QCursor::pos())->geometry().y();
+-        scrollArea->verticalScrollBar()->setStyleSheet(styleSheet);
+-        QPoint currentPos = this->pos();
+-        scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+-        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,panelHeight-SCROLLA);
+-        m_scheduleWidget->setFixedHeight(100*num);
+-        scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH, height*0.1);
+-        this->move(currentPos.x(), SCROLLA-WIDGET_GAP);
+-        isExceedScreenHeight = false;
++    if(panelHeight < this->height() || panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT || isExceedScreenHeight){
++        if(ScrollAreaNeedChange){
++            qDebug()<<"不支持分辨率";
++        }
++        else{
++            qDebug()<<"分辨率支持111";
++            int height = qApp->screenAt(QCursor::pos())->size().height() + qApp->screenAt(QCursor::pos())->geometry().y();
++            scrollArea->verticalScrollBar()->setStyleSheet(ScrollAreaStyleSheet);
++            QPoint currentPos = this->pos();
++            scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
++            this->setFixedSize(ORIGIN_CALENDAR_WIDTH,panelHeight-SCROLLA);
++            m_scheduleWidget->setFixedHeight(100*num);
++            //scrollArea->setFixedSize(420, height*0.1);
++            scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
++            this->move(currentPos.x(), SCROLLA-WIDGET_GAP);
++            isExceedScreenHeight = false;
++        }
+     }
+     foreach(info,m_markInfoList){
+         scheduleWidget = new schedule_item(this,true);
+@@ -404,37 +455,43 @@ void LunarCalendarWidget::twoLessSchedule()
+         item_layout->addSpacing(2);
+ 
+     }
++    labWidget->setContentsMargins(16,0,16,0);
++    yijiWidget->setContentsMargins(16,0,16,0);
+     m_scheduleWidget->setLayout(item_layout);
+     scrollArea->setWidget(m_scheduleWidget);
+-    widgetTop = new QHBoxLayout(this);
+-    verLayoutCalendar->setMargin(10);
+-    verLayoutCalendar->setSpacing(0);
+-
+-    widgetTop->addWidget(widgetTime);
+-    widgetTop->addWidget(m_createScheduleButton);
+-    verLayoutCalendar->addLayout(widgetTop);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(lineUp);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(m_widgetTop);
+-    verLayoutCalendar->addWidget(widgetWeek);
+-    verLayoutCalendar->addWidget(m_widgetDayBody, 1);
+-    verLayoutCalendar->addWidget(widgetYearBody, 1);
+-    verLayoutCalendar->addWidget(widgetmonthBody, 1);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(lineDown);
++
++    m_horLayoutWidgetTop = new QHBoxLayout(this);
++    m_horLayoutWidgetTop->setContentsMargins(26,0,24,0);
++    m_horLayoutWidgetTop->addWidget(widgetTime);
++    m_horLayoutWidgetTop->addWidget(m_createScheduleButton);
++
++    m_verLayoutCalendar->setMargin(0);
++    m_verLayoutCalendar->setSpacing(0);
++    m_verLayoutCalendar->addLayout(m_horLayoutWidgetTop);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(lineUp);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(m_widgetTop);
++    m_verLayoutCalendar->addSpacing(18);
++    m_verLayoutCalendar->addWidget(widgetWeek);
++    m_verLayoutCalendar->addWidget(m_widgetDayBody, 1);
++    m_verLayoutCalendar->addWidget(widgetYearBody, 1);
++    m_verLayoutCalendar->addWidget(widgetmonthBody, 1);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(lineDown);
+     controlDownLine();
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(labWidget);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(labWidget);
+     //    if(yijistate){
+-    verLayoutCalendar->addWidget(yijiWidget);
++    m_verLayoutCalendar->addWidget(yijiWidget);
+     //    }
+ 
+     //yiji框的下划线分割
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(lineSchedule);
+-    verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-    verLayoutCalendar->addWidget(scrollArea);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    lineSchedule->setFixedHeight(1);
++    m_verLayoutCalendar->addWidget(lineSchedule);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(scrollArea);
+ }
+ void LunarCalendarWidget::updateSchedule()
+ {
+@@ -446,17 +503,24 @@ void LunarCalendarWidget::updateSchedule()
+     if(num == 0)
+     {
+         noSchedule();
+-    }else{
+-        if(num <= 2){
++    }
++    else
++    {
++        if(num <= 2)
++        {
+             twoLessSchedule();
+-        }else if(CalendarDataBase::getInstance().m_markInfoList.count()>2){
+-            if(panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++        }
++        else if(CalendarDataBase::getInstance().m_markInfoList.count()>2)
++        {
++            if(panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT)
++            {
+                 isExceedScreenHeight = true;
+                 twoLessSchedule();
+                 isExceedScreenHeight = false;
+-            }else{
++            }
++            else
++            {
+                ThreeMoreSchedule();
+-
+             }
+         }
+ 
+@@ -526,7 +590,7 @@ void LunarCalendarWidget::_timeUpdate() {
+     QString _time = SDK2CPP(kdk_system_second)();
+     QFont font(m_fontName);
+     datelabel->setText(_time);
+-    font.setPointSize(15);
++    font.setPixelSize(24);
+     datelabel->setFont(font);
+     QString strHoliday;
+     QString strSolarTerms;
+@@ -554,17 +618,18 @@ void LunarCalendarWidget::_timeUpdate() {
+         _date = _date + " "+strLunarMonth + strLunarDay;
+     }
+     timelabel->setText(_date);
+-//    font.setPointSize(12);
+-    font.setPointSize(7);
+-     if(isWayland){
+-          font.setPointSize(12);
++    font.setPixelSize(14);
++    if(isWayland)
++    {
++        font.setPointSize(12);
+     }
+ 
+     timelabel->setFont(font);
+     QFont font1(m_font);
+     font1.setPixelSize(22);
+-    if(isWayland){
+-       font.setPointSize(15);
++    if(isWayland)
++    {
++        font.setPointSize(15);
+     }
+ 
+     QFont font2(m_font);
+@@ -616,7 +681,7 @@ void LunarCalendarWidget::initWidget()
+     btnNextYear->setIcon(QIcon::fromTheme("ukui-end-symbolic"));
+ 
+     m_font.setFamily(m_fontName);
+-    m_font.setPointSize(12);
++    m_font.setPixelSize(14);
+     QFont smallfont = m_font;
+     if(QLocale::system().name() != "zh_CN"){
+         smallfont.setPointSize(8);
+@@ -628,7 +693,7 @@ void LunarCalendarWidget::initWidget()
+     btnYear->setFont(smallfont);
+     btnYear->setText(tr("Year"));
+     btnYear->setToolTip(tr("Year"));
+-    btnYear->setFixedSize(64,36);
++    btnYear->setFixedSize(56,36);
+ 
+     //btnYear->setStyle(new CustomStyle_pushbutton("ukui-default"));
+     connect(btnYear,&QPushButton::clicked,this,&LunarCalendarWidget::yearWidgetChange);
+@@ -640,7 +705,7 @@ void LunarCalendarWidget::initWidget()
+     btnMonth->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+     btnMonth->setText(tr("Month"));
+     btnMonth->setToolTip(tr("Month"));
+-    btnMonth->setFixedSize(64,36);
++    btnMonth->setFixedSize(56,36);
+     //btnMonth->setStyle(new CustomStyle_pushbutton("ukui-default"));
+     connect(btnMonth,&QPushButton::clicked,this,&LunarCalendarWidget::monthWidgetChange);
+ 
+@@ -653,7 +718,7 @@ void LunarCalendarWidget::initWidget()
+     btnToday->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+     btnToday->setText(tr("Today"));
+     btnToday->setToolTip(tr("Today"));
+-    btnToday->setFixedSize(64,36);
++    btnToday->setFixedSize(56,36);
+ 
+     btnYear->setProperty("needTranslucent",true);
+     btnMonth->setProperty("needTranslucent",true);
+@@ -664,18 +729,17 @@ void LunarCalendarWidget::initWidget()
+     //年份与月份下拉框 暂不用此
+     cboxYearandMonth = new QComboBox;
+     cboxYearandMonthLabel = new QLabel();
+-//       cboxYearandMonthLabel->setFixedWidth(80);
+-        cboxYearandMonthLabel->setFixedWidth(90);
+-         if(isWayland){
+-           cboxYearandMonthLabel->setFixedWidth(80);
+-          }
+-
++    cboxYearandMonthLabel->setFixedWidth(90);
++    cboxYearandMonthLabel->setFixedHeight(36);
++    if(isWayland){
++        cboxYearandMonthLabel->setFixedWidth(80);
++    }
+ 
+     cboxYearandMonthLabel->setFont(m_font);
+ 
+     //顶部横向布局
+     QHBoxLayout *layoutTop = new QHBoxLayout(m_widgetTop);
+-    layoutTop->setContentsMargins(0, 0, 0, 9);
++    layoutTop->setContentsMargins(8, 0, 24, 0);
+     layoutTop->addSpacing(8);
+     layoutTop->addWidget(btnPrevYear);
+     layoutTop->addWidget(cboxYearandMonthLabel);
+@@ -687,17 +751,18 @@ void LunarCalendarWidget::initWidget()
+     layoutTop->addSpacing(8);
+ 
+     //时间
+-    widgetTime->setMinimumHeight(50);
+-    timeShow->setSpacing(4);
+-    timeShow->addStretch();
+-    timeShow->addWidget(datelabel);//, Qt::AlignHCenter);
+-    //    timeShow->addSpacing(4);
+-    timeShow->addWidget(timelabel);//,Qt::AlignHCenter);
+-    timeShow->addStretch();
+-    //    datelabel->setStyleSheet("background-color:red");
+-    //    timelabel->setStyleSheet("background-color:green");
++    widgetTime->setFixedHeight(89);
++    //widgetTime->setStyleSheet("background-color:grey");
++    m_verLayoutTopLeft->setContentsMargins(0, 0, 0, 0);
++    m_verLayoutTopLeft->setSpacing(0);
++    m_verLayoutTopLeft->addStretch();
++    m_verLayoutTopLeft->addWidget(datelabel);
++    m_verLayoutTopLeft->addWidget(timelabel);
++    m_verLayoutTopLeft->addStretch();
++    //datelabel->setStyleSheet("background-color:red");
++    //timelabel->setStyleSheet("background-color:green");
+     //星期widget
+-    widgetWeek = new QWidget;
++    widgetWeek = new QWidget();
+     widgetWeek->setObjectName("widgetWeek");
+     widgetWeek->setMinimumHeight(30);
+     widgetWeek->installEventFilter(this);
+@@ -711,7 +776,7 @@ void LunarCalendarWidget::initWidget()
+         QLabel *lab = new QLabel;
+         lab->setObjectName(QString("WeekLabel_%1").arg(i));
+         QFont font(m_font);
+-        font.setPixelSize(14);
++        font.setPixelSize(12);
+         lab->setFont(font);
+         lab->setAlignment(Qt::AlignCenter);
+         layoutWeek->addWidget(lab);
+@@ -722,7 +787,7 @@ void LunarCalendarWidget::initWidget()
+     m_widgetDayBody = new QWidget;
+     m_widgetDayBody->setObjectName("widgetDayBody");
+     m_widgetDayBody->setAttribute(Qt::WA_TransparentForMouseEvents,true);
+-    //    m_widgetDayBody->setFixedHeight(370);
++    m_widgetDayBody->setMinimumHeight(350);
+     //日期标签布局
+     QGridLayout *layoutBodyDay = new QGridLayout(m_widgetDayBody);
+     layoutBodyDay->setMargin(1);
+@@ -735,6 +800,7 @@ void LunarCalendarWidget::initWidget()
+         //        QDate currentDate = date.addDays(i - date.dayOfWeek() +1);
+         LunarCalendarItem *lab = new LunarCalendarItem(m_fontName,false);
+         lab->setObjectName(QString("DayLabel_%1").arg(i));
++        lab->setFixedSize(60,56);
+         lab->installEventFilter(this);
+         lab->worktime = worktime;
+         connect(lab, SIGNAL(clicked(QDate, LunarCalendarItem::DayType)), this, SLOT(labClicked(QDate, LunarCalendarItem::DayType)));
+@@ -747,7 +813,7 @@ void LunarCalendarWidget::initWidget()
+     widgetYearBody = new QWidget;
+     widgetYearBody->setObjectName("widgetYearBody");
+     widgetYearBody->setAttribute(Qt::WA_TransparentForMouseEvents,true);
+-    //    widgetYearBody->setFixedHeight(370);
++    widgetYearBody->setMinimumHeight(350);
+     //年份标签布局
+     QGridLayout *layoutBodyYear = new QGridLayout(widgetYearBody);
+     layoutBodyYear->setMargin(1);
+@@ -769,7 +835,7 @@ void LunarCalendarWidget::initWidget()
+     widgetmonthBody = new QWidget;
+     widgetmonthBody->setObjectName("widgetmonthBody");
+     widgetmonthBody->setAttribute(Qt::WA_TransparentForMouseEvents,true);
+-    //    widgetmonthBody->setFixedHeight(370);
++    widgetmonthBody->setMinimumHeight(350);
+     //月份标签布局
+     QGridLayout *layoutBodyMonth = new QGridLayout(widgetmonthBody);
+     layoutBodyMonth->setMargin(1);
+@@ -788,7 +854,7 @@ void LunarCalendarWidget::initWidget()
+     widgetmonthBody->hide();
+ 
+     QFont font(m_fontName);
+-    font.setPointSize(12);
++    font.setPixelSize(14);
+ //       font.setPointSize(5);
+ //           if(isWayland){
+ //             font.setPointSize(12);
+@@ -850,9 +916,9 @@ void LunarCalendarWidget::initWidget()
+     lineDown = new PartLineWidget();
+     lineSchedule = new PartLineWidget();
+ 
+-    lineUp->setFixedSize(440, 1);
+-    lineDown->setFixedSize(440, 1);
+-    lineSchedule->setFixedSize(440, 1);
++    lineUp->setFixedSize(ORIGIN_CALENDAR_WIDTH, 1);
++    lineDown->setFixedSize(ORIGIN_CALENDAR_WIDTH, 1);
++    lineSchedule->setFixedSize(ORIGIN_CALENDAR_WIDTH, 1);
+ 
+     updateLayout();
+ 
+@@ -1320,6 +1386,10 @@ void LunarCalendarWidget::initDate()
+ void LunarCalendarWidget::customButtonsClicked(int x)
+ {
+     int num = CalendarDataBase::getInstance().m_markInfoList.count();
++    int totalHeight = qApp->screenAt(QCursor::pos())->size().height() + qApp->screenAt(QCursor::pos())->geometry().y();//屏幕高度
++    int totalWidth = qApp->screenAt(QCursor::pos())->size().width() + qApp->screenAt(QCursor::pos())->geometry().x();
++    int  m_panelPoistion = m_panelGsettings->get(PANEL_POSITION_KEY).toInt();
++    QRect rect;
+     if (x == 1) {
+         yiLabel->setVisible(true);
+         jiLabel->setVisible(true);
+@@ -1327,16 +1397,108 @@ void LunarCalendarWidget::customButtonsClicked(int x)
+         if (yijiGsettings) {
+             yijiGsettings->set(YIJISTATUS,QVariant(true));
+         }
+-        Q_EMIT yijiChangeUp(num);
++
++        QPoint currentPos = this->pos();
++
++        //        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,this->height()+YIJI_HEIGHT);
++        //2种情况1.目前屏幕大小 740 <x< 740+75 2.屏幕高度 x <740
++        if(LESSTWOSHCEDULE_CALENDAR_HEIGHT < panelHeight && panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT){
++            ScrollAreaNeedChange = true;
++            updateLayout();
++            return;
++        }
++        else if(panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++            ScrollbarUnderTheResolution = true;
++            updateLayout();
++            return;
++        }
++        //当位置在上方的时候 不需要move，只需要改变高度即可
++        if(position != 1){
++            if(isWayland){
++                //3右 0下 2左 1上
++                switch (m_panelPoistion) {
++                case 0:
++                    rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,panelHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-YIJI_HEIGHT-WIDGET_GAP,
++                                 ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++                    kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                    break;
++                case 1:
++                    rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,qApp->screenAt(QCursor::pos())->geometry().y()+panelSize+WIDGET_GAP,
++                                 ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++                    kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                    break;
++                case 2:
++                    rect.setRect(qApp->screenAt(QCursor::pos())->geometry().x()+panelSize+WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP-YIJI_HEIGHT,
++                                 ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++                    kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                    break;
++                case 3:
++                    rect.setRect(totalWidth-panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP-YIJI_HEIGHT,
++                                 ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++                    kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                    break;
++                }
++            }else{
++                this->move(currentPos.x(),currentPos.y()-YIJI_HEIGHT);
++            }
++        }
++            this->setFixedSize(ORIGIN_CALENDAR_WIDTH,this->height()+YIJI_HEIGHT);
+     } else {
+         yiLabel->setVisible(false);
+         jiLabel->setVisible(false);
+-        Q_EMIT yijiChangeDown(num);
++        //        Q_EMIT yijiChangeDown(num);
+         yijistate = false;
+         if (yijiGsettings) {
+             yijiGsettings->set(YIJISTATUS,QVariant(false));
+         }
+-}
++
++        if(LESSTWOSHCEDULE_CALENDAR_HEIGHT<panelHeight && panelHeight<LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT){
++            ScrollAreaNeedChange = false;
++            updateLayout();
++            return;
++        }
++        else if(panelHeight < LESSTWOSHCEDULE_CALENDAR_HEIGHT){
++            ScrollbarUnderTheResolution = true;
++            updateLayout();
++            return;
++        }
++        QPoint currentPos = this->pos();
++
++        //        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,this->height()-YIJI_HEIGHT);
++        //当位置在上方的时候 不需要move，只需要改变高度即可
++        if(position!=1){
++             if(isWayland)
++             {
++                 //3右 0下 2左 1上
++                 switch (m_panelPoistion) {
++                 case 0:
++                     rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,totalHeight-panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                                  ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++                     kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                     break;
++                 case 1:
++                     rect.setRect(totalWidth-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,qApp->screenAt(QCursor::pos())->geometry().y()+panelSize+WIDGET_GAP,
++                                  ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++                     kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                     break;
++                 case 2:
++                     rect.setRect(qApp->screenAt(QCursor::pos())->geometry().x()+panelSize+WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                                  ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++                     kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                     break;
++                 case 3:
++                     rect.setRect(totalWidth-panelSize-ORIGIN_CALENDAR_WIDTH-WIDGET_GAP,totalHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
++                                  ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
++                     kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++                     break;
++                 }
++             }
++             else{
++                 this->move(currentPos.x(),currentPos.y()+YIJI_HEIGHT);
++             }
++        }
++            this->setFixedSize(ORIGIN_CALENDAR_WIDTH,this->height()-YIJI_HEIGHT);
++    }
+ }
+ 
+ QString LunarCalendarWidget::getSettings()
+@@ -2449,7 +2611,6 @@ void LunarCalendarWidget::updateYearMonthString(int year, int month)
+ }
+ void LunarCalendarWidget::updateLayout()
+ {
+-
+     updateLayout1();
+     updateSchedule();
+ }
+@@ -2463,12 +2624,12 @@ void LunarCalendarWidget::updateLayout1()
+     scrollArea = new CustomScrollArea(this);
+     scrollArea->setWidgetResizable(true);
+     scrollArea->setStyleSheet("background-color: transparent;");
+-    if(verLayoutCalendar){
+-        delete verLayoutCalendar;
+-        verLayoutCalendar = new QVBoxLayout(this);
++    if(m_verLayoutCalendar){
++        delete m_verLayoutCalendar;
++        m_verLayoutCalendar = new QVBoxLayout(this);
+     }
+-    else if(!verLayoutCalendar){
+-        verLayoutCalendar = new QVBoxLayout(this);
++    else if(!m_verLayoutCalendar){
++        m_verLayoutCalendar = new QVBoxLayout(this);
+     }
+     if(m_markInfoList.count()!=0){
+         if(label){
+@@ -2561,158 +2722,133 @@ void LunarCalendarWidget::onGSettingsChanged(const QString &key)
+ void LunarCalendarWidget::ThreeMoreSchedule()
+ {
+     int num = m_markInfoList.count();
+-    QString vertical = "#666666";
+-    QString hover = "#ffffff";
+-    if (styleGsettings!=nullptr) {
+-        QString currentTheme = styleGsettings->get(COLOR_THEME).toString();
+-        if(currentTheme == "ukui-light"){
+-            vertical = "#ffffff";
+-            hover = "#999999";
+-        }
+-
+-    }
+-    QString styleSheet = QString("\
+-        QScrollBar:vertical {\
+-            background: transparent; /* 滚动条背景颜色 */\
+-            width: 5px; /* 滚动条宽度 */\
+-            margin: 0px 0px 0px 0px; /* 外边距 */\
+-            border-radius: 10px; /* 滚动条的整体圆角 */\
+-        }\
+-        QScrollBar::handle:vertical {\
+-            background: %1; /* 滚动条滑块背景颜色 */\
+-            min-height: 30px; /* 滑块最小高度 */\
+-            border-radius: 10px; /* 滑块圆角半径 */\
+-        }\
+-        QScrollBar::handle:vertical:hover {\
+-            background: %2; /* 滚动条滑块背景颜色（悬停时）*/\
+-            min-height: 30px; /* 滑块最小高度 */\
+-            border-radius: 10px; /* 悬停时的滑块圆角半径 */\
+-        }\
+-        QScrollBar::add-line:vertical {\
+-            background: transparent; /* 上方按钮背景颜色 */\
+-            border-radius: 10px; /* 上方按钮圆角半径 */\
+-        }\
+-        QScrollBar::sub-line:vertical {\
+-            background: transparent; /* 下方按钮背景颜色 */\
+-            border-radius: 10px; /* 下方按钮圆角半径 */\
+-        }\
+-        QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {\
+-            background: transparent; /* 滚动条轨道背景颜色 */\
+-            border-radius: 10px; /* 轨道圆角半径 */\
+-        }").arg(vertical).arg(hover);
+     QPoint currentPos = this->pos();
+     this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);//900是三个以上日程的默认高度
++    m_scheduleWidget = new QWidget(this);
++    m_scheduleWidget->setContentsMargins(0,0,0,23);
++    m_scheduleWidget->setStyleSheet("background-color: transparent;");
++    m_scheduleWidget->setFixedHeight(75*num);
++    labWidget->setContentsMargins(16,0,16,0);
++    yijiWidget->setContentsMargins(16,0,16,0);
++    scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+ 
+-        m_scheduleWidget = new QWidget(this);
+-        m_scheduleWidget->setContentsMargins(0,0,0,23);
+-        m_scheduleWidget->setStyleSheet("background-color: transparent;");
+-        m_scheduleWidget->setFixedHeight(80*num);
+-        scrollArea->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
+-
+-        scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH-20, 140);
+-        scrollArea->verticalScrollBar()->setStyleSheet(styleSheet);
+-//        scrollArea->setWidgetResizable(false);
+-        scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    //scrollArea->setFixedSize(ORIGIN_CALENDAR_WIDTH-20, 140);
++    scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
++    scrollArea->verticalScrollBar()->setStyleSheet(ScrollAreaStyleSheet);
++    scrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    label = new ShowMoreLabel(this);
++    label->settext(tr("More"));
++    label->setText(tr("More"));
++    label->setToolTip(tr("More"));//显示更多Label
++    //把前两个日程先显示出来 这部分不用修改
++    foreach(info, m_markInfoList){
++        scheduleWidget = new schedule_item(this,true);
++        QString time1;
++        QString time2;
++        if(timemodel == "12"){
++            scheduleWidget->timemode = "12";
++            if(info.hour <= 12){
++                time1 = tr("morning");
++            }else{
++                time1 = tr("afternoon");
++                info.hour = info.hour-12;
++            }
++            if(info.end_hour < 12){
++                time2 = tr("morning");
++            }else{
++                time2 = tr("afternoon");
++                info.end_hour = info.end_hour-12;
++            }
++        }else if(timemodel == "24"){
++            time1 = "";
++            time2 = "";
++        }
++        QString starttimeString = QString::number(info.hour)+":"+QString::number(info.minute);// 确保这是有效的格式
++        QTime m_startTime = QTime::fromString(starttimeString, "h:m");
++        QString start = m_startTime.toString("hh:mm");
++        QString timeString = QString::number(info.end_hour)+":"+QString::number(info.end_minute);// 确保这是有效的格式
++        QTime m_endTime = QTime::fromString(timeString, "h:m");
++        QString end = m_endTime.toString("hh:mm");
++        QString  lineOne = QString(" %1%2-%3%4 ").arg(time1).arg(start).arg(time2).arg(end)
++                +info.timeLong;
++        if(info.m_isAllDay){
++            lineOne = tr("   allday");
++        }
++        scheduleWidget->setStartTime(lineOne);
++        scheduleWidget->adjustDate(this->date);
++        scheduleWidget->setEndTime(info.end_hour,info.end_minute,this->date,time2);
++        scheduleWidget->setDescription(info.m_descript);
++        scheduleWidget->setId(info.m_markId);
++        connect(scheduleWidget,&schedule_item::ScheduleClick,this,&LunarCalendarWidget::slotEditSchedule);
++        connect(scheduleWidget,&schedule_item::EditSchedule,this,&LunarCalendarWidget::slotEditSchedule);
++        connect(scheduleWidget,&schedule_item::updateWindow,this,&LunarCalendarWidget::updateFromItem);
++        item_layout->addWidget(scheduleWidget);
++    }
++    m_scheduleWidget->setLayout(item_layout);
++    scrollArea->setWidget(m_scheduleWidget);
++    m_horLayoutWidgetTop = new QHBoxLayout(this);
++    m_horLayoutWidgetTop->setContentsMargins(26,0,24,0);
++    m_verLayoutCalendar->setMargin(0);
++    m_verLayoutCalendar->setSpacing(0);
++    m_horLayoutWidgetTop->addWidget(widgetTime);
++    m_horLayoutWidgetTop->addWidget(m_createScheduleButton);
++    m_verLayoutCalendar->addLayout(m_horLayoutWidgetTop);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(lineUp);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(m_widgetTop);
++    m_verLayoutCalendar->addSpacing(18);
++    m_verLayoutCalendar->addWidget(widgetWeek);
++    m_verLayoutCalendar->addWidget(m_widgetDayBody, 1);
++    m_verLayoutCalendar->addWidget(widgetYearBody, 1);
++    m_verLayoutCalendar->addWidget(widgetmonthBody, 1);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(lineDown);
++    controlDownLine();
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(labWidget);
++    m_verLayoutCalendar->addWidget(yijiWidget);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    lineSchedule->setFixedHeight(1);
++    m_verLayoutCalendar->addWidget(lineSchedule);
++    m_verLayoutCalendar->addItem(new QSpacerItem(6,6));
++    m_verLayoutCalendar->addWidget(scrollArea);
++    if(ScrollAreaNeedChange){
++        //scrollArea->setFixedSize(420,100);
++        scrollArea->setFixedWidth(ORIGIN_CALENDAR_WIDTH);
++    }
++    else
++    {
++        this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);//无日程的时候，日历高度固定600,不会根据分辨率变化大小
++        if(yijistate){
++            this->setFixedSize(ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT+YIJI_HEIGHT);
++        }
++        switch(position) {
++        case 0:
++            this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
++            if(yijistate){
++                this->move(currentPos.x(), panelHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT -YIJI_HEIGHT - WIDGET_GAP);
++            }
++            break;
++        case 1:
++            this->move(currentPos.x(), m_panelGsettings->get(PANEL_SIZE_KEY).toInt() + WIDGET_GAP);
++            if(yijistate){
++                this->move(currentPos.x(), m_panelGsettings->get(PANEL_SIZE_KEY).toInt() + WIDGET_GAP);
+ 
+ 
+-//        m_scheduleWidget->setStyleSheet("background-color: transparent;");
+-        label = new ShowMoreLabel(this);
+-        label->settext(tr("More"));
+-        label->setText(tr("More"));
+-        label->setToolTip(tr("More"));//显示更多Label
+-        //把前两个日程先显示出来 这部分不用修改
+-        foreach(info, m_markInfoList){
+-            scheduleWidget = new schedule_item(this,true);
+-            QString time1;
+-            QString time2;
+-            if(timemodel == "12"){
+-                scheduleWidget->timemode = "12";
+-                if(info.hour <= 12){
+-                    time1 = tr("morning");
+-                }else{
+-                    time1 = tr("afternoon");
+-                    info.hour = info.hour-12;
+-                }
+-                if(info.end_hour < 12){
+-                    time2 = tr("morning");
+-                }else{
+-                    time2 = tr("afternoon");
+-                    info.end_hour = info.end_hour-12;
+-                }
+-            }else if(timemodel == "24"){
+-                time1 = "";
+-                time2 = "";
+             }
+-            QString starttimeString = QString::number(info.hour)+":"+QString::number(info.minute);// 确保这是有效的格式
+-            QTime m_startTime = QTime::fromString(starttimeString, "h:m");
+-            QString start = m_startTime.toString("hh:mm");
+-            QString timeString = QString::number(info.end_hour)+":"+QString::number(info.end_minute);// 确保这是有效的格式
+-            QTime m_endTime = QTime::fromString(timeString, "h:m");
+-            QString end = m_endTime.toString("hh:mm");
+-            QString  lineOne = QString(" %1%2-%3%4 ").arg(time1).arg(start).arg(time2).arg(end)
+-                    +info.timeLong;
+-            if(info.m_isAllDay){
+-                lineOne = tr("   allday");
++            break;
++        case 2:
++        case 3: //这里position 2 和 3 的行为是相同的
++            this->move(currentPos.x(), primaryScreenHeight - LESSTWOSHCEDULE_CALENDAR_HEIGHT - WIDGET_GAP);
++            if(yijistate){
++                this->move(currentPos.x(), primaryScreenHeight - this->height() - WIDGET_GAP);
+             }
+-            scheduleWidget->setStartTime(lineOne);
+-            scheduleWidget->adjustDate(this->date);
+-            scheduleWidget->setEndTime(info.end_hour,info.end_minute,this->date,time2);
+-            scheduleWidget->setDescription(info.m_descript);
+-            scheduleWidget->setId(info.m_markId);
+-            connect(scheduleWidget,&schedule_item::ScheduleClick,this,&LunarCalendarWidget::slotEditSchedule);
+-            connect(scheduleWidget,&schedule_item::EditSchedule,this,&LunarCalendarWidget::slotEditSchedule);
+-            connect(scheduleWidget,&schedule_item::updateWindow,this,&LunarCalendarWidget::updateFromItem);
+-            item_layout->addWidget(scheduleWidget);
+-        }
+-        m_scheduleWidget->setLayout(item_layout);
+-        scrollArea->setWidget(m_scheduleWidget);
+-        widgetTop = new QHBoxLayout(this);
+-        verLayoutCalendar->setMargin(10);
+-        verLayoutCalendar->setSpacing(0);
+-
+-        widgetTop->addWidget(widgetTime);
+-        widgetTop->addWidget(m_createScheduleButton);
+-        verLayoutCalendar->addLayout(widgetTop);
+-        verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-        verLayoutCalendar->addWidget(lineUp);
+-        verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-        verLayoutCalendar->addWidget(m_widgetTop);
+-        verLayoutCalendar->addWidget(widgetWeek);
+-        verLayoutCalendar->addWidget(m_widgetDayBody, 1);
+-        verLayoutCalendar->addWidget(widgetYearBody, 1);
+-        verLayoutCalendar->addWidget(widgetmonthBody, 1);
+-        verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-        verLayoutCalendar->addWidget(lineDown);
+-        controlDownLine();
+-        verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-        verLayoutCalendar->addWidget(labWidget);
+-        //    if(yijistate){
+-        verLayoutCalendar->addWidget(yijiWidget);
+-        //    }
+-
+-        //yiji框的下划线分割
+-        verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-        verLayoutCalendar->addWidget(lineSchedule);
+-        verLayoutCalendar->addItem(new QSpacerItem(6,6));
+-        verLayoutCalendar->addWidget(scrollArea);
+-        int position;
+-//        this->move(currentPos.x(),panelHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-        if (m_panelGsettings!=nullptr) {
+-            position = m_panelGsettings->get(PANEL_POSITION_KEY).toInt();
+-           }
+-        if(position == 0){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),panelHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-        }else if(position == 2){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),primaryScreenHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-        }else if(position == 3){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),primaryScreenHeight-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP);
+-        }else if(position == 1){
+-            QPoint currentPos = this->pos();
+-            this->move(currentPos.x(),m_panelGsettings->get(PANEL_SIZE_KEY).toInt()+WIDGET_GAP);
++            break;
++        default:
++            break;
+         }
++    }
+ }
+ void LunarCalendarWidget::PrimaryScreenHeight(int height)
+ {
+@@ -2736,7 +2872,6 @@ void LunarCalendarWidget::initGsettings()
+     }
+     connect(screen, &QScreen::geometryChanged, this, &LunarCalendarWidget::onPrimaryScreenChanged);
+     widgetTime->setObjectName("widgetTime");
+-    timeShow->setContentsMargins(16, 16, 16, 0);
+ 
+     const QByteArray calendar_id(PANEL_CONTROL_IN_CALENDAR);
+     if(QGSettings::isSchemaInstalled(calendar_id)){
+diff --git a/lunarcalendarwidget/lunarcalendarwidget.h b/lunarcalendarwidget/lunarcalendarwidget.h
+index 66e26d4..b7ed275 100644
+--- a/lunarcalendarwidget/lunarcalendarwidget.h
++++ b/lunarcalendarwidget/lunarcalendarwidget.h
+@@ -64,10 +64,7 @@
+ #include "schedulemark.h"
+ #include "schedulestruct.h"
+ #include <kysdk/applications/kborderlessbutton.h>
+-//const int CALENDAR_WIDTH = 440;
+-//const int CALENDAR_HEIGHT = 700;
+-//const int CALENDAR_LUNAR_HEIGHT = 75;
+-//const int CALENDAR_LUNAR_HEIGHT_PLUSE = 77;
++
+ class QGestureEvent;
+ class QPanGesture;
+ class QPinchGesture;
+@@ -148,8 +145,8 @@ public:
+         SelectType_Image = 3        //图片背景
+     };
+ 
+-    QVBoxLayout *verLayoutCalendar = nullptr;
+-    QHBoxLayout *widgetTop = nullptr;
++    QVBoxLayout *m_verLayoutCalendar = nullptr;
++    QHBoxLayout *m_horLayoutWidgetTop = nullptr;
+     schedule_item *scheduleWidget =nullptr;
+     QWidget *allButtom = nullptr;
+     QDate date;                         //当前日期
+@@ -163,6 +160,12 @@ public:
+     void initGsettings();
+     bool yijistate = false;
+ 
++    bool ScrollbarUnderTheResolution = false; //极限分辨率下的滑动区域
++    bool ScrollAreaNeedChange = false;
++CustomScrollArea *scrollArea = nullptr;
++QString ScrollAreaStyleSheet;
++void DisplayAtResolution();//极限分辨率下的显示
++
+     int position;
+     explicit LunarCalendarWidget(QWidget *parent = 0);
+     ~LunarCalendarWidget();
+@@ -206,7 +209,7 @@ private:
+     QLabel *timelabel = nullptr;
+     QLabel *lunarlabel = nullptr;
+     QTimer *timer = nullptr;
+-    QVBoxLayout *timeShow = nullptr;
++    QVBoxLayout *m_verLayoutTopLeft = nullptr;
+     QWidget *widgetTime = nullptr;
+     QPushButton *btnYear = nullptr;
+     QPushButton *btnMonth = nullptr;
+@@ -286,7 +289,7 @@ private:
+     QColor hoverBgColor;                //悬停日期背景颜色
+ 
+     QGSettings *calendar_gsettings = nullptr;
+-    CustomScrollArea *scrollArea = nullptr;
++//    CustomScrollArea *scrollArea = nullptr;
+ 
+     void setColor(bool mdark_style);
+     void _timeUpdate();

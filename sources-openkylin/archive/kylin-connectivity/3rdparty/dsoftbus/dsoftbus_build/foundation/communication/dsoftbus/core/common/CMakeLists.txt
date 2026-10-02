@@ -1,0 +1,7 @@
+add_subdirectory(json_utils)
+add_subdirectory(log)
+add_subdirectory(message_handler)
+add_subdirectory(queue)
+add_subdirectory(security)
+add_subdirectory(softbus_property)
+add_subdirectory(utils)

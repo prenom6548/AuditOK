@@ -1,0 +1,116 @@
+// SPDX-FileCopyrightText: 2022 - 2023 UnionTech Software Technology Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-3.0-or-later
+
+#include <QCoreApplication>
+#include <QDebug>
+
+#include "dopticaldiscmanager.h"
+#include "dopticaldiscinfo.h"
+#include "burnjob.h"
+#include "burnjobmanager.h"
+
+DFM_BURN_USE_NS
+
+static void erase(const QString &dev)
+{
+    DOpticalDiscManager manager(dev);
+    QObject::connect(&manager, &DOpticalDiscManager::jobStatusChanged, [](JobStatus status, int progress, QString speed, QStringList message) {
+        qDebug() << int(status) << progress << speed << message;
+    });
+    manager.erase();
+}
+
+static void showInfo(const QString &dev)
+{
+    QScopedPointer<DOpticalDiscInfo> info { DOpticalDiscManager::createOpticalInfo(dev) };
+    qDebug() << info->device();
+    qDebug() << int(info->mediaType());
+    qDebug() << info->writeSpeed();
+    qDebug() << info->volumeName();
+}
+
+static void commit()
+{
+    DOpticalDiscManager manager("/dev/sr0");
+    QObject::connect(&manager, &DOpticalDiscManager::jobStatusChanged, [](JobStatus status, int progress, QString speed, QStringList message) {
+        qDebug() << int(status) << progress << speed << message;
+    });
+    manager.setStageFile("/home/yff/kylin-project/testdata/burn");
+    BurnOptions opts;
+    opts |= BurnOption::kJolietAndRockRidge;
+    opts |= BurnOption::kKeepAppendable;
+    manager.commit(opts, 0, "123");
+}
+
+static void commitUDF()
+{
+    DOpticalDiscManager manager("/dev/sr0");
+    QObject::connect(&manager, &DOpticalDiscManager::jobStatusChanged, [](JobStatus status, int progress, QString speed, QStringList message) {
+        qDebug() << int(status) << progress << speed << message;
+    });
+    manager.setStageFile("/home/zhangs/Downloads/254111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111111.gz");
+    BurnOptions opts;
+    opts |= BurnOption::kUDF102Supported;
+    opts |= BurnOption::kKeepAppendable;
+    manager.commit(opts, 0, "abc123");
+}
+
+static void writeISO()
+{
+    DOpticalDiscManager manager("/dev/sr0");
+    QObject::connect(&manager, &DOpticalDiscManager::jobStatusChanged, [](JobStatus status, int progress, QString speed, QStringList message) {
+        qDebug() << int(status) << progress << speed << message;
+    });
+    manager.writeISO("/home/zhangs/Downloads/deb/20200413_214350.iso");
+}
+
+static void check()
+{
+    DOpticalDiscManager manager("/dev/sr0");
+    QObject::connect(&manager, &DOpticalDiscManager::jobStatusChanged, [](JobStatus status, int progress, QString speed, QStringList message) {
+        qInfo() << int(status) << progress << speed << message;
+    });
+    double gud, slo, bad;
+    manager.checkmedia(&gud, &slo, &bad);
+    bool check { true };
+    bool checkRet { !(check && (bad > (2 + 1e-6))) };
+    qDebug() << "check ret" << checkRet;
+}
+
+static void dumpISO()
+{
+    DOpticalDiscManager manager("/dev/sr0");
+    QObject::connect(&manager, &DOpticalDiscManager::jobStatusChanged, [](JobStatus status, int progress, QString speed, QStringList message) {
+        qInfo() << int(status) << progress << speed << message;
+    });
+    manager.dumpISO("/home/zhangs/tmp/aabb.iso");
+}
+
+int main(int argc, char *argv[])
+{
+    QCoreApplication a(argc, argv);
+#if 0
+    showInfo("/dev/sr0");
+    erase("/dev/sr0");
+    writeISO();
+    commit();
+    commitUDF();
+    check();
+    dumpISO();
+#endif
+    BurnOptions opts;
+    opts |= BurnOption::kJolietAndRockRidge;
+    opts |= BurnOption::kKeepAppendable;
+
+    ky_plugin_burn::BurnJobManager::Config config;
+    config.opts = opts;
+    config.speeds = 0;
+    config.volName = "hello";
+
+    ky_plugin_burn::BurnJobManager::instance()->startBurnISOFiles("/dev/sr0",
+                                                                  QUrl::fromLocalFile("/home/yff/kylin-project/testdata/burn"),
+                                                                  config);
+
+    return a.exec();
+}

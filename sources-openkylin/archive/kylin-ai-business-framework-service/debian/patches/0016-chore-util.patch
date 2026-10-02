@@ -1,0 +1,403 @@
+From: Wei Wei <wangweinan@kylinos.cn>
+Date: Thu, 30 May 2024 19:11:19 +0800
+Subject: =?utf-8?b?Y2hvcmU6IOaVtOeQhuWQiOW5tnV0aWw=?=
+
+---
+ CMakeLists.txt                             |  3 --
+ src/utils/autotokenizer.cpp                |  2 -
+ src/utils/imageembedder.cpp                |  8 ++--
+ src/utils/math.cpp                         | 63 ------------------------------
+ src/utils/math.h                           | 31 ---------------
+ src/utils/parser/officepyparserwrapper.cpp |  2 -
+ src/utils/pythonthreadlocker.h             | 35 -----------------
+ src/utils/pythonutil.h                     | 12 ++++++
+ src/utils/textembedder.cpp                 |  4 +-
+ src/utils/utils.cpp                        | 47 ++++++++++++++++++++++
+ src/utils/utils.h                          | 10 ++++-
+ src/utils/vectordb/vectordb.cpp            |  1 -
+ 12 files changed, 74 insertions(+), 144 deletions(-)
+ delete mode 100644 src/utils/math.cpp
+ delete mode 100644 src/utils/math.h
+ delete mode 100644 src/utils/pythonthreadlocker.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 67a0f95..28b99b0 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -29,8 +29,6 @@ add_executable(kylin-ai-business-framework-service src/main.cpp
+     src/utils/autotokenizer.h
+     src/utils/imageembedder.cpp
+     src/utils/imageembedder.h
+-    src/utils/math.cpp
+-    src/utils/math.h
+     src/utils/textembedder.cpp
+     src/utils/textembedder.h
+     src/embeddingtaskmanager/baseembeddingservice.h src/embeddingtaskmanager/baseembeddingservice.cpp
+@@ -38,7 +36,6 @@ add_executable(kylin-ai-business-framework-service src/main.cpp
+     src/embeddingtaskmanager/embeddingtaskmanager.h src/embeddingtaskmanager/embeddingtaskmanager.cpp
+     src/embeddingtaskmanager/imageembeddingservice.h src/embeddingtaskmanager/imageembeddingservice.cpp
+     src/embeddingtaskmanager/textembeddingservice.h src/embeddingtaskmanager/textembeddingservice.cpp
+-    src/utils/pythonthreadlocker.h
+     src/datamanagement/datamanagementjsonhelper.cpp
+     src/datamanagement/datamanagementjsonhelper.h
+     src/datamanagement/datamanagementdatabase.cpp
+diff --git a/src/utils/autotokenizer.cpp b/src/utils/autotokenizer.cpp
+index 6839cff..3151c86 100644
+--- a/src/utils/autotokenizer.cpp
++++ b/src/utils/autotokenizer.cpp
+@@ -15,9 +15,7 @@
+  */
+ 
+ #include "autotokenizer.h"
+-
+ #include "utils/pythonutil.h"
+-#include "utils/pythonthreadlocker.h"
+ 
+ #include <iostream>
+ 
+diff --git a/src/utils/imageembedder.cpp b/src/utils/imageembedder.cpp
+index ed01390..ccc04ca 100644
+--- a/src/utils/imageembedder.cpp
++++ b/src/utils/imageembedder.cpp
+@@ -15,7 +15,7 @@
+  */
+ 
+ #include "imageembedder.h"
+-#include "math.h"
++#include "utils/utils.h"
+ 
+ #include <opencv4/opencv2/opencv.hpp>
+ 
+@@ -55,7 +55,7 @@ std::vector<float> ImageEmbedder::embeddingText(const std::string &text)
+                   << text << std::endl;
+         return std::vector<float>();
+     }
+-    Math::normalizeTokens(tokens, INPUT_CONTEXT_LENGTH);
++    math::normalizeTokens(tokens, INPUT_CONTEXT_LENGTH);
+ 
+     tokens.insert(tokens.begin(), batch);
+ 
+@@ -77,7 +77,7 @@ std::vector<float> ImageEmbedder::embeddingText(const std::string &text)
+                      outputNames.data(), &outputTensorValue, outputNames.size());
+     std::cout << "Chinese-Clip finish inference" << std::endl;
+ 
+-    Math::normalize(result);
++    math::normalize(result);
+ 
+     return result;
+ }
+@@ -121,7 +121,7 @@ std::vector<float> ImageEmbedder::embeddingImage(const std::string& filePath)
+                        outputNames.data(), &outputTensorValue, outputNames.size());
+     std::cout << "Finish embedding image " << filePath << std::endl;
+ 
+-    Math::normalize(result);
++    math::normalize(result);
+ 
+     return result;
+ }
+diff --git a/src/utils/math.cpp b/src/utils/math.cpp
+deleted file mode 100644
+index 9aa0ede..0000000
+--- a/src/utils/math.cpp
++++ /dev/null
+@@ -1,63 +0,0 @@
+-/*
+- * Copyright 2024 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify it under
+- * the terms of the GNU General Public License as published by the Free Software
+- * Foundation, either version 3 of the License, or (at your option) any later
+- * version.
+- *
+- * This program is distributed in the hope that it will be useful, but WITHOUT
+- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+- * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * this program. If not, see <https://www.gnu.org/licenses/>.
+- */
+-
+-#include "math.h"
+-
+-#include <cmath>
+-#include <iostream>
+-
+-// 将向量归一化
+-void Math::normalize(std::vector<float> &vec)
+-{
+-    if (vec.empty()) {
+-        return;
+-    }
+-
+-    float normNum = norm(vec);
+-    if (normNum == 0.0) {
+-        return;
+-    }
+-
+-    for (int i = 0; i < vec.size(); ++i) {
+-        vec[i] = vec[i] / normNum;
+-    }
+-}
+-
+-// 向量取模
+-float Math::norm(const std::vector<float>& vec)
+-{
+-    float norm = 0.0f;
+-    for (const float& element : vec) {
+-        norm += element * element;
+-    }
+-    norm = std::sqrt(norm);
+-
+-    return norm;
+-}
+-
+-void Math::normalizeTokens(std::vector<int64_t> &tokens, int length)
+-{
+-    if (tokens.size() == length) {
+-        return;
+-    } else if (tokens.size() > length) {
+-        tokens[length - 1] = tokens.back();
+-        tokens.resize(length);
+-        std::cerr << "Input tokens exceed " << length
+-                  << ", the tokens will be cropped" << std::endl;
+-    } else {
+-        tokens.resize(52, 0);
+-    }
+-}
+diff --git a/src/utils/math.h b/src/utils/math.h
+deleted file mode 100644
+index ea098e1..0000000
+--- a/src/utils/math.h
++++ /dev/null
+@@ -1,31 +0,0 @@
+-/*
+- * Copyright 2024 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify it under
+- * the terms of the GNU General Public License as published by the Free Software
+- * Foundation, either version 3 of the License, or (at your option) any later
+- * version.
+- *
+- * This program is distributed in the hope that it will be useful, but WITHOUT
+- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+- * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * this program. If not, see <https://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef MATH_H
+-#define MATH_H
+-
+-#include <cstdint>
+-#include <vector>
+-
+-class Math
+-{
+-public:
+-    static void normalize(std::vector<float> &vec);
+-    static float norm(const std::vector<float> &matrix);
+-    static void normalizeTokens(std::vector<int64_t> &tokens, int length);
+-};
+-
+-#endif // MATH_H
+diff --git a/src/utils/parser/officepyparserwrapper.cpp b/src/utils/parser/officepyparserwrapper.cpp
+index 9c09636..acb820b 100644
+--- a/src/utils/parser/officepyparserwrapper.cpp
++++ b/src/utils/parser/officepyparserwrapper.cpp
+@@ -15,9 +15,7 @@
+  */
+ 
+ #include "officepyparserwrapper.h"
+-
+ #include "utils/pythonutil.h"
+-#include "utils/pythonthreadlocker.h"
+ 
+ OfficePyParserWrapper::OfficePyParserWrapper()
+ {
+diff --git a/src/utils/pythonthreadlocker.h b/src/utils/pythonthreadlocker.h
+deleted file mode 100644
+index c5de3e8..0000000
+--- a/src/utils/pythonthreadlocker.h
++++ /dev/null
+@@ -1,35 +0,0 @@
+-/*
+- * Copyright 2024 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify it under
+- * the terms of the GNU General Public License as published by the Free Software
+- * Foundation, either version 3 of the License, or (at your option) any later
+- * version.
+- *
+- * This program is distributed in the hope that it will be useful, but WITHOUT
+- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+- * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * this program. If not, see <https://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef PYTHONTHREADLOCKER_H
+-#define PYTHONTHREADLOCKER_H
+-
+-#include <Python.h>
+-
+-class PythonThreadLocker
+-{
+-public:
+-    PythonThreadLocker() : state(PyGILState_Ensure())
+-    {}
+-    ~PythonThreadLocker() {
+-        PyGILState_Release(state);
+-    }
+-
+-private:
+-    PyGILState_STATE state;
+-};
+-
+-#endif // PYTHONTHREADLOCKER_H
+diff --git a/src/utils/pythonutil.h b/src/utils/pythonutil.h
+index 0b56b2b..5184ff6 100644
+--- a/src/utils/pythonutil.h
++++ b/src/utils/pythonutil.h
+@@ -57,5 +57,17 @@ std::vector<float> convertPythonListToVectorFloat(PyObject* obj);
+ 
+ }
+ 
++class PythonThreadLocker
++{
++public:
++    PythonThreadLocker() : state(PyGILState_Ensure())
++    {}
++    ~PythonThreadLocker() {
++        PyGILState_Release(state);
++    }
++
++private:
++    PyGILState_STATE state;
++};
+ 
+ #endif // PYTHONUTIL_H
+diff --git a/src/utils/textembedder.cpp b/src/utils/textembedder.cpp
+index 7c7a0fa..23ee8c5 100644
+--- a/src/utils/textembedder.cpp
++++ b/src/utils/textembedder.cpp
+@@ -15,7 +15,7 @@
+  */
+ 
+ #include "textembedder.h"
+-#include "math.h"
++#include "utils/utils.h"
+ 
+ #include <iostream>
+ 
+@@ -196,7 +196,7 @@ std::vector<float> TextEmbedder::inference(Token& token, int batch)
+     Ort::RunOptions runOpts(nullptr);
+     session_.Run(runOpts, inputNames.data(), inputTensors.data(), inputTensors.size(),
+                  outputNames.data(), &outputTensor, 1);
+-    Math::normalize(output);
++    math::normalize(output);
+ 
+ 
+     return output;
+diff --git a/src/utils/utils.cpp b/src/utils/utils.cpp
+index a11a744..8ec3005 100644
+--- a/src/utils/utils.cpp
++++ b/src/utils/utils.cpp
+@@ -17,6 +17,8 @@
+ #include "utils.h"
+ 
+ #include <uuid/uuid.h>
++#include <iostream>
++#include <cmath>
+ 
+ namespace utils {
+ 
+@@ -33,3 +35,48 @@ std::string generateUUID()
+ }
+ 
+ }
++
++namespace math
++{
++void normalize(std::vector<float> &vec)
++{
++    if (vec.empty()) {
++        return;
++    }
++
++    float normNum = norm(vec);
++    if (normNum == 0.0) {
++        return;
++    }
++
++    for (int i = 0; i < vec.size(); ++i) {
++        vec[i] = vec[i] / normNum;
++    }
++}
++
++// 向量取模
++float norm(const std::vector<float>& vec)
++{
++    float norm = 0.0f;
++    for (const float& element : vec) {
++        norm += element * element;
++    }
++    norm = std::sqrt(norm);
++
++    return norm;
++}
++
++void normalizeTokens(std::vector<int64_t> &tokens, int length)
++{
++    if (tokens.size() == length) {
++        return;
++    } else if (tokens.size() > length) {
++        tokens[length - 1] = tokens.back();
++        tokens.resize(length);
++        std::cerr << "Input tokens exceed " << length
++                  << ", the tokens will be cropped" << std::endl;
++    } else {
++        tokens.resize(52, 0);
++    }
++}
++} // namespace math
+diff --git a/src/utils/utils.h b/src/utils/utils.h
+index a8edbee..15f46d1 100644
+--- a/src/utils/utils.h
++++ b/src/utils/utils.h
+@@ -16,13 +16,21 @@
+ 
+ #ifndef UTILS_H
+ #define UTILS_H
++
+ #include <string>
++#include <cstdint>
++#include <vector>
++
+ namespace utils {
+ 
+ std::string generateUUID();
+ 
+-
+ }
+ 
++namespace math {
++    void normalize(std::vector<float> &vec);
++    float norm(const std::vector<float> &matrix);
++    void normalizeTokens(std::vector<int64_t> &tokens, int length);
++}
+ 
+ #endif // UTILS_H
+diff --git a/src/utils/vectordb/vectordb.cpp b/src/utils/vectordb/vectordb.cpp
+index 771bf60..225b4e8 100644
+--- a/src/utils/vectordb/vectordb.cpp
++++ b/src/utils/vectordb/vectordb.cpp
+@@ -15,7 +15,6 @@
+  */
+ 
+ #include "vectordb.h"
+-#include "utils/pythonthreadlocker.h"
+ #include "utils/pythonutil.h"
+ 
+ #include <Python.h>

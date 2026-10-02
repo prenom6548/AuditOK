@@ -1,0 +1,223 @@
+From: =?utf-8?b?6IOh5oGS?= <17691252557@163.com>
+Date: Fri, 15 Mar 2024 03:27:35 +0000
+Subject: =?utf-8?b?ITEyMiDlkIzmraXku6PnoIEgTWVyZ2UgcHVsbCByZXF1ZXN0ICExMjIg?=
+ =?utf-8?b?ZnJvbSDog6HmgZIvb3Blbmt5bGluL25pbGU=?=
+
+---
+ .../session/cpp/src/session_service_impl.cpp       | 23 ++++----
+ .../ftpserver/fineftp-server/src/filesystem.cpp    | 67 +++++++++++-----------
+ 2 files changed, 46 insertions(+), 44 deletions(-)
+
+diff --git a/3rdparty/dsoftbus/dsoftbus_build/foundation/communication/dsoftbus/sdk/transmission/session/cpp/src/session_service_impl.cpp b/3rdparty/dsoftbus/dsoftbus_build/foundation/communication/dsoftbus/sdk/transmission/session/cpp/src/session_service_impl.cpp
+index 5ec61ee..0ec7a3c 100644
+--- a/3rdparty/dsoftbus/dsoftbus_build/foundation/communication/dsoftbus/sdk/transmission/session/cpp/src/session_service_impl.cpp
++++ b/3rdparty/dsoftbus/dsoftbus_build/foundation/communication/dsoftbus/sdk/transmission/session/cpp/src/session_service_impl.cpp
+@@ -21,6 +21,7 @@
+ #include "softbus_def.h"
+ #include "softbus_errcode.h"
+ #include "softbus_log.h"
++#include <mutex>
+ 
+ namespace Communication {
+ namespace SoftBus {
+@@ -46,7 +47,7 @@ std::shared_ptr<ISessionService> ISessionService::GetInstance()
+ }
+ 
+ int SessionServiceImpl::CreateSessionServer(const std::string &pkgName, const std::string &sessionName,
+-    std::shared_ptr<ISessionListener> listener)
++                                            std::shared_ptr<ISessionListener> listener)
+ {
+     if (pkgName.empty() || sessionName.empty() || listener == nullptr) {
+         SoftBusLog(SOFTBUS_LOG_TRAN, SOFTBUS_LOG_ERROR, "SessionServiceImpl:CreateSessionServer, invalid parameter");
+@@ -76,19 +77,21 @@ int SessionServiceImpl::RemoveSessionServer(const std::string &pkgName, const st
+ }
+ 
+ std::shared_ptr<Session> SessionServiceImpl::OpenSession(const std::string &mySessionName,
+-    const std::string &peerSessionName, const std::string &peerDeviceId, const std::string &groupId, int flags)
++                                                         const std::string &peerSessionName,
++                                                         const std::string &peerDeviceId, const std::string &groupId,
++                                                         int flags)
+ {
+     SoftBusLog(SOFTBUS_LOG_TRAN, SOFTBUS_LOG_INFO, "SessionServiceImpl::OpenSession");
+     if (mySessionName.empty() || peerSessionName.empty() || peerDeviceId.empty()) {
+         return nullptr;
+     }
+-    int sessionId = OpenSessionInner(mySessionName.c_str(), peerSessionName.c_str(),
+-        peerDeviceId.c_str(), groupId.c_str(), flags);
++    int sessionId =
++        OpenSessionInner(mySessionName.c_str(), peerSessionName.c_str(), peerDeviceId.c_str(), groupId.c_str(), flags);
+     if (sessionId <= 0 || sessionId > MAX_SESSION_ID) {
+         SoftBusLog(SOFTBUS_LOG_TRAN, SOFTBUS_LOG_ERROR, "SessionServiceImpl:OpenSession, invalid sessionId.");
+         return nullptr;
+     }
+-     
++
+     std::shared_ptr<Session> session;
+     std::lock_guard<std::mutex> autoLock(sessionMutex_);
+     auto iter = sessionMap_.find(sessionId);
+@@ -256,7 +259,7 @@ void SessionServiceImpl::MessageReceivedCallback(int sessionId, const void *data
+ }
+ 
+ int SessionServiceImpl::GetSessionListener(int sessionId, std::shared_ptr<ISessionListener> &listener,
+-    std::shared_ptr<Session> &session)
++                                           std::shared_ptr<Session> &session)
+ {
+     std::lock_guard<std::mutex> autoLock(sessionMutex_);
+     auto iter = sessionMap_.find(sessionId);
+@@ -272,8 +275,8 @@ int SessionServiceImpl::GetSessionListener(int sessionId, std::shared_ptr<ISessi
+     return SOFTBUS_ERR;
+ }
+ 
+-int SessionServiceImpl::GetSessionListenerOnSessionOpened(int sessionId,
+-    std::shared_ptr<ISessionListener> &listener, std::shared_ptr<Session> &session)
++int SessionServiceImpl::GetSessionListenerOnSessionOpened(int sessionId, std::shared_ptr<ISessionListener> &listener,
++                                                          std::shared_ptr<Session> &session)
+ {
+     (void)session;
+     char str[SESSION_NAME_SIZE_MAX];
+@@ -290,5 +293,5 @@ int SessionServiceImpl::GetSessionListenerOnSessionOpened(int sessionId,
+     }
+     return SOFTBUS_ERR;
+ }
+-} // namespace SoftBus
+-} // namespace Communication
++}  // namespace SoftBus
++}  // namespace Communication
+diff --git a/3rdparty/ftpserver/fineftp-server/src/filesystem.cpp b/3rdparty/ftpserver/fineftp-server/src/filesystem.cpp
+index 13efb97..6b79e4c 100644
+--- a/3rdparty/ftpserver/fineftp-server/src/filesystem.cpp
++++ b/3rdparty/ftpserver/fineftp-server/src/filesystem.cpp
+@@ -5,15 +5,15 @@
+ #include <mutex>
+ #include <iomanip>
+ #include <dirent.h>
++#include <string.h>
++#include <errno.h>
+ 
+ ////////////////////////////////////////////////////////////////////////////////
+ /// Filesystem
+ ////////////////////////////////////////////////////////////////////////////////
+ 
+-namespace fineftp
+-{
+-namespace Filesystem
+-{
++namespace fineftp {
++namespace Filesystem {
+ 
+ FileStatus::FileStatus(const std::string &path) : path_(path)
+ {
+@@ -21,7 +21,9 @@ FileStatus::FileStatus(const std::string &path) : path_(path)
+     is_ok_ = (error_code == 0);
+ }
+ 
+-FileStatus::~FileStatus() {}
++FileStatus::~FileStatus()
++{
++}
+ 
+ bool FileStatus::isOk() const
+ {
+@@ -34,24 +36,24 @@ FileType FileStatus::type() const
+         return FileType::Unknown;
+ 
+     switch (file_status_.st_mode & S_IFMT) {
+-    case S_IFREG:
+-        return FileType::RegularFile;
+-    case S_IFDIR:
+-        return FileType::Dir;
+-    case S_IFCHR:
+-        return FileType::CharacterDevice;
++        case S_IFREG:
++            return FileType::RegularFile;
++        case S_IFDIR:
++            return FileType::Dir;
++        case S_IFCHR:
++            return FileType::CharacterDevice;
+ #ifndef WIN32
+-    case S_IFBLK:
+-        return FileType::BlockDevice;
+-    case S_IFIFO:
+-        return FileType::Fifo;
+-    case S_IFLNK:
+-        return FileType::SymbolicLink;
+-    case S_IFSOCK:
+-        return FileType::Socket;
+-#endif // !WIN32
+-    default:
+-        return FileType::Unknown;
++        case S_IFBLK:
++            return FileType::BlockDevice;
++        case S_IFIFO:
++            return FileType::Fifo;
++        case S_IFLNK:
++            return FileType::SymbolicLink;
++        case S_IFSOCK:
++            return FileType::Socket;
++#endif  // !WIN32
++        default:
++            return FileType::Unknown;
+     }
+ }
+ 
+@@ -157,10 +159,8 @@ std::string FileStatus::timeString() const
+     // struct tm* file_timeinfo = localtime(&file_status_.st_ctime);
+     // int file_year = file_timeinfo->tm_year;
+ 
+-
+-
+-    std::tm now_timeinfo {};
+-    std::tm file_timeinfo {};
++    std::tm now_timeinfo{};
++    std::tm file_timeinfo{};
+ 
+     localtime_r(&now_time_t, &now_timeinfo);
+     localtime_r(&file_status_.st_ctime, &file_timeinfo);
+@@ -168,7 +168,6 @@ std::string FileStatus::timeString() const
+     int current_year = now_timeinfo.tm_year;
+     int file_year = file_timeinfo.tm_year;
+ 
+-
+     // Hardcoded english month names, because returning a localized string by strftime here may break certain FTP
+     // clients
+     static std::string month_names[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+@@ -247,9 +246,9 @@ std::string cleanPath(const std::string &path, bool windows_path, const char out
+          *    \\Host
+          */
+ 
+-        std::regex win_local_drive("^[a-zA-Z]\\:"); // Local drive
++        std::regex win_local_drive("^[a-zA-Z]\\:");  // Local drive
+         std::regex win_network_drive(
+-            "^[/\\\\]{2}[^/\\\\]+"); // Network path starting with two slashes or backslashes followed by a hostname
++            "^[/\\\\]{2}[^/\\\\]+");  // Network path starting with two slashes or backslashes followed by a hostname
+ 
+         if (std::regex_search(path, win_local_drive)) {
+             // Windows local drive, consisting of drive-letter and colon
+@@ -257,7 +256,7 @@ std::string cleanPath(const std::string &path, bool windows_path, const char out
+         } else if (std::regex_search(path, win_network_drive)) {
+             // Window network drive, consisting of \\ and hostname
+             size_t sep_pos = path.find_first_of("/\\", 2);
+-            absolute_root = path.substr(0, sep_pos); // If no seperator was found, this will return the entire string
++            absolute_root = path.substr(0, sep_pos);  // If no seperator was found, this will return the entire string
+         }
+     } else {
+         // On Unix there is only one root and it is '/'
+@@ -328,8 +327,8 @@ std::string cleanPath(const std::string &path, bool windows_path, const char out
+     path_ss << absolute_root;
+ 
+     if (windows_path && !absolute_root.empty()) {
+-        path_ss
+-            << output_separator; // The windows drive must be followed by a separator. When referencing a network drive.
++        path_ss << output_separator;  // The windows drive must be followed by a separator. When referencing a network
++                                      // drive.
+     }
+ 
+     auto comp_it = components.begin();
+@@ -351,5 +350,5 @@ std::string cleanPathNative(const std::string &path)
+     char separator = '/';
+     return cleanPath(path, windows_path, separator);
+ }
+-} // namespace Filesystem
+-} // namespace fineftp
++}  // namespace Filesystem
++}  // namespace fineftp

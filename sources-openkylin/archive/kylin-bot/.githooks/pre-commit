@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+if command -v gitleaks >/dev/null 2>&1; then
+  gitleaks protect --staged --redact
+else
+  echo "warning: gitleaks not found; skipping staged secret scan" >&2
+fi
+
+staged_rust_files=()
+while IFS= read -r file; do
+  staged_rust_files+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACMR -- '*.rs')
+
+if [ "${#staged_rust_files[@]}" -eq 0 ]; then
+  exit 0
+fi
+
+for file in "${staged_rust_files[@]}"; do
+  if ! git diff --quiet -- "$file"; then
+    echo "error: staged Rust file has unstaged changes: $file" >&2
+    echo "hint: stage the full file or stash local edits before commit so auto-formatting is safe." >&2
+    exit 1
+  fi
+done
+
+echo "==> pre-commit: formatting Rust sources..."
+cargo fmt --all
+git add -- "${staged_rust_files[@]}"

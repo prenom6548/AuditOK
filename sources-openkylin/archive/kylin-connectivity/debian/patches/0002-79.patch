@@ -1,0 +1,959 @@
+From: =?utf-8?b?6IOh5oGS?= <17691252557@163.com>
+Date: Mon, 31 Jul 2023 01:45:44 +0000
+Subject: =?utf-8?b?ITc5IOWQjOatpeS7o+eggSBNZXJnZSBwdWxsIHJlcXVlc3QgITc5IGZy?=
+ =?utf-8?b?b20g6IOh5oGSL29wZW5reWxpbi95YW5ndHpl?=
+
+---
+ common/fileinfo.cpp                                | 146 ++++++++++++++++++++-
+ common/fileinfo.h                                  |  51 ++++---
+ common/tablemodelistener.cpp                       |   2 +-
+ connectmanage/connectionservice.cpp                |   2 +
+ filesearch/database/searchdatabase.cpp             |   9 +-
+ main.cpp                                           |   2 +-
+ projection/device/baseserver.cpp                   |  20 ++-
+ .../device/controller/inputconvert/controlmsg.cpp  |  94 ++++++-------
+ projection/device/deviceui/videoform.cpp           |   9 +-
+ projection/devicemanage/devicemanage.cpp           |  12 +-
+ projection/uibase/videotitle.cpp                   |   1 -
+ task.sh                                            |   7 -
+ ui/connectinterface/connectinterface.cpp           |   1 -
+ ui/connectinterface/devicecodeitem.cpp             |  51 +++----
+ ui/connectinterface/devicecodeitem.h               |   8 +-
+ ui/connectinterface/devicecodewidget.cpp           |  11 +-
+ ui/connectinterface/devicecodewidget.h             |   3 +-
+ ui/filemanageview/filemanagewin.cpp                |   5 +-
+ ui/mainwindow.cpp                                  |  18 +--
+ 19 files changed, 285 insertions(+), 167 deletions(-)
+
+diff --git a/common/fileinfo.cpp b/common/fileinfo.cpp
+index 9d84504..cf02de7 100644
+--- a/common/fileinfo.cpp
++++ b/common/fileinfo.cpp
+@@ -6,6 +6,11 @@
+ 
+ QMap<QString, QString> FileInfo::mimeMapTable = FileInfo::initMimeMap();
+ QMap<QString, QString> FileInfo::iconNameMapTable = FileInfo::initIconNameMap();
++QSet<QString> FileInfo::imageTypeSet = FileInfo::initimageSet();
++QSet<QString> FileInfo::textTypeSet = FileInfo::inittextSet();
++QSet<QString> FileInfo::audioTypeSet = FileInfo::initaudioSet();
++QSet<QString> FileInfo::videoTypeSet = FileInfo::initvideoSet();
++
+ QMap<QString, QString> FileInfo::initMimeMap()
+ {
+     QMap<QString, QString> map;
+@@ -151,6 +156,7 @@ QMap<QString, QString> FileInfo::initMimeMap()
+     map.insert("z", "application/x-compress");
+     map.insert("zip", "application/x-zip-compressed");
+     map.insert("pdf", "application/pdf");
++    map.insert("torrent", "application/x-bittorrent");
+     return map;
+ }
+ 
+@@ -189,11 +195,142 @@ QMap<QString, QString> FileInfo::initIconNameMap()
+     map.insert("application/x-compress", "application-x-compress");
+     map.insert("application/x-zip-compressed", "application-x-compress");
+     map.insert("application/pdf", "application-x-pdf");
++    map.insert("application/x-bittorrent", "application-x-bittorrent");
+     // inode/directory
+     map.insert("inode/directory", "folder");
+     return map;
+ }
+ 
++QSet<QString> FileInfo::initimageSet()
++{
++    QSet<QString> set;
++    set << "bmp"
++        << "gif"
++        << "jpg"
++        << "jpeg"
++        << "png"
++        << "pbm"
++        << "pgm"
++        << "ppm"
++        << "xbm"
++        << "xpm"
++        << "svg"
++        << "dds"
++        << "icns"
++        << "jp2"
++        << "mng"
++        << "tga"
++        << "tiff"
++        << "tif"
++        << "wbmp"
++        << "webp";
++    return set;
++}
++
++QSet<QString> FileInfo::inittextSet()
++{
++    QSet<QString> set;
++    set << "txt"
++        << "rar"
++        << "java"
++        << "c"
++        << "conf"
++        << "cpp"
++        << "c"
++        << "h"
++        << "htm"
++        << "html"
++        << "java"
++        << "log"
++        << "prop"
++        << "rc"
++        << "sh"
++        << "rc"
++        << "xml";
++    return set;
++}
++QSet<QString> FileInfo::initaudioSet()
++{
++    QSet<QString> set;
++    set << "mp2"
++        << "mp3"
++        << "ogg"
++        << "oga"
++        << "wav"
++        << "wma"
++        << "aac"
++        << "ac3"
++        << "dts"
++        << "ra"
++        << "ape"
++        << "flac"
++        << "thd"
++        << "mka"
++        << "m4a"
++        << "opus"
++        << "m3u"
++        << "m4b"
++        << "m4p"
++        << "mpga"
++        << "aif"
++        << "mmf";
++    return set;
++}
++QSet<QString> FileInfo::initvideoSet()
++{
++    QSet<QString> set;
++    set << "avi"
++        << "vfw"
++        << "divx"
++        << "mpg"
++        << "mpe"
++        << "mpeg"
++        << "mpg"
++        << "mpg4"
++        << "m1v"
++        << "m2v"
++        << "mpv"
++        << "dv"
++        << "3gp"
++        << "3g2"
++        << "mov"
++        << "mp4"
++        << "m4v"
++        << "dat"
++        << "vcd"
++        << "ogm"
++        << "ogv"
++        << "ogx"
++        << "asf"
++        << "wmv"
++        << "iso"
++        << "vob"
++        << "mkv"
++        << "nsv"
++        << "ram"
++        << "flv"
++        << "rm"
++        << "swf"
++        << "ts"
++        << "rmvb"
++        << "dvr-ms"
++        << "m2t"
++        << "m2ts"
++        << "mts"
++        << "rec"
++        << "wtv"
++        << "f4v"
++        << "hdmov"
++        << "webm"
++        << "vp8"
++        << "bik"
++        << "smk"
++        << "wtv"
++        << "part"
++        << "m4u"
++        << "h264";
++    return set;
++}
+ FileInfo::FileInfo()
+ {
+     m_id = 0;
+@@ -359,7 +496,6 @@ void FileInfo::setDate(const QString &date)
+ }
+ QString FileInfo::getContentType() const
+ {
+-    qDebug() << m_name << m_type << m_contentType;
+     return m_contentType;
+ }
+ 
+@@ -368,16 +504,16 @@ FileInfo::FileType FileInfo::judgmentType(QString fileName)
+     QMimeDatabase db;
+     QMimeType mime = db.mimeTypeForFile(fileName);
+     QString fileType = fileName.mid(fileName.lastIndexOf(".") + 1, fileName.size());
+-    if (mime.name().startsWith("text/")) {
++    if (mime.name().startsWith("text/") || textTypeSet.contains(fileType)) {
+         // 文本文件 text/plain, text/html, text/css, text/javascript
+         return FileType::Txt;
+-    } else if (mime.name().startsWith("image/")) {
++    } else if (mime.name().startsWith("image/") || imageTypeSet.contains(fileType)) {
+         // 图片 image/gif, image/png, image/jpeg, image/bmp, image/webp
+         return FileType::Image;
+-    } else if (mime.name().startsWith("audio/")) {
++    } else if (mime.name().startsWith("audio/") || audioTypeSet.contains(fileType)) {
+         // 音频 audio/wav, audio/mpeg, audio/midi, audio/webm, audio/ogg
+         return FileType::Audio;
+-    } else if (mime.name().startsWith("video/")) {
++    } else if (mime.name().startsWith("video/") || videoTypeSet.contains(fileType)) {
+         // 视频 video/mp4, video/x-flv, video/webm, video/ogg
+         return FileType::Video;
+     } else if (fileType == "doc" || fileType == "docx" || fileType == "wps") {
+diff --git a/common/fileinfo.h b/common/fileinfo.h
+index e6f74d3..85f9c0f 100644
+--- a/common/fileinfo.h
++++ b/common/fileinfo.h
+@@ -5,6 +5,7 @@
+ #include <QVariant>
+ #include <QProcess>
+ #include <QtDBus>
++#include <QSet>
+ 
+ #define FILEINFO_CONTENT_TYPE_IMAGE "image"
+ #define FILEINFO_CONTENT_TYPE_VIDEO "video"
+@@ -16,17 +17,17 @@ class FileInfo
+ {
+ public:
+     enum FileType {
+-        Dir = 0, // 文件夹
+-        Txt,     // 文本文件
+-        Audio,   // 音频
+-        Video,   // 视频
+-        Image,   // 图片
+-        Doc,     // word
+-        Pdf,     // pdf
+-        Excel,   // excel
+-        Ppt,     // ppt
+-        Zip,     // zip
+-        Other,   // 其他
++        Dir = 0,  // 文件夹
++        Txt,      // 文本文件
++        Audio,    // 音频
++        Video,    // 视频
++        Image,    // 图片
++        Doc,      // word
++        Pdf,      // pdf
++        Excel,    // excel
++        Ppt,      // ppt
++        Zip,      // zip
++        Other,    // 其他
+     };
+ 
+ public:
+@@ -69,6 +70,10 @@ public:
+     static void fileOpen(QString fileName);
+     static QMap<QString, QString> initMimeMap();
+     static QMap<QString, QString> initIconNameMap();
++    static QSet<QString> initimageSet();
++    static QSet<QString> inittextSet();
++    static QSet<QString> initaudioSet();
++    static QSet<QString> initvideoSet();
+     static QString contentType(QString flag);
+     static QString iconName(QString flag);
+ 
+@@ -78,17 +83,21 @@ public:
+     }
+ 
+ private:
+-    int m_id = 0;                 // 文件id
+-    QString m_name = "";          // 文件名
+-    QString m_path = "";          // 文件路径
+-    qint64 m_size = 0;            // 文件大小
+-    int m_type = 0;               // 文件类型
+-    QString m_date = "";          // 时间
+-    QString m_dateTime = "";      // 详细时间
+-    QString m_thumbnailPath = ""; // 缩略图路径
+-    QString m_contentType = "";   // 文件类型描述
++    int m_id = 0;                  // 文件id
++    QString m_name = "";           // 文件名
++    QString m_path = "";           // 文件路径
++    qint64 m_size = 0;             // 文件大小
++    int m_type = 0;                // 文件类型
++    QString m_date = "";           // 时间
++    QString m_dateTime = "";       // 详细时间
++    QString m_thumbnailPath = "";  // 缩略图路径
++    QString m_contentType = "";    // 文件类型描述
+     static QMap<QString, QString> mimeMapTable;
+     static QMap<QString, QString> iconNameMapTable;
++    static QSet<QString> imageTypeSet;
++    static QSet<QString> textTypeSet;
++    static QSet<QString> audioTypeSet;
++    static QSet<QString> videoTypeSet;
+ };
+ Q_DECLARE_METATYPE(FileInfo)
+-#endif // FILEINFO_H
++#endif  // FILEINFO_H
+diff --git a/common/tablemodelistener.cpp b/common/tablemodelistener.cpp
+index 5858c9d..3249ee5 100644
+--- a/common/tablemodelistener.cpp
++++ b/common/tablemodelistener.cpp
+@@ -43,7 +43,7 @@ QString TableModeListener::getRotations()
+     if (m_modeInterface && m_modeInterface->isValid()) {
+         QDBusPendingReply<QString> resultMode = m_modeInterface->call("get_current_rotation");
+         if (resultMode.isValid()) {
+-            qDebug() << "Table value " << resultMode.value();
++            qInfo() << "Table value " << resultMode.value();
+             return resultMode.value();
+         }
+     }
+diff --git a/connectmanage/connectionservice.cpp b/connectmanage/connectionservice.cpp
+index a090b42..ad5a1e8 100644
+--- a/connectmanage/connectionservice.cpp
++++ b/connectmanage/connectionservice.cpp
+@@ -803,8 +803,10 @@ bool ConnectionService::sendBusyMessage()
+ 
+ void ConnectionService::openWriteFile()
+ {
++#ifdef DEBUG
+     qDebug() << "write file " << QString::fromStdString(m_filesInfo.file_info(m_currentFileIndex).name())
+              << m_filesInfo.file_info(m_currentFileIndex).size();
++#endif  // !DEBUG
+     m_writeSize = 0;
+     m_writeFile = new QFile(m_fileSavePath + QString::fromStdString(m_filesInfo.file_info(m_currentFileIndex).name()));
+     bool openFlag = m_writeFile->open(QIODevice::WriteOnly);
+diff --git a/filesearch/database/searchdatabase.cpp b/filesearch/database/searchdatabase.cpp
+index dad2aa0..53d60ea 100644
+--- a/filesearch/database/searchdatabase.cpp
++++ b/filesearch/database/searchdatabase.cpp
+@@ -19,14 +19,13 @@ const QString DATEBASE_NAME = "searchbase";
+ 
+ SearchDataBase::SearchDataBase(QObject *parent) : QObject(parent)
+ {
+-    qDebug() << QSqlDatabase::drivers();  // 当前环境支持哪些数据库
+-    QMutexLocker lockData(&m_mutex);      // 加锁，函数执行完后自动解锁
++    qInfo() << QSqlDatabase::drivers();  // 当前环境支持哪些数据库
++    QMutexLocker lockData(&m_mutex);     // 加锁，函数执行完后自动解锁
+     m_database = QSqlDatabase::addDatabase("QSQLITE", DATEBASE_NAME);
+ }
+ 
+ SearchDataBase::~SearchDataBase()
+ {
+-    qDebug() << "析构";
+     if (true == m_databaseOpenFlag) {
+         sqlite3_shutdown();
+         m_database.close();
+@@ -88,10 +87,10 @@ int SearchDataBase::creatVirtualDBTable()
+     queryRes &= creatVTable.exec("insert into virtualSearchInfo select * from search");
+ 
+     if (queryRes) {
+-        qDebug() << "creat virtual table success！";
++        qInfo() << "creat virtual table success！";
+         return DB_OP_SUCC;
+     } else {
+-        qDebug() << "creat virtual table error：" << creatVTable.lastError().text();
++        qInfo() << "creat virtual table error：" << creatVTable.lastError().text();
+         return CREATE_TABLE_FAILED;
+     }
+ }
+diff --git a/main.cpp b/main.cpp
+index 2dff00f..af5c962 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -48,7 +48,7 @@ int main(int argc, char *argv[])
+     app.setWindowIcon(QIcon::fromTheme("kylin-connectivity"));
+ 
+     if (app.isRunning()) {
+-        qDebug() << "kylin-connectivity is already running!";
++        qWarning() << "kylin-connectivity is already running!";
+         app.sendMessage("running , 4000");
+         return 0;
+     }
+diff --git a/projection/device/baseserver.cpp b/projection/device/baseserver.cpp
+index 1477fe0..562d9fc 100644
+--- a/projection/device/baseserver.cpp
++++ b/projection/device/baseserver.cpp
+@@ -10,12 +10,14 @@ BaseServer::BaseServer(QObject *parent) : QObject(parent)
+     connect(&m_serverSocket, &TcpServer::sigSocketDisconnect, this, &BaseServer::sigSocketDisconnect);
+ }
+ 
+-BaseServer::~BaseServer() {}
++BaseServer::~BaseServer()
++{
++}
+ 
+ void BaseServer::onInputChinese(const QString &input)
+ {
+     if (m_inputSocket && m_inputSocket->isValid()) {
+-        qDebug() << "input" << input;
++        qInfo() << "input" << input;
+         std::string inputData = input.toStdString();
+         std::string data = "";
+         ChineseInputMessage message;
+@@ -39,11 +41,17 @@ BaseServer::ServerParams BaseServer::getParams()
+     return m_params;
+ }
+ 
+-bool BaseServer::start(BaseServer::ServerParams params) {}
++bool BaseServer::start(BaseServer::ServerParams params)
++{
++}
+ 
+-bool BaseServer::connectTo() {}
++bool BaseServer::connectTo()
++{
++}
+ 
+-void BaseServer::onConnectTimer() {}
++void BaseServer::onConnectTimer()
++{
++}
+ 
+ void BaseServer::timerEvent(QTimerEvent *event)
+ {
+@@ -82,7 +90,7 @@ bool BaseServer::readInfo(VideoSocket *videoSocket, QString &deviceName, QSize &
+         qInfo("Could not retrieve device information");
+         return false;
+     }
+-    buf[DEVICE_NAME_FIELD_LENGTH - 1] = '\0'; // in case the client sends garbage
++    buf[DEVICE_NAME_FIELD_LENGTH - 1] = '\0';  // in case the client sends garbage
+     // strcpy is safe here, since name contains at least DEVICE_NAME_FIELD_LENGTH bytes
+     // and strlen(buf) < DEVICE_NAME_FIELD_LENGTH
+     deviceName = (char *)buf;
+diff --git a/projection/device/controller/inputconvert/controlmsg.cpp b/projection/device/controller/inputconvert/controlmsg.cpp
+index 5a59e28..36b8c7e 100644
+--- a/projection/device/controller/inputconvert/controlmsg.cpp
++++ b/projection/device/controller/inputconvert/controlmsg.cpp
+@@ -101,7 +101,7 @@ void ControlMsg::writePosition(QBuffer &buffer, const QRect &value)
+ quint16 ControlMsg::toFixedPoint16(float f)
+ {
+     Q_ASSERT(f >= 0.0f && f <= 1.0f);
+-    quint32 u = f * 0x1p16f; // 2^16
++    quint32 u = f * 0x1p16f;  // 2^16
+     if (u >= 0xffff) {
+         u = 0xffff;
+     }
+@@ -116,52 +116,52 @@ QByteArray ControlMsg::serializeData()
+     buffer.putChar(m_data.type);
+ 
+     switch (m_data.type) {
+-    case CMT_INJECT_KEYCODE:
+-        buffer.putChar(m_data.injectKeycode.action);
+-        BufferUtil::write32(buffer, m_data.injectKeycode.keycode);
+-        BufferUtil::write32(buffer, m_data.injectKeycode.repeat);
+-        BufferUtil::write32(buffer, m_data.injectKeycode.metastate);
+-        break;
+-    case CMT_INJECT_TEXT:
+-        BufferUtil::write32(buffer, static_cast<quint32>(strlen(m_data.injectText.text)));
+-        buffer.write(m_data.injectText.text, strlen(m_data.injectText.text));
+-        break;
+-    case CMT_INJECT_TOUCH: {
+-        buffer.putChar(m_data.injectTouch.action);
+-        BufferUtil::write64(buffer, m_data.injectTouch.id);
+-        writePosition(buffer, m_data.injectTouch.position);
+-        quint16 pressure = toFixedPoint16(m_data.injectTouch.pressure);
+-        BufferUtil::write16(buffer, pressure);
+-        BufferUtil::write32(buffer, m_data.injectTouch.buttons);
+-    } break;
+-    case CMT_INJECT_SCROLL:
+-        writePosition(buffer, m_data.injectScroll.position);
+-        BufferUtil::write32(buffer, m_data.injectScroll.hScroll);
+-        BufferUtil::write32(buffer, m_data.injectScroll.vScroll);
+-        break;
+-    case CMT_BACK_OR_SCREEN_ON:
+-        buffer.putChar(m_data.backOrScreenOn.action);
+-        break;
+-    case CMT_GET_CLIPBOARD:
+-        buffer.putChar(m_data.getClipboard.copyKey);
+-        break;
+-    case CMT_SET_CLIPBOARD:
+-        BufferUtil::write64(buffer, m_data.setClipboard.sequence);
+-        buffer.putChar(!!m_data.setClipboard.paste);
+-        BufferUtil::write32(buffer, static_cast<quint32>(strlen(m_data.setClipboard.text)));
+-        buffer.write(m_data.setClipboard.text, strlen(m_data.setClipboard.text));
+-        break;
+-    case CMT_SET_SCREEN_POWER_MODE:
+-        buffer.putChar(m_data.setScreenPowerMode.mode);
+-        break;
+-    case CMT_EXPAND_NOTIFICATION_PANEL:
+-    case CMT_EXPAND_SETTINGS_PANEL:
+-    case CMT_COLLAPSE_PANELS:
+-    case CMT_ROTATE_DEVICE:
+-        break;
+-    default:
+-        qDebug() << "Unknown event type:" << m_data.type;
+-        break;
++        case CMT_INJECT_KEYCODE:
++            buffer.putChar(m_data.injectKeycode.action);
++            BufferUtil::write32(buffer, m_data.injectKeycode.keycode);
++            BufferUtil::write32(buffer, m_data.injectKeycode.repeat);
++            BufferUtil::write32(buffer, m_data.injectKeycode.metastate);
++            break;
++        case CMT_INJECT_TEXT:
++            BufferUtil::write32(buffer, static_cast<quint32>(strlen(m_data.injectText.text)));
++            buffer.write(m_data.injectText.text, strlen(m_data.injectText.text));
++            break;
++        case CMT_INJECT_TOUCH: {
++            buffer.putChar(m_data.injectTouch.action);
++            BufferUtil::write64(buffer, m_data.injectTouch.id);
++            writePosition(buffer, m_data.injectTouch.position);
++            quint16 pressure = toFixedPoint16(m_data.injectTouch.pressure);
++            BufferUtil::write16(buffer, pressure);
++            BufferUtil::write32(buffer, m_data.injectTouch.buttons);
++        } break;
++        case CMT_INJECT_SCROLL:
++            writePosition(buffer, m_data.injectScroll.position);
++            BufferUtil::write32(buffer, m_data.injectScroll.hScroll);
++            BufferUtil::write32(buffer, m_data.injectScroll.vScroll);
++            break;
++        case CMT_BACK_OR_SCREEN_ON:
++            buffer.putChar(m_data.backOrScreenOn.action);
++            break;
++        case CMT_GET_CLIPBOARD:
++            buffer.putChar(m_data.getClipboard.copyKey);
++            break;
++        case CMT_SET_CLIPBOARD:
++            BufferUtil::write64(buffer, m_data.setClipboard.sequence);
++            buffer.putChar(!!m_data.setClipboard.paste);
++            BufferUtil::write32(buffer, static_cast<quint32>(strlen(m_data.setClipboard.text)));
++            buffer.write(m_data.setClipboard.text, strlen(m_data.setClipboard.text));
++            break;
++        case CMT_SET_SCREEN_POWER_MODE:
++            buffer.putChar(m_data.setScreenPowerMode.mode);
++            break;
++        case CMT_EXPAND_NOTIFICATION_PANEL:
++        case CMT_EXPAND_SETTINGS_PANEL:
++        case CMT_COLLAPSE_PANELS:
++        case CMT_ROTATE_DEVICE:
++            break;
++        default:
++            qInfo() << "Unknown event type:" << m_data.type;
++            break;
+     }
+     buffer.close();
+     return byteArray;
+diff --git a/projection/device/deviceui/videoform.cpp b/projection/device/deviceui/videoform.cpp
+index dd1ee52..aba3ca2 100644
+--- a/projection/device/deviceui/videoform.cpp
++++ b/projection/device/deviceui/videoform.cpp
+@@ -416,12 +416,11 @@ bool VideoForm::eventFilter(QObject *watch, QEvent *event)
+             case QEvent::InputMethod: {
+                 this->changeInputBoxPos();
+                 QInputMethodEvent *inputMethodEvent = (QInputMethodEvent *)event;
+-                if (!hasFocus()) {  //失去焦点时，输入法事件优先于FocusOut事件被处理
+-                    inputMethodEvent->setCommitString("");  //将失去焦点后提交的字符串设置为空
++                if (!hasFocus()) {  // 失去焦点时，输入法事件优先于FocusOut事件被处理
++                    inputMethodEvent->setCommitString("");  // 将失去焦点后提交的字符串设置为空
+                 } else {
+                     QString commitText = inputMethodEvent->commitString();
+                     if (!commitText.isEmpty()) {
+-                        qDebug() << "commitText = " << commitText;
+                         Q_EMIT m_device->sigInputChinese(commitText);
+                     }
+                 }
+@@ -686,7 +685,7 @@ void VideoForm::changeInputBoxPos()
+     if (testAttribute(Qt::WA_InputMethodEnabled)) {
+         QTransform t;
+         QPoint p = cursorPoint();
+-        t.translate(p.x() - this->width() / 2, p.y() - this->height());  //平移x,y
++        t.translate(p.x() - this->width() / 2, p.y() - this->height());  // 平移x,y
+         QGuiApplication::inputMethod()->setInputItemTransform(t);
+         QGuiApplication::inputMethod()->setInputItemRectangle(this->rect());
+         QGuiApplication::inputMethod()->update(Qt::ImQueryInput);
+@@ -700,7 +699,7 @@ QPoint VideoForm::cursorPoint()
+                                                      m_inputY * this->height() / m_frameSize.height()));
+ 
+     point.setY(point.y() + 30);
+-    //如果输入坐标位置 + 50 > 屏幕分辨率端高度，此时输入法框会盖住输入框，需要进行如下处理，其中使用的50和150待优化
++    // 如果输入坐标位置 + 50 > 屏幕分辨率端高度，此时输入法框会盖住输入框，需要进行如下处理，其中使用的50和150待优化
+     const QDesktopWidget *desktop = QApplication::desktop();
+     if (desktop) {
+         QRect rect = desktop->screenGeometry();
+diff --git a/projection/devicemanage/devicemanage.cpp b/projection/devicemanage/devicemanage.cpp
+index 35a81a0..7fc70a4 100644
+--- a/projection/devicemanage/devicemanage.cpp
++++ b/projection/devicemanage/devicemanage.cpp
+@@ -13,8 +13,7 @@
+ 
+ const int DM_MAX_DEVICES_NUM = 1;
+ 
+-namespace KProjection
+-{
++namespace KProjection {
+ 
+ DeviceManage::DeviceManage(QObject *parent) : QObject(parent)
+ {
+@@ -34,7 +33,6 @@ DeviceManage::DeviceManage(QObject *parent) : QObject(parent)
+ 
+ DeviceManage::~DeviceManage()
+ {
+-    qDebug() << "delete DeviceManage";
+     disconnectDevice();
+     Stream::deInit();
+ }
+@@ -69,7 +67,7 @@ bool DeviceManage::connectDevice(BaseDevice::DeviceParams params)
+ bool DeviceManage::connectWifiDevice(BaseDevice::DeviceParams params)
+ {
+     m_params = params;
+-    qDebug() << "connect Wifi Device";
++    qInfo() << "connect Wifi Device";
+     if (m_params.serial.trimmed().isEmpty()) {
+         qWarning() << "can not find device";
+         return false;
+@@ -99,9 +97,7 @@ void DeviceManage::initDeviceSignals()
+             m_deviceMap[m_params.serial] = m_device;
+             Q_EMIT sigScreenConnected();
+         });
+-        connect(m_device, &BaseDevice::sigVideoClose, this, [this]() {
+-            disconnectDevice();
+-        });
++        connect(m_device, &BaseDevice::sigVideoClose, this, [this]() { disconnectDevice(); });
+     }
+ }
+ 
+@@ -255,4 +251,4 @@ void DeviceManage::onKeyEvent(const QKeyEvent *from, const QSize &frameSize, con
+     }
+ }
+ 
+-} // namespace KProjection
+\ No newline at end of file
++}  // namespace KProjection
+\ No newline at end of file
+diff --git a/projection/uibase/videotitle.cpp b/projection/uibase/videotitle.cpp
+index 0837f53..df7724c 100644
+--- a/projection/uibase/videotitle.cpp
++++ b/projection/uibase/videotitle.cpp
+@@ -29,7 +29,6 @@ VideoTitle::VideoTitle(QWidget *parent) : QWidget(parent)
+         m_fontData = new QGSettings(UKUI_STYLE_GSETTING_PATH);
+         connect(m_fontData, &QGSettings::changed, this, [=](const QString &key) {
+             if (key == "systemFont") {
+-                qDebug() << "The font changes...";
+                 double fontSize = kdk::GsettingMonitor::getSystemFontSize().toDouble();
+                 QFont font;
+                 font.setPointSizeF(fontSize);
+diff --git a/task.sh b/task.sh
+index 8f637a2..1559424 100755
+--- a/task.sh
++++ b/task.sh
+@@ -6,10 +6,3 @@ ln -sf '/opt/kylin-connectivity/tools/anti-control-server' '/usr/bin/anti-contro
+ ln -sf '/opt/kylin-connectivity/tools/anti-control-client' '/usr/bin/anti-control-client'
+ ln -sf '/opt/kylin-connectivity/connectivity_softbus_server' '/usr/bin/connectivity_softbus_server'
+ ln -sf '/opt/kylin-connectivity/connectivity_softbus_client' '/usr/bin/connectivity_softbus_client'
+-mv /opt/kylin-connectivity/tools/libffmpeg /opt/kylin-connectivity/tools/libffmpeg.so
+-mv /opt/kylin-connectivity/tools/libvulkan /opt/kylin-connectivity/tools/libvulkan.so
+-mv /opt/kylin-connectivity/tools/libvk_swiftshader /opt/kylin-connectivity/tools/libvk_swiftshader.so
+-mv /opt/kylin-connectivity/tools/libGLESv2 /opt/kylin-connectivity/tools/libGLESv2.so
+-mv /opt/kylin-connectivity/tools/libEGL /opt/kylin-connectivity/tools/libEGL.so
+-mv /opt/kylin-connectivity/tools/swiftshader/libEGL /opt/kylin-connectivity/tools/libEGL.so
+-mv /opt/kylin-connectivity/tools/swiftshader/libGLESv2 /opt/kylin-connectivity/tools/libGLESv2.so
+diff --git a/ui/connectinterface/connectinterface.cpp b/ui/connectinterface/connectinterface.cpp
+index f1b77f4..076c257 100644
+--- a/ui/connectinterface/connectinterface.cpp
++++ b/ui/connectinterface/connectinterface.cpp
+@@ -81,7 +81,6 @@ void ConnectInterface::setTheme(PublicAttributes::Theme theme)
+     m_backgroundWin->setTheme(theme);
+     m_mobileConnectWin->setTheme(theme);
+     m_searchWin->setTheme(theme);
+-    m_deviceCodeWidget->setTheme(theme);
+ }
+ 
+ void ConnectInterface::setInterFaceCodeInfo(const QString wifiInfo)
+diff --git a/ui/connectinterface/devicecodeitem.cpp b/ui/connectinterface/devicecodeitem.cpp
+index 938cc9a..da33165 100644
+--- a/ui/connectinterface/devicecodeitem.cpp
++++ b/ui/connectinterface/devicecodeitem.cpp
+@@ -1,6 +1,8 @@
+ #include "devicecodeitem.h"
+ #include <QDebug>
+ #include <QRegExpValidator>
++#include <QVariant>
++#include <QFont>
+ 
+ const int LINE_WIDTH = 56;
+ const int LINE_HEIGHT = 56;
+@@ -8,53 +10,30 @@ const QString PLACEHOLDER = " ";
+ 
+ DeviceCodeItem::DeviceCodeItem(QWidget *parent) : QLineEdit(parent)
+ {
++    QFont font;
++    font.setPointSizeF(26);
++    setFont(font);
+     setFixedSize(LINE_WIDTH, LINE_HEIGHT);
+     setFocusPolicy(Qt::NoFocus);
+     setAlignment(Qt::AlignCenter);
+     setValidator(new QRegExpValidator(QRegExp("[a-zA-Z0-9]+$")));
+     setCursor(Qt::ArrowCursor);
++    setReadOnly(true);
+     setText(PLACEHOLDER);
+     connect(this, &DeviceCodeItem::textChanged, this, &DeviceCodeItem::slotTextChanged);
+     connect(this, &DeviceCodeItem::cursorPositionChanged, this, &DeviceCodeItem::slotCursorPositionChanged);
+ }
+ 
+-void DeviceCodeItem::setTheme(PublicAttributes::Theme theme)
+-{
+-    m_theme = theme;
+-    switch (m_theme) {
+-    case PublicAttributes::Theme::Light: {
+-        setStyleSheet("background:#E6E6E6;font-size:26px;border-radius:8px");
+-    } break;
+-    case PublicAttributes::Theme::Dark: {
+-        setStyleSheet("background:#373737;font-size:26px;border-radius:8px");
+-    } break;
+-    }
+-}
+-
+ void DeviceCodeItem::setInput()
+ {
++    m_isInput = true;
+     setFocus();
+-    switch (m_theme) {
+-    case PublicAttributes::Theme::Light: {
+-        setStyleSheet("background:#E6E6E6;font-size:26px;border:2px solid #3790FA;border-radius:8px");
+-    } break;
+-    case PublicAttributes::Theme::Dark: {
+-        setStyleSheet("background:#373737;font-size:26px;border:2px solid #3790FA;border-radius:8px");
+-    } break;
+-    }
+ }
+ 
+ void DeviceCodeItem::exitInput()
+ {
++    m_isInput = false;
+     setFocusPolicy(Qt::NoFocus);
+-    switch (m_theme) {
+-    case PublicAttributes::Theme::Light: {
+-        setStyleSheet("background:#E6E6E6;font-size:26px;border-radius:8px");
+-    } break;
+-    case PublicAttributes::Theme::Dark: {
+-        setStyleSheet("background:#373737;font-size:26px;border-radius:8px");
+-    } break;
+-    }
+ }
+ 
+ void DeviceCodeItem::clearText()
+@@ -78,18 +57,28 @@ void DeviceCodeItem::mouseMoveEvent(QMouseEvent *)
+     return;
+ }
+ 
+-//同上，鼠标双击什么也不干
++// 同上，鼠标双击什么也不干
+ void DeviceCodeItem::mouseDoubleClickEvent(QMouseEvent *)
+ {
+     return;
+ }
+ 
+-//同上，鼠标双击什么也不干
++// 同上，鼠标双击什么也不干
+ void DeviceCodeItem::mousePressEvent(QMouseEvent *)
+ {
++    if (m_isInput) {
++        setFocus();
++    }
+     return;
+ }
+ 
++void DeviceCodeItem::keyPressEvent(QKeyEvent *e)
++{
++    setReadOnly(false);
++    QLineEdit::keyPressEvent(e);
++    setReadOnly(true);
++}
++
+ void DeviceCodeItem::slotTextChanged()
+ {
+     QString str = text();
+diff --git a/ui/connectinterface/devicecodeitem.h b/ui/connectinterface/devicecodeitem.h
+index cea8c6a..97029cd 100644
+--- a/ui/connectinterface/devicecodeitem.h
++++ b/ui/connectinterface/devicecodeitem.h
+@@ -1,9 +1,9 @@
+ #ifndef DEVICECODEITEM_H
+ #define DEVICECODEITEM_H
+ 
++#include <QObject>
+ #include <QLineEdit>
+ #include <QKeyEvent>
+-#include "publicattributes.hpp"
+ 
+ class DeviceCodeItem : public QLineEdit
+ {
+@@ -11,7 +11,6 @@ class DeviceCodeItem : public QLineEdit
+ public:
+     DeviceCodeItem(QWidget *parent = nullptr);
+ 
+-    void setTheme(PublicAttributes::Theme theme);
+     void setInput();
+     void exitInput();
+     void clearText();
+@@ -22,6 +21,7 @@ protected:
+     void mouseMoveEvent(QMouseEvent *) override;
+     void mouseDoubleClickEvent(QMouseEvent *) override;
+     void mousePressEvent(QMouseEvent *) override;
++    void keyPressEvent(QKeyEvent *e) override;
+ 
+ Q_SIGNALS:
+     void sigTextInput(QString);
+@@ -32,10 +32,10 @@ private Q_SLOTS:
+     void slotCursorPositionChanged();
+ 
+ private:
+-    PublicAttributes::Theme m_theme = PublicAttributes::Theme::Light;
+     bool m_isActiveDelete = false;
+     bool m_isHead = false;
+     bool m_isEnd = false;
++    bool m_isInput = false;
+ };
+ 
+-#endif // DEVICECODEITEM_H
++#endif  // DEVICECODEITEM_H
+diff --git a/ui/connectinterface/devicecodewidget.cpp b/ui/connectinterface/devicecodewidget.cpp
+index 82cde10..538aea2 100644
+--- a/ui/connectinterface/devicecodewidget.cpp
++++ b/ui/connectinterface/devicecodewidget.cpp
+@@ -25,7 +25,7 @@ void DeviceCodeWidget::initUI()
+     font.setBold(true);
+     QLabel *connectCodeLab = new QLabel(this);
+     connectCodeLab->setText(
+-        tr("Please enter the connection code of the other device")); // Please enter the other party's connection code
++        tr("Please enter the connection code of the other device"));  // Please enter the other party's connection code
+     connectCodeLab->setFont(font);
+ 
+     connectCodeHLayout->addStretch();
+@@ -62,7 +62,7 @@ void DeviceCodeWidget::initUI()
+ 
+     m_startConnectBtn = new QPushButton(this);
+     m_startConnectBtn->setFixedSize(160, 48);
+-    m_startConnectBtn->setText(tr("Connection")); // Start Connection
++    m_startConnectBtn->setText(tr("Connection"));  // Start Connection
+     m_startConnectBtn->setFocusPolicy(Qt::NoFocus);
+     m_startConnectBtn->setProperty("isImportant", true);
+     m_startConnectBtn->setEnabled(false);
+@@ -84,13 +84,6 @@ void DeviceCodeWidget::initUI()
+     connect(m_startConnectBtn, &QPushButton::clicked, this, &DeviceCodeWidget::slotSendDeviceCode);
+ }
+ 
+-void DeviceCodeWidget::setTheme(PublicAttributes::Theme theme)
+-{
+-    for (int i = 0; i < MaxCode::Num; i++) {
+-        m_codeLines[i]->setTheme(theme);
+-    }
+-}
+-
+ void DeviceCodeWidget::setInput()
+ {
+     m_codeLines[m_currentCodeIndex]->setInput();
+diff --git a/ui/connectinterface/devicecodewidget.h b/ui/connectinterface/devicecodewidget.h
+index 92223d5..b853495 100644
+--- a/ui/connectinterface/devicecodewidget.h
++++ b/ui/connectinterface/devicecodewidget.h
+@@ -17,7 +17,6 @@ class DeviceCodeWidget : public QWidget
+ public:
+     explicit DeviceCodeWidget(QWidget *parent = nullptr);
+ 
+-    void setTheme(PublicAttributes::Theme theme);
+     void setInput();
+ 
+ Q_SIGNALS:
+@@ -38,4 +37,4 @@ private:
+     QPushButton *m_startConnectBtn = nullptr;
+ };
+ 
+-#endif // DEVICECODEWIDGET_H
++#endif  // DEVICECODEWIDGET_H
+diff --git a/ui/filemanageview/filemanagewin.cpp b/ui/filemanageview/filemanagewin.cpp
+index f97d7cd..cc515b3 100644
+--- a/ui/filemanageview/filemanagewin.cpp
++++ b/ui/filemanageview/filemanagewin.cpp
+@@ -309,7 +309,6 @@ bool FileManageWin::eventFilter(QObject *obj, QEvent *event)
+ {
+     if (obj == this) {
+         if (event->type() == QEvent::Resize && !m_crumbList.isEmpty()) {
+-            qDebug() << m_crumbList;
+             autoResetCrumb();
+         }
+     }
+@@ -565,12 +564,10 @@ void FileManageWin::resetCrumbMaxWidth()
+     if (m_crumbMaxWidth < 640) {
+         m_crumbMaxWidth = 640;
+     }
+-    qDebug() << "Resize crumb max width changed:" << m_crumbMaxWidth;
+ }
+ 
+ void FileManageWin::slotCrumbIndexChange(int index)
+ {
+-    qDebug() << "Crumb clicked index:" << index;
+     if (index == m_crumb->count() - 1 || (m_isAutoReset && index == 1)) {
+         return;
+     }
+@@ -600,7 +597,7 @@ void FileManageWin::slotKdkBtnClicked()
+     kdk::KToolButton *btn = qobject_cast<kdk::KToolButton *>(sender());
+     if (btn == m_retreatBtn) {
+         load();
+-        if (m_isSearch) {
++        if (m_isSearch && m_type == FileManageWin::TabType::SearchResultsPage) {
+             m_isSearch = false;
+             m_searchLine->clear();
+             m_isSearchLineHiddenIn = true;
+diff --git a/ui/mainwindow.cpp b/ui/mainwindow.cpp
+index 1ffe7d8..8d89921 100644
+--- a/ui/mainwindow.cpp
++++ b/ui/mainwindow.cpp
+@@ -658,7 +658,9 @@ void MainWindow::initSearchServer(QString searchPath)
+ 
+ void MainWindow::startLoadUI()
+ {
+-    startTimer();
++    if (!m_isOpeningFile) {
++        startTimer();
++    }
+     m_loadDialog = new LoadDialog(this);
+     m_loadDialog->move(this->geometry().x() + ((this->width() - m_loadDialog->width()) >> 1),
+                        this->geometry().y() + (((this->height() - m_loadDialog->height()) >> 1)));
+@@ -1028,7 +1030,7 @@ void MainWindow::changeFontSize()
+ void MainWindow::changeFont(const QString &key)
+ {
+     if (key == "systemFont") {
+-        qDebug() << "The font changes...";
++        qInfo() << "The font changes...";
+         changeFontSize();
+     }
+ }
+@@ -1583,14 +1585,12 @@ void MainWindow::slotRejectTran(FtpManager::ErrorType type)
+     m_messageBox->setIconPixmap(QIcon::fromTheme("dialog-warning"));
+     m_messageBox->addButton(tr("OK"));
+     connect(m_messageBox, &MessageDialog::buttonClicked, this, [=](QPushButton *) {
+-        if (type == FtpManager::ErrorType::Put) {
+-            switchUploadPath();
+-        }
++        QStringList list = m_fileManageWin->getPathList();
++        checkPage(list);
+     });
+     connect(m_messageBox, &MessageDialog::sigClose, this, [=]() {
+-        if (type == FtpManager::ErrorType::Put) {
+-            switchUploadPath();
+-        }
++        QStringList list = m_fileManageWin->getPathList();
++        checkPage(list);
+     });
+     moveMessageBox();
+ }
+@@ -1601,7 +1601,7 @@ void MainWindow::slotSearchResult(const QMap<QString, FileInfo> &searchResult)
+     if (searchResult.isEmpty()) {
+         setTipDisplayWin(tr("No relevant results"));
+         m_tipDisplayLay->setAllowDrag(false);
+-        m_fileManageWin->setWidget(m_tipDisplayLay, FileManageWin::TabType::Default);
++        m_fileManageWin->setWidget(m_tipDisplayLay, FileManageWin::TabType::SearchResultsPage);
+         return;
+     }
+     m_fileView = new FileView(this);

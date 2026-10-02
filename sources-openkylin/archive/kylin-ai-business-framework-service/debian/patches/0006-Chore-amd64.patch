@@ -1,0 +1,234 @@
+From: wangyan <wangyan@kylinos.cn>
+Date: Thu, 16 May 2024 19:45:03 +0800
+Subject: =?utf-8?b?Q2hvcmU6IOmZkOWItue8luivkeaJk+WMheeahOaetuaehOS4umFtZDY0?=
+
+---
+ CMakeLists.txt                                    |  6 +++++-
+ src/datamanagement/datamanagementdatabase.cpp     | 23 +++--------------------
+ src/embeddingtaskmanager/baseembeddingservice.cpp |  8 ++++----
+ src/embeddingtaskmanager/embeddingtask.cpp        | 21 +++------------------
+ src/embeddingtaskmanager/embeddingtask.h          |  3 +--
+ src/utils/utils.cpp                               | 19 +++++++++++++++++++
+ src/utils/utils.h                                 | 12 ++++++++++++
+ 7 files changed, 47 insertions(+), 45 deletions(-)
+ create mode 100644 src/utils/utils.cpp
+ create mode 100644 src/utils/utils.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a36b851..67a0f95 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -48,7 +48,9 @@ add_executable(kylin-ai-business-framework-service src/main.cpp
+     src/datamanagement/segmenttokenizer.cpp
+     src/datamanagement/segmenttokenizer.h
+     src/utils/vectordb/vectordb.cpp
+-    src/utils/vectordb/vectordb.h)
++    src/utils/vectordb/vectordb.h
++    src/utils/utils.cpp
++    src/utils/utils.h)
+ 
+ 
+ find_package(PkgConfig REQUIRED)
+@@ -59,6 +61,7 @@ pkg_check_modules(opencv REQUIRED IMPORTED_TARGET opencv4)
+ pkg_check_modules(onnxruntime REQUIRED IMPORTED_TARGET libonnxruntime)
+ pkg_check_modules(GIO REQUIRED IMPORTED_TARGET gio-unix-2.0)
+ pkg_check_modules(jsoncpp REQUIRED IMPORTED_TARGET jsoncpp)
++pkg_check_modules(UUID REQUIRED IMPORTED_TARGET uuid)
+ 
+ include_directories(
+     ./src
+@@ -74,6 +77,7 @@ target_link_libraries(kylin-ai-business-framework-service
+     PkgConfig::poppler
+     PkgConfig::opencv
+     PkgConfig::onnxruntime
++    PkgConfig::UUID
+ )
+ 
+ set(FRAMEWORK_PATH /usr/share/kylin-ai-business-framework)
+diff --git a/src/datamanagement/datamanagementdatabase.cpp b/src/datamanagement/datamanagementdatabase.cpp
+index 3cb70dd..828ef5d 100644
+--- a/src/datamanagement/datamanagementdatabase.cpp
++++ b/src/datamanagement/datamanagementdatabase.cpp
+@@ -1,5 +1,6 @@
+ #include "datamanagementdatabase.h"
+ #include "utils/vectordb/vectordb.h"
++#include "utils/utils.h"
+ 
+ #include <algorithm>
+ #include <iostream>
+@@ -18,24 +19,6 @@ std::string getVectorDatabasePath() {
+     return vector_database_path;
+ }
+ 
+-std::string generateUUID() {
+-    std::random_device rd;
+-    std::mt19937 gen(rd());
+-    std::uniform_int_distribution<> dis(0, 15);
+-
+-    std::stringstream ss;
+-    ss << std::hex;
+-
+-    for (int i = 0; i < 32; ++i) {
+-        if (i == 8 || i == 12 || i == 16 || i == 20) {
+-            ss << "-";
+-        }
+-        ss << dis(gen);
+-    }
+-
+-    return ss.str();
+-}
+-
+ std::vector<double> convertFloatToDouble(const std::vector<float>& floatVec) {
+     std::vector<double> doubleVec;
+     doubleVec.reserve(floatVec.size()); // 预留空间以避免不必要的重新分配
+@@ -273,7 +256,7 @@ void DataManagementDatabase::checkAndCreateCollections(const std::vector<std::st
+ VectorData DataManagementDatabase::getFileDataFromFileInfo(const DBFileInfo &fileinfo) const
+ {
+     VectorData fileData;
+-    fileData.id = generateUUID();
++    fileData.id = utils::generateUUID();
+     fileData.metadata.insert({"source", std::string(fileinfo.filepath)});
+     fileData.metadata.insert({"modifytime", int(fileinfo.modifyTime)});
+ 
+@@ -285,7 +268,7 @@ std::vector<VectorData> DataManagementDatabase::getVectorDatasFromFileInfo(const
+     std::vector<VectorData> datas;
+     for (auto const& vector : fileinfo.vectors) {
+         VectorData vectorData;
+-        vectorData.id = generateUUID();
++        vectorData.id = utils::generateUUID();
+         vectorData.embedding = convertFloatToDouble(vector);
+         vectorData.metadata.insert({"sourceId", sourceId});
+         datas.emplace_back(std::move(vectorData));
+diff --git a/src/embeddingtaskmanager/baseembeddingservice.cpp b/src/embeddingtaskmanager/baseembeddingservice.cpp
+index 05ce985..655bb4e 100644
+--- a/src/embeddingtaskmanager/baseembeddingservice.cpp
++++ b/src/embeddingtaskmanager/baseembeddingservice.cpp
+@@ -45,10 +45,10 @@ std::vector<float> BaseEmbeddingService::getTaskResult(TaskID id)
+ 
+     // std::cout << "Find result of task " << id << " in result list" << std::endl;
+     std::vector<float> result;
+-    for (const auto& res : results_) {
+-        if (res.first == id) {
+-            result = res.second;
+-            results_.remove(res);
++    for (auto begin = results_.begin(); begin != results_.end(); ++begin) {
++        if (begin->first == id) {
++            result = begin->second;
++            results_.erase(begin);
+             break;
+         }
+     }
+diff --git a/src/embeddingtaskmanager/embeddingtask.cpp b/src/embeddingtaskmanager/embeddingtask.cpp
+index 8a49e8f..442dc41 100644
+--- a/src/embeddingtaskmanager/embeddingtask.cpp
++++ b/src/embeddingtaskmanager/embeddingtask.cpp
+@@ -1,4 +1,5 @@
+ #include "embeddingtask.h"
++#include "utils/utils.h"
+ 
+ #include <chrono>
+ #include <random>
+@@ -6,14 +7,14 @@
+ EmbeddingTask::EmbeddingTask(const std::string &textData, EmbeddingDataType type, TaskPriority priority)
+     : taskData_(encodeText(textData))
+     , taskType_(type)
+-    , taskId_(generateUniqueId())
++    , taskId_(utils::generateUUID())
+     , priority_(priority)
+ { }
+ 
+ EmbeddingTask::EmbeddingTask(const std::vector<unsigned char> &data, EmbeddingDataType type, TaskPriority priority)
+     : taskData_(data)
+     , taskType_(type)
+-    , taskId_(generateUniqueId())
++    , taskId_(utils::generateUUID())
+     , priority_(priority)
+ {}
+ 
+@@ -27,22 +28,6 @@ bool EmbeddingTask::operator <(const EmbeddingTask& other) const
+     return priority() < other.priority();
+ }
+ 
+-long long EmbeddingTask::generateUniqueId() const
+-{
+-    // 获取当前时间戳
+-    auto now = std::chrono::system_clock::now();
+-    auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(now.time_since_epoch()).count();
+-
+-    // 生成随机数
+-    std::random_device rd;
+-    std::mt19937 gen(rd());
+-    std::uniform_int_distribution<long long> distribution(1, 1000);
+-    long long random = distribution(gen);
+-
+-    // 将时间戳和随机数结合生成唯一id
+-    return ms * 1000 + random;
+-}
+-
+ std::vector<unsigned char> EmbeddingTask::encodeText(const std::string &data) const
+ {
+     std::vector<unsigned char> encodedData;
+diff --git a/src/embeddingtaskmanager/embeddingtask.h b/src/embeddingtaskmanager/embeddingtask.h
+index 3ae85a4..950dc52 100644
+--- a/src/embeddingtaskmanager/embeddingtask.h
++++ b/src/embeddingtaskmanager/embeddingtask.h
+@@ -4,7 +4,7 @@
+ #include <vector>
+ #include <string>
+ 
+-typedef int TaskID;
++typedef std::string TaskID;
+ 
+ class EmbeddingTask {
+ public:
+@@ -34,7 +34,6 @@ public:
+     bool operator<(const EmbeddingTask& other) const;
+ 
+ private:
+-    long long generateUniqueId() const;
+ 
+     std::vector<unsigned char> encodeText(const std::string& data) const;
+     std::string decodeText(const std::vector<unsigned char>& data) const;
+diff --git a/src/utils/utils.cpp b/src/utils/utils.cpp
+new file mode 100644
+index 0000000..abc3f9e
+--- /dev/null
++++ b/src/utils/utils.cpp
+@@ -0,0 +1,19 @@
++#include "utils.h"
++
++#include <uuid/uuid.h>
++
++namespace utils {
++
++std::string generateUUID()
++{
++    uuid_t uuid;
++    char uuid_str[37];
++
++    uuid_generate_random(uuid);
++    uuid_unparse(uuid, uuid_str);
++    std::string id = uuid_str;
++
++    return id;
++}
++
++}
+diff --git a/src/utils/utils.h b/src/utils/utils.h
+new file mode 100644
+index 0000000..8a44b74
+--- /dev/null
++++ b/src/utils/utils.h
+@@ -0,0 +1,12 @@
++#ifndef UTILS_H
++#define UTILS_H
++#include <string>
++namespace utils {
++
++std::string generateUUID();
++
++
++}
++
++
++#endif // UTILS_H

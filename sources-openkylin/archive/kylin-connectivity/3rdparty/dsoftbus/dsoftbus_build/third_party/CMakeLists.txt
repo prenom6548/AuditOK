@@ -1,0 +1,4 @@
+add_subdirectory(bounds_checking_function)
+add_subdirectory(cJSON)
+add_subdirectory(libcoap)
+add_subdirectory(mbedtls)

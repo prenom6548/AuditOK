@@ -1,0 +1,160 @@
+From: Wei Wei <wangweinan@kylinos.cn>
+Date: Fri, 17 May 2024 16:41:05 +0800
+Subject: =?utf-8?b?Zml4OiDlnKhEYXRhTWFuYWdlbWVudFNlcnZpY2XliJ3lp4vljJbml7Y=?=
+ =?utf-8?b?5Yid5aeL5YyW5pWw5o2u5bqT?=
+
+---
+ src/datamanagement/datamanagementdatabase.cpp | 11 +++++---
+ src/datamanagement/datamanagementdatabase.h   |  1 +
+ src/datamanagement/datamanagementservice.cpp  | 40 +++++++++++++++++----------
+ 3 files changed, 33 insertions(+), 19 deletions(-)
+
+diff --git a/src/datamanagement/datamanagementdatabase.cpp b/src/datamanagement/datamanagementdatabase.cpp
+index 6a9b065..0361eeb 100644
+--- a/src/datamanagement/datamanagementdatabase.cpp
++++ b/src/datamanagement/datamanagementdatabase.cpp
+@@ -73,6 +73,13 @@ void DataManagementDatabase::destroyClient()
+     database_.destroyClient();
+ }
+ 
++void DataManagementDatabase::initCollections()
++{
++    const std::vector<std::string> collections =
++            {FILE_INFO_COLLECTION_NAME, VISION_FILE_CONTENT_COLLECTION_NAME, TEXT_FILE_CONTENT_COLLECTION_NAME};
++    checkAndCreateCollections(collections);
++}
++
+ SimilaritySearchResult DataManagementDatabase::visionSearch(const std::vector<float> &vector)
+ {
+     return similaritySearch(VISION_FILE_CONTENT_COLLECTION_NAME, vector);
+@@ -162,10 +169,6 @@ void DataManagementDatabase::addDatas(const std::vector<DBFileInfo> &fileinfos,
+         return;
+     }
+ 
+-    const std::vector<std::string> collections =
+-        {FILE_INFO_COLLECTION_NAME, collection};
+-    checkAndCreateCollections(collections);
+-
+     // 分别向两个collection添加数据，若有一方添加失败则撤回操作
+     auto filesResult = database_.addData(FILE_INFO_COLLECTION_NAME, fileDatas);
+     if (filesResult != VectorDBErrorCode::Success) {
+diff --git a/src/datamanagement/datamanagementdatabase.h b/src/datamanagement/datamanagementdatabase.h
+index bc5dcb2..4529c30 100644
+--- a/src/datamanagement/datamanagementdatabase.h
++++ b/src/datamanagement/datamanagementdatabase.h
+@@ -49,6 +49,7 @@ public:
+     bool createClient();
+     void destroyClient();
+ 
++    void initCollections();
+     SimilaritySearchResult visionSearch(const std::vector<float> &vector);
+     SimilaritySearchResult textSearch(const std::vector<float> &vector);
+     void addImageDatas(const std::vector<DBFileInfo> &fileinfos);
+diff --git a/src/datamanagement/datamanagementservice.cpp b/src/datamanagement/datamanagementservice.cpp
+index 0055e2b..e76d424 100644
+--- a/src/datamanagement/datamanagementservice.cpp
++++ b/src/datamanagement/datamanagementservice.cpp
+@@ -33,7 +33,16 @@ static const double VISION_SEARCH_THRESHOLD = 0.4;
+ 
+ DataManagementService::DataManagementService()
+     : embeddingTaskManager_(EmbeddingTaskManager::getInstance())
+- {}
++ {
++    //! \note chromadb 内部也有使用多线程，如果直接在其他线程里使用chromadb，
++    //! 可能会导致对 Python GIL 的操作冲突，经过验证，首次使用 chromadb 需要
++    //! 在初始化 Python 环境的线程，这里选择调用数据库接口初始化 collection
++    //! 此外还存在一个问题，实际上每次destroyClient都没有能真正释放掉数据库资源，
++    //! 如果强行在 destroyClient 中清理所有的引用计数，会导致使用数据库接口时概率崩溃
++    database_.createClient();
++    database_.initCollections();
++    database_.destroyClient();
++ }
+ 
+ void DataManagementService::similaritySearch(const std::string& searchConditions, SimilaritySearchCallback callback)
+ {
+@@ -41,12 +50,12 @@ void DataManagementService::similaritySearch(const std::string& searchConditions
+         callback(std::string(), DATA_MANAGEMENT_PARAM_ERROR);
+         return;
+     }
+-    // cpr::async([searchConditions, callback, this]() {
++    cpr::async([searchConditions, callback, this]() {
+         int errorCode = 0;
+ 
+         std::string result = doSimilaritySearch(searchConditions, errorCode);
+         callback(result, errorCode);
+-    // });
++    });
+ }
+ 
+ void DataManagementService::addTextFiles(const std::string& fileinfos, AddTextFilesCallback callback)
+@@ -55,12 +64,12 @@ void DataManagementService::addTextFiles(const std::string& fileinfos, AddTextFi
+         callback(DATA_MANAGEMENT_PARAM_ERROR);
+         return;
+     }
+-    // cpr::async([fileinfos, callback, this]() {
++    cpr::async([fileinfos, callback, this]() {
+         int errorCode = 0;
+ 
+         doAddTextFiles(fileinfos, errorCode);
+         callback(errorCode);
+-    // });
++    });
+ }
+ 
+ void DataManagementService::addImageFiles(const std::string& fileinfos, AddImageFilesCallback callback)
+@@ -70,12 +79,12 @@ void DataManagementService::addImageFiles(const std::string& fileinfos, AddImage
+         return;
+     }
+ 
+-    // cpr::async([fileinfos, callback, this]() {
++    cpr::async([fileinfos, callback, this]() {
+         int errorCode = 0;
+ 
+         doAddImageFiles(fileinfos, errorCode);
+         callback(errorCode);
+-    // });
++    });
+ }
+ 
+ void DataManagementService::deleteFiles(const std::string& fileinfos, DeleteFilesCallback callback)
+@@ -85,11 +94,11 @@ void DataManagementService::deleteFiles(const std::string& fileinfos, DeleteFile
+         return;
+     }
+ 
+-    // cpr::async([fileinfos, callback, this]() {
++    cpr::async([fileinfos, callback, this]() {
+         int errorCode = 0;
+         doDeleteFiles(fileinfos, errorCode);
+         callback(errorCode);
+-    // });
++    });
+ }
+ 
+ void DataManagementService::updateFilesName(const std::string& fileinfos, UpdateFilesNameCallback callback)
+@@ -104,19 +113,20 @@ void DataManagementService::updateFilesContent(const std::string& fileinfos, Upd
+         return;
+     }
+ 
+-    // cpr::async([fileinfos, callback, this]() {
++    cpr::async([fileinfos, callback, this]() {
+         int errorCode = 0;
+         doUpdateFilesContent(fileinfos, errorCode);
+         callback(errorCode);
+-    // });
++    });
+ }
+ 
+ void DataManagementService::getAllFileInfos(GetAllFileinfosCallback callback)
+ {
+-    int errorCode = 0;
+-
+-    std::string result = doGetAllFileInfos(errorCode);
+-    callback(result, errorCode);
++    cpr::async([callback, this]() {
++        int errorCode = 0;
++        std::string result = doGetAllFileInfos(errorCode);
++        callback(result, errorCode);
++    });
+ }
+ 
+ SimilaritySearchResult DataManagementService::mergeSearchResults(

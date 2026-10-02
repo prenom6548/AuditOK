@@ -1,0 +1,5 @@
+add_subdirectory(common)
+add_subdirectory(tcp)
+add_subdirectory(ble)
+add_subdirectory(br)
+add_subdirectory(manager)

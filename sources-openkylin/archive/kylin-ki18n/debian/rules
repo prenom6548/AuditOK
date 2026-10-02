@@ -1,0 +1,49 @@
+#!/usr/bin/make -f
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+STAGING := $(CURDIR)/debian/tmp
+
+export CARGO_HOME = $(CURDIR)/debian/cargo-home
+export SSL_CERT_FILE = /etc/ssl/certs/ca-certificates.crt
+export SSL_CERT_DIR = /etc/ssl/certs
+
+KI18N_BUILD_QCH ?= ON
+
+%:
+	dh $@
+
+override_dh_auto_clean:
+	[ ! -f Cargo.toml ] || cargo clean --manifest-path=$(CURDIR)/Cargo.toml
+	rm -rf $(CURDIR)/testdata/ki18n-autotests/generated
+	find $(CURDIR)/tests/data -type f \( -name '*.mo' -o -name '*.po' -o -name '*.pmapc' -o -name 'translator_ctx_*.bin' \) -delete 2>/dev/null || true
+	rm -rf $(CURDIR)/build
+	find $(CURDIR) -mindepth 1 -maxdepth 1 -type d -name 'build-*' -exec rm -rf {} +
+	rm -rf $(CURDIR)/cpp/build
+	rm -rf $(CURDIR)/CMakeFiles
+	rm -f $(CURDIR)/CMakeCache.txt $(CURDIR)/cmake_install.cmake $(CURDIR)/CTestTestfile.cmake
+	rm -f $(CURDIR)/DartConfiguration.tcl $(CURDIR)/CPackConfig.cmake $(CURDIR)/CPackSourceConfig.cmake
+	rm -rf $(CURDIR)/debian/cargo-home
+
+override_dh_auto_configure:
+	mkdir -p "$(CARGO_HOME)"
+	mkdir -p $(CURDIR)/build
+	cd $(CURDIR)/build && cmake .. \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DKI18N_RS_FULL_INSTALL=ON \
+		-DKI18N_RS_BUILD_QCH=$(KI18N_BUILD_QCH)
+
+override_dh_auto_build: override_dh_auto_configure
+	mkdir -p "$(CARGO_HOME)"
+	cargo build --release --manifest-path=$(CURDIR)/Cargo.toml
+	cd $(CURDIR)/build && cmake --build .
+
+override_dh_auto_install: override_dh_auto_build
+	rm -rf $(STAGING)
+	mkdir -p $(STAGING)
+	DESTDIR=$(STAGING) cmake --install $(CURDIR)/build --prefix /usr
+
+override_dh_auto_test:
+	mkdir -p "$(CARGO_HOME)"
+	cargo test --release --manifest-path=$(CURDIR)/Cargo.toml
+	cd $(CURDIR)/build && ctest --output-on-failure

@@ -1,0 +1,2132 @@
+From: Wei Wei <wangweinan@kylinos.cn>
+Date: Thu, 13 Jun 2024 14:11:00 +0800
+Subject: debian: update changelog to 1.0.0.0-ok0.9
+
+---
+ CMakeLists.txt                                     |   5 +-
+ src/datamanagement/datamanagementprocessor.cpp     |  20 +
+ src/datamanagement/datamanagementprocessor.h       |   3 +
+ src/datamanagement/datamanagementprocessor.xml     |   9 +
+ src/datamanagement/datamanagementprocessorglue.c   | 735 ++++++++++++++++++---
+ src/datamanagement/datamanagementprocessorglue.h   |  62 ++
+ src/datamanagement/datamanagementservice.cpp       |  36 +
+ src/datamanagement/datamanagementservice.h         |   4 +-
+ src/embeddingtaskmanager/baseembeddingservice.cpp  |  20 +-
+ src/embeddingtaskmanager/baseembeddingservice.h    |  11 +-
+ src/embeddingtaskmanager/embeddingtaskmanager.cpp  |  41 +-
+ src/embeddingtaskmanager/embeddingtaskmanager.h    |   7 +
+ src/embeddingtaskmanager/imageembeddingservice.cpp |  11 +
+ src/embeddingtaskmanager/imageembeddingservice.h   |   1 +
+ src/embeddingtaskmanager/textembeddingservice.cpp  |  12 +
+ src/embeddingtaskmanager/textembeddingservice.h    |   3 +
+ src/utils/imageembedder.cpp                        |  21 +
+ src/utils/imageembedder.h                          |   3 +
+ src/utils/textembedder.cpp                         |  15 +
+ src/utils/textembedder.h                           |   3 +
+ 20 files changed, 933 insertions(+), 89 deletions(-)
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 28b99b0..4dfabfc 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -47,7 +47,8 @@ add_executable(kylin-ai-business-framework-service src/main.cpp
+     src/utils/vectordb/vectordb.cpp
+     src/utils/vectordb/vectordb.h
+     src/utils/utils.cpp
+-    src/utils/utils.h)
++    src/utils/utils.h
++)
+ 
+ 
+ find_package(PkgConfig REQUIRED)
+@@ -85,4 +86,4 @@ install(TARGETS kylin-ai-business-framework-service
+ )
+ install(DIRECTORY src/utils/python DESTINATION ${FRAMEWORK_PATH}/utils)
+ install(DIRECTORY configs/lib/systemd/user/ DESTINATION /usr/lib/systemd/user)
+-install(DIRECTORY python-depends/ DESTINATION ${FRAMEWORK_PATH}/python-depends)
+\ No newline at end of file
++install(DIRECTORY python-depends/ DESTINATION ${FRAMEWORK_PATH}/python-depends)
+diff --git a/src/datamanagement/datamanagementprocessor.cpp b/src/datamanagement/datamanagementprocessor.cpp
+index 9b05c38..b39e19f 100644
+--- a/src/datamanagement/datamanagementprocessor.cpp
++++ b/src/datamanagement/datamanagementprocessor.cpp
+@@ -65,6 +65,9 @@ void DataManagementProcessor::unexportSkeleton()
+ 
+ void DataManagementProcessor::connectSignal()
+ {
++    g_signal_connect(delegate_, "handle-get-feature-status",
++                    G_CALLBACK(DataManagementProcessor::handleGetFeatureStatus),
++                    this);
+     g_signal_connect(delegate_, "handle-similarity-search",
+                      G_CALLBACK(DataManagementProcessor::handleSimilaritySearch),
+                      this);
+@@ -88,6 +91,23 @@ void DataManagementProcessor::connectSignal()
+                      this);
+ }
+ 
++bool DataManagementProcessor::handleGetFeatureStatus(AisdkDataManagementProcessor *delegate,
++                                                      GDBusMethodInvocation *invocation,
++                                                      gpointer /*userData*/)
++{
++    std::cout << "Receive get_feature_status request" << std::endl;
++    auto callback = [delegate, invocation](int featureStatus, int errorCode)
++    {
++        std::cout << "Complete get_feature_status request" << std::endl;
++        aisdk_data_management_processor_complete_get_feature_status(
++            delegate, invocation, featureStatus, errorCode);
++    };
++
++    DataManagementService::getInstance()->getFeatureStatus(callback);
++
++    return true;
++}
++
+ bool DataManagementProcessor::handleSimilaritySearch(AisdkDataManagementProcessor *delegate,
+                                                      GDBusMethodInvocation *invocation,
+                                                      gchar *searchConditions, int /*uid*/,
+diff --git a/src/datamanagement/datamanagementprocessor.h b/src/datamanagement/datamanagementprocessor.h
+index c2c1536..71768de 100644
+--- a/src/datamanagement/datamanagementprocessor.h
++++ b/src/datamanagement/datamanagementprocessor.h
+@@ -32,6 +32,9 @@ private:
+     void unexportSkeleton();
+     void connectSignal();
+ 
++    static bool handleGetFeatureStatus(AisdkDataManagementProcessor *delegate,
++                                       GDBusMethodInvocation *invocation,
++                                       gpointer userData);
+     static bool handleSimilaritySearch(AisdkDataManagementProcessor *delegate,
+                                        GDBusMethodInvocation *invocation,
+                                        gchar *searchConditions,
+diff --git a/src/datamanagement/datamanagementprocessor.xml b/src/datamanagement/datamanagementprocessor.xml
+index 003e03b..eb36488 100644
+--- a/src/datamanagement/datamanagementprocessor.xml
++++ b/src/datamanagement/datamanagementprocessor.xml
+@@ -3,6 +3,15 @@
+ <node>
+     <interface name="org.openkylin.aisdk.DataManagementProcessor">
+ 
++        <!--
++          @brief get feature status
++          @param [out] status, -1 means error, 0 means feature is available, 1 means feature is not install, 2 means feature is not supported
++          @param [out] error message returned
++        -->
++        <method name="getFeatureStatus">
++            <arg name="status" type="i" direction="out" />
++            <arg name="errorMsg" type="i" direction="out" />
++        </method>
+         <!--
+           @brief similarity search
+           @param [in] content of the search, a json string, has at least a 'text' key
+diff --git a/src/datamanagement/datamanagementprocessorglue.c b/src/datamanagement/datamanagementprocessorglue.c
+index 292821a..0bb7993 100644
+--- a/src/datamanagement/datamanagementprocessorglue.c
++++ b/src/datamanagement/datamanagementprocessorglue.c
+@@ -17,6 +17,52 @@
+ #  include <gio/gunixfdlist.h>
+ #endif
+ 
++#ifdef G_ENABLE_DEBUG
++#define g_marshal_value_peek_boolean(v)  g_value_get_boolean (v)
++#define g_marshal_value_peek_char(v)     g_value_get_schar (v)
++#define g_marshal_value_peek_uchar(v)    g_value_get_uchar (v)
++#define g_marshal_value_peek_int(v)      g_value_get_int (v)
++#define g_marshal_value_peek_uint(v)     g_value_get_uint (v)
++#define g_marshal_value_peek_long(v)     g_value_get_long (v)
++#define g_marshal_value_peek_ulong(v)    g_value_get_ulong (v)
++#define g_marshal_value_peek_int64(v)    g_value_get_int64 (v)
++#define g_marshal_value_peek_uint64(v)   g_value_get_uint64 (v)
++#define g_marshal_value_peek_enum(v)     g_value_get_enum (v)
++#define g_marshal_value_peek_flags(v)    g_value_get_flags (v)
++#define g_marshal_value_peek_float(v)    g_value_get_float (v)
++#define g_marshal_value_peek_double(v)   g_value_get_double (v)
++#define g_marshal_value_peek_string(v)   (char*) g_value_get_string (v)
++#define g_marshal_value_peek_param(v)    g_value_get_param (v)
++#define g_marshal_value_peek_boxed(v)    g_value_get_boxed (v)
++#define g_marshal_value_peek_pointer(v)  g_value_get_pointer (v)
++#define g_marshal_value_peek_object(v)   g_value_get_object (v)
++#define g_marshal_value_peek_variant(v)  g_value_get_variant (v)
++#else /* !G_ENABLE_DEBUG */
++/* WARNING: This code accesses GValues directly, which is UNSUPPORTED API.
++ *          Do not access GValues directly in your code. Instead, use the
++ *          g_value_get_*() functions
++ */
++#define g_marshal_value_peek_boolean(v)  (v)->data[0].v_int
++#define g_marshal_value_peek_char(v)     (v)->data[0].v_int
++#define g_marshal_value_peek_uchar(v)    (v)->data[0].v_uint
++#define g_marshal_value_peek_int(v)      (v)->data[0].v_int
++#define g_marshal_value_peek_uint(v)     (v)->data[0].v_uint
++#define g_marshal_value_peek_long(v)     (v)->data[0].v_long
++#define g_marshal_value_peek_ulong(v)    (v)->data[0].v_ulong
++#define g_marshal_value_peek_int64(v)    (v)->data[0].v_int64
++#define g_marshal_value_peek_uint64(v)   (v)->data[0].v_uint64
++#define g_marshal_value_peek_enum(v)     (v)->data[0].v_long
++#define g_marshal_value_peek_flags(v)    (v)->data[0].v_ulong
++#define g_marshal_value_peek_float(v)    (v)->data[0].v_float
++#define g_marshal_value_peek_double(v)   (v)->data[0].v_double
++#define g_marshal_value_peek_string(v)   (v)->data[0].v_pointer
++#define g_marshal_value_peek_param(v)    (v)->data[0].v_pointer
++#define g_marshal_value_peek_boxed(v)    (v)->data[0].v_pointer
++#define g_marshal_value_peek_pointer(v)  (v)->data[0].v_pointer
++#define g_marshal_value_peek_object(v)   (v)->data[0].v_pointer
++#define g_marshal_value_peek_variant(v)  (v)->data[0].v_pointer
++#endif /* !G_ENABLE_DEBUG */
++
+ typedef struct
+ {
+   GDBusArgInfo parent_struct;
+@@ -151,6 +197,141 @@ _g_value_equal (const GValue *a, const GValue *b)
+   return ret;
+ }
+ 
++static void
++_g_dbus_codegen_marshal_BOOLEAN__OBJECT (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint G_GNUC_UNUSED,
++    void         *marshal_data)
++{
++  typedef gboolean (*_GDbusCodegenMarshalBoolean_ObjectFunc)
++       (void *data1,
++        GDBusMethodInvocation *arg_method_invocation,
++        void *data2);
++  _GDbusCodegenMarshalBoolean_ObjectFunc callback;
++  GCClosure *cc = (GCClosure*) closure;
++  void *data1, *data2;
++  gboolean v_return;
++
++  g_return_if_fail (return_value != NULL);
++  g_return_if_fail (n_param_values == 2);
++
++  if (G_CCLOSURE_SWAP_DATA (closure))
++    {
++      data1 = closure->data;
++      data2 = g_value_peek_pointer (param_values + 0);
++    }
++  else
++    {
++      data1 = g_value_peek_pointer (param_values + 0);
++      data2 = closure->data;
++    }
++
++  callback = (_GDbusCodegenMarshalBoolean_ObjectFunc)
++    (marshal_data ? marshal_data : cc->callback);
++
++  v_return =
++    callback (data1,
++              g_marshal_value_peek_object (param_values + 1),
++              data2);
++
++  g_value_set_boolean (return_value, v_return);
++}
++
++static void
++_g_dbus_codegen_marshal_BOOLEAN__OBJECT_STRING_INT (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint G_GNUC_UNUSED,
++    void         *marshal_data)
++{
++  typedef gboolean (*_GDbusCodegenMarshalBoolean_ObjectStringIntFunc)
++       (void *data1,
++        GDBusMethodInvocation *arg_method_invocation,
++        const gchar *arg_searchConditions,
++        gint arg_uid,
++        void *data2);
++  _GDbusCodegenMarshalBoolean_ObjectStringIntFunc callback;
++  GCClosure *cc = (GCClosure*) closure;
++  void *data1, *data2;
++  gboolean v_return;
++
++  g_return_if_fail (return_value != NULL);
++  g_return_if_fail (n_param_values == 4);
++
++  if (G_CCLOSURE_SWAP_DATA (closure))
++    {
++      data1 = closure->data;
++      data2 = g_value_peek_pointer (param_values + 0);
++    }
++  else
++    {
++      data1 = g_value_peek_pointer (param_values + 0);
++      data2 = closure->data;
++    }
++
++  callback = (_GDbusCodegenMarshalBoolean_ObjectStringIntFunc)
++    (marshal_data ? marshal_data : cc->callback);
++
++  v_return =
++    callback (data1,
++              g_marshal_value_peek_object (param_values + 1),
++              g_marshal_value_peek_string (param_values + 2),
++              g_marshal_value_peek_int (param_values + 3),
++              data2);
++
++  g_value_set_boolean (return_value, v_return);
++}
++
++static void
++_g_dbus_codegen_marshal_BOOLEAN__OBJECT_INT (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint G_GNUC_UNUSED,
++    void         *marshal_data)
++{
++  typedef gboolean (*_GDbusCodegenMarshalBoolean_ObjectIntFunc)
++       (void *data1,
++        GDBusMethodInvocation *arg_method_invocation,
++        gint arg_uid,
++        void *data2);
++  _GDbusCodegenMarshalBoolean_ObjectIntFunc callback;
++  GCClosure *cc = (GCClosure*) closure;
++  void *data1, *data2;
++  gboolean v_return;
++
++  g_return_if_fail (return_value != NULL);
++  g_return_if_fail (n_param_values == 3);
++
++  if (G_CCLOSURE_SWAP_DATA (closure))
++    {
++      data1 = closure->data;
++      data2 = g_value_peek_pointer (param_values + 0);
++    }
++  else
++    {
++      data1 = g_value_peek_pointer (param_values + 0);
++      data2 = closure->data;
++    }
++
++  callback = (_GDbusCodegenMarshalBoolean_ObjectIntFunc)
++    (marshal_data ? marshal_data : cc->callback);
++
++  v_return =
++    callback (data1,
++              g_marshal_value_peek_object (param_values + 1),
++              g_marshal_value_peek_int (param_values + 2),
++              data2);
++
++  g_value_set_boolean (return_value, v_return);
++}
++
+ /* ------------------------------------------------------------------------
+  * Code for interface org.openkylin.aisdk.DataManagementProcessor
+  * ------------------------------------------------------------------------
+@@ -166,6 +347,48 @@ _g_value_equal (const GValue *a, const GValue *b)
+ 
+ /* ---- Introspection data for org.openkylin.aisdk.DataManagementProcessor ---- */
+ 
++static const _ExtendedGDBusArgInfo _aisdk_data_management_processor_method_info_get_feature_status_OUT_ARG_status =
++{
++  {
++    -1,
++    (gchar *) "status",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
++static const _ExtendedGDBusArgInfo _aisdk_data_management_processor_method_info_get_feature_status_OUT_ARG_errorMsg =
++{
++  {
++    -1,
++    (gchar *) "errorMsg",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
++static const GDBusArgInfo * const _aisdk_data_management_processor_method_info_get_feature_status_OUT_ARG_pointers[] =
++{
++  &_aisdk_data_management_processor_method_info_get_feature_status_OUT_ARG_status.parent_struct,
++  &_aisdk_data_management_processor_method_info_get_feature_status_OUT_ARG_errorMsg.parent_struct,
++  NULL
++};
++
++static const _ExtendedGDBusMethodInfo _aisdk_data_management_processor_method_info_get_feature_status =
++{
++  {
++    -1,
++    (gchar *) "getFeatureStatus",
++    NULL,
++    (GDBusArgInfo **) &_aisdk_data_management_processor_method_info_get_feature_status_OUT_ARG_pointers,
++    NULL
++  },
++  "handle-get-feature-status",
++  FALSE
++};
++
+ static const _ExtendedGDBusArgInfo _aisdk_data_management_processor_method_info_similarity_search_IN_ARG_searchConditions =
+ {
+   {
+@@ -593,6 +816,7 @@ static const _ExtendedGDBusMethodInfo _aisdk_data_management_processor_method_in
+ 
+ static const GDBusMethodInfo * const _aisdk_data_management_processor_method_info_pointers[] =
+ {
++  &_aisdk_data_management_processor_method_info_get_feature_status.parent_struct,
+   &_aisdk_data_management_processor_method_info_similarity_search.parent_struct,
+   &_aisdk_data_management_processor_method_info_add_text_files.parent_struct,
+   &_aisdk_data_management_processor_method_info_add_image_files.parent_struct,
+@@ -641,12 +865,116 @@ aisdk_data_management_processor_interface_info (void)
+  * Returns: The last property id.
+  */
+ guint
+-aisdk_data_management_processor_override_properties (GObjectClass *klass, guint property_id_begin)
++aisdk_data_management_processor_override_properties (GObjectClass *klass G_GNUC_UNUSED, guint property_id_begin)
+ {
+   return property_id_begin - 1;
+ }
+ 
+ 
++inline static void
++aisdk_data_management_processor_method_marshal_get_feature_status (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
++inline static void
++aisdk_data_management_processor_method_marshal_similarity_search (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT_STRING_INT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
++inline static void
++aisdk_data_management_processor_method_marshal_add_text_files (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT_STRING_INT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
++inline static void
++aisdk_data_management_processor_method_marshal_add_image_files (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT_STRING_INT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
++inline static void
++aisdk_data_management_processor_method_marshal_delete_files (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT_STRING_INT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
++inline static void
++aisdk_data_management_processor_method_marshal_update_files_name (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT_STRING_INT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
++inline static void
++aisdk_data_management_processor_method_marshal_update_files_content_data (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT_STRING_INT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
++inline static void
++aisdk_data_management_processor_method_marshal_get_all_fileinfos (
++    GClosure     *closure,
++    GValue       *return_value,
++    unsigned int  n_param_values,
++    const GValue *param_values,
++    void         *invocation_hint,
++    void         *marshal_data)
++{
++  _g_dbus_codegen_marshal_BOOLEAN__OBJECT_INT (closure,
++    return_value, n_param_values, param_values, invocation_hint, marshal_data);
++}
++
+ 
+ /**
+  * AisdkDataManagementProcessor:
+@@ -661,6 +989,7 @@ aisdk_data_management_processor_override_properties (GObjectClass *klass, guint
+  * @handle_add_text_files: Handler for the #AisdkDataManagementProcessor::handle-add-text-files signal.
+  * @handle_delete_files: Handler for the #AisdkDataManagementProcessor::handle-delete-files signal.
+  * @handle_get_all_fileinfos: Handler for the #AisdkDataManagementProcessor::handle-get-all-fileinfos signal.
++ * @handle_get_feature_status: Handler for the #AisdkDataManagementProcessor::handle-get-feature-status signal.
+  * @handle_similarity_search: Handler for the #AisdkDataManagementProcessor::handle-similarity-search signal.
+  * @handle_update_files_content_data: Handler for the #AisdkDataManagementProcessor::handle-update-files-content-data signal.
+  * @handle_update_files_name: Handler for the #AisdkDataManagementProcessor::handle-update-files-name signal.
+@@ -675,6 +1004,28 @@ static void
+ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface *iface)
+ {
+   /* GObject signals for incoming D-Bus method calls: */
++  /**
++   * AisdkDataManagementProcessor::handle-get-feature-status:
++   * @object: A #AisdkDataManagementProcessor.
++   * @invocation: A #GDBusMethodInvocation.
++   *
++   * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.getFeatureStatus">getFeatureStatus()</link> D-Bus method.
++   *
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_get_feature_status() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   *
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
++   */
++  g_signal_new ("handle-get-feature-status",
++    G_TYPE_FROM_INTERFACE (iface),
++    G_SIGNAL_RUN_LAST,
++    G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_get_feature_status),
++    g_signal_accumulator_true_handled,
++    NULL,
++      aisdk_data_management_processor_method_marshal_get_feature_status,
++    G_TYPE_BOOLEAN,
++    1,
++    G_TYPE_DBUS_METHOD_INVOCATION);
++
+   /**
+    * AisdkDataManagementProcessor::handle-similarity-search:
+    * @object: A #AisdkDataManagementProcessor.
+@@ -684,9 +1035,9 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.similaritySearch">similaritySearch()</link> D-Bus method.
+    *
+-   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_similarity_search() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_similarity_search() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+    *
+-   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+    */
+   g_signal_new ("handle-similarity-search",
+     G_TYPE_FROM_INTERFACE (iface),
+@@ -694,7 +1045,7 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+     G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_similarity_search),
+     g_signal_accumulator_true_handled,
+     NULL,
+-    g_cclosure_marshal_generic,
++      aisdk_data_management_processor_method_marshal_similarity_search,
+     G_TYPE_BOOLEAN,
+     3,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+@@ -708,9 +1059,9 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.addTextFiles">addTextFiles()</link> D-Bus method.
+    *
+-   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_add_text_files() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_add_text_files() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+    *
+-   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+    */
+   g_signal_new ("handle-add-text-files",
+     G_TYPE_FROM_INTERFACE (iface),
+@@ -718,7 +1069,7 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+     G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_add_text_files),
+     g_signal_accumulator_true_handled,
+     NULL,
+-    g_cclosure_marshal_generic,
++      aisdk_data_management_processor_method_marshal_add_text_files,
+     G_TYPE_BOOLEAN,
+     3,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+@@ -732,9 +1083,9 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.addImageFiles">addImageFiles()</link> D-Bus method.
+    *
+-   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_add_image_files() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_add_image_files() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+    *
+-   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+    */
+   g_signal_new ("handle-add-image-files",
+     G_TYPE_FROM_INTERFACE (iface),
+@@ -742,7 +1093,7 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+     G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_add_image_files),
+     g_signal_accumulator_true_handled,
+     NULL,
+-    g_cclosure_marshal_generic,
++      aisdk_data_management_processor_method_marshal_add_image_files,
+     G_TYPE_BOOLEAN,
+     3,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+@@ -756,9 +1107,9 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.deleteFiles">deleteFiles()</link> D-Bus method.
+    *
+-   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_delete_files() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_delete_files() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+    *
+-   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+    */
+   g_signal_new ("handle-delete-files",
+     G_TYPE_FROM_INTERFACE (iface),
+@@ -766,7 +1117,7 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+     G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_delete_files),
+     g_signal_accumulator_true_handled,
+     NULL,
+-    g_cclosure_marshal_generic,
++      aisdk_data_management_processor_method_marshal_delete_files,
+     G_TYPE_BOOLEAN,
+     3,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+@@ -780,9 +1131,9 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.updateFilesName">updateFilesName()</link> D-Bus method.
+    *
+-   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_update_files_name() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_update_files_name() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+    *
+-   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+    */
+   g_signal_new ("handle-update-files-name",
+     G_TYPE_FROM_INTERFACE (iface),
+@@ -790,7 +1141,7 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+     G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_update_files_name),
+     g_signal_accumulator_true_handled,
+     NULL,
+-    g_cclosure_marshal_generic,
++      aisdk_data_management_processor_method_marshal_update_files_name,
+     G_TYPE_BOOLEAN,
+     3,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+@@ -804,9 +1155,9 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.updateFilesContentData">updateFilesContentData()</link> D-Bus method.
+    *
+-   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_update_files_content_data() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_update_files_content_data() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+    *
+-   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+    */
+   g_signal_new ("handle-update-files-content-data",
+     G_TYPE_FROM_INTERFACE (iface),
+@@ -814,7 +1165,7 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+     G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_update_files_content_data),
+     g_signal_accumulator_true_handled,
+     NULL,
+-    g_cclosure_marshal_generic,
++      aisdk_data_management_processor_method_marshal_update_files_content_data,
+     G_TYPE_BOOLEAN,
+     3,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+@@ -827,9 +1178,9 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.getAllFileinfos">getAllFileinfos()</link> D-Bus method.
+    *
+-   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_get_all_fileinfos() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_data_management_processor_complete_get_all_fileinfos() or e.g. g_dbus_method_invocation_return_error() on it) and no other signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
+    *
+-   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   * Returns: %G_DBUS_METHOD_INVOCATION_HANDLED or %TRUE if the invocation was handled, %G_DBUS_METHOD_INVOCATION_UNHANDLED or %FALSE to let other signal handlers run.
+    */
+   g_signal_new ("handle-get-all-fileinfos",
+     G_TYPE_FROM_INTERFACE (iface),
+@@ -837,18 +1188,138 @@ aisdk_data_management_processor_default_init (AisdkDataManagementProcessorIface
+     G_STRUCT_OFFSET (AisdkDataManagementProcessorIface, handle_get_all_fileinfos),
+     g_signal_accumulator_true_handled,
+     NULL,
+-    g_cclosure_marshal_generic,
++      aisdk_data_management_processor_method_marshal_get_all_fileinfos,
+     G_TYPE_BOOLEAN,
+     2,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_INT);
+ 
+ }
+ 
++/**
++ * aisdk_data_management_processor_call_get_feature_status:
++ * @proxy: A #AisdkDataManagementProcessorProxy.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
++ * @cancellable: (nullable): A #GCancellable or %NULL.
++ * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
++ * @user_data: User data to pass to @callback.
++ *
++ * Asynchronously invokes the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.getFeatureStatus">getFeatureStatus()</link> D-Bus method on @proxy.
++ * When the operation is finished, @callback will be invoked in the thread-default main loop of the thread you are calling this method from (see g_main_context_push_thread_default()).
++ * You can then call aisdk_data_management_processor_call_get_feature_status_finish() to get the result of the operation.
++ *
++ * See aisdk_data_management_processor_call_get_feature_status_sync() for the synchronous, blocking version of this method.
++ */
++void
++aisdk_data_management_processor_call_get_feature_status (
++    AisdkDataManagementProcessor *proxy,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
++    GCancellable *cancellable,
++    GAsyncReadyCallback callback,
++    gpointer user_data)
++{
++  g_dbus_proxy_call (G_DBUS_PROXY (proxy),
++    "getFeatureStatus",
++    g_variant_new ("()"),
++    call_flags,
++    timeout_msec,
++    cancellable,
++    callback,
++    user_data);
++}
++
++/**
++ * aisdk_data_management_processor_call_get_feature_status_finish:
++ * @proxy: A #AisdkDataManagementProcessorProxy.
++ * @out_status: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @res: The #GAsyncResult obtained from the #GAsyncReadyCallback passed to aisdk_data_management_processor_call_get_feature_status().
++ * @error: Return location for error or %NULL.
++ *
++ * Finishes an operation started with aisdk_data_management_processor_call_get_feature_status().
++ *
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
++ */
++gboolean
++aisdk_data_management_processor_call_get_feature_status_finish (
++    AisdkDataManagementProcessor *proxy,
++    gint *out_status,
++    gint *out_errorMsg,
++    GAsyncResult *res,
++    GError **error)
++{
++  GVariant *_ret;
++  _ret = g_dbus_proxy_call_finish (G_DBUS_PROXY (proxy), res, error);
++  if (_ret == NULL)
++    goto _out;
++  g_variant_get (_ret,
++                 "(ii)",
++                 out_status,
++                 out_errorMsg);
++  g_variant_unref (_ret);
++_out:
++  return _ret != NULL;
++}
++
++/**
++ * aisdk_data_management_processor_call_get_feature_status_sync:
++ * @proxy: A #AisdkDataManagementProcessorProxy.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
++ * @out_status: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @cancellable: (nullable): A #GCancellable or %NULL.
++ * @error: Return location for error or %NULL.
++ *
++ * Synchronously invokes the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.getFeatureStatus">getFeatureStatus()</link> D-Bus method on @proxy. The calling thread is blocked until a reply is received.
++ *
++ * See aisdk_data_management_processor_call_get_feature_status() for the asynchronous version of this method.
++ *
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
++ */
++gboolean
++aisdk_data_management_processor_call_get_feature_status_sync (
++    AisdkDataManagementProcessor *proxy,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
++    gint *out_status,
++    gint *out_errorMsg,
++    GCancellable *cancellable,
++    GError **error)
++{
++  GVariant *_ret;
++  _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
++    "getFeatureStatus",
++    g_variant_new ("()"),
++    call_flags,
++    timeout_msec,
++    cancellable,
++    error);
++  if (_ret == NULL)
++    goto _out;
++  g_variant_get (_ret,
++                 "(ii)",
++                 out_status,
++                 out_errorMsg);
++  g_variant_unref (_ret);
++_out:
++  return _ret != NULL;
++}
++
+ /**
+  * aisdk_data_management_processor_call_similarity_search:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_searchConditions: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -864,6 +1335,8 @@ aisdk_data_management_processor_call_similarity_search (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_searchConditions,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+@@ -873,8 +1346,8 @@ aisdk_data_management_processor_call_similarity_search (
+     g_variant_new ("(si)",
+                    arg_searchConditions,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     callback,
+     user_data);
+@@ -890,7 +1363,7 @@ aisdk_data_management_processor_call_similarity_search (
+  *
+  * Finishes an operation started with aisdk_data_management_processor_call_similarity_search().
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_similarity_search_finish (
+@@ -918,6 +1391,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_searchConditions: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @out_searchResult: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+@@ -927,13 +1404,15 @@ _out:
+  *
+  * See aisdk_data_management_processor_call_similarity_search() for the asynchronous version of this method.
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_similarity_search_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_searchConditions,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gchar **out_searchResult,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+@@ -945,8 +1424,8 @@ aisdk_data_management_processor_call_similarity_search_sync (
+     g_variant_new ("(si)",
+                    arg_searchConditions,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     error);
+   if (_ret == NULL)
+@@ -965,6 +1444,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -980,6 +1463,8 @@ aisdk_data_management_processor_call_add_text_files (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+@@ -989,8 +1474,8 @@ aisdk_data_management_processor_call_add_text_files (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     callback,
+     user_data);
+@@ -1005,7 +1490,7 @@ aisdk_data_management_processor_call_add_text_files (
+  *
+  * Finishes an operation started with aisdk_data_management_processor_call_add_text_files().
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_add_text_files_finish (
+@@ -1031,6 +1516,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+@@ -1039,13 +1528,15 @@ _out:
+  *
+  * See aisdk_data_management_processor_call_add_text_files() for the asynchronous version of this method.
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_add_text_files_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error)
+@@ -1056,8 +1547,8 @@ aisdk_data_management_processor_call_add_text_files_sync (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     error);
+   if (_ret == NULL)
+@@ -1075,6 +1566,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1090,6 +1585,8 @@ aisdk_data_management_processor_call_add_image_files (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+@@ -1099,8 +1596,8 @@ aisdk_data_management_processor_call_add_image_files (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     callback,
+     user_data);
+@@ -1115,7 +1612,7 @@ aisdk_data_management_processor_call_add_image_files (
+  *
+  * Finishes an operation started with aisdk_data_management_processor_call_add_image_files().
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_add_image_files_finish (
+@@ -1141,6 +1638,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+@@ -1149,13 +1650,15 @@ _out:
+  *
+  * See aisdk_data_management_processor_call_add_image_files() for the asynchronous version of this method.
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_add_image_files_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error)
+@@ -1166,8 +1669,8 @@ aisdk_data_management_processor_call_add_image_files_sync (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     error);
+   if (_ret == NULL)
+@@ -1185,6 +1688,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1200,6 +1707,8 @@ aisdk_data_management_processor_call_delete_files (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+@@ -1209,8 +1718,8 @@ aisdk_data_management_processor_call_delete_files (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     callback,
+     user_data);
+@@ -1225,7 +1734,7 @@ aisdk_data_management_processor_call_delete_files (
+  *
+  * Finishes an operation started with aisdk_data_management_processor_call_delete_files().
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_delete_files_finish (
+@@ -1251,6 +1760,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+@@ -1259,13 +1772,15 @@ _out:
+  *
+  * See aisdk_data_management_processor_call_delete_files() for the asynchronous version of this method.
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_delete_files_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error)
+@@ -1276,8 +1791,8 @@ aisdk_data_management_processor_call_delete_files_sync (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     error);
+   if (_ret == NULL)
+@@ -1295,6 +1810,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1310,6 +1829,8 @@ aisdk_data_management_processor_call_update_files_name (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+@@ -1319,8 +1840,8 @@ aisdk_data_management_processor_call_update_files_name (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     callback,
+     user_data);
+@@ -1335,7 +1856,7 @@ aisdk_data_management_processor_call_update_files_name (
+  *
+  * Finishes an operation started with aisdk_data_management_processor_call_update_files_name().
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_update_files_name_finish (
+@@ -1361,6 +1882,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+@@ -1369,13 +1894,15 @@ _out:
+  *
+  * See aisdk_data_management_processor_call_update_files_name() for the asynchronous version of this method.
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_update_files_name_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error)
+@@ -1386,8 +1913,8 @@ aisdk_data_management_processor_call_update_files_name_sync (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     error);
+   if (_ret == NULL)
+@@ -1405,6 +1932,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1420,6 +1951,8 @@ aisdk_data_management_processor_call_update_files_content_data (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+@@ -1429,8 +1962,8 @@ aisdk_data_management_processor_call_update_files_content_data (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     callback,
+     user_data);
+@@ -1445,7 +1978,7 @@ aisdk_data_management_processor_call_update_files_content_data (
+  *
+  * Finishes an operation started with aisdk_data_management_processor_call_update_files_content_data().
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_update_files_content_data_finish (
+@@ -1471,6 +2004,10 @@ _out:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_fileinfos: Argument to pass with the method invocation.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+@@ -1479,13 +2016,15 @@ _out:
+  *
+  * See aisdk_data_management_processor_call_update_files_content_data() for the asynchronous version of this method.
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_update_files_content_data_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error)
+@@ -1496,8 +2035,8 @@ aisdk_data_management_processor_call_update_files_content_data_sync (
+     g_variant_new ("(si)",
+                    arg_fileinfos,
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     error);
+   if (_ret == NULL)
+@@ -1514,6 +2053,10 @@ _out:
+  * aisdk_data_management_processor_call_get_all_fileinfos:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1528,6 +2071,8 @@ void
+ aisdk_data_management_processor_call_get_all_fileinfos (
+     AisdkDataManagementProcessor *proxy,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+@@ -1536,8 +2081,8 @@ aisdk_data_management_processor_call_get_all_fileinfos (
+     "getAllFileinfos",
+     g_variant_new ("(i)",
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     callback,
+     user_data);
+@@ -1553,7 +2098,7 @@ aisdk_data_management_processor_call_get_all_fileinfos (
+  *
+  * Finishes an operation started with aisdk_data_management_processor_call_get_all_fileinfos().
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_get_all_fileinfos_finish (
+@@ -1580,6 +2125,10 @@ _out:
+  * aisdk_data_management_processor_call_get_all_fileinfos_sync:
+  * @proxy: A #AisdkDataManagementProcessorProxy.
+  * @arg_uid: Argument to pass with the method invocation.
++ * @call_flags: Flags from the #GDBusCallFlags enumeration. If you want to allow interactive
++       authorization be sure to set %G_DBUS_CALL_FLAGS_ALLOW_INTERACTIVE_AUTHORIZATION.
++ * @timeout_msec: The timeout in milliseconds (with %G_MAXINT meaning "infinite") or
++       -1 to use the proxy default timeout.
+  * @out_fileinfos: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_errorMsg: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+@@ -1589,12 +2138,14 @@ _out:
+  *
+  * See aisdk_data_management_processor_call_get_all_fileinfos() for the asynchronous version of this method.
+  *
+- * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ * Returns: (skip): %TRUE if the call succeeded, %FALSE if @error is set.
+  */
+ gboolean
+ aisdk_data_management_processor_call_get_all_fileinfos_sync (
+     AisdkDataManagementProcessor *proxy,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gchar **out_fileinfos,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+@@ -1605,8 +2156,8 @@ aisdk_data_management_processor_call_get_all_fileinfos_sync (
+     "getAllFileinfos",
+     g_variant_new ("(i)",
+                    arg_uid),
+-    G_DBUS_CALL_FLAGS_NONE,
+-    -1,
++    call_flags,
++    timeout_msec,
+     cancellable,
+     error);
+   if (_ret == NULL)
+@@ -1620,6 +2171,30 @@ _out:
+   return _ret != NULL;
+ }
+ 
++/**
++ * aisdk_data_management_processor_complete_get_feature_status:
++ * @object: A #AisdkDataManagementProcessor.
++ * @invocation: (transfer full): A #GDBusMethodInvocation.
++ * @status: Parameter to return.
++ * @errorMsg: Parameter to return.
++ *
++ * Helper function used in service implementations to finish handling invocations of the <link linkend="gdbus-method-org-openkylin-aisdk-DataManagementProcessor.getFeatureStatus">getFeatureStatus()</link> D-Bus method. If you instead want to finish handling an invocation by returning an error, use g_dbus_method_invocation_return_error() or similar.
++ *
++ * This method will free @invocation, you cannot use it afterwards.
++ */
++void
++aisdk_data_management_processor_complete_get_feature_status (
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
++    GDBusMethodInvocation *invocation,
++    gint status,
++    gint errorMsg)
++{
++  g_dbus_method_invocation_return_value (invocation,
++    g_variant_new ("(ii)",
++                   status,
++                   errorMsg));
++}
++
+ /**
+  * aisdk_data_management_processor_complete_similarity_search:
+  * @object: A #AisdkDataManagementProcessor.
+@@ -1633,7 +2208,7 @@ _out:
+  */
+ void
+ aisdk_data_management_processor_complete_similarity_search (
+-    AisdkDataManagementProcessor *object,
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
+     GDBusMethodInvocation *invocation,
+     const gchar *searchResult,
+     gint errorMsg)
+@@ -1656,7 +2231,7 @@ aisdk_data_management_processor_complete_similarity_search (
+  */
+ void
+ aisdk_data_management_processor_complete_add_text_files (
+-    AisdkDataManagementProcessor *object,
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
+     GDBusMethodInvocation *invocation,
+     gint errorMsg)
+ {
+@@ -1677,7 +2252,7 @@ aisdk_data_management_processor_complete_add_text_files (
+  */
+ void
+ aisdk_data_management_processor_complete_add_image_files (
+-    AisdkDataManagementProcessor *object,
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
+     GDBusMethodInvocation *invocation,
+     gint errorMsg)
+ {
+@@ -1698,7 +2273,7 @@ aisdk_data_management_processor_complete_add_image_files (
+  */
+ void
+ aisdk_data_management_processor_complete_delete_files (
+-    AisdkDataManagementProcessor *object,
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
+     GDBusMethodInvocation *invocation,
+     gint errorMsg)
+ {
+@@ -1719,7 +2294,7 @@ aisdk_data_management_processor_complete_delete_files (
+  */
+ void
+ aisdk_data_management_processor_complete_update_files_name (
+-    AisdkDataManagementProcessor *object,
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
+     GDBusMethodInvocation *invocation,
+     gint errorMsg)
+ {
+@@ -1740,7 +2315,7 @@ aisdk_data_management_processor_complete_update_files_name (
+  */
+ void
+ aisdk_data_management_processor_complete_update_files_content_data (
+-    AisdkDataManagementProcessor *object,
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
+     GDBusMethodInvocation *invocation,
+     gint errorMsg)
+ {
+@@ -1762,7 +2337,7 @@ aisdk_data_management_processor_complete_update_files_content_data (
+  */
+ void
+ aisdk_data_management_processor_complete_get_all_fileinfos (
+-    AisdkDataManagementProcessor *object,
++    AisdkDataManagementProcessor *object G_GNUC_UNUSED,
+     GDBusMethodInvocation *invocation,
+     const gchar *fileinfos,
+     gint errorMsg)
+@@ -1814,17 +2389,17 @@ aisdk_data_management_processor_proxy_finalize (GObject *object)
+ }
+ 
+ static void
+-aisdk_data_management_processor_proxy_get_property (GObject      *object,
+-  guint         prop_id,
+-  GValue       *value,
++aisdk_data_management_processor_proxy_get_property (GObject      *object G_GNUC_UNUSED,
++  guint         prop_id G_GNUC_UNUSED,
++  GValue       *value G_GNUC_UNUSED,
+   GParamSpec   *pspec G_GNUC_UNUSED)
+ {
+ }
+ 
+ static void
+-aisdk_data_management_processor_proxy_set_property (GObject      *object,
+-  guint         prop_id,
+-  const GValue *value,
++aisdk_data_management_processor_proxy_set_property (GObject      *object G_GNUC_UNUSED,
++  guint         prop_id G_GNUC_UNUSED,
++  const GValue *value G_GNUC_UNUSED,
+   GParamSpec   *pspec G_GNUC_UNUSED)
+ {
+ }
+@@ -1932,7 +2507,7 @@ aisdk_data_management_processor_proxy_class_init (AisdkDataManagementProcessorPr
+ }
+ 
+ static void
+-aisdk_data_management_processor_proxy_iface_init (AisdkDataManagementProcessorIface *iface)
++aisdk_data_management_processor_proxy_iface_init (AisdkDataManagementProcessorIface *iface G_GNUC_UNUSED)
+ {
+ }
+ 
+@@ -2324,7 +2899,7 @@ out:
+ }
+ 
+ static void
+-aisdk_data_management_processor_skeleton_dbus_interface_flush (GDBusInterfaceSkeleton *_skeleton)
++aisdk_data_management_processor_skeleton_dbus_interface_flush (GDBusInterfaceSkeleton *_skeleton G_GNUC_UNUSED)
+ {
+ }
+ 
+@@ -2385,7 +2960,7 @@ aisdk_data_management_processor_skeleton_class_init (AisdkDataManagementProcesso
+ }
+ 
+ static void
+-aisdk_data_management_processor_skeleton_iface_init (AisdkDataManagementProcessorIface *iface)
++aisdk_data_management_processor_skeleton_iface_init (AisdkDataManagementProcessorIface *iface G_GNUC_UNUSED)
+ {
+ }
+ 
+diff --git a/src/datamanagement/datamanagementprocessorglue.h b/src/datamanagement/datamanagementprocessorglue.h
+index ee917a2..ebc711a 100644
+--- a/src/datamanagement/datamanagementprocessorglue.h
++++ b/src/datamanagement/datamanagementprocessorglue.h
+@@ -53,6 +53,10 @@ struct _AisdkDataManagementProcessorIface
+     GDBusMethodInvocation *invocation,
+     gint arg_uid);
+ 
++  gboolean (*handle_get_feature_status) (
++    AisdkDataManagementProcessor *object,
++    GDBusMethodInvocation *invocation);
++
+   gboolean (*handle_similarity_search) (
+     AisdkDataManagementProcessor *object,
+     GDBusMethodInvocation *invocation,
+@@ -80,6 +84,12 @@ guint aisdk_data_management_processor_override_properties (GObjectClass *klass,
+ 
+ 
+ /* D-Bus method call completion functions: */
++void aisdk_data_management_processor_complete_get_feature_status (
++    AisdkDataManagementProcessor *object,
++    GDBusMethodInvocation *invocation,
++    gint status,
++    gint errorMsg);
++
+ void aisdk_data_management_processor_complete_similarity_search (
+     AisdkDataManagementProcessor *object,
+     GDBusMethodInvocation *invocation,
+@@ -120,10 +130,36 @@ void aisdk_data_management_processor_complete_get_all_fileinfos (
+ 
+ 
+ /* D-Bus method calls: */
++void aisdk_data_management_processor_call_get_feature_status (
++    AisdkDataManagementProcessor *proxy,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
++    GCancellable *cancellable,
++    GAsyncReadyCallback callback,
++    gpointer user_data);
++
++gboolean aisdk_data_management_processor_call_get_feature_status_finish (
++    AisdkDataManagementProcessor *proxy,
++    gint *out_status,
++    gint *out_errorMsg,
++    GAsyncResult *res,
++    GError **error);
++
++gboolean aisdk_data_management_processor_call_get_feature_status_sync (
++    AisdkDataManagementProcessor *proxy,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
++    gint *out_status,
++    gint *out_errorMsg,
++    GCancellable *cancellable,
++    GError **error);
++
+ void aisdk_data_management_processor_call_similarity_search (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_searchConditions,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -139,6 +175,8 @@ gboolean aisdk_data_management_processor_call_similarity_search_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_searchConditions,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gchar **out_searchResult,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+@@ -148,6 +186,8 @@ void aisdk_data_management_processor_call_add_text_files (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -162,6 +202,8 @@ gboolean aisdk_data_management_processor_call_add_text_files_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error);
+@@ -170,6 +212,8 @@ void aisdk_data_management_processor_call_add_image_files (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -184,6 +228,8 @@ gboolean aisdk_data_management_processor_call_add_image_files_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error);
+@@ -192,6 +238,8 @@ void aisdk_data_management_processor_call_delete_files (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -206,6 +254,8 @@ gboolean aisdk_data_management_processor_call_delete_files_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error);
+@@ -214,6 +264,8 @@ void aisdk_data_management_processor_call_update_files_name (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -228,6 +280,8 @@ gboolean aisdk_data_management_processor_call_update_files_name_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error);
+@@ -236,6 +290,8 @@ void aisdk_data_management_processor_call_update_files_content_data (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -250,6 +306,8 @@ gboolean aisdk_data_management_processor_call_update_files_content_data_sync (
+     AisdkDataManagementProcessor *proxy,
+     const gchar *arg_fileinfos,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+     GError **error);
+@@ -257,6 +315,8 @@ gboolean aisdk_data_management_processor_call_update_files_content_data_sync (
+ void aisdk_data_management_processor_call_get_all_fileinfos (
+     AisdkDataManagementProcessor *proxy,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -271,6 +331,8 @@ gboolean aisdk_data_management_processor_call_get_all_fileinfos_finish (
+ gboolean aisdk_data_management_processor_call_get_all_fileinfos_sync (
+     AisdkDataManagementProcessor *proxy,
+     gint arg_uid,
++    GDBusCallFlags call_flags,
++    gint timeout_msec,
+     gchar **out_fileinfos,
+     gint *out_errorMsg,
+     GCancellable *cancellable,
+diff --git a/src/datamanagement/datamanagementservice.cpp b/src/datamanagement/datamanagementservice.cpp
+index fa5ffe3..7dcae7e 100644
+--- a/src/datamanagement/datamanagementservice.cpp
++++ b/src/datamanagement/datamanagementservice.cpp
+@@ -130,6 +130,15 @@ void DataManagementService::getAllFileInfos(GetAllFileinfosCallback callback)
+     });
+ }
+ 
++void DataManagementService::getFeatureStatus(GetFeatureStatusCallback callback)
++{
++    cpr::async([callback, this]() {
++        int errorCode = 0;
++        int featureStatus = doGetFeatureStatus(errorCode);
++        callback(featureStatus, errorCode);
++    });
++}
++
+ SimilaritySearchResult DataManagementService::mergeSearchResults(
+     const SimilaritySearchResult& visionSearchResult, const SimilaritySearchResult& textSearchResult) const {
+ 
+@@ -410,6 +419,33 @@ void DataManagementService::doUpdateFilesContent(const std::string &fileinfosJso
+     database_.addTextDatas(std::move(textDatas));
+ }
+ 
++int DataManagementService::doGetFeatureStatus(int &errorCode)
++{
++    FeatureStatus featureStatus = EmbeddingTaskManager::getInstance()->checkEmbeddingFeatureStatus();
++    int status = -1;
++    // 如果dbus getFeatureStatus接口定义更新，或者FeatureStatus更新此处需同步更新
++    // dbus 接口定义见 src/datamanagement/datamanagementprocessor.xml
++    switch (featureStatus) {
++    case FeatureStatus::Available:
++        status = 0;
++        break;
++    case FeatureStatus::NotInstalled:
++        status = 1;
++        break;
++    case FeatureStatus::NotSupported:
++        status = 2;
++        break;
++    default:
++        break;
++    }
++
++    if (-1 == status) {
++        errorCode = DATA_MANAGEMENT_UNKNOWN_ERROR;
++    }
++
++    return status;
++}
++
+ std::vector<float> DataManagementService::textSideEmbeddingText(const std::string& text)
+ {
+     std::vector<float> textEmbedding;
+diff --git a/src/datamanagement/datamanagementservice.h b/src/datamanagement/datamanagementservice.h
+index 6e5d7f2..2df415f 100644
+--- a/src/datamanagement/datamanagementservice.h
++++ b/src/datamanagement/datamanagementservice.h
+@@ -35,6 +35,7 @@ public:
+     using UpdateFilesNameCallback = std::function<void(int)>;
+     using UpdateFilesContentCallback = std::function<void(int)>;
+     using GetAllFileinfosCallback = std::function<void(const std::string&, int)>;
++    using GetFeatureStatusCallback = std::function<void(int, int)>;
+ 
+     static DataManagementService* getInstance() {
+         static DataManagementService service;
+@@ -48,7 +49,7 @@ public:
+     void updateFilesName(const std::string& fileinfos, UpdateFilesNameCallback callback);
+     void updateFilesContent(const std::string& fileinfos, UpdateFilesContentCallback callback);
+     void getAllFileInfos(GetAllFileinfosCallback callback);
+-
++    void getFeatureStatus(GetFeatureStatusCallback callback);
+ 
+ private:
+     DataManagementService();
+@@ -61,6 +62,7 @@ private:
+     std::string doGetAllFileInfos(int& errorCode);
+     void doDeleteFiles(const std::string& fileinfosJson, int& errorCode);
+     void doUpdateFilesContent(const std::string& fileinfosJson, int& errorCode);
++    int doGetFeatureStatus(int& errorCode);
+ 
+     SimilaritySearchResult mergeSearchResults(const SimilaritySearchResult& visionSearchResult,
+                                               const SimilaritySearchResult& textSearchResult) const;
+diff --git a/src/embeddingtaskmanager/baseembeddingservice.cpp b/src/embeddingtaskmanager/baseembeddingservice.cpp
+index feaed46..1de37a2 100644
+--- a/src/embeddingtaskmanager/baseembeddingservice.cpp
++++ b/src/embeddingtaskmanager/baseembeddingservice.cpp
+@@ -20,7 +20,7 @@
+ 
+ void BaseEmbeddingService::stop()
+ {
+-    if (!stop_) {
++    if (started()) {
+         stop_ = true;
+         taskQueueCV_.notify_all();
+         if (processTaskThread_.joinable())
+@@ -31,12 +31,23 @@ void BaseEmbeddingService::stop()
+ 
+ void BaseEmbeddingService::start()
+ {
+-    processTaskThread_ = std::thread(&BaseEmbeddingService::processTaskInThread, this);
++    std::unique_lock<std::mutex> lock(startMutex_);
++    if (started())
++        return;
+     stop_ = false;
++    processTaskThread_ = std::thread(&BaseEmbeddingService::processTaskInThread, this);
++}
++
++bool BaseEmbeddingService::started()
++{
++    return !stop_;
+ }
+ 
+ void BaseEmbeddingService::addTask(const EmbeddingTask &task)
+ {
++    if (!started()) {
++        return;
++    }
+     std::unique_lock<std::mutex> lock(taskMutex_);
+ 
+     tasks_.push(task);
+@@ -48,6 +59,9 @@ void BaseEmbeddingService::addTask(const EmbeddingTask &task)
+ 
+ std::vector<float> BaseEmbeddingService::getTaskResult(TaskID id)
+ {
++    if (!started()) {
++        return std::vector<float>();
++    }
+     std::unique_lock<std::mutex> lock(resultMutex_);
+ 
+     resultQueueCV_.wait(lock, [id, this] {
+@@ -77,7 +91,7 @@ void BaseEmbeddingService::processTaskInThread()
+     //! \todo 当长时间没有执行过任务时释放资源，在下次执行任务时重新初始化资源
+     initResourceInThread();
+ 
+-    while (!stop_) {
++    while (started()) {
+         EmbeddingTask task;
+         {
+             std::unique_lock<std::mutex> lock(taskMutex_);
+diff --git a/src/embeddingtaskmanager/baseembeddingservice.h b/src/embeddingtaskmanager/baseembeddingservice.h
+index 438661f..a15b444 100644
+--- a/src/embeddingtaskmanager/baseembeddingservice.h
++++ b/src/embeddingtaskmanager/baseembeddingservice.h
+@@ -25,6 +25,12 @@
+ #include <condition_variable>
+ #include <thread>
+ 
++enum class FeatureStatus {
++    Available,
++    NotInstalled,
++    NotSupported
++};
++
+ class BaseEmbeddingService
+ {
+ public:
+@@ -33,6 +39,8 @@ public:
+ 
+     void stop();
+     void start();
++    bool started();
++    virtual FeatureStatus checkServiceFeatureStatus() = 0;
+ 
+     void addTask(const EmbeddingTask& task);
+     std::vector<float> getTaskResult(TaskID id);
+@@ -49,11 +57,12 @@ private:
+     std::thread processTaskThread_;
+     std::mutex taskMutex_;
+     std::mutex resultMutex_;
++    std::mutex startMutex_;
+ 
+     std::condition_variable taskQueueCV_;
+     std::condition_variable resultQueueCV_;
+ 
+-    bool stop_ = false;
++    bool stop_ = true;
+ };
+ 
+ #endif // BASEEMBEDDINGSERVICE_H
+diff --git a/src/embeddingtaskmanager/embeddingtaskmanager.cpp b/src/embeddingtaskmanager/embeddingtaskmanager.cpp
+index 1d3e846..e3d837f 100644
+--- a/src/embeddingtaskmanager/embeddingtaskmanager.cpp
++++ b/src/embeddingtaskmanager/embeddingtaskmanager.cpp
+@@ -24,8 +24,7 @@ EmbeddingTaskManager::EmbeddingTaskManager()
+     : textEmbeddingService_(std::make_unique<TextEmbeddingService>())
+     , imageEmbeddingService_(std::make_unique<ImageEmbeddingService>())
+ {
+-    textEmbeddingService_->start();
+-    imageEmbeddingService_->start();
++
+ }
+ 
+ EmbeddingTaskManager::~EmbeddingTaskManager()
+@@ -34,22 +33,60 @@ EmbeddingTaskManager::~EmbeddingTaskManager()
+     imageEmbeddingService_->stop();
+ }
+ 
++void EmbeddingTaskManager::initEmbeddingService()
++{
++    std::unique_lock<std::mutex> lock(embeddingServiceInitMutex_);
++    if (hasInitEmbeddingService_)
++        return;
++
++    if (checkEmbeddingFeatureStatus() == FeatureStatus::Available) {
++        textEmbeddingService_->start();
++        imageEmbeddingService_->start();
++        hasInitEmbeddingService_ = true;
++    }
++
++}
++
++FeatureStatus EmbeddingTaskManager::checkEmbeddingFeatureStatus()
++{
++    FeatureStatus textStatus = textEmbeddingService_->checkServiceFeatureStatus();
++    FeatureStatus imageStatus = imageEmbeddingService_->checkServiceFeatureStatus();
++    if (textStatus == FeatureStatus::NotSupported || imageStatus == FeatureStatus::NotSupported) {
++        return FeatureStatus::NotSupported;
++    } else if (textStatus == FeatureStatus::NotInstalled || imageStatus == FeatureStatus::NotInstalled) {
++        return FeatureStatus::NotInstalled;
++    }
++
++    return FeatureStatus::Available;
++}
+ void EmbeddingTaskManager::addImageSideTask(const EmbeddingTask &task)
+ {
++    if (!hasInitEmbeddingService_)
++        initEmbeddingService();
++
+     imageEmbeddingService_->addTask(task);
+ }
+ 
+ void EmbeddingTaskManager::addTextSideTask(const EmbeddingTask &task)
+ {
++    if (!hasInitEmbeddingService_)
++        initEmbeddingService();
++
+     textEmbeddingService_->addTask(task);
+ }
+ 
+ std::vector<float> EmbeddingTaskManager::getImageSideResult(TaskID id)
+ {
++    if (!hasInitEmbeddingService_)
++        initEmbeddingService();
++
+     return imageEmbeddingService_->getTaskResult(id);
+ }
+ 
+ std::vector<float> EmbeddingTaskManager::getTextSideResult(TaskID id)
+ {
++    if (!hasInitEmbeddingService_)
++        initEmbeddingService();
++
+     return textEmbeddingService_->getTaskResult(id);
+ }
+diff --git a/src/embeddingtaskmanager/embeddingtaskmanager.h b/src/embeddingtaskmanager/embeddingtaskmanager.h
+index 752e96d..dc593b5 100644
+--- a/src/embeddingtaskmanager/embeddingtaskmanager.h
++++ b/src/embeddingtaskmanager/embeddingtaskmanager.h
+@@ -21,6 +21,7 @@
+ #include "embeddingtaskmanager/baseembeddingservice.h"
+ 
+ #include <memory>
++#include <mutex>
+ 
+ class EmbeddingTaskManager
+ {
+@@ -37,10 +38,16 @@ public:
+     std::vector<float> getImageSideResult(TaskID id);
+     std::vector<float> getTextSideResult(TaskID id);
+ 
++    FeatureStatus checkEmbeddingFeatureStatus();
++
+ private:
+     EmbeddingTaskManager();
++    void initEmbeddingService();
+ 
+ private:
++    bool hasInitEmbeddingService_ = false;
++    std::mutex embeddingServiceInitMutex_;
++
+     std::unique_ptr<BaseEmbeddingService> textEmbeddingService_;
+     std::unique_ptr<BaseEmbeddingService> imageEmbeddingService_;
+ };
+diff --git a/src/embeddingtaskmanager/imageembeddingservice.cpp b/src/embeddingtaskmanager/imageembeddingservice.cpp
+index c81d6f4..a5cec15 100644
+--- a/src/embeddingtaskmanager/imageembeddingservice.cpp
++++ b/src/embeddingtaskmanager/imageembeddingservice.cpp
+@@ -18,6 +18,17 @@
+ 
+ #include <iostream>
+ 
++FeatureStatus ImageEmbeddingService::checkServiceFeatureStatus()
++{
++    if (!ImageEmbedder::isModelSupport()) {
++        return FeatureStatus::NotSupported;
++    } else if (!ImageEmbedder::isModelInstalled()) {
++        return FeatureStatus::NotInstalled;
++    }
++
++    return FeatureStatus::Available;
++}
++
+ void ImageEmbeddingService::initResourceInThread()
+ {
+     if (embedder_.get() != nullptr)
+diff --git a/src/embeddingtaskmanager/imageembeddingservice.h b/src/embeddingtaskmanager/imageembeddingservice.h
+index e7256ac..26158ab 100644
+--- a/src/embeddingtaskmanager/imageembeddingservice.h
++++ b/src/embeddingtaskmanager/imageembeddingservice.h
+@@ -26,6 +26,7 @@ class ImageEmbeddingService : public BaseEmbeddingService
+ {
+ public:
+     ImageEmbeddingService() = default;
++    FeatureStatus checkServiceFeatureStatus() override;
+ 
+ protected:
+     void initResourceInThread() override;
+diff --git a/src/embeddingtaskmanager/textembeddingservice.cpp b/src/embeddingtaskmanager/textembeddingservice.cpp
+index 62ec6d7..8ace4b8 100644
+--- a/src/embeddingtaskmanager/textembeddingservice.cpp
++++ b/src/embeddingtaskmanager/textembeddingservice.cpp
+@@ -19,6 +19,18 @@
+ 
+ #include <iostream>
+ 
++
++FeatureStatus TextEmbeddingService::checkServiceFeatureStatus()
++{
++    if (!TextEmbedder::isModelInstalled()) {
++        return FeatureStatus::NotInstalled;
++    } else if (!TextEmbedder::isModelSupport()) {
++        return FeatureStatus::NotSupported;
++    }
++
++    return FeatureStatus::Available;
++}
++
+ void TextEmbeddingService::initResourceInThread()
+ {
+     if (embedder_.get() != nullptr)
+diff --git a/src/embeddingtaskmanager/textembeddingservice.h b/src/embeddingtaskmanager/textembeddingservice.h
+index 048cdd8..51b0df7 100644
+--- a/src/embeddingtaskmanager/textembeddingservice.h
++++ b/src/embeddingtaskmanager/textembeddingservice.h
+@@ -24,6 +24,9 @@
+ 
+ class TextEmbeddingService : public BaseEmbeddingService
+ {
++public:
++    FeatureStatus checkServiceFeatureStatus() override;
++
+ protected:
+     void initResourceInThread() override;
+     std::vector<float> doEmbeddingInThread(const EmbeddingTask& task) override;
+diff --git a/src/utils/imageembedder.cpp b/src/utils/imageembedder.cpp
+index ccc04ca..d052964 100644
+--- a/src/utils/imageembedder.cpp
++++ b/src/utils/imageembedder.cpp
+@@ -20,6 +20,7 @@
+ #include <opencv4/opencv2/opencv.hpp>
+ 
+ #include <iostream>
++#include <fstream>
+ 
+ static const char* TXT_MODEL_FOLDER = "/usr/share/kylin-datamanagement-models/cn-clip-onnx";
+ static const char* VISION_MODEL_PATH = "/usr/share/kylin-datamanagement-models/cn-clip-onnx/vit-b-16.img.fp32.onnx";
+@@ -27,6 +28,26 @@ static const char* TXT_MODEL_PATH = "/usr/share/kylin-datamanagement-models/cn-c
+ static const int INPUT_CONTEXT_LENGTH = 52;
+ 
+ 
++bool ImageEmbedder::isModelSupport()
++{
++    return true;
++}
++
++bool ImageEmbedder::isModelInstalled()
++{
++    std::ifstream visionModelFile(VISION_MODEL_PATH);
++    if (!visionModelFile.good()) {
++        return false;
++    }
++
++    std::ifstream txtModelFile(TXT_MODEL_PATH);
++    if (!txtModelFile.good()) {
++        return false;
++    }
++
++    return true;
++}
++
+ ImageEmbedder::ImageEmbedder()
+     : textSession_(Ort::Env(ORT_LOGGING_LEVEL_WARNING, "Default"),
+                    TXT_MODEL_PATH, Ort::SessionOptions(nullptr))
+diff --git a/src/utils/imageembedder.h b/src/utils/imageembedder.h
+index 2d96f2e..5874d8b 100644
+--- a/src/utils/imageembedder.h
++++ b/src/utils/imageembedder.h
+@@ -27,6 +27,9 @@ class Mat;
+ 
+ class ImageEmbedder {
+ public:
++    static bool isModelSupport();
++    static bool isModelInstalled();
++
+     ImageEmbedder();
+ 
+     std::vector<float> embeddingText(const std::string &text);
+diff --git a/src/utils/textembedder.cpp b/src/utils/textembedder.cpp
+index 23ee8c5..1a2b65f 100644
+--- a/src/utils/textembedder.cpp
++++ b/src/utils/textembedder.cpp
+@@ -18,6 +18,7 @@
+ #include "utils/utils.h"
+ 
+ #include <iostream>
++#include <fstream>
+ 
+ static const char* MODEL_FOLDER = "/usr/share/kylin-datamanagement-models/bge-m3-onnx";
+ static const char* MODEL_PATH = "/usr/share/kylin-datamanagement-models/bge-m3-onnx/model.onnx";
+@@ -28,6 +29,20 @@ TextEmbedder::TextEmbedder()
+                MODEL_PATH, Ort::SessionOptions(nullptr))
+ {}
+ 
++bool TextEmbedder::isModelInstalled()
++{
++    std::ifstream modelFile(MODEL_PATH);
++    if (!modelFile.good()) {
++        return false;
++    }
++    return true;
++}
++
++bool TextEmbedder::isModelSupport()
++{
++    return true;
++}
++
+ int TextEmbedder::longestTokensSize(const std::vector<Token> &tokens) const
+ {
+     int longestLength = 0;
+diff --git a/src/utils/textembedder.h b/src/utils/textembedder.h
+index e2c8b85..45d00de 100644
+--- a/src/utils/textembedder.h
++++ b/src/utils/textembedder.h
+@@ -26,6 +26,9 @@
+ 
+ class TextEmbedder {
+ public:
++    static bool isModelSupport();
++    static bool isModelInstalled();
++
+     TextEmbedder();
+     std::vector<std::vector<float>> batchEmbeddingTexts(const std::vector<std::string>& texts);
+     std::vector<float> embeddingText(const std::string& text);

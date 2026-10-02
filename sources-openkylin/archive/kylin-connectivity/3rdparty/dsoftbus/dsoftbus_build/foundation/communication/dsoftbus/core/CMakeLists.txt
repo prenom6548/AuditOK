@@ -1,0 +1,7 @@
+add_subdirectory(common)
+add_subdirectory(bus_center)
+add_subdirectory(connection)
+add_subdirectory(authentication)
+add_subdirectory(discovery)
+add_subdirectory(transmission)
+add_subdirectory(frame)

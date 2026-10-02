@@ -1,0 +1,176 @@
+import type { SessionMessageRow } from '@/types/api';
+import { generateUUID } from '@/lib/uuid';
+
+const MAX_MESSAGES = 100;
+const PREFIX = 'kylinbot_chat_history_v1:';
+
+export interface ChatSessionSummary {
+  sessionId: string;
+  title: string;
+  preview: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
+export interface PersistedChatBubble {
+  id: string;
+  role: 'user' | 'agent';
+  content: string;
+  thinking?: string;
+  markdown?: boolean;
+  toolCall?: { name: string; args?: unknown; output?: string };
+  attachments?: PersistedAttachment[];
+  timestamp: string;
+}
+
+export interface PersistedAttachment {
+  id: string;
+  name: string;
+  mimeType?: string;
+  kind: 'image' | 'audio' | 'video' | 'file';
+  dataBase64: string;
+}
+
+function storageKey(sessionId: string): string {
+  return `${PREFIX}${sessionId}`;
+}
+
+export function loadChatHistory(sessionId: string): PersistedChatBubble[] {
+  try {
+    const raw = localStorage.getItem(storageKey(sessionId));
+    if (!raw) return [];
+    const parsed = JSON.parse(raw) as { messages?: PersistedChatBubble[] };
+    if (!parsed.messages?.length) return [];
+    return parsed.messages;
+  } catch {
+    return [];
+  }
+}
+
+export function saveChatHistory(sessionId: string, messages: PersistedChatBubble[]): void {
+  try {
+    const slice = messages.slice(-MAX_MESSAGES);
+    localStorage.setItem(storageKey(sessionId), JSON.stringify({ messages: slice }));
+  } catch {
+    // QuotaExceeded or private mode
+  }
+}
+
+export function listChatSessions(): ChatSessionSummary[] {
+  const sessions: ChatSessionSummary[] = [];
+
+  try {
+    for (let i = 0; i < localStorage.length; i += 1) {
+      const key = localStorage.key(i);
+      if (!key || !key.startsWith(PREFIX)) continue;
+
+      const sessionId = key.slice(PREFIX.length);
+      const messages = loadChatHistory(sessionId);
+      if (!messages.length) continue;
+
+      const lastMessage = messages[messages.length - 1]!;
+      const firstUserMessage = messages.find((message) => message.role === 'user');
+      const titleSource = firstUserMessage?.content || lastMessage.content || '未命名会话';
+      const previewSource = lastMessage.content || '';
+
+      sessions.push({
+        sessionId,
+        title: titleSource.trim().slice(0, 28) || '未命名会话',
+        preview: previewSource.trim().slice(0, 72),
+        updatedAt: lastMessage.timestamp,
+        messageCount: messages.length,
+      });
+    }
+  } catch {
+    return [];
+  }
+
+  return sessions.sort(
+    (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
+  );
+}
+
+/** Map server-persisted rows into UI messages (timestamps are synthetic for ordering). */
+export function mapServerMessagesToPersisted(rows: SessionMessageRow[]): PersistedChatBubble[] {
+  const base = Date.now() - rows.length * 1000;
+  const out: PersistedChatBubble[] = [];
+  let idx = 0;
+  for (const row of rows) {
+    if (row.role === 'system') continue;
+    const ts = new Date(base + idx * 1000).toISOString();
+    idx += 1;
+    if (row.role === 'user') {
+      out.push({
+        id: generateUUID(),
+        role: 'user',
+        content: row.content,
+        timestamp: ts,
+      });
+    } else if (row.role === 'assistant') {
+      out.push({
+        id: generateUUID(),
+        role: 'agent',
+        content: row.content,
+        markdown: true,
+        timestamp: ts,
+      });
+    } else {
+      out.push({
+        id: generateUUID(),
+        role: 'agent',
+        content: row.content,
+        markdown: false,
+        timestamp: ts,
+      });
+    }
+  }
+  return out;
+}
+
+export function persistedToUiMessages(
+  rows: PersistedChatBubble[],
+): Array<{
+  id: string;
+  role: 'user' | 'agent';
+  content: string;
+  thinking?: string;
+  markdown?: boolean;
+  toolCall?: { name: string; args?: unknown; output?: string };
+  attachments?: PersistedAttachment[];
+  timestamp: Date;
+}> {
+  return rows.map((m) => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    thinking: m.thinking,
+    markdown: m.markdown,
+    toolCall: m.toolCall,
+    attachments: m.attachments,
+    timestamp: new Date(m.timestamp),
+  }));
+}
+
+export function uiMessagesToPersisted(
+  messages: Array<{
+    id: string;
+    role: 'user' | 'agent';
+    content: string;
+    thinking?: string;
+    markdown?: boolean;
+    toolCall?: { name: string; args?: unknown; output?: string };
+    attachments?: PersistedAttachment[];
+    timestamp: Date;
+  }>,
+): PersistedChatBubble[] {
+  return messages.map((m) => ({
+    id: m.id,
+    role: m.role,
+    content: m.content,
+    thinking: m.thinking,
+    markdown: m.markdown,
+    toolCall: m.toolCall,
+    attachments: m.attachments,
+    timestamp: m.timestamp.toISOString(),
+  }));
+}

@@ -1,0 +1,500 @@
+From: Wei Wei <wangweinan@kylinos.cn>
+Date: Fri, 5 Jul 2024 09:35:53 +0800
+Subject: =?utf-8?b?Zml4OiDosIPmlbTnm7jkvLzluqbmo4DntKLpmIjlgLzku6XpgILphY0=?=
+ =?utf-8?b?5paw5paH5pys5ZCR6YeP5YyW5qih5Z6L?=
+
+---
+ CMakeLists.txt                               |   2 -
+ src/datamanagement/datamanagementservice.cpp |   6 +-
+ src/datamanagement/segmenttokenizer.cpp      | 160 ---------------------------
+ src/datamanagement/segmenttokenizer.h        |  35 ------
+ src/utils/autotokenizer.cpp                  |  31 ++++--
+ src/utils/python/autotokenizer.py            |  41 +++----
+ src/utils/textembedder.cpp                   |   2 +-
+ src/utils/utils.cpp                          |  78 +++++++++++++
+ src/utils/utils.h                            |   7 ++
+ 9 files changed, 127 insertions(+), 235 deletions(-)
+ delete mode 100644 src/datamanagement/segmenttokenizer.cpp
+ delete mode 100644 src/datamanagement/segmenttokenizer.h
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 4dfabfc..3de3d03 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -42,8 +42,6 @@ add_executable(kylin-ai-business-framework-service src/main.cpp
+     src/datamanagement/datamanagementdatabase.h
+     src/datamanagement/datamanagementservice.cpp
+     src/datamanagement/datamanagementservice.h
+-    src/datamanagement/segmenttokenizer.cpp
+-    src/datamanagement/segmenttokenizer.h
+     src/utils/vectordb/vectordb.cpp
+     src/utils/vectordb/vectordb.h
+     src/utils/utils.cpp
+diff --git a/src/datamanagement/datamanagementservice.cpp b/src/datamanagement/datamanagementservice.cpp
+index 7dcae7e..f200155 100644
+--- a/src/datamanagement/datamanagementservice.cpp
++++ b/src/datamanagement/datamanagementservice.cpp
+@@ -19,14 +19,14 @@
+ #include "datamanagement/datamanagementjsonhelper.h"
+ #include "utils/parser/parser.h"
+ #include "utils/parser/fileparserfactory.h"
+-#include "datamanagement/segmenttokenizer.h"
++#include "utils/utils.h"
+ #include "embeddingtaskmanager/embeddingtaskmanager.h"
+ #include "embeddingtaskmanager/embeddingtask.h"
+ 
+ #include <iostream>
+ #include <filesystem>
+ 
+-static const double TEXT_SEARCH_THRESHOLD = 0.8;
++static const double TEXT_SEARCH_THRESHOLD = 0.65;
+ static const double VISION_SEARCH_THRESHOLD = 0.4;
+ 
+ typedef enum {
+@@ -274,7 +274,7 @@ std::vector<DBFileInfo> DataManagementService::makeDatasByTextFilePathAndFormat(
+             continue;
+         }
+ 
+-        SegmentTokenizer::segmentTokenize(file.contents, 100);
++        text::segmentTokenize(file.contents, 100);
+         std::cout << "start encode text file " << path << std::endl;
+         std::vector<std::vector<float>> vectors = textSideEmbeddingTexts(file.contents);
+         std::cout << "finish encode text file " << path << std::endl;
+diff --git a/src/datamanagement/segmenttokenizer.cpp b/src/datamanagement/segmenttokenizer.cpp
+deleted file mode 100644
+index 6e1074d..0000000
+--- a/src/datamanagement/segmenttokenizer.cpp
++++ /dev/null
+@@ -1,160 +0,0 @@
+-/*
+- * Copyright 2024 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify it under
+- * the terms of the GNU General Public License as published by the Free Software
+- * Foundation, either version 3 of the License, or (at your option) any later
+- * version.
+- *
+- * This program is distributed in the hope that it will be useful, but WITHOUT
+- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+- * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * this program. If not, see <https://www.gnu.org/licenses/>.
+- */
+-
+-#include "segmenttokenizer.h"
+-
+-namespace SegmentTokenizer {
+-
+-std::vector<std::string> splitString(
+-    const std::string& str, const std::string& delimiters) {
+-    std::vector<std::string> result;
+-
+-    size_t startPos = 0;
+-    size_t foundPos = str.find(delimiters);
+-
+-    while(foundPos != std::string::npos) {
+-        if (delimiters == "." && !isEnglishPeriod(str, foundPos)) {
+-            foundPos = str.find(delimiters, foundPos + delimiters.size());
+-            continue;
+-        }
+-        result.emplace_back(str.substr(startPos, foundPos - startPos + delimiters.size()));
+-        startPos = foundPos + delimiters.size();
+-        foundPos = str.find(delimiters, startPos);
+-    }
+-    std::string lastSegment = str.substr(startPos);
+-    if (!lastSegment.empty()) {
+-        result.emplace_back(lastSegment);
+-    }
+-
+-    return result;
+-}
+-
+-// 按照句号分割句子，如果按照句号分割后仍然过长，则按照逗号进一步分割
+-std::vector<std::string> splitChineseString(const std::string& str, int maxLength)
+-{
+-    std::vector<std::string> sentences = splitString(str, "。");
+-    for (auto it = sentences.begin(); it != sentences.end();) {
+-        if (it->size() > maxLength) {
+-            std::vector<std::string> phrases = splitString(*it, "，");
+-            it = sentences.erase(it);
+-            it = sentences.insert(it, phrases.begin(), phrases.end());
+-        }
+-        ++it;
+-    }
+-    return sentences;
+-}
+-
+-std::vector<std::string> splitEnglishString(const std::string& str, int maxLength)
+-{
+-    std::vector<std::string> sentences = splitString(str, ".");
+-    for (auto it = sentences.begin(); it != sentences.end();) {
+-        if (it->size() > maxLength) {
+-            std::vector<std::string> phrases = splitString(*it, ",");
+-            it = sentences.erase(it);
+-            it = sentences.insert(it, phrases.begin(), phrases.end());
+-        }
+-        ++it;
+-    }
+-    return sentences;
+-}
+-
+-bool isEnglishPeriod(const std::string& text, size_t index) {
+-    if (index == 0) // 确保不越界
+-        return false;
+-    if (index == text.size() - 1) // 文本结尾的'.'认为是英文句号
+-        return true;
+-
+-    // 观察`.`周围的内容
+-    char prevChar = text[index - 1];
+-    char nextChar = text[index + 1];
+-
+-    // 判断`.`是否是英文句号
+-    if (std::isspace(prevChar) && std::isalpha(nextChar)) // 如果`.`前是空格且`.`后是字母
+-        return true;
+-    else if (std::isalpha(prevChar) && std::isspace(nextChar)) // 如果`.`前是字母且`.`后是空格
+-        return true;
+-    else if (std::ispunct(prevChar) && std::isspace(nextChar)) // 如果`.`前是标点符号且`.`后是空格
+-        return true;
+-
+-    return false;
+-}
+-
+-bool containsEnglishPeriod(const std::string& text)
+-{
+-    for (size_t i = 0; i < text.size(); ++i) {
+-        if (isEnglishPeriod(text, i))
+-            return true;
+-    }
+-    return false;
+-}
+-
+-std::vector<std::string> fixedSizeChunks(const std::string& text, int chunkSize)
+-{
+-    std::vector<std::string> chunks;
+-
+-    size_t startPos = 0;
+-    while (startPos < text.size()) {
+-        size_t endPos = startPos + chunkSize;
+-        // 确保不要在一个 UTF-8 多字节字符的中间分割
+-        if (endPos < text.size()) {
+-            while ((text[endPos] & 0xC0) == 0x80) {
+-                // 如果 endPos 指向的字节是多字节字符的非起始字节
+-                // 向前移动，直到找到多字节字符的起始字节
+-                --endPos;
+-            }
+-        }
+-
+-        size_t length = endPos - startPos;
+-        chunks.push_back(text.substr(startPos, length));
+-        startPos += length;
+-    }
+-
+-    return chunks;
+-}
+-
+-// 文本分割，首先按照句号分割，如果按照句号分割完过长，
+-// 则按逗号进行进一步分割，如果按照逗号分割完仍然过长，则按照固定长度进行分割
+-void segmentTokenize(std::vector<std::string> &texts, int maxLength)
+-{
+-    for (auto begin = texts.begin(); begin != texts.end();) {
+-        if (begin->size() < maxLength) {
+-            ++begin;
+-            continue;
+-        }
+-
+-        if (begin->find("。") != std::string::npos) {
+-            std::vector<std::string> sentences = splitChineseString(*begin, maxLength);
+-            begin = texts.erase(begin);
+-            begin = texts.insert(begin, sentences.begin(), sentences.end());
+-        } else if (containsEnglishPeriod(*begin)) {
+-            std::vector<std::string> sentences = splitEnglishString(*begin, maxLength);
+-            begin = texts.erase(begin);
+-            begin = texts.insert(begin, sentences.begin(), sentences.end());
+-        }
+-
+-        if (begin->size() < maxLength) {
+-            ++begin;
+-            continue;
+-        }
+-
+-        std::vector<std::string> chunks = fixedSizeChunks(*begin, maxLength);
+-        begin = texts.erase(begin);
+-        begin = texts.insert(begin, chunks.begin(), chunks.end());
+-        std::advance(begin, chunks.size());
+-    }
+-}
+-
+-}
+diff --git a/src/datamanagement/segmenttokenizer.h b/src/datamanagement/segmenttokenizer.h
+deleted file mode 100644
+index 162ad32..0000000
+--- a/src/datamanagement/segmenttokenizer.h
++++ /dev/null
+@@ -1,35 +0,0 @@
+-/*
+- * Copyright 2024 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify it under
+- * the terms of the GNU General Public License as published by the Free Software
+- * Foundation, either version 3 of the License, or (at your option) any later
+- * version.
+- *
+- * This program is distributed in the hope that it will be useful, but WITHOUT
+- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+- * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License along with
+- * this program. If not, see <https://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef SEGMENTTOKENIZER_H
+-#define SEGMENTTOKENIZER_H
+-
+-#include <vector>
+-#include <string>
+-
+-namespace SegmentTokenizer {
+-
+-std::vector<std::string> splitString(const std::string& str, const std::string& delimiters);
+-std::vector<std::string> splitChineseString(const std::string& str, int maxLength);
+-std::vector<std::string> splitEnglishString(const std::string& str, int maxLength);
+-bool isEnglishPeriod(const std::string& text, size_t index);
+-bool containsEnglishPeriod(const std::string& text);
+-std::vector<std::string> fixedSizeChunks(const std::string& text, int chunkSize);
+-void segmentTokenize(std::vector<std::string>& texts, int maxLength);
+-
+-} // namespace SegmentTokenizer
+-
+-#endif // SEGMENTTOKENIZER_H
+diff --git a/src/utils/autotokenizer.cpp b/src/utils/autotokenizer.cpp
+index 3151c86..5c3595c 100644
+--- a/src/utils/autotokenizer.cpp
++++ b/src/utils/autotokenizer.cpp
+@@ -29,22 +29,39 @@ AutoTokenizer::AutoTokenizer(const std::string& modelFolderPath)
+     PyRun_SimpleString("import sys");
+     std::string command = "sys.path.append('" + std::string(DATA_MANAGEMENT_PYTHON_PATH) + "')";
+     PyRun_SimpleString(command.c_str());
+-    tokenizer_ = PyImport_ImportModule("autotokenizer");
+-    if (!tokenizer_) {
++
++    PyObject* module = PyImport_ImportModule("autotokenizer");
++    if (!module) {
+         std::cerr << "Import tokenizer error" << std::endl;
+         PyErr_Print();
+         return;
+     }
+-    PyObject* initFunc = PyObject_GetAttrString(tokenizer_, "init_tokenizer");
+-    if (!initFunc) {
+-        std::cerr << "Get init_tokenizer from tokenizer error" << std::endl;
++
++    PyObject* tokenizerClass = PyObject_GetAttrString(module, "Tokenizer");
++    if (!tokenizerClass) {
++        std::cerr << "Get tokenizer class error" << std::endl;
+         PyErr_Print();
++        Py_XDECREF(module);
+         return;
+     }
++
+     PyObject* args = Py_BuildValue("(s)", modelFolderPath.c_str());
+-    PyObject_CallObject(initFunc, args);
++    if (!args) {
++        std::cerr << "Build string args with " << modelFolderPath << " error" << std::endl;
++        PyErr_Print();
++        Py_XDECREF(module);
++        Py_XDECREF(tokenizerClass);
++        return;
++    }
++
++    tokenizer_ = PyObject_CallObject(tokenizerClass, args);
++    if (!tokenizer_) {
++        std::cerr << "Call init_tokenizer error" << std::endl;
++        PyErr_Print();
++    }
+ 
+-    Py_XDECREF(initFunc);
++    Py_XDECREF(module);
++    Py_XDECREF(tokenizerClass);
+     Py_XDECREF(args);
+ }
+ 
+diff --git a/src/utils/python/autotokenizer.py b/src/utils/python/autotokenizer.py
+index 74a3198..81aa918 100644
+--- a/src/utils/python/autotokenizer.py
++++ b/src/utils/python/autotokenizer.py
+@@ -16,37 +16,24 @@ from transformers import AutoTokenizer
+ 
+ import os
+ os.environ["TOKENIZERS_PARALLELISM"] = "false"
+-tokenizer = None
+ 
+-def init_tokenizer(tokenizer_file_path):
+-    global tokenizer
++class Tokenizer:
++    def __init__(self, tokenizer_file_path):
++        self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_file_path)
+ 
+-    tokenizer = AutoTokenizer.from_pretrained(tokenizer_file_path)
++    def tokenize_text(self, input_text):
+ 
+-def tokenize_text(input_text):
+-    global tokenizer
++        if self.tokenizer is None:
++            print("Don't init tokenizer, please run init_tokenizer befor")
++            return {}
+ 
+-    if tokenizer is None:
+-        print("Don't init tokenizer, please run init_tokenizer befor")
+-        return {}
++        # 将文本转换为 tokens
++        tokens = self.tokenizer(input_text)
+ 
+-    # 将文本转换为 tokens
+-    tokens = tokenizer(input_text)
+-    # print(tokens)
++        input_ids = tokens['input_ids']
++        attention_mask = tokens['attention_mask']
+ 
+-    input_ids = tokens['input_ids']
+-    attention_mask = tokens['attention_mask']
++        # 合并 input_ids 和 attention_mask
++        merged_dict = {'input_ids': input_ids, 'attention_mask': attention_mask}
+ 
+-    # 合并 input_ids 和 attention_mask
+-    merged_dict = {'input_ids': input_ids, 'attention_mask': attention_mask}
+-
+-    return merged_dict
+-
+-# # 调用函数，传入输入文本和 tokenizer 文件路径
+-# input_texts = { "杰尼龟", "皮卡丘", "小火龙", "妙蛙种子" }
+-# tokenizer_file_path = "/home/wangweinan/models/bge-m3-onnx/"
+-
+-# init_tokenizer(tokenizer_file_path)
+-# for text in input_texts:
+-#     tokens = tokenize_text(text)
+-#     print (tokens)
++        return merged_dict
+diff --git a/src/utils/textembedder.cpp b/src/utils/textembedder.cpp
+index 1a2b65f..d138086 100644
+--- a/src/utils/textembedder.cpp
++++ b/src/utils/textembedder.cpp
+@@ -201,7 +201,7 @@ std::vector<float> TextEmbedder::inference(Token& token, int batch)
+     }
+ 
+     const std::vector<const char*> inputNames = {"input_ids", "attention_mask"};
+-    const std::vector<const char*> outputNames = {"dense_vecs"};
++    const std::vector<const char*> outputNames = {"sentence_embedding"};
+     std::vector<float> output(batch * 1024);
+ 
+     std::vector<Ort::Value> inputTensors = createInputTensors(token, batch, inputNames);
+diff --git a/src/utils/utils.cpp b/src/utils/utils.cpp
+index 8ec3005..cb2f7ef 100644
+--- a/src/utils/utils.cpp
++++ b/src/utils/utils.cpp
+@@ -19,6 +19,7 @@
+ #include <uuid/uuid.h>
+ #include <iostream>
+ #include <cmath>
++#include <regex>
+ 
+ namespace utils {
+ 
+@@ -80,3 +81,80 @@ void normalizeTokens(std::vector<int64_t> &tokens, int length)
+     }
+ }
+ } // namespace math
++
++
++namespace text
++{
++//去除多余的换行和空格、使用递归的方式进行文档切分
++void applyRegex(std::string &text) {
++    static const std::regex newlineRegex("\\n{3,}");
++    static const std::regex spaceRegex("\\s");
++    static const std::regex doubleNewlineRegex("\\n\\n");
++    static const std::regex singlePunctuationRegex("([;；.!?。！？\\?])([^”’])");
++    static const std::regex ellipsisRegex("(\\.{6})([^\"’”」』])");
++    static const std::regex chineseEllipsisRegex("(\\…{2})([^\"’”」』])");
++    static const std::regex endQuotePunctuationRegex("([;；!?。！？\\?][\"’”」』]{0,2})([^;；!?，。！？\\?])");
++
++    text = std::regex_replace(text, newlineRegex, "\n");
++    text = std::regex_replace(text, spaceRegex, " ");
++    text = std::regex_replace(text, doubleNewlineRegex, "");
++    text = std::regex_replace(text, singlePunctuationRegex, "$1\n$2");
++    text = std::regex_replace(text, ellipsisRegex, "$1\n$2");
++    text = std::regex_replace(text, chineseEllipsisRegex, "$1\n$2");
++    text = std::regex_replace(text, endQuotePunctuationRegex, "$1\n$2");
++
++    text.erase(std::remove_if(text.begin(), text.end(), isspace), text.end());
++}
++
++// 根据最大长度分割句子
++std::vector<std::string> splitSentences(const std::string &text, int maxLength) {
++    std::istringstream iss(text);
++    std::string sentence;
++    std::vector<std::string> sentences;
++    while (std::getline(iss, sentence, '\n')) {
++        // 检查句子是否为空，若为空则跳过本次循环
++        if (sentence.empty()) {
++            continue;
++        }
++        size_t start = 0;
++        while (start < sentence.length()) {
++            size_t end = std::min(sentence.length(), start + maxLength);
++            // 确保不切分多字节字符
++            while (end > start && (sentence[end] & 0xC0) == 0x80) {
++                --end;
++            }
++            // 如果end位置没有移动，则向前寻找一个合法的结束位置
++            if (end == start) {
++                while (start < sentence.length() && (sentence[start] & 0xC0) == 0x80) {
++                    ++start;
++                }
++                end = std::min(sentence.length(), start + maxLength);
++                while (end > start && (sentence[end] & 0xC0) == 0x80) {
++                    --end;
++                }
++            }
++            sentences.push_back(sentence.substr(start, end - start));
++            start = end;
++        }
++    }
++    return sentences;
++}
++
++
++void segmentTokenize(std::vector<std::string> &texts, int maxLength) {
++    auto begin = texts.begin();
++    while (begin != texts.end()) {
++        applyRegex(*begin);
++        std::vector<std::string> sentences = splitSentences(*begin, maxLength);
++        if (sentences.empty()) {
++            ++begin;
++            continue;
++        }
++
++        begin = texts.erase(begin);
++        begin = texts.insert(begin, sentences.begin(), sentences.end());
++        std::advance(begin, sentences.size());
++    }
++
++}
++}
+diff --git a/src/utils/utils.h b/src/utils/utils.h
+index 15f46d1..4495dc5 100644
+--- a/src/utils/utils.h
++++ b/src/utils/utils.h
+@@ -31,6 +31,13 @@ namespace math {
+     void normalize(std::vector<float> &vec);
+     float norm(const std::vector<float> &matrix);
+     void normalizeTokens(std::vector<int64_t> &tokens, int length);
++
++}
++
++namespace text {
++    void applyRegex(std::string &text);
++    std::vector<std::string> splitSentences(const std::string &text, int maxLength);
++    void segmentTokenize(std::vector<std::string> &texts, int maxLength);
+ }
+ 
+ #endif // UTILS_H

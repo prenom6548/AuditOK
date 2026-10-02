@@ -1,0 +1,135 @@
+#!/bin/bash
+set -e
+diskName=$1
+
+if [ "x$diskName" = "x" ]; then
+	echo "传入分区名为空"
+fi
+
+efibootdir=`ls -a /sys/firmware/efi/efivars`
+
+mountrootdir=/home/kylin/fixBootDir
+
+if [ ! -d "$mountrootdir" ]; then
+        mkdir -p $mountrootdir
+fi
+
+parse_device(){
+        device=$1
+        if echo $device | grep -E -q "^UUID="; then
+                echo $device | sed 's:^UUID=:/dev/disk/by-uuid/:' | tr -d "\n"
+        elif echo $device | grep -E -q "^LABEL="; then
+                echo $device | sed 's:^LABEL=:/dev/disk/by-label/:' | tr -d "\n"
+        else
+                echo $device | tr -d "\n"
+        fi
+}
+
+mount $diskName $mountrootdir
+
+deployversionfile=/ostree/pkgs/ostree-version.info
+
+version_type=$(cat "$mountrootdir$deployversionfile" | awk '{print $1}')
+cur_version=$(cat "$mountrootdir$deployversionfile" | awk '{print $2}')
+
+cur_rootdir=$mountrootdir/ostree/deploy/$version_type/deploy/$cur_version
+cur_pkgsdir=$mountrootdir/ostree/pkgs/ovl-$cur_version
+#不可变系统根目录无usr目录故创建 
+rootusr=$mountrootdir/usr
+if [ ! -d "$rootusr" ]; then
+        mkdir -p "$rootusr"
+fi
+
+rootetc=$mountrootdir/etc
+if [ ! -d "$rootetc" ]; then
+        mkdir -p "$rootetc"
+fi
+
+mount --bind /dev "$mountrootdir/dev"
+mount --bind /dev/pts "$mountrootdir/dev/pts"
+mount --bind /proc "$mountrootdir/proc"
+mount --bind /sys "$mountrootdir/sys"
+#将现部署版本中的usr和etc绑定挂载到将要chroot的根下
+#mount --bind "$cur_rootdir/usr" "$mountrootdir/usr"
+#mount --bind "$cur_rootdir/etc" "$mountrootdir/etc"
+mount -t overlay overlay -o lowerdir=$cur_rootdir/etc,upperdir=$cur_pkgsdir/etc-ovl/etc-lower,workdir=$cur_pkgsdir/etc-ovl/etc-work $mountrootdir/etc
+mount -t overlay overlay -o lowerdir=$cur_rootdir/usr,upperdir=$cur_pkgsdir/usr-ovl/usr-lower,workdir=$cur_pkgsdir/usr-ovl/usr-work $mountrootdir/usr
+mount -t overlay overlay -o lowerdir=$cur_rootdir/var/lib,upperdir=$cur_pkgsdir/var-ovl/var-lower/lib,workdir=$cur_pkgsdir/var-ovl/var-work/lib $mountrootdir/var/lib
+
+if [ ! -z "$efibootdir" ]; then
+        mount --bind /sys/firmware/efi/efivars "$mountrootdir/sys/firmware/efi/efivars"
+fi
+
+cat "$mountrootdir/etc/fstab" | grep -Ev "^#" | grep -Ev "^$" | awk '{print $1 " " $2 " " $3 " " $4 " " $5 " " $6}' |
+while read device mntdir fstype options dump passno ;
+do
+        if [ "x$mntdir" = "x/" ] ; then
+                echo "mount 挂载点为根目录，不需要挂载"
+                continue
+        fi
+        if [ "x$mntdir" = "xnone" ] ; then
+                echo "mount 为swap分区，不需要挂载"
+                continue
+        fi
+    if [ "x$device" = "x/data/home" ] || [ "x$device" = "x/data/root" ] ; then
+        echo "mount data分区home root目录，不需要挂载"
+        continue
+    fi
+    if [ "x$mntdir" = "x/sysroot" ] ; then
+        echo "sysroot目录，不需要挂载"
+        continue
+    fi
+        if [ "x$mntdir" = "x/data" ] ; then
+                echo "data 挂载点为数据目录，不需要挂载"
+                continue
+        fi
+    echo "$device $options"
+    device=$(parse_device $device)
+    echo "$device, -------------- $mntdir"
+    echo "mount -n -o $options $device $mountrootdir$mntdir"
+    mount -n -o $options $device $mountrootdir$mntdir
+
+    if cat /proc/cpuinfo|grep -i "kirin.*9.0" > /dev/null || cat /proc/cpuinfo|grep -i "pangu.*m900" > /dev/null ;then
+        if [ "x$mntdir" = "x/boot/efi" ] || [ "x$mntdir" = "x/boot" ] ; then
+            mount -o rw,remount $device $mountrootdir$mntdir
+        fi
+    fi
+done
+
+log_dir="/var/log/kylin-fix-boot-grub"
+if [ ! -d "$log_dir" ]; then
+        mkdir -p "$log_dir"
+fi
+
+log_file="$log_dir/fix-grub.log"
+touch "$log_file"
+
+cp -a /usr/share/kylin-fix-boot-grub/fix-bash/fix-grub-real "$mountrootdir/home/fix-grub-real"
+if [ $? -eq 0 ]; then
+    echo "成功cpfix-grub-real"
+else
+    echo "cpfix-grub-real失败"
+    exit 1
+fi
+#将当前目录移动到即将chroot的目录下
+cd "$mountrootdir"
+#以相对路径创建两个符号链接,避免chroot改变路径后绝对路径链接失效
+ln -s ./usr/bin bin
+ln -s ./usr/lib lib
+ln -s ./usr/lib32 lib32
+ln -s ./usr/libx32 libx32
+ln -s ./usr/lib64 lib64
+
+chroot $mountrootdir /home/fix-grub-real |& tee -a "$log_file"
+#卸载usr、etc绑定并删除创建的usr、bin、lib
+umount -l "$mountrootdir/usr"
+umount -l "$mountrootdir/etc"
+rm -rf "$mountrootdir/usr/"
+rm -rf "$mountrootdir/bin"
+rm -rf "$mountrootdir/lib"
+rm -rf "$mountrootdir/lib32"
+rm -rf "$mountrootdir/libx32"
+rm -rf "$mountrootdir/lib64"
+#最后卸载mountrootdir
+umount -l $mountrootdir
+

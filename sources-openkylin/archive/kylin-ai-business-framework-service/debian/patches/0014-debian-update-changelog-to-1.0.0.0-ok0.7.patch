@@ -1,0 +1,128 @@
+From: Wei Wei <wangweinan@kylinos.cn>
+Date: Tue, 28 May 2024 13:54:39 +0800
+Subject: debian: update changelog to 1.0.0.0-ok0.7
+
+---
+ src/utils/python/chroma_db.py | 49 +++++++++++++++++++++----------------------
+ 1 file changed, 24 insertions(+), 25 deletions(-)
+
+diff --git a/src/utils/python/chroma_db.py b/src/utils/python/chroma_db.py
+index a6cef38..9aa85b6 100644
+--- a/src/utils/python/chroma_db.py
++++ b/src/utils/python/chroma_db.py
+@@ -16,11 +16,11 @@ import chromadb
+ from chromadb.config import Settings
+ import multiprocessing
+ 
+-def do_list_collections(path):
++def do_list_collections(shared_list, path):
+     client = chromadb.PersistentClient(path=path)
+     results = client.list_collections()
+-    names = [collection.name for collection in results]
+-    return names
++    for collection in results:
++        shared_list.append(collection.name)
+ 
+ def do_create_collection(path, collection_name, collection_metadata="cosine"):
+     client = chromadb.PersistentClient(path=path)
+@@ -44,7 +44,7 @@ def do_add_data(path, collection_name, ids,  metadatas, vectors = None, document
+         metadatas = metadatas
+     )
+ 
+-def do_get_data(path, collection_name, id=None, source=None):
++def do_get_data(shared_dict, path, collection_name, id=None, source=None):
+     client = chromadb.PersistentClient(path = path)
+     collection = client.get_collection(name = collection_name)
+     if source == "":
+@@ -53,12 +53,13 @@ def do_get_data(path, collection_name, id=None, source=None):
+ 
+     data = collection.get(
+         ids=id,
+-        # embeddings=vectors,
+         where_document=filter,
+         include=["embeddings", "metadatas", "documents"]
+     )
+-    results = {'ids': data.get('ids'), 'embeddings': data.get('embeddings'), 'metadatas': data.get('metadatas'), 'documents': data.get('documents')}
+-    return results
++    shared_dict['ids'] = data.get('ids')
++    shared_dict['embeddings'] = data.get('embeddings')
++    shared_dict['metadatas'] = data.get('metadatas')
++    shared_dict['documents'] = data.get('documents')
+ 
+ def do_delete_data(path, collection_name, sourceIds=None, ids=None):
+     client = chromadb.PersistentClient(path = path)
+@@ -72,15 +73,17 @@ def do_delete_data(path, collection_name, sourceIds=None, ids=None):
+         where=filter
+     )
+ 
+-def do_query_data(path, collection_name, embuddings=None, results=10):
++def do_query_data(shared_dict, path, collection_name, embeddings=None, results=10):
+     client = chromadb.PersistentClient(path = path)
+     collection = client.get_collection(name = collection_name)
+     data = collection.query(
+-        query_embeddings=embuddings,
++        query_embeddings=embeddings,
+         n_results=results
+     )
+-    results = {'ids': data.get('ids')[0],'metadatas': data.get('metadatas')[0], 'documents': data.get('documents')[0], 'distances': data.get('distances')[0]}
+-    return results
++    shared_dict['ids'] = data.get('ids')[0]
++    shared_dict['metadatas'] = data.get('metadatas')[0]
++    shared_dict['documents'] = data.get('documents')[0]
++    shared_dict['distances'] = data.get('distances')[0]
+ 
+ def do_update_data(path, collection_name, ids, documents = None, vectors = None, metadatas = None):
+     client = chromadb.PersistentClient(path = path)
+@@ -97,13 +100,11 @@ class ChromaDB:
+         self.path = path
+ 
+     def list_collections(self):
+-        q = multiprocessing.Queue()
+-        target = lambda q: q.put(do_list_collections(self.path))
+-        p = multiprocessing.Process(target=target, args=(q,))
++        shared_list = multiprocessing.Manager().list()
++        p = multiprocessing.Process(target=do_list_collections, args=(shared_list, self.path))
+         p.start()
+         p.join()
+-        result = q.get()
+-        return result
++        return list(shared_list)
+ 
+     #创建collection
+     def create_collection(
+@@ -132,12 +133,11 @@ class ChromaDB:
+ 
+     #获得所有数据
+     def get_data(self, collection_name, id=None, source=None):
+-        q = multiprocessing.Queue()
+-        target = lambda q: q.put(do_get_data(self.path, collection_name, id, source))
+-        p = multiprocessing.Process(target=target, args=(q,))
++        shared_dict = multiprocessing.Manager().dict()
++        p = multiprocessing.Process(target=do_get_data, args=(shared_dict, self.path, collection_name, id, source))
+         p.start()
+         p.join()
+-        return q.get()
++        return dict(shared_dict)
+ 
+     #删
+     def delete_data(self, collection_name, sourceIds=None, ids=None):
+@@ -149,15 +149,14 @@ class ChromaDB:
+     def query_data(
+         self,
+         collection_name,
+-        embuddings=None,
++        embeddings=None,
+         results=10
+     ):
+-        q = multiprocessing.Queue()
+-        target = lambda q: q.put(do_query_data(self.path, collection_name, embuddings, results))
+-        p = multiprocessing.Process(target=target, args=(q,))
++        shared_dict = multiprocessing.Manager().dict()
++        p = multiprocessing.Process(target=do_query_data, args=(shared_dict, self.path, collection_name, embeddings, results))
+         p.start()
+         p.join()
+-        return q.get()
++        return dict(shared_dict)
+ 
+      #更新跟add保持一致
+     def update_data(self, collection_name, ids, documents = None, vectors = None, metadatas = None):

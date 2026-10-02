@@ -1,0 +1,3026 @@
+From: =?utf-8?b?6IOh5oGS?= <17691252557@163.com>
+Date: Wed, 27 Sep 2023 08:49:46 +0000
+Subject: =?utf-8?b?ITEwMCDlkIzmraXku6PnoIEgTWVyZ2UgcHVsbCByZXF1ZXN0ICExMDAg?=
+ =?utf-8?b?ZnJvbSDog6HmgZIvb3Blbmt5bGluL25pbGU=?=
+
+---
+ .../third_party/cJSON/CMakeLists.txt               |   2 +-
+ CMakeLists.txt                                     |   5 +-
+ common/CMakeLists.txt                              |   2 -
+ common/fileinfo.cpp                                | 857 ++++++++++++++++----
+ common/fileinfolist.cpp                            |  74 --
+ common/fileinfolist.h                              |  30 -
+ dbus/dbusvfsinterface.cpp                          |  19 -
+ dbus/dbusvfsinterface.h                            |   3 -
+ kylin-connectivity.desktop                         |   2 +
+ .../com.kylin.connectivity.manager.limit           |   1 -
+ .../com.kylin.connectivity.manager.limit.verify    |   2 +-
+ lupdate_ts                                         |   3 +
+ .../send-to-connectivity.cpp                       |   5 +
+ .../send-to-connectivity.h                         |   2 +-
+ .../peony-vfs-kylin-multiterminal/CMakeLists.txt   |   2 -
+ .../filecollection.cpp                             |  68 --
+ .../peony-vfs-kylin-multiterminal/filecollection.h |  35 -
+ .../multiterminal-vfs-dbus-interface.cpp           | 112 +--
+ .../multiterminal-vfs-dbus-interface.h             |  14 +-
+ .../multiterminal-vfs-file-monitor.cpp             |  10 -
+ .../multiterminal-vfs-file.cpp                     |  14 +-
+ .../peony-vfs-multiterminal.h                      |   6 +-
+ translations/kylin-connectivity_bo_CN.ts           |  27 +-
+ translations/kylin-connectivity_mn.ts              |  27 +-
+ translations/kylin-connectivity_zh_CN.ts           |  27 +-
+ translations/kylin-connectivity_zh_HK.ts           | 890 +++++++++++++++++++++
+ translations/peony-send-to-connectivity_bo_CN.ts   |  12 +-
+ translations/peony-send-to-connectivity_mn.ts      |  12 +-
+ translations/peony-send-to-connectivity_zh_CN.ts   |  12 +-
+ translations/peony-send-to-connectivity_zh_HK.ts   |  27 +
+ .../peony-vfs-kylin-multiterminal_zh_HK.ts         |  56 ++
+ ui/mainwindow.cpp                                  |  14 +-
+ 32 files changed, 1853 insertions(+), 519 deletions(-)
+ delete mode 100644 common/fileinfolist.cpp
+ delete mode 100644 common/fileinfolist.h
+ delete mode 100644 plugin/peony-vfs-kylin-multiterminal/filecollection.cpp
+ delete mode 100644 plugin/peony-vfs-kylin-multiterminal/filecollection.h
+ create mode 100644 translations/kylin-connectivity_zh_HK.ts
+ create mode 100644 translations/peony-send-to-connectivity_zh_HK.ts
+ create mode 100644 translations/peony-vfs-kylin-multiterminal_zh_HK.ts
+
+diff --git a/3rdparty/dsoftbus/dsoftbus_build/third_party/cJSON/CMakeLists.txt b/3rdparty/dsoftbus/dsoftbus_build/third_party/cJSON/CMakeLists.txt
+index 1778243..d380249 100644
+--- a/3rdparty/dsoftbus/dsoftbus_build/third_party/cJSON/CMakeLists.txt
++++ b/3rdparty/dsoftbus/dsoftbus_build/third_party/cJSON/CMakeLists.txt
+@@ -1,5 +1,5 @@
+ add_definitions()
+-
++set(CMAKE_C_FLAGS "-Wall -fPIC")
+ include_directories(
+         .
+ )
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 102d2f6..dc34228 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -72,12 +72,15 @@ set(TRANSLATIONS
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/kylin-connectivity_zh_CN.ts"
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/kylin-connectivity_bo_CN.ts"
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/kylin-connectivity_mn.ts"
++	"${CMAKE_CURRENT_LIST_DIR}/translations/kylin-connectivity_zh_HK.ts"
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-send-to-connectivity_zh_CN.ts"
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-send-to-connectivity_bo_CN.ts"
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-send-to-connectivity_mn.ts"
++	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-send-to-connectivity_zh_HK.ts"
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-vfs-kylin-multiterminal_zh_CN.ts"
+ 	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-vfs-kylin-multiterminal_bo_CN.ts"
+-	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-vfs-kylin-multiterminal_mn.ts")
++	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-vfs-kylin-multiterminal_mn.ts"
++	"${CMAKE_CURRENT_LIST_DIR}/translations/peony-vfs-kylin-multiterminal_zh_HK.ts")
+ set_source_files_properties(${TRANSLATIONS} PROPERTIES OUTPUT_LOCATION "${CMAKE_CURRENT_BINARY_DIR}/translations")
+ qt5_add_translation(QM_FILES ${TRANSLATIONS})
+ 
+diff --git a/common/CMakeLists.txt b/common/CMakeLists.txt
+index 61cf834..1717203 100644
+--- a/common/CMakeLists.txt
++++ b/common/CMakeLists.txt
+@@ -18,8 +18,6 @@ set(COMMON_SOURCES
+         config.cpp
+         fileinfo.h
+         fileinfo.cpp
+-        fileinfolist.h
+-        fileinfolist.cpp
+         generatetools.h
+         generatetools.cpp
+         highlight-effect.h
+diff --git a/common/fileinfo.cpp b/common/fileinfo.cpp
+index cf02de7..46b5c19 100644
+--- a/common/fileinfo.cpp
++++ b/common/fileinfo.cpp
+@@ -14,162 +14,707 @@ QSet<QString> FileInfo::videoTypeSet = FileInfo::initvideoSet();
+ QMap<QString, QString> FileInfo::initMimeMap()
+ {
+     QMap<QString, QString> map;
+-    // for supported image types
+-    map.insert("bmp", "image/x-ms-bmp");
++    map.insert("load", "text/html");
++    map.insert("123", "application/vnd.lotus-1-2-3");
++    map.insert("3ds", "image/x-3ds");
++    map.insert("3g2", "video/3gpp");
++    map.insert("3ga", "video/3gpp");
++    map.insert("3gp", "video/3gpp");
++    map.insert("3gpp", "video/3gpp");
++    map.insert("602", "application/x-t602");
++    map.insert("669", "audio/x-mod");
++    map.insert("7z", "application/x-7z-compressed");
++    map.insert("a", "application/x-archive");
++    map.insert("aac", "audio/mp4");
++    map.insert("abw", "application/x-abiword");
++    map.insert("abw.crashed", "application/x-abiword");
++    map.insert("abw.gz", "application/x-abiword");
++    map.insert("ac3", "audio/ac3");
++    map.insert("ace", "application/x-ace");
++    map.insert("adb", "text/x-adasrc");
++    map.insert("ads", "text/x-adasrc");
++    map.insert("afm", "application/x-font-afm");
++    map.insert("ag", "image/x-applix-graphics");
++    map.insert("ai", "application/illustrator");
++    map.insert("aif", "audio/x-aiff");
++    map.insert("aifc", "audio/x-aiff");
++    map.insert("aiff", "audio/x-aiff");
++    map.insert("al", "application/x-perl");
++    map.insert("alz", "application/x-alz");
++    map.insert("amr", "audio/amr");
++    map.insert("ani", "application/x-navi-animation");
++    map.insert("anim[1-9j]", "video/x-anim");
++    map.insert("anx", "application/annodex");
++    map.insert("ape", "audio/x-ape");
++    map.insert("arj", "application/x-arj");
++    map.insert("arw", "image/x-sony-arw");
++    map.insert("as", "application/x-applix-spreadsheet");
++    map.insert("asc", "text/plain");
++    map.insert("asf", "video/x-ms-asf");
++    map.insert("asp", "application/x-asp");
++    map.insert("ass", "text/x-ssa");
++    map.insert("asx", "audio/x-ms-asx");
++    map.insert("atom", "application/atom+xml");
++    map.insert("au", "audio/basic");
++    map.insert("avi", "video/x-msvideo");
++    map.insert("aw", "application/x-applix-word");
++    map.insert("awb", "audio/amr-wb");
++    map.insert("awk", "application/x-awk");
++    map.insert("axa", "audio/annodex");
++    map.insert("axv", "video/annodex");
++    map.insert("bak", "application/x-trash");
++    map.insert("bcpio", "application/x-bcpio");
++    map.insert("bdf", "application/x-font-bdf");
++    map.insert("bib", "text/x-bibtex");
++    map.insert("bin", "application/octet-stream");
++    map.insert("blend", "application/x-blender");
++    map.insert("blender", "application/x-blender");
++    map.insert("bmp", "image/bmp");
++    map.insert("bz", "application/x-bzip");
++    map.insert("bz2", "application/x-bzip");
++    map.insert("c", "text/x-csrc");
++    map.insert("c++", "text/x-c++src");
++    map.insert("cab", "application/vnd.ms-cab-compressed");
++    map.insert("cb7", "application/x-cb7");
++    map.insert("cbr", "application/x-cbr");
++    map.insert("cbt", "application/x-cbt");
++    map.insert("cbz", "application/x-cbz");
++    map.insert("cc", "text/x-c++src");
++    map.insert("cdf", "application/x-netcdf");
++    map.insert("cdr", "application/vnd.corel-draw");
++    map.insert("cer", "application/x-x509-ca-cert");
++    map.insert("cert", "application/x-x509-ca-cert");
++    map.insert("cgm", "image/cgm");
++    map.insert("chm", "application/x-chm");
++    map.insert("chrt", "application/x-kchart");
++    map.insert("class", "application/x-java");
++    map.insert("cls", "text/x-tex");
++    map.insert("cmake", "text/x-cmake");
++    map.insert("cpio", "application/x-cpio");
++    map.insert("cpio.gz", "application/x-cpio-compressed");
++    map.insert("cpp", "text/x-c++src");
++    map.insert("cr2", "image/x-canon-cr2");
++    map.insert("crt", "application/x-x509-ca-cert");
++    map.insert("crw", "image/x-canon-crw");
++    map.insert("cs", "text/x-csharp");
++    map.insert("csh", "application/x-csh");
++    map.insert("css", "text/css");
++    map.insert("cssl", "text/css");
++    map.insert("csv", "text/csv");
++    map.insert("cue", "application/x-cue");
++    map.insert("cur", "image/x-win-bitmap");
++    map.insert("cxx", "text/x-c++src");
++    map.insert("d", "text/x-dsrc");
++    map.insert("dar", "application/x-dar");
++    map.insert("dbf", "application/x-dbf");
++    map.insert("dc", "application/x-dc-rom");
++    map.insert("dcl", "text/x-dcl");
++    map.insert("dcm", "application/dicom");
++    map.insert("dcr", "image/x-kodak-dcr");
++    map.insert("dds", "image/x-dds");
++    map.insert("deb", "application/x-deb");
++    map.insert("der", "application/x-x509-ca-cert");
++    map.insert("desktop", "application/x-desktop");
++    map.insert("dia", "application/x-dia-diagram");
++    map.insert("diff", "text/x-patch");
++    map.insert("divx", "video/x-msvideo");
++    map.insert("djv", "image/vnd.djvu");
++    map.insert("djvu", "image/vnd.djvu");
++    map.insert("dng", "image/x-adobe-dng");
++    map.insert("doc", "application/msword");
++    map.insert("docbook", "application/docbook+xml");
++    map.insert("docm", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
++    map.insert("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
++    map.insert("dot", "text/vnd.graphviz");
++    map.insert("dsl", "text/x-dsl");
++    map.insert("dtd", "application/xml-dtd");
++    map.insert("dtx", "text/x-tex");
++    map.insert("dv", "video/dv");
++    map.insert("dvi", "application/x-dvi");
++    map.insert("dvi.bz2", "application/x-bzdvi");
++    map.insert("dvi.gz", "application/x-gzdvi");
++    map.insert("dwg", "image/vnd.dwg");
++    map.insert("dxf", "image/vnd.dxf");
++    map.insert("e", "text/x-eiffel");
++    map.insert("egon", "application/x-egon");
++    map.insert("eif", "text/x-eiffel");
++    map.insert("el", "text/x-emacs-lisp");
++    map.insert("emf", "image/x-emf");
++    map.insert("emp", "application/vnd.emusic-emusic_package");
++    map.insert("ent", "application/xml-external-parsed-entity");
++    map.insert("eps", "image/x-eps");
++    map.insert("eps.bz2", "image/x-bzeps");
++    map.insert("eps.gz", "image/x-gzeps");
++    map.insert("epsf", "image/x-eps");
++    map.insert("epsf.bz2", "image/x-bzeps");
++    map.insert("epsf.gz", "image/x-gzeps");
++    map.insert("epsi", "image/x-eps");
++    map.insert("epsi.bz2", "image/x-bzeps");
++    map.insert("epsi.gz", "image/x-gzeps");
++    map.insert("epub", "application/epub+zip");
++    map.insert("erl", "text/x-erlang");
++    map.insert("es", "application/ecmascript");
++    map.insert("etheme", "application/x-e-theme");
++    map.insert("etx", "text/x-setext");
++    map.insert("exe", "application/x-ms-dos-executable");
++    map.insert("exr", "image/x-exr");
++    map.insert("ez", "application/andrew-inset");
++    map.insert("f", "text/x-fortran");
++    map.insert("f90", "text/x-fortran");
++    map.insert("f95", "text/x-fortran");
++    map.insert("fb2", "application/x-fictionbook+xml");
++    map.insert("fig", "image/x-xfig");
++    map.insert("fits", "image/fits");
++    map.insert("fl", "application/x-fluid");
++    map.insert("flac", "audio/x-flac");
++    map.insert("flc", "video/x-flic");
++    map.insert("fli", "video/x-flic");
++    map.insert("flv", "video/x-flv");
++    map.insert("flw", "application/x-kivio");
++    map.insert("fo", "text/x-xslfo");
++    map.insert("for", "text/x-fortran");
++    map.insert("g3", "image/fax-g3");
++    map.insert("gb", "application/x-gameboy-rom");
++    map.insert("gba", "application/x-gba-rom");
++    map.insert("gcrd", "text/directory");
++    map.insert("ged", "application/x-gedcom");
++    map.insert("gedcom", "application/x-gedcom");
++    map.insert("gen", "application/x-genesis-rom");
++    map.insert("gf", "application/x-tex-gf");
++    map.insert("gg", "application/x-sms-rom");
+     map.insert("gif", "image/gif");
+-    map.insert("jpg", "image/jpeg");
+-    map.insert("jpeg", "image/jpeg");
+-    map.insert("png", "image/png");
+-    map.insert("pbm", "image/pbm");
+-    map.insert("pgm", "image/pgm");
+-    map.insert("ppm", "image/ppm");
+-    map.insert("xbm", "image/xbm");
+-    map.insert("xpm", "image/xpm");
+-    map.insert("svg", "image/svg");
+-    map.insert("dds", "image/dds");
+-    map.insert("icns", "image/icns");
++    map.insert("glade", "application/x-glade");
++    map.insert("gmo", "application/x-gettext-translation");
++    map.insert("gnc", "application/x-gnucash");
++    map.insert("gnd", "application/gnunet-directory");
++    map.insert("gnucash", "application/x-gnucash");
++    map.insert("gnumeric", "application/x-gnumeric");
++    map.insert("gnuplot", "application/x-gnuplot");
++    map.insert("gp", "application/x-gnuplot");
++    map.insert("gpg", "application/pgp-encrypted");
++    map.insert("gplt", "application/x-gnuplot");
++    map.insert("gra", "application/x-graphite");
++    map.insert("gsf", "application/x-font-type1");
++    map.insert("gsm", "audio/x-gsm");
++    map.insert("gtar", "application/x-tar");
++    map.insert("gv", "text/vnd.graphviz");
++    map.insert("gvp", "text/x-google-video-pointer");
++    map.insert("gz", "application/x-gzip");
++    map.insert("h", "text/x-chdr");
++    map.insert("h++", "text/x-c++hdr");
++    map.insert("hdf", "application/x-hdf");
++    map.insert("hh", "text/x-c++hdr");
++    map.insert("hp", "text/x-c++hdr");
++    map.insert("hpgl", "application/vnd.hp-hpgl");
++    map.insert("hpp", "text/x-c++hdr");
++    map.insert("hs", "text/x-haskell");
++    map.insert("htm", "text/html");
++    map.insert("html", "text/html");
++    map.insert("hwp", "application/x-hwp");
++    map.insert("hwt", "application/x-hwt");
++    map.insert("hxx", "text/x-c++hdr");
++    map.insert("ica", "application/x-ica");
++    map.insert("icb", "image/x-tga");
++    map.insert("icns", "image/x-icns");
++    map.insert("ico", "image/vnd.microsoft.icon");
++    map.insert("ics", "text/calendar");
++    map.insert("idl", "text/x-idl");
++    map.insert("ief", "image/ief");
++    map.insert("iff", "image/x-iff");
++    map.insert("ilbm", "image/x-ilbm");
++    map.insert("ime", "text/x-imelody");
++    map.insert("imy", "text/x-imelody");
++    map.insert("ins", "text/x-tex");
++    map.insert("iptables", "text/x-iptables");
++    map.insert("iso", "application/x-cd-image");
++    map.insert("iso9660", "application/x-cd-image");
++    map.insert("it", "audio/x-it");
++    map.insert("j2k", "image/jp2");
++    map.insert("jad", "text/vnd.sun.j2me.app-descriptor");
++    map.insert("jar", "application/x-java-archive");
++    map.insert("java", "text/x-java");
++    map.insert("jng", "image/x-jng");
++    map.insert("jnlp", "application/x-java-jnlp-file");
+     map.insert("jp2", "image/jp2");
+-    map.insert("mng", "image/mng");
+-    map.insert("tga", "image/tga");
+-    map.insert("tiff", "image/tiff");
+-    map.insert("tif", "image/tif");
+-    map.insert("wbmp", "image/wbmp");
+-    map.insert("webp", "image/webp");
+-    // for supported video types
+-    map.insert("avi", "video/x-msvideo");
+-    map.insert("vfw", "video/vfw");
+-    map.insert("divx", "video/divx");
+-    map.insert("mpg", "video/mpg");
++    map.insert("jpc", "image/jp2");
++    map.insert("jpe", "image/jpeg");
++    map.insert("jpeg", "image/jpeg");
++    map.insert("jpf", "image/jp2");
++    map.insert("jpg", "image/jpeg");
++    map.insert("jpr", "application/x-jbuilder-project");
++    map.insert("jpx", "image/jp2");
++    map.insert("js", "application/javascript");
++    map.insert("json", "application/json");
++    map.insert("jsonp", "application/jsonp");
++    map.insert("k25", "image/x-kodak-k25");
++    map.insert("kar", "audio/midi");
++    map.insert("karbon", "application/x-karbon");
++    map.insert("kdc", "image/x-kodak-kdc");
++    map.insert("kdelnk", "application/x-desktop");
++    map.insert("kexi", "application/x-kexiproject-sqlite3");
++    map.insert("kexic", "application/x-kexi-connectiondata");
++    map.insert("kexis", "application/x-kexiproject-shortcut");
++    map.insert("kfo", "application/x-kformula");
++    map.insert("kil", "application/x-killustrator");
++    map.insert("kino", "application/smil");
++    map.insert("kml", "application/vnd.google-earth.kml+xml");
++    map.insert("kmz", "application/vnd.google-earth.kmz");
++    map.insert("kon", "application/x-kontour");
++    map.insert("kpm", "application/x-kpovmodeler");
++    map.insert("kpr", "application/x-kpresenter");
++    map.insert("kpt", "application/x-kpresenter");
++    map.insert("kra", "application/x-krita");
++    map.insert("ksp", "application/x-kspread");
++    map.insert("kud", "application/x-kugar");
++    map.insert("kwd", "application/x-kword");
++    map.insert("kwt", "application/x-kword");
++    map.insert("la", "application/x-shared-library-la");
++    map.insert("latex", "text/x-tex");
++    map.insert("ldif", "text/x-ldif");
++    map.insert("lha", "application/x-lha");
++    map.insert("lhs", "text/x-literate-haskell");
++    map.insert("lhz", "application/x-lhz");
++    map.insert("log", "text/x-log");
++    map.insert("ltx", "text/x-tex");
++    map.insert("lua", "text/x-lua");
++    map.insert("lwo", "image/x-lwo");
++    map.insert("lwob", "image/x-lwo");
++    map.insert("lws", "image/x-lws");
++    map.insert("ly", "text/x-lilypond");
++    map.insert("lyx", "application/x-lyx");
++    map.insert("lz", "application/x-lzip");
++    map.insert("lzh", "application/x-lha");
++    map.insert("lzma", "application/x-lzma");
++    map.insert("lzo", "application/x-lzop");
++    map.insert("m", "text/x-matlab");
++    map.insert("m15", "audio/x-mod");
++    map.insert("m2t", "video/mpeg");
++    map.insert("m3u", "audio/x-mpegurl");
++    map.insert("m3u8", "audio/x-mpegurl");
++    map.insert("m4", "application/x-m4");
++    map.insert("m4a", "audio/mp4");
++    map.insert("m4b", "audio/x-m4b");
++    map.insert("m4v", "video/mp4");
++    map.insert("mab", "application/x-markaby");
++    map.insert("man", "application/x-troff-man");
++    map.insert("mbox", "application/mbox");
++    map.insert("md", "application/x-genesis-rom");
++    map.insert("mdb", "application/vnd.ms-access");
++    map.insert("mdi", "image/vnd.ms-modi");
++    map.insert("me", "text/x-troff-me");
++    map.insert("med", "audio/x-mod");
++    map.insert("metalink", "application/metalink+xml");
++    map.insert("mgp", "application/x-magicpoint");
++    map.insert("mid", "audio/midi");
++    map.insert("midi", "audio/midi");
++    map.insert("mif", "application/x-mif");
++    map.insert("minipsf", "audio/x-minipsf");
++    map.insert("mka", "audio/x-matroska");
++    map.insert("mkv", "video/x-matroska");
++    map.insert("ml", "text/x-ocaml");
++    map.insert("mli", "text/x-ocaml");
++    map.insert("mm", "text/x-troff-mm");
++    map.insert("mmf", "application/x-smaf");
++    map.insert("mml", "text/mathml");
++    map.insert("mng", "video/x-mng");
++    map.insert("mo", "application/x-gettext-translation");
++    map.insert("mo3", "audio/x-mo3");
++    map.insert("moc", "text/x-moc");
++    map.insert("mod", "audio/x-mod");
++    map.insert("mof", "text/x-mof");
++    map.insert("moov", "video/quicktime");
++    map.insert("mov", "video/quicktime");
++    map.insert("movie", "video/x-sgi-movie");
++    map.insert("mp+", "audio/x-musepack");
++    map.insert("mp2", "video/mpeg");
++    map.insert("mp3", "audio/mpeg");
++    map.insert("mp4", "video/mp4");
++    map.insert("mpc", "audio/x-musepack");
+     map.insert("mpe", "video/mpeg");
+     map.insert("mpeg", "video/mpeg");
+     map.insert("mpg", "video/mpeg");
+-    map.insert("mpg4", "video/mp4");
+-    map.insert("m1v", "video/m1v");
+-    map.insert("m2v", "video/m2v");
+-    map.insert("mpv", "video/mpv");
+-    map.insert("dv", "video/dv");
+-    map.insert("3gp", "video/3gpp");
+-    map.insert("3g2", "video/3gpp2");
+-    map.insert("mov", "video/quicktime");
+-    map.insert("mp4", "video/mp4");
+-    map.insert("m4v", "video/x-m4v");
+-    map.insert("dat", "video/dat");
+-    map.insert("vcd", "video/vcd");
+-    map.insert("ogm", "video/ogm");
+-    map.insert("ogv", "video/ogv");
+-    map.insert("ogx", "video/ogx");
+-    map.insert("asf", "video/x-ms-asf");
+-    map.insert("wmv", "video/x-ms-wmv");
+-    map.insert("iso", "video/iso");
+-    map.insert("vob", "video/vob");
+-    map.insert("mkv", "video/mkv");
+-    map.insert("nsv", "video/nsv");
+-    map.insert("ram", "video/ram");
+-    map.insert("flv", "video/flv");
+-    map.insert("rm", "video/rm");
+-    map.insert("swf", "video/swf");
+-    map.insert("ts", "video/ts");
+-    map.insert("rmvb", "video/rmvb");
+-    map.insert("dvr-ms", "video/dvr-ms");
+-    map.insert("m2t", "video/m2t");
+-    map.insert("m2ts", "video/m2ts");
+-    map.insert("mts", "video/mts");
+-    map.insert("rec", "video/rec");
+-    map.insert("wtv", "video/wtv");
+-    map.insert("f4v", "video/f4v");
+-    map.insert("hdmov", "video/hdmov");
+-    map.insert("webm", "video/webm");
+-    map.insert("vp8", "video/vp8");
+-    map.insert("bik", "video/bik");
+-    map.insert("smk", "video/smk");
+-    map.insert("wtv", "video/wtv");
+-    map.insert("part", "video/part");
+-    map.insert("m4u", "video/vnd.mpegurl");
+-    // for supported audio types
+-    map.insert("mp2", "audio/x-mpeg");
+-    map.insert("mp3", "audio/x-mpeg");
+-    map.insert("ogg", "audio/ogg");
+-    map.insert("oga", "audio/oga");
+-    map.insert("wav", "audio/x-wav");
+-    map.insert("wma", "audio/x-ms-wma");
+-    map.insert("aac", "audio/aac");
+-    map.insert("ac3", "audio/ac3");
+-    map.insert("dts", "audio/dts");
+-    map.insert("ra", "audio/ra");
+-    map.insert("ape", "audio/ape");
+-    map.insert("flac", "audio/flac");
+-    map.insert("thd", "audio/thd");
+-    map.insert("mka", "audio/mka");
+-    map.insert("m4a", "audio/mp4a-latm");
+-    map.insert("opus", "audio/opus");
+-    map.insert("m3u", "audio/x-mpegurl");
+-    map.insert("m4b", "audio/mp4a-latm");
+-    map.insert("m4p", "audio/mp4a-latm");
+     map.insert("mpga", "audio/mpeg");
+-    map.insert("aif", "audio/x-aiff");
+-    // for supported document types
+-    map.insert("txt", "text/plain");
+-    map.insert("rar", "application/vnd.rar");
+-    map.insert("java", "text/x-java");
+-    map.insert("apk", "application/vnd.android.package-archive");
+-    map.insert("zip", "application/zip");
+-    map.insert("deb", "application/vnd.debian.binary-package");
+-    map.insert("udeb", "application/vnd.debian.binary-package");
+-    map.insert("dot", "application/msword-template");
++    map.insert("mpp", "audio/x-musepack");
++    map.insert("mrl", "text/x-mrml");
++    map.insert("mrml", "text/x-mrml");
++    map.insert("mrw", "image/x-minolta-mrw");
++    map.insert("ms", "text/x-troff-ms");
++    map.insert("msi", "application/x-msi");
++    map.insert("msod", "image/x-msod");
++    map.insert("msx", "application/x-msx-rom");
++    map.insert("mtm", "audio/x-mod");
++    map.insert("mup", "text/x-mup");
++    map.insert("mxf", "application/mxf");
++    map.insert("n64", "application/x-n64-rom");
++    map.insert("nb", "application/mathematica");
++    map.insert("nc", "application/x-netcdf");
++    map.insert("nds", "application/x-nintendo-ds-rom");
++    map.insert("nef", "image/x-nikon-nef");
++    map.insert("nes", "application/x-nes-rom");
++    map.insert("nfo", "text/x-nfo");
++    map.insert("not", "text/x-mup");
++    map.insert("nsc", "application/x-netshow-channel");
++    map.insert("nsv", "video/x-nsv");
++    map.insert("o", "application/x-object");
++    map.insert("obj", "application/x-tgif");
++    map.insert("ocl", "text/x-ocl");
++    map.insert("oda", "application/oda");
++    map.insert("odb", "application/vnd.oasis.opendocument.database");
++    map.insert("odc", "application/vnd.oasis.opendocument.chart");
++    map.insert("odf", "application/vnd.oasis.opendocument.formula");
++    map.insert("odg", "application/vnd.oasis.opendocument.graphics");
++    map.insert("odi", "application/vnd.oasis.opendocument.image");
++    map.insert("odm", "application/vnd.oasis.opendocument.text-master");
++    map.insert("odp", "application/vnd.oasis.opendocument.presentation");
++    map.insert("ods", "application/vnd.oasis.opendocument.spreadsheet");
++    map.insert("odt", "application/vnd.oasis.opendocument.text");
++    map.insert("oga", "audio/ogg");
++    map.insert("ogg", "video/x-theora+ogg");
++    map.insert("ogm", "video/x-ogm+ogg");
++    map.insert("ogv", "video/ogg");
++    map.insert("ogx", "application/ogg");
++    map.insert("old", "application/x-trash");
++    map.insert("oleo", "application/x-oleo");
++    map.insert("opml", "text/x-opml+xml");
++    map.insert("ora", "image/openraster");
++    map.insert("orf", "image/x-olympus-orf");
++    map.insert("otc", "application/vnd.oasis.opendocument.chart-template");
++    map.insert("otf", "application/x-font-otf");
++    map.insert("otg", "application/vnd.oasis.opendocument.graphics-template");
++    map.insert("oth", "application/vnd.oasis.opendocument.text-web");
++    map.insert("otp", "application/vnd.oasis.opendocument.presentation-template");
++    map.insert("ots", "application/vnd.oasis.opendocument.spreadsheet-template");
++    map.insert("ott", "application/vnd.oasis.opendocument.text-template");
++    map.insert("owl", "application/rdf+xml");
++    map.insert("oxt", "application/vnd.openofficeorg.extension");
++    map.insert("p", "text/x-pascal");
++    map.insert("p10", "application/pkcs10");
++    map.insert("p12", "application/x-pkcs12");
++    map.insert("p7b", "application/x-pkcs7-certificates");
++    map.insert("p7s", "application/pkcs7-signature");
++    map.insert("pack", "application/x-java-pack200");
++    map.insert("pak", "application/x-pak");
++    map.insert("par2", "application/x-par2");
++    map.insert("pas", "text/x-pascal");
++    map.insert("patch", "text/x-patch");
++    map.insert("pbm", "image/x-portable-bitmap");
++    map.insert("pcd", "image/x-photo-cd");
++    map.insert("pcf", "application/x-cisco-vpn-settings");
++    map.insert("pcf.gz", "application/x-font-pcf");
++    map.insert("pcf.z", "application/x-font-pcf");
++    map.insert("pcl", "application/vnd.hp-pcl");
++    map.insert("pcx", "image/x-pcx");
++    map.insert("pdb", "chemical/x-pdb");
++    map.insert("pdc", "application/x-aportisdoc");
++    map.insert("pdf", "application/pdf");
++    map.insert("pdf.bz2", "application/x-bzpdf");
++    map.insert("pdf.gz", "application/x-gzpdf");
++    map.insert("pef", "image/x-pentax-pef");
++    map.insert("pem", "application/x-x509-ca-cert");
++    map.insert("perl", "application/x-perl");
++    map.insert("pfa", "application/x-font-type1");
++    map.insert("pfb", "application/x-font-type1");
++    map.insert("pfx", "application/x-pkcs12");
++    map.insert("pgm", "image/x-portable-graymap");
++    map.insert("pgn", "application/x-chess-pgn");
++    map.insert("pgp", "application/pgp-encrypted");
++    map.insert("php", "application/x-php");
++    map.insert("php3", "application/x-php");
++    map.insert("php4", "application/x-php");
++    map.insert("pict", "image/x-pict");
++    map.insert("pict1", "image/x-pict");
++    map.insert("pict2", "image/x-pict");
++    map.insert("pickle", "application/python-pickle");
++    map.insert("pk", "application/x-tex-pk");
++    map.insert("pkipath", "application/pkix-pkipath");
++    map.insert("pkr", "application/pgp-keys");
++    map.insert("pl", "application/x-perl");
++    map.insert("pla", "audio/x-iriver-pla");
++    map.insert("pln", "application/x-planperfect");
++    map.insert("pls", "audio/x-scpls");
++    map.insert("pm", "application/x-perl");
++    map.insert("png", "image/png");
++    map.insert("pnm", "image/x-portable-anymap");
++    map.insert("pntg", "image/x-macpaint");
++    map.insert("po", "text/x-gettext-translation");
++    map.insert("por", "application/x-spss-por");
+     map.insert("pot", "text/x-gettext-translation-template");
+-    map.insert("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document");
+-    map.insert("doc", "application/msword");
+-    map.insert("xls", "application/vnd.ms-excel");
+-    map.insert("et", "application/vnd.ms-excel");
+-    map.insert("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
++    map.insert("ppm", "image/x-portable-pixmap");
+     map.insert("pps", "application/vnd.ms-powerpoint");
+     map.insert("ppt", "application/vnd.ms-powerpoint");
+-    map.insert("dps", "application/vnd.ms-powerpoint");
++    map.insert("pptm", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+     map.insert("pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation");
+-    map.insert("wps", "application/vnd.ms-works");
+-    map.insert("bin", "application/octet-stream");
+-    map.insert("c", "text/plain");
+-    map.insert("class", "application/octet-stream");
+-    map.insert("conf", "text/plain");
+-    map.insert("cpp", "text/plain");
+-    map.insert("c", "text/plain");
+-    map.insert("h", "text/plain");
+-    map.insert("htm", "text/html");
+-    map.insert("html", "ttext/html");
+-    map.insert("jar", "application/java-archive");
+-    map.insert("java", "text/plain");
+-    map.insert("js", "application/x-javascript");
+-    map.insert("exe", "application/octet-stream");
+-    map.insert("gtar", "application/x-gtar");
+-    map.insert("gz", "application/x-gzip");
+-    map.insert("log", "text/plain");
+-    map.insert("mpc", "application/vnd.mpohun.certificate");
+-    map.insert("msg", "application/vnd.ms-outlook");
+-    map.insert("prop", "text/plain");
+-    map.insert("rc", "text/plain");
++    map.insert("ppz", "application/vnd.ms-powerpoint");
++    map.insert("prc", "application/x-palm-database");
++    map.insert("ps", "application/postscript");
++    map.insert("ps.bz2", "application/x-bzpostscript");
++    map.insert("ps.gz", "application/x-gzpostscript");
++    map.insert("psd", "image/vnd.adobe.photoshop");
++    map.insert("psf", "audio/x-psf");
++    map.insert("psf.gz", "application/x-gz-font-linux-psf");
++    map.insert("psflib", "audio/x-psflib");
++    map.insert("psid", "audio/prs.sid");
++    map.insert("psw", "application/x-pocket-word");
++    map.insert("pw", "application/x-pw");
++    map.insert("py", "text/x-python");
++    map.insert("pyc", "application/x-python-bytecode");
++    map.insert("pyo", "application/x-python-bytecode");
++    map.insert("qif", "image/x-quicktime");
++    map.insert("qt", "video/quicktime");
++    map.insert("qtif", "image/x-quicktime");
++    map.insert("qtl", "application/x-quicktime-media-link");
++    map.insert("qtvr", "video/quicktime");
++    map.insert("ra", "audio/vnd.rn-realaudio");
++    map.insert("raf", "image/x-fuji-raf");
++    map.insert("ram", "application/ram");
++    map.insert("rar", "application/x-rar");
++    map.insert("ras", "image/x-cmu-raster");
++    map.insert("raw", "image/x-panasonic-raw");
++    map.insert("rax", "audio/vnd.rn-realaudio");
++    map.insert("rb", "application/x-ruby");
++    map.insert("rdf", "application/rdf+xml");
++    map.insert("rdfs", "application/rdf+xml");
++    map.insert("reg", "text/x-ms-regedit");
++    map.insert("rej", "application/x-reject");
++    map.insert("rgb", "image/x-rgb");
++    map.insert("rle", "image/rle");
++    map.insert("rm", "application/vnd.rn-realmedia");
++    map.insert("rmj", "application/vnd.rn-realmedia");
++    map.insert("rmm", "application/vnd.rn-realmedia");
++    map.insert("rms", "application/vnd.rn-realmedia");
++    map.insert("rmvb", "application/vnd.rn-realmedia");
++    map.insert("rmx", "application/vnd.rn-realmedia");
++    map.insert("roff", "text/troff");
++    map.insert("rp", "image/vnd.rn-realpix");
++    map.insert("rpm", "application/x-rpm");
++    map.insert("rss", "application/rss+xml");
++    map.insert("rt", "text/vnd.rn-realtext");
+     map.insert("rtf", "application/rtf");
+-    map.insert("sh", "text/plain");
++    map.insert("rtx", "text/richtext");
++    map.insert("rv", "video/vnd.rn-realvideo");
++    map.insert("rvx", "video/vnd.rn-realvideo");
++    map.insert("s3m", "audio/x-s3m");
++    map.insert("sam", "application/x-amipro");
++    map.insert("sami", "application/x-sami");
++    map.insert("sav", "application/x-spss-sav");
++    map.insert("scm", "text/x-scheme");
++    map.insert("sda", "application/vnd.stardivision.draw");
++    map.insert("sdc", "application/vnd.stardivision.calc");
++    map.insert("sdd", "application/vnd.stardivision.impress");
++    map.insert("sdp", "application/sdp");
++    map.insert("sds", "application/vnd.stardivision.chart");
++    map.insert("sdw", "application/vnd.stardivision.writer");
++    map.insert("sgf", "application/x-go-sgf");
++    map.insert("sgi", "image/x-sgi");
++    map.insert("sgl", "application/vnd.stardivision.writer");
++    map.insert("sgm", "text/sgml");
++    map.insert("sgml", "text/sgml");
++    map.insert("sh", "application/x-shellscript");
++    map.insert("shar", "application/x-shar");
++    map.insert("shn", "application/x-shorten");
++    map.insert("siag", "application/x-siag");
++    map.insert("sid", "audio/prs.sid");
++    map.insert("sik", "application/x-trash");
++    map.insert("sis", "application/vnd.symbian.install");
++    map.insert("sisx", "x-epoc/x-sisx-app");
++    map.insert("sit", "application/x-stuffit");
++    map.insert("siv", "application/sieve");
++    map.insert("sk", "image/x-skencil");
++    map.insert("sk1", "image/x-skencil");
++    map.insert("skr", "application/pgp-keys");
++    map.insert("slk", "text/spreadsheet");
++    map.insert("smaf", "application/x-smaf");
++    map.insert("smc", "application/x-snes-rom");
++    map.insert("smd", "application/vnd.stardivision.mail");
++    map.insert("smf", "application/vnd.stardivision.math");
++    map.insert("smi", "application/x-sami");
++    map.insert("smil", "application/smil");
++    map.insert("sml", "application/smil");
++    map.insert("sms", "application/x-sms-rom");
++    map.insert("snd", "audio/basic");
++    map.insert("so", "application/x-sharedlib");
++    map.insert("spc", "application/x-pkcs7-certificates");
++    map.insert("spd", "application/x-font-speedo");
++    map.insert("spec", "text/x-rpm-spec");
++    map.insert("spl", "application/x-shockwave-flash");
++    map.insert("spx", "audio/x-speex");
++    map.insert("sql", "text/x-sql");
++    map.insert("sr2", "image/x-sony-sr2");
++    map.insert("src", "application/x-wais-source");
++    map.insert("srf", "image/x-sony-srf");
++    map.insert("srt", "application/x-subrip");
++    map.insert("ssa", "text/x-ssa");
++    map.insert("stc", "application/vnd.sun.xml.calc.template");
++    map.insert("std", "application/vnd.sun.xml.draw.template");
++    map.insert("sti", "application/vnd.sun.xml.impress.template");
++    map.insert("stm", "audio/x-stm");
++    map.insert("stw", "application/vnd.sun.xml.writer.template");
++    map.insert("sty", "text/x-tex");
++    map.insert("sub", "text/x-subviewer");
++    map.insert("sun", "image/x-sun-raster");
++    map.insert("sv4cpio", "application/x-sv4cpio");
++    map.insert("sv4crc", "application/x-sv4crc");
++    map.insert("svg", "image/svg+xml");
++    map.insert("svgz", "image/svg+xml-compressed");
++    map.insert("swf", "application/x-shockwave-flash");
++    map.insert("sxc", "application/vnd.sun.xml.calc");
++    map.insert("sxd", "application/vnd.sun.xml.draw");
++    map.insert("sxg", "application/vnd.sun.xml.writer.global");
++    map.insert("sxi", "application/vnd.sun.xml.impress");
++    map.insert("sxm", "application/vnd.sun.xml.math");
++    map.insert("sxw", "application/vnd.sun.xml.writer");
++    map.insert("sylk", "text/spreadsheet");
++    map.insert("t", "text/troff");
++    map.insert("t2t", "text/x-txt2tags");
+     map.insert("tar", "application/x-tar");
+-    map.insert("tgz", "application/x-compressed");
+-    map.insert("rc", "text/plain");
+-    map.insert("xml", "text/xml");  // text/plain
+-    map.insert("z", "application/x-compress");
+-    map.insert("zip", "application/x-zip-compressed");
+-    map.insert("pdf", "application/pdf");
++    map.insert("tar.bz", "application/x-bzip-compressed-tar");
++    map.insert("tar.bz2", "application/x-bzip-compressed-tar");
++    map.insert("tar.gz", "application/x-compressed-tar");
++    map.insert("tar.lzma", "application/x-lzma-compressed-tar");
++    map.insert("tar.lzo", "application/x-tzo");
++    map.insert("tar.xz", "application/x-xz-compressed-tar");
++    map.insert("tar.z", "application/x-tarz");
++    map.insert("tbz", "application/x-bzip-compressed-tar");
++    map.insert("tbz2", "application/x-bzip-compressed-tar");
++    map.insert("tcl", "text/x-tcl");
++    map.insert("tex", "text/x-tex");
++    map.insert("texi", "text/x-texinfo");
++    map.insert("texinfo", "text/x-texinfo");
++    map.insert("tga", "image/x-tga");
++    map.insert("tgz", "application/x-compressed-tar");
++    map.insert("theme", "application/x-theme");
++    map.insert("themepack", "application/x-windows-themepack");
++    map.insert("tif", "image/tiff");
++    map.insert("tiff", "image/tiff");
++    map.insert("tk", "text/x-tcl");
++    map.insert("tlz", "application/x-lzma-compressed-tar");
++    map.insert("tnef", "application/vnd.ms-tnef");
++    map.insert("tnf", "application/vnd.ms-tnef");
++    map.insert("toc", "application/x-cdrdao-toc");
+     map.insert("torrent", "application/x-bittorrent");
++    map.insert("tpic", "image/x-tga");
++    map.insert("tr", "text/troff");
++    map.insert("ts", "application/x-linguist");
++    map.insert("tsv", "text/tab-separated-values");
++    map.insert("tta", "audio/x-tta");
++    map.insert("ttc", "application/x-font-ttf");
++    map.insert("ttf", "application/x-font-ttf");
++    map.insert("ttx", "application/x-font-ttx");
++    map.insert("txt", "text/plain");
++    map.insert("txz", "application/x-xz-compressed-tar");
++    map.insert("tzo", "application/x-tzo");
++    map.insert("ufraw", "application/x-ufraw");
++    map.insert("ui", "application/x-designer");
++    map.insert("uil", "text/x-uil");
++    map.insert("ult", "audio/x-mod");
++    map.insert("uni", "audio/x-mod");
++    map.insert("uri", "text/x-uri");
++    map.insert("url", "text/x-uri");
++    map.insert("ustar", "application/x-ustar");
++    map.insert("vala", "text/x-vala");
++    map.insert("vapi", "text/x-vala");
++    map.insert("vcf", "text/directory");
++    map.insert("vcs", "text/calendar");
++    map.insert("vct", "text/directory");
++    map.insert("vda", "image/x-tga");
++    map.insert("vhd", "text/x-vhdl");
++    map.insert("vhdl", "text/x-vhdl");
++    map.insert("viv", "video/vivo");
++    map.insert("vivo", "video/vivo");
++    map.insert("vlc", "audio/x-mpegurl");
++    map.insert("vob", "video/mpeg");
++    map.insert("voc", "audio/x-voc");
++    map.insert("vor", "application/vnd.stardivision.writer");
++    map.insert("vst", "image/x-tga");
++    map.insert("wav", "audio/x-wav");
++    map.insert("wax", "audio/x-ms-asx");
++    map.insert("wb1", "application/x-quattropro");
++    map.insert("wb2", "application/x-quattropro");
++    map.insert("wb3", "application/x-quattropro");
++    map.insert("wbmp", "image/vnd.wap.wbmp");
++    map.insert("wcm", "application/vnd.ms-works");
++    map.insert("wdb", "application/vnd.ms-works");
++    map.insert("webm", "video/webm");
++    map.insert("wk1", "application/vnd.lotus-1-2-3");
++    map.insert("wk3", "application/vnd.lotus-1-2-3");
++    map.insert("wk4", "application/vnd.lotus-1-2-3");
++    map.insert("wks", "application/vnd.ms-works");
++    map.insert("wma", "audio/x-ms-wma");
++    map.insert("wmf", "image/x-wmf");
++    map.insert("wml", "text/vnd.wap.wml");
++    map.insert("wmls", "text/vnd.wap.wmlscript");
++    map.insert("wmv", "video/x-ms-wmv");
++    map.insert("wmx", "audio/x-ms-asx");
++    map.insert("wp", "application/vnd.wordperfect");
++    map.insert("wp4", "application/vnd.wordperfect");
++    map.insert("wp5", "application/vnd.wordperfect");
++    map.insert("wp6", "application/vnd.wordperfect");
++    map.insert("wpd", "application/vnd.wordperfect");
++    map.insert("wpg", "application/x-wpg");
++    map.insert("wpl", "application/vnd.ms-wpl");
++    map.insert("wpp", "application/vnd.wordperfect");
++    map.insert("wps", "application/vnd.ms-works");
++    map.insert("wri", "application/x-mswrite");
++    map.insert("wrl", "model/vrml");
++    map.insert("wv", "audio/x-wavpack");
++    map.insert("wvc", "audio/x-wavpack-correction");
++    map.insert("wvp", "audio/x-wavpack");
++    map.insert("wvx", "audio/x-ms-asx");
++    map.insert("x3f", "image/x-sigma-x3f");
++    map.insert("xac", "application/x-gnucash");
++    map.insert("xbel", "application/x-xbel");
++    map.insert("xbl", "application/xml");
++    map.insert("xbm", "image/x-xbitmap");
++    map.insert("xcf", "image/x-xcf");
++    map.insert("xcf.bz2", "image/x-compressed-xcf");
++    map.insert("xcf.gz", "image/x-compressed-xcf");
++    map.insert("xhtml", "application/xhtml+xml");
++    map.insert("xi", "audio/x-xi");
++    map.insert("xla", "application/vnd.ms-excel");
++    map.insert("xlc", "application/vnd.ms-excel");
++    map.insert("xld", "application/vnd.ms-excel");
++    map.insert("xlf", "application/x-xliff");
++    map.insert("xliff", "application/x-xliff");
++    map.insert("xll", "application/vnd.ms-excel");
++    map.insert("xlm", "application/vnd.ms-excel");
++    map.insert("xls", "application/vnd.ms-excel");
++    map.insert("xlsm", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
++    map.insert("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
++    map.insert("xlt", "application/vnd.ms-excel");
++    map.insert("xlw", "application/vnd.ms-excel");
++    map.insert("xm", "audio/x-xm");
++    map.insert("xmf", "audio/x-xmf");
++    map.insert("xmi", "text/x-xmi");
++    map.insert("xml", "application/xml");
++    map.insert("xpm", "image/x-xpixmap");
++    map.insert("xps", "application/vnd.ms-xpsdocument");
++    map.insert("xsl", "application/xml");
++    map.insert("xslfo", "text/x-xslfo");
++    map.insert("xslt", "application/xml");
++    map.insert("xspf", "application/xspf+xml");
++    map.insert("xul", "application/vnd.mozilla.xul+xml");
++    map.insert("xwd", "image/x-xwindowdump");
++    map.insert("xyz", "chemical/x-pdb");
++    map.insert("xz", "application/x-xz");
++    map.insert("w2p", "application/w2p");
++    map.insert("z", "application/x-compress");
++    map.insert("zabw", "application/x-abiword");
++    map.insert("zip", "application/zip");
++    // unknown
++    map.insert("sr", "image/sr");
++    map.insert("apng", "image/apng");
++    map.insert("jif", "image/jif");
++    map.insert("jfi", "image/jfi");
++    map.insert("mpa", "image/mpa");
+     return map;
+ }
+ 
+ QMap<QString, QString> FileInfo::initIconNameMap()
+ {
+     QMap<QString, QString> map;
+-    // for supported image icon
+     map.insert("image", "image-x-generic");
+-    // for supported video icon
+     map.insert("video", "video-x-generic");
+-    // for supported audio icon
+-    map.insert("audio/x-mpeg", "audio-x-generic");
+-    // for supported document types
++    map.insert("audio", "audio-x-generic");
+     map.insert("text", "text");
+     map.insert("application/vnd.rar", "rar");
+     map.insert("application/vnd.android.package-archive", "application-apk");
+@@ -196,7 +741,7 @@ QMap<QString, QString> FileInfo::initIconNameMap()
+     map.insert("application/x-zip-compressed", "application-x-compress");
+     map.insert("application/pdf", "application-x-pdf");
+     map.insert("application/x-bittorrent", "application-x-bittorrent");
+-    // inode/directory
++    map.insert("application/x-smaf", "audio-x-generic");
+     map.insert("inode/directory", "folder");
+     return map;
+ }
+@@ -223,7 +768,20 @@ QSet<QString> FileInfo::initimageSet()
+         << "tiff"
+         << "tif"
+         << "wbmp"
+-        << "webp";
++        << "webp"
++        << "sr"
++        << "exr"
++        << "jpe"
++        << "pnm"
++        << "ras"
++        << "dib"
++        << "ico"
++        << "j2k"
++        << "psd"
++        << "jfi"
++        << "jif"
++        << "apng"
++        << "jng";
+     return set;
+ }
+ 
+@@ -231,16 +789,14 @@ QSet<QString> FileInfo::inittextSet()
+ {
+     QSet<QString> set;
+     set << "txt"
+-        << "rar"
+         << "java"
+-        << "c"
++        << "pot"
+         << "conf"
+         << "cpp"
+         << "c"
+         << "h"
+         << "htm"
+         << "html"
+-        << "java"
+         << "log"
+         << "prop"
+         << "rc"
+@@ -249,6 +805,7 @@ QSet<QString> FileInfo::inittextSet()
+         << "xml";
+     return set;
+ }
++
+ QSet<QString> FileInfo::initaudioSet()
+ {
+     QSet<QString> set;
+@@ -273,9 +830,15 @@ QSet<QString> FileInfo::initaudioSet()
+         << "m4p"
+         << "mpga"
+         << "aif"
+-        << "mmf";
++        << "mmf"
++        << "amr"
++        << "m4r"
++        << "mid"
++        << "wv"
++        << "mpa";
+     return set;
+ }
++
+ QSet<QString> FileInfo::initvideoSet()
+ {
+     QSet<QString> set;
+@@ -501,19 +1064,19 @@ QString FileInfo::getContentType() const
+ 
+ FileInfo::FileType FileInfo::judgmentType(QString fileName)
+ {
+-    QMimeDatabase db;
+-    QMimeType mime = db.mimeTypeForFile(fileName);
++    // QMimeDatabase db;
++    // QMimeType mime = db.mimeTypeForFile(fileName);
+     QString fileType = fileName.mid(fileName.lastIndexOf(".") + 1, fileName.size());
+-    if (mime.name().startsWith("text/") || textTypeSet.contains(fileType)) {
++    if (textTypeSet.contains(fileType)) {  // mime.name().startsWith("text/") ||
+         // 文本文件 text/plain, text/html, text/css, text/javascript
+         return FileType::Txt;
+-    } else if (mime.name().startsWith("image/") || imageTypeSet.contains(fileType)) {
++    } else if (imageTypeSet.contains(fileType)) {  // mime.name().startsWith("image/") ||
+         // 图片 image/gif, image/png, image/jpeg, image/bmp, image/webp
+         return FileType::Image;
+-    } else if (mime.name().startsWith("audio/") || audioTypeSet.contains(fileType)) {
++    } else if (audioTypeSet.contains(fileType)) {  // mime.name().startsWith("audio/") ||
+         // 音频 audio/wav, audio/mpeg, audio/midi, audio/webm, audio/ogg
+         return FileType::Audio;
+-    } else if (mime.name().startsWith("video/") || videoTypeSet.contains(fileType)) {
++    } else if (videoTypeSet.contains(fileType)) {  // mime.name().startsWith("video/") ||
+         // 视频 video/mp4, video/x-flv, video/webm, video/ogg
+         return FileType::Video;
+     } else if (fileType == "doc" || fileType == "docx" || fileType == "wps") {
+diff --git a/common/fileinfolist.cpp b/common/fileinfolist.cpp
+deleted file mode 100644
+index 86477d1..0000000
+--- a/common/fileinfolist.cpp
++++ /dev/null
+@@ -1,74 +0,0 @@
+-#include "fileinfolist.h"
+-
+-#include <QDebug>
+-
+-FileInfoList::FileInfoList() {}
+-
+-void FileInfoList::addFileInfo(FileInfo fileInfo)
+-{
+-    m_fileList.append(fileInfo);
+-    m_length++;
+-}
+-
+-const QList<FileInfo> FileInfoList::getFileList()
+-{
+-    return m_fileList;
+-}
+-
+-
+-const FileInfo FileInfoList::value(int index)
+-{
+-    return m_fileList.value(index);
+-}
+-
+-const FileInfo FileInfoList::value(QString key)
+-{
+-    for (int i = 0; i < m_fileList.size(); i++) {
+-        if (key == m_fileList.value(i).name()) {
+-            return m_fileList.value(i);
+-        }
+-    }
+-    return FileInfo();
+-}
+-
+-const int FileInfoList::size()
+-{
+-    return m_length;
+-}
+-
+-void FileInfoList::clear()
+-{
+-    m_fileList.clear();
+-    m_length = 0;
+-}
+-
+-QDBusArgument &operator<<(QDBusArgument &argument, const FileInfoList &fileInfoList)
+-{
+-    argument.beginArray(qMetaTypeId<FileInfo>());
+-    for (int i = 0; i < fileInfoList.m_length; i++) {
+-        argument << fileInfoList.m_fileList.value(i);
+-    }
+-    argument.endArray();
+-    return argument;
+-}
+-
+-const QDBusArgument &operator>>(const QDBusArgument &argument, FileInfoList &fileInfoList)
+-{
+-    argument.beginArray();
+-    fileInfoList.clear();
+-
+-    while (!argument.atEnd()) {
+-        FileInfo fileInfo;
+-        argument >> fileInfo;
+-        fileInfoList.addFileInfo(fileInfo);
+-    }
+-
+-    argument.endArray();
+-    return argument;
+-}
+-
+-void FileInfoList::registerMetaType()
+-{
+-    qRegisterMetaType<FileInfoList>("FileInfoList");
+-    qDBusRegisterMetaType<FileInfoList>();
+-}
+diff --git a/common/fileinfolist.h b/common/fileinfolist.h
+deleted file mode 100644
+index 192a58b..0000000
+--- a/common/fileinfolist.h
++++ /dev/null
+@@ -1,30 +0,0 @@
+-#ifndef FILEINFOLIST_H
+-#define FILEINFOLIST_H
+-
+-#include <QString>
+-#include <QVariant>
+-#include <QtDBus>
+-
+-#include "fileinfo.h"
+-
+-class FileInfoList
+-{
+-public:
+-    FileInfoList();
+-    void addFileInfo(FileInfo fileInfo);
+-    const QList<FileInfo> getFileList();
+-    const FileInfo value(int index);
+-    const FileInfo value(QString key);
+-    const int size();
+-    void clear();
+-
+-    friend QDBusArgument &operator<<(QDBusArgument &argument, const FileInfoList &fileInfoList);
+-    friend const QDBusArgument &operator>>(const QDBusArgument &argument, FileInfoList &fileInfoList);
+-    static void registerMetaType();
+-
+-private:
+-    QList<FileInfo> m_fileList;
+-    int m_length = 0;
+-};
+-Q_DECLARE_METATYPE(FileInfoList)
+-#endif // FILEINFOLIST_H
+diff --git a/dbus/dbusvfsinterface.cpp b/dbus/dbusvfsinterface.cpp
+index 373f817..ebd6587 100644
+--- a/dbus/dbusvfsinterface.cpp
++++ b/dbus/dbusvfsinterface.cpp
+@@ -3,21 +3,8 @@
+ DbusVfsInterface::DbusVfsInterface(MainWindow *window, QObject *parent) : QObject(parent), m_window(window)
+ {
+     FileInfo::registerMetaType();
+-    FileInfoList::registerMetaType();
+     connect(m_window, &MainWindow::sigConnected, this, &DbusVfsInterface::sigDeviceUpdate);
+     connect(m_window, &MainWindow::sigDisconnect, this, [=]() { Q_EMIT sigDeviceUpdate(QString("")); });
+-    connect(m_window, &MainWindow::sigFileInfoList, this, [=](const QMap<QString, FileInfo> &fileMap) {
+-        m_fileMap.clear();
+-        m_fileMap = fileMap;
+-        FileInfoList list;
+-        QMap<QString, FileInfo>::const_iterator it = fileMap.begin();
+-        while (it != fileMap.end()) {
+-            list.addFileInfo(it.value());
+-            it++;
+-        }
+-        qInfo() << "Publish file list." << list.size();
+-        Q_EMIT sigFileInfoList(list);
+-    });
+ }
+ 
+ QString DbusVfsInterface::getDeviceName()
+@@ -32,12 +19,6 @@ QString DbusVfsInterface::getMountDir()
+     return MOUNT_DIR;
+ }
+ 
+-void DbusVfsInterface::getFileInfoList(QString path)
+-{
+-    qInfo() << "External request for file list." << path;
+-    m_window->list(path);
+-}
+-
+ void DbusVfsInterface::downFile(QStringList fromPathList, QString targetPath)
+ {
+     qInfo() << "External request for download file." << targetPath;
+diff --git a/dbus/dbusvfsinterface.h b/dbus/dbusvfsinterface.h
+index 7565b7c..8e96887 100644
+--- a/dbus/dbusvfsinterface.h
++++ b/dbus/dbusvfsinterface.h
+@@ -7,7 +7,6 @@
+ 
+ #include <QObject>
+ #include "fileinfo.h"
+-#include "fileinfolist.h"
+ #include "mainwindow.h"
+ 
+ class DbusVfsInterface : public QObject
+@@ -19,12 +18,10 @@ public:
+ 
+ Q_SIGNALS:
+     void sigDeviceUpdate(QString);
+-    void sigFileInfoList(FileInfoList);
+ 
+ public Q_SLOTS:
+     QString getDeviceName();
+     QString getMountDir();
+-    void getFileInfoList(QString path);
+     void downFile(QStringList fromPathList, QString targetPath);
+ 
+ private:
+diff --git a/kylin-connectivity.desktop b/kylin-connectivity.desktop
+index 32a845e..7584ce9 100755
+--- a/kylin-connectivity.desktop
++++ b/kylin-connectivity.desktop
+@@ -4,11 +4,13 @@ Type=Application
+ Name[zh_CN]=多端协同
+ Name[bo_CN]=ཕན་ཚུན་འབྲེལ་མཐུད་བྱེད་པ།
+ Name[mn]=ᠣᠯᠠᠨ ᠦᠵᠦᠬᠦᠷ ᠲᠤ᠌ ᠬᠠᠮᠵᠢᠯᠴᠠᠬᠤ
++Name[zh_HK]=多端協同
+ Name=kylin-connectivity
+ GenericName[bo_CN]=ཕན་ཚུན་འབྲེལ་མཐུད་བྱེད་པ།
+ GenericName=kylin-connectivity
+ GenericName[zh_CN]=多端协同
+ GenericName[mn]=ᠣᠯᠠᠨ ᠦᠵᠦᠬᠦᠷ ᠲᠤ᠌ ᠬᠠᠮᠵᠢᠯᠴᠠᠬᠤ
++GenericName[zh_HK]=多端協同
+ Exec=/usr/bin/kylin-connectivity %u
+ Icon=kylin-connectivity
+ Categories=Utility;kylin-connectivity;
+diff --git a/kylinconnectivitymanager/com.kylin.connectivity.manager.limit b/kylinconnectivitymanager/com.kylin.connectivity.manager.limit
+index 9cf8137..2b7644e 100644
+--- a/kylinconnectivitymanager/com.kylin.connectivity.manager.limit
++++ b/kylinconnectivitymanager/com.kylin.connectivity.manager.limit
+@@ -1,3 +1,2 @@
+ [whitelist]
+-key1 = /usr/bin/d-feet
+ key2 = /usr/bin/kylin-connectivity
+\ No newline at end of file
+diff --git a/kylinconnectivitymanager/com.kylin.connectivity.manager.limit.verify b/kylinconnectivitymanager/com.kylin.connectivity.manager.limit.verify
+index 516f192..c7be2fa 100644
+--- a/kylinconnectivitymanager/com.kylin.connectivity.manager.limit.verify
++++ b/kylinconnectivitymanager/com.kylin.connectivity.manager.limit.verify
+@@ -1 +1 @@
+-72868f3691db171009f033f95c8758806d553a85
++739fea463230d91dae12e4c08732a36df94646ad
+\ No newline at end of file
+diff --git a/lupdate_ts b/lupdate_ts
+index 1340e8f..b72b783 100755
+--- a/lupdate_ts
++++ b/lupdate_ts
+@@ -8,3 +8,6 @@ lupdate -recursive -no-obsolete ./plugin/peony-vfs-kylin-multiterminal -ts ./tra
+ lupdate -recursive -no-obsolete ./ui ./projection ./pcscreenmanage -ts ./translations/kylin-connectivity_mn.ts
+ lupdate -recursive -no-obsolete ./plugin/peony-send-to-connectivity -ts ./translations/peony-send-to-connectivity_mn.ts
+ lupdate -recursive -no-obsolete ./plugin/peony-vfs-kylin-multiterminal -ts ./translations/peony-vfs-kylin-multiterminal_mn.ts
++lupdate -recursive -no-obsolete ./ui ./projection ./pcscreenmanage -ts ./translations/kylin-connectivity_zh_HK.ts
++lupdate -recursive -no-obsolete ./plugin/peony-send-to-connectivity -ts ./translations/peony-send-to-connectivity_zh_HK.ts
++lupdate -recursive -no-obsolete ./plugin/peony-vfs-kylin-multiterminal -ts ./translations/peony-vfs-kylin-multiterminal_zh_HK.ts
+diff --git a/plugin/peony-send-to-connectivity/send-to-connectivity.cpp b/plugin/peony-send-to-connectivity/send-to-connectivity.cpp
+index ed0f677..24d361d 100644
+--- a/plugin/peony-send-to-connectivity/send-to-connectivity.cpp
++++ b/plugin/peony-send-to-connectivity/send-to-connectivity.cpp
+@@ -32,6 +32,7 @@
+ #include <QProcess>
+ #include <QDebug>
+ #include <QUrl>
++#include <QMessageBox>
+ 
+ using namespace Peony;
+ 
+@@ -71,6 +72,10 @@ QList<QAction *> SendToKConnectivity::menuActions(Types types, const QString &ur
+                     if (interface->isValid()) {
+                         interface->call("setLocalPathList", pathList);
+                         interface->deleteLater();
++                    } else {
++                        QMessageBox msgBox(QMessageBox::Warning, tr("Warning"), tr("Please open kylin-connectivity"),
++                                           QMessageBox::Close);
++                        msgBox.exec();
+                     }
+                 });
+             }
+diff --git a/plugin/peony-send-to-connectivity/send-to-connectivity.h b/plugin/peony-send-to-connectivity/send-to-connectivity.h
+index 250e209..623ae04 100644
+--- a/plugin/peony-send-to-connectivity/send-to-connectivity.h
++++ b/plugin/peony-send-to-connectivity/send-to-connectivity.h
+@@ -63,7 +63,7 @@ public:
+     }
+     const QIcon icon() override
+     {
+-        return QIcon::fromTheme("");
++        return QIcon::fromTheme("kylin-connectivity");
+     }
+     PluginInterface::PluginType pluginType() override
+     {
+diff --git a/plugin/peony-vfs-kylin-multiterminal/CMakeLists.txt b/plugin/peony-vfs-kylin-multiterminal/CMakeLists.txt
+index 2ccad5a..32dc35d 100644
+--- a/plugin/peony-vfs-kylin-multiterminal/CMakeLists.txt
++++ b/plugin/peony-vfs-kylin-multiterminal/CMakeLists.txt
+@@ -20,8 +20,6 @@ set(VFS_SOURCES
+         multiterminal-vfs-register.h
+         peony-vfs-multiterminal.cpp
+         peony-vfs-multiterminal.h
+-        filecollection.cpp
+-        filecollection.h
+         )
+ 
+ add_library(peony-vfs-kylin-multiterminal SHARED ${VFS_SOURCES})
+diff --git a/plugin/peony-vfs-kylin-multiterminal/filecollection.cpp b/plugin/peony-vfs-kylin-multiterminal/filecollection.cpp
+deleted file mode 100644
+index b3698cc..0000000
+--- a/plugin/peony-vfs-kylin-multiterminal/filecollection.cpp
++++ /dev/null
+@@ -1,68 +0,0 @@
+-#include "filecollection.h"
+-#include <QDebug>
+-#include <QFileInfo>
+-#include <QDir>
+-#include <QDateTime>
+-#include <sys/syslog.h>
+-
+-FileCollection::FileCollection(QString path)
+-{
+-    m_path = path;
+-    m_fileinfoList.clear();
+-}
+-
+-FileCollection::~FileCollection() {}
+-
+-void FileCollection::run()
+-{
+-    QDir dir(m_path);
+-    QStringList subDirList = dir.entryList(QDir::AllDirs);
+-    subDirList.removeOne(".");
+-    subDirList.removeOne("..");
+-    handleDir(m_path, subDirList);
+-    QStringList fileList = dir.entryList(QDir::Files);
+-    handleFile(m_path, fileList);
+-
+-    Q_EMIT finish(m_fileinfoList);
+-}
+-
+-void FileCollection::handleDir(const QString &path, QStringList &dirList)
+-{
+-    if (dirList.isEmpty()) {
+-        return;
+-    }
+-    QString dirName = dirList.value(0);
+-    QString dirPath = path + "/" + dirName;
+-    dirList.removeAt(0);
+-    QFileInfo info(dirPath);
+-    FileInfo fileinfo;
+-    fileinfo.setName(info.fileName());
+-    fileinfo.setPath(dirPath);
+-    fileinfo.setSize(info.size());
+-    fileinfo.setDateTime(info.lastModified().toString("yyyy-MM-dd hh:mm:ss"));
+-    fileinfo.setType(FileInfo::FileType::Dir);
+-    m_fileinfoList.addFileInfo(fileinfo);
+-    handleDir(path, dirList);
+-
+-    return;
+-}
+-
+-void FileCollection::handleFile(const QString &path, QStringList &fileList)
+-{
+-    if (fileList.isEmpty()) {
+-        return;
+-    }
+-    QString fileName = fileList.value(0);
+-    QString filePath = path + "/" + fileName;
+-    fileList.removeAt(0);
+-    QFileInfo info(filePath);
+-    FileInfo fileinfo;
+-    fileinfo.setName(info.fileName());
+-    fileinfo.setPath(filePath);
+-    fileinfo.setSize(info.size());
+-    fileinfo.setDateTime(info.lastModified().toString("yyyy-MM-dd hh:mm:ss"));
+-    m_fileinfoList.addFileInfo(fileinfo);
+-    handleFile(path, fileList);
+-
+-    return;
+-}
+diff --git a/plugin/peony-vfs-kylin-multiterminal/filecollection.h b/plugin/peony-vfs-kylin-multiterminal/filecollection.h
+deleted file mode 100644
+index d9222f6..0000000
+--- a/plugin/peony-vfs-kylin-multiterminal/filecollection.h
++++ /dev/null
+@@ -1,35 +0,0 @@
+-#ifndef FILECOLLECTION_H
+-#define FILECOLLECTION_H
+-
+-#include <QObject>
+-#include <QThread>
+-#include <QStringList>
+-
+-#include "fileinfo.h"
+-#include "fileinfolist.h"
+-
+-class FileCollection : public QThread
+-{
+-    Q_OBJECT
+-public:
+-    FileCollection(QString path);
+-    ~FileCollection();
+-
+-protected:
+-    void run();
+-
+-private:
+-    void handleDir(const QString &path, QStringList &dirList);
+-    void handleFile(const QString &path, QStringList &fileList);
+-
+-private:
+-    QString m_path = "";
+-    FileInfoList m_fileinfoList; // 文件信息列表，保存遍历的文件信息
+-    QStringList m_filePathList; // 单独保存所以文件路径，用于对比删除数据库中不存在的文件信息
+-Q_SIGNALS:
+-    void finish(FileInfoList); // 处理完成信号
+-
+-public Q_SLOTS:
+-};
+-
+-#endif // FILECOLLECTION_H
+diff --git a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.cpp b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.cpp
+index 6c63e09..9ea59c1 100644
+--- a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.cpp
++++ b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.cpp
+@@ -29,7 +29,8 @@
+ #include <QFile>
+ #include <QEventLoop>
+ #include <QTimer>
+-#include "filecollection.h"
++
++#include <QCoreApplication>
+ 
+ #define KYLIN_CONNECTIVITY_PATH "/"
+ #define KYLIN_CONNECTIVITY_SERVICE "com.kylinos.Multiterminal.Manager"
+@@ -44,7 +45,11 @@ MultVfsDbusInterface *MultVfsDbusInterface::getInstance()
+ MultVfsDbusInterface::MultVfsDbusInterface(QObject *parent) : QObject(parent), m_sessionBusInterface(nullptr)
+ {
+     FileInfo::registerMetaType();
+-    FileInfoList::registerMetaType();
++    moveToThread(qApp->thread());
++    connect(this, &MultVfsDbusInterface::requestGetDeviceName, this, &MultVfsDbusInterface::getDeviceName, Qt::BlockingQueuedConnection);
++    connect(this, &MultVfsDbusInterface::requestGetFileInfo, this, &MultVfsDbusInterface::getFileInfo, Qt::BlockingQueuedConnection);
++    connect(this, &MultVfsDbusInterface::requestGetFileList, this, &MultVfsDbusInterface::getFileList, Qt::BlockingQueuedConnection);
++    connect(this, &MultVfsDbusInterface::requestGetMountDir, this, &MultVfsDbusInterface::getMountDir, Qt::BlockingQueuedConnection);
+ }
+ 
+ MultVfsDbusInterface::~MultVfsDbusInterface()
+@@ -61,13 +66,15 @@ void MultVfsDbusInterface::initDbusData()
+         m_sessionBusInterface = new QDBusInterface(KYLIN_CONNECTIVITY_SERVICE, KYLIN_CONNECTIVITY_PATH,
+                                                    KYLIN_CONNECTIVITY_INTERFACE, QDBusConnection::sessionBus());
+     }
+-    // QObject::connect(m_sessionBusInterface, SIGNAL(sigFileInfoList(FileInfoList)), this,
+-    //                  SLOT(slotFileInfoList(FileInfoList)));
+     QObject::connect(m_sessionBusInterface, SIGNAL(sigDeviceUpdate(QString)), this, SLOT(slotDeviceUpdate(QString)));
+ }
+ 
+ QString MultVfsDbusInterface::getMountDir()
+ {
++    if (QThread::currentThread() != qApp->thread()) {
++        return requestGetMountDir();
++    }
++
+     QString mountDir;
+     if (!m_mountDir.isEmpty()) {
+         return m_mountDir;
+@@ -87,6 +94,9 @@ QString MultVfsDbusInterface::getMountDir()
+ 
+ QString MultVfsDbusInterface::getDeviceName()
+ {
++    if (QThread::currentThread() != qApp->thread()) {
++        return requestGetDeviceName();
++    }
+     QString deviceName;
+     if (!m_deviceName.isEmpty()) {
+         return m_deviceName;
+@@ -106,58 +116,34 @@ QString MultVfsDbusInterface::getDeviceName()
+ 
+ QStringList MultVfsDbusInterface::getFileList(QString path)
+ {
+-    QMutexLocker locker(&m_mutex);
+-    if (m_sessionBusInterface && m_sessionBusInterface->isValid()) {
+-        if (path == m_oldPath) {
+-            // 防止多次请求相同数据
+-            return m_fileList;
+-        }
+-        QEventLoop loop;
+-        FileCollection *fileCollection = new FileCollection(m_mountDir + path);
+-        QObject::connect(fileCollection, &FileCollection::finish, this, [=, &loop](FileInfoList list) {
+-            m_infoList = list;
+-            QStringList dirList;
+-            QStringList fileList;
+-            for (int i = 0; i < list.size(); i++) {
+-                FileInfo fileInfo = list.value(i);
+-                if (fileInfo.type() != FileInfo::FileType::Dir) {
+-                    fileList.append(fileInfo.name());
+-                } else {
+-                    dirList.append(fileInfo.name());
+-                }
+-            }
+-            for (int i = 0; i < fileList.size(); i++) {
+-                dirList.append(fileList.value(i));
+-            }
+-            m_fileList = dirList;
+-            loop.quit();
+-            fileCollection->deleteLater();
+-        });
+-        m_fileList.clear();
+-        m_infoList.clear();
+-        // m_sessionBusInterface->call("getFileInfoList", path);
+-        bool result = true;
+-        fileCollection->start();
+-        loop.exec();
+-        if (!result) {
+-            m_oldPath = path;
+-            return m_fileList;
+-        }
+-        m_oldPath = path;
+-        return m_fileList;
++    if (QThread::currentThread() != qApp->thread()) {
++        return requestGetFileList(path);
+     }
++
++    QDir dir(m_mountDir + path);
++    QStringList m_fileList = dir.entryList(QDir::AllEntries);
++    m_fileList.removeOne(".");
++    m_fileList.removeOne("..");
+     m_oldPath = path;
+     return m_fileList;
+ }
+ 
+-const FileInfoList &MultVfsDbusInterface::getInfoList()
++const FileInfo MultVfsDbusInterface::getFileInfo(QString filePath)
+ {
+-    return m_infoList;
+-}
+-
+-const FileInfo MultVfsDbusInterface::getFileInfo(QString fileName)
+-{
+-    return m_infoList.value(fileName);
++    if (QThread::currentThread() != qApp->thread()) {
++        return requestGetFileInfo(filePath);
++    }
++    QFileInfo info(filePath);
++    FileInfo fileinfo;
++    fileinfo.setName(info.fileName());
++    fileinfo.setPath(filePath);
++    fileinfo.setSize(info.size());
++    fileinfo.setDateTime(info.lastModified().toString("yyyy-MM-dd hh:mm:ss"));
++    if(info.isDir()) {
++        fileinfo.setType(FileInfo::FileType::Dir);
++    }
++    
++    return fileinfo;
+ }
+ 
+ void MultVfsDbusInterface::slotDeviceUpdate(QString deviceName)
+@@ -165,33 +151,7 @@ void MultVfsDbusInterface::slotDeviceUpdate(QString deviceName)
+     m_deviceName = deviceName;
+     if (m_deviceName.isEmpty()) {
+         m_fileList.clear();
+-        m_infoList.clear();
+         m_oldPath.clear();
+     }
+     Q_EMIT sigDeviceUpdate(deviceName);
+ }
+-
+-// void MultVfsDbusInterface::slotFileInfoList(FileInfoList list)
+-// {
+-//     m_infoList = list;
+-//     QStringList dirList;
+-//     QStringList fileList;
+-//     for (int i = 0; i < list.size(); i++) {
+-//         FileInfo fileInfo = list.value(i);
+-//         if (fileInfo.type() != FileInfo::FileType::Dir) {
+-//             fileList.append(fileInfo.name());
+-//         } else {
+-//             dirList.append(fileInfo.name());
+-//         }
+-//     }
+-//     for (int i = 0; i < fileList.size(); i++) {
+-//         dirList.append(fileList.value(i));
+-//     }
+-//     m_fileList = dirList;
+-//     Q_EMIT sigInfoFinish();
+-// }
+-
+-QString MultVfsDbusInterface::getCurrentPath()
+-{
+-    return m_oldPath;
+-}
+diff --git a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.h b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.h
+index eb17cc2..4e4e4d5 100644
+--- a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.h
++++ b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-dbus-interface.h
+@@ -30,7 +30,6 @@
+ #include <QMutex>
+ 
+ #include "fileinfo.h"
+-#include "fileinfolist.h"
+ 
+ #define ADDRESS_PREFIX "mult:///"
+ 
+@@ -45,16 +44,16 @@ public Q_SLOTS:
+     QString getMountDir();
+     QString getDeviceName();
+     QStringList getFileList(QString path);
+-    const FileInfoList &getInfoList();
+-    const FileInfo getFileInfo(QString fileName);
++    const FileInfo getFileInfo(QString filePath);
+     void slotDeviceUpdate(QString deviceName);
+-    void slotFileInfoList(FileInfoList list);
+-    QString getCurrentPath();
+ 
+ Q_SIGNALS:
+     void sigDeviceUpdate(QString);
+-    // void sigFileInfoList(QStringList);
+-    // void sigInfoFinish();
++
++    QString requestGetMountDir();
++    QString requestGetDeviceName();
++    QStringList requestGetFileList(QString path);
++    FileInfo requestGetFileInfo(QString fileName);
+ 
+ private:
+     explicit MultVfsDbusInterface(QObject *parent = nullptr);
+@@ -64,7 +63,6 @@ private:
+ 
+     QDBusInterface *m_sessionBusInterface;
+     QStringList m_fileList;
+-    FileInfoList m_infoList;
+     QString m_mountDir = "";
+     QString m_deviceName = "";
+     QString m_oldPath = "";
+diff --git a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file-monitor.cpp b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file-monitor.cpp
+index 5a29b49..f0d7cdb 100644
+--- a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file-monitor.cpp
++++ b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file-monitor.cpp
+@@ -98,14 +98,4 @@ void vfs_mult_file_monitor_dir(MultVFSFileMonitor *obj, const QString &uri)
+         }
+         g_clear_object(&file);
+     });
+-    // obj->post = QObject::connect(interface, &MultVfsDbusInterface::sigFileInfoList, [=](QStringList list) {
+-    //     for (int i = 0; i < list.size(); i++) {
+-    //         QString pathUri = uri + "/" + list.value(i);
+-    //         GFile *file = G_FILE(vfs_mult_file_new_for_uri(pathUri.toUtf8().constData()));
+-    //         if (file && G_IS_FILE(file) && G_IS_FILE_MONITOR(obj)) {
+-    //             g_file_monitor_emit_event(G_FILE_MONITOR(obj), file, nullptr, G_FILE_MONITOR_EVENT_CREATED);
+-    //         }
+-    //         g_clear_object(&file);
+-    //     }
+-    // });
+ }
+diff --git a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp
+index a67b433..d5ba399 100644
+--- a/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp
++++ b/plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp
+@@ -385,11 +385,11 @@ GFileInfo *vfs_mult_file_query_info(GFile *file, const char *attributes, GFileQu
+ 
+     if (url.startsWith(QString(ADDRESS_PREFIX + interface->getDeviceName()))) {
+         trueUri = url;
+-        QString fileName = trueUri.mid(trueUri.lastIndexOf("/") + 1, trueUri.size());
++        trueUri.replace(QString(ADDRESS_PREFIX + interface->getDeviceName()), interface->getMountDir());
+ 
+-        FileInfoList list = interface->getInfoList();
+         FileInfo fileInfo;
+-        fileInfo = list.value(fileName);
++        fileInfo = interface->getFileInfo(trueUri);
++        QString fileName = trueUri.mid(trueUri.lastIndexOf("/") + 1, trueUri.size());
+         info = g_file_info_new();
+         g_file_info_set_display_name(info, fileName.toUtf8().constData());
+         g_file_info_set_size(info, fileInfo.size());
+@@ -417,13 +417,13 @@ GFileInfo *vfs_mult_file_query_info(GFile *file, const char *attributes, GFileQu
+             return info;
+         }
+         contentType = fileInfo.getContentType();
+-        if (contentType.contains(FILEINFO_CONTENT_TYPE_IMAGE)) {
++        if (fileInfo.type() == FileInfo::FileType::Image) {
+             iconName = FileInfo::iconName(FILEINFO_CONTENT_TYPE_IMAGE);
+-        } else if (contentType.contains(FILEINFO_CONTENT_TYPE_AUDIO)) {
++        } else if (fileInfo.type() == FileInfo::FileType::Audio) {
+             iconName = FileInfo::iconName(FILEINFO_CONTENT_TYPE_AUDIO);
+-        } else if (contentType.contains(FILEINFO_CONTENT_TYPE_VIDEO)) {
++        } else if (fileInfo.type() == FileInfo::FileType::Video) {
+             iconName = FileInfo::iconName(FILEINFO_CONTENT_TYPE_VIDEO);
+-        } else if (contentType.contains(FILEINFO_CONTENT_TYPE_TEXT)) {
++        } else if (fileInfo.type() == FileInfo::FileType::Txt) {
+             iconName = FileInfo::iconName(FILEINFO_CONTENT_TYPE_TEXT);
+         } else {
+             iconName = FileInfo::iconName(contentType);
+diff --git a/plugin/peony-vfs-kylin-multiterminal/peony-vfs-multiterminal.h b/plugin/peony-vfs-kylin-multiterminal/peony-vfs-multiterminal.h
+index 7c90e1d..d633cc9 100644
+--- a/plugin/peony-vfs-kylin-multiterminal/peony-vfs-multiterminal.h
++++ b/plugin/peony-vfs-kylin-multiterminal/peony-vfs-multiterminal.h
+@@ -72,11 +72,7 @@ public:
+     }
+     virtual const QIcon icon()
+     {
+-        QIcon icn = QIcon::fromTheme("folder-phone-symbolic");
+-        if (icn.isNull()) {
+-            icn = QIcon::fromTheme("folder-phone-symbolic");
+-        }
+-        return icn;
++        return QIcon::fromTheme("kylin-connectivity");
+     }
+     virtual void setEnable(bool enable)
+     {
+diff --git a/translations/kylin-connectivity_bo_CN.ts b/translations/kylin-connectivity_bo_CN.ts
+index 57d956d..bd7a992 100644
+--- a/translations/kylin-connectivity_bo_CN.ts
++++ b/translations/kylin-connectivity_bo_CN.ts
+@@ -408,6 +408,7 @@
+         <location filename="../ui/mainwindow.cpp" line="1432"/>
+         <location filename="../ui/mainwindow.cpp" line="1488"/>
+         <location filename="../ui/mainwindow.cpp" line="1800"/>
++        <location filename="../ui/mainwindow.cpp" line="1818"/>
+         <source>CLOSE</source>
+         <translation>སྒོ་རྒྱག་པ།</translation>
+     </message>
+@@ -432,7 +433,7 @@
+         <translation>དུས་ཐོག་ཏུ་འབྲེལ་མཐུད་བྱེད་པ།</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1991"/>
++        <location filename="../ui/mainwindow.cpp" line="2003"/>
+         <source>There is currently a connection in progress!</source>
+         <translation>མིག་སྔར་ཡར་ཐོན་ཡོང་བར་འབྲེལ་བ་ཡོད།</translation>
+     </message>
+@@ -510,7 +511,17 @@
+         <translation>འབྲེལ་མེད་འབྲས་བུ།</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="2005"/>
++        <location filename="../ui/mainwindow.cpp" line="1812"/>
++        <source>Not currently supported</source>
++        <translation>གནས་སྐབས་ལ་རྒྱབ་སྐྱོར་མི་བྱེད་པ་</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1814"/>
++        <source>The Wayland version system currently does not support mobile screen projection function.</source>
++        <translation>Waylandཅན་གྱི་པར་གཞི་མ་ལག་གིས་གནས་སྐབས་སུ་ཁ་པར་གྱི་བརྙན་གཏོང་བྱེད་ནུས་ལ་རྒྱབ་སྐྱོར་མི་བྱེད།</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="2017"/>
+         <source>The screen projection request has been sent to the connected device. Please click [Agree] in the opposite pop-up window</source>
+         <translation>བརྙན་ཤེལ་གྱི་འཆར་འགོད་བླང་བྱ་དེ་འབྲེལ་མཐུད་སྒྲིག་ཆས་ལ་བསྐྱལ་ཟིན། ཁྱོད་ཀྱིས་ཁ་གཏད་ཀྱི་སྒེའུ་ཁུང་ནས་[འཐད་པ་བྱུང་]ཞེས་པའི་ཁ་པར་ཞིག་རྒྱག་རོགས།</translation>
+     </message>
+@@ -525,9 +536,9 @@
+         <location filename="../ui/mainwindow.cpp" line="1500"/>
+         <location filename="../ui/mainwindow.cpp" line="1571"/>
+         <location filename="../ui/mainwindow.cpp" line="1593"/>
+-        <location filename="../ui/mainwindow.cpp" line="1987"/>
+-        <location filename="../ui/mainwindow.cpp" line="1993"/>
+-        <location filename="../ui/mainwindow.cpp" line="2010"/>
++        <location filename="../ui/mainwindow.cpp" line="1999"/>
++        <location filename="../ui/mainwindow.cpp" line="2005"/>
++        <location filename="../ui/mainwindow.cpp" line="2022"/>
+         <source>OK</source>
+         <translation>འགྲིགས།</translation>
+     </message>
+@@ -554,13 +565,13 @@
+         <translation>ཕབ་ལེན་བྱས་ནས་ཕབ་ལེན་བྱས</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1981"/>
+-        <location filename="../ui/mainwindow.cpp" line="2003"/>
++        <location filename="../ui/mainwindow.cpp" line="1993"/>
++        <location filename="../ui/mainwindow.cpp" line="2015"/>
+         <source>Request sent successfully!</source>
+         <translation>རེ་འདུན་ཞུ་ཡིག་ལེགས་འགྲུབ་བྱུང་བ་རེད།</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1982"/>
++        <location filename="../ui/mainwindow.cpp" line="1994"/>
+         <source>The connection request has been sent to the selected device. Please click [YES] in the opposite pop-up window</source>
+         <translation>འབྲེལ་མཐུད་ཀྱི་རེ་བ་དེ་བདམས་ཟིན་པའི་སྒྲིག་ཆས་ལ་བསྐྱལ་ཟིན། ཁྱོད་ཀྱིས་ཁ་གཏད་ཀྱི་སྒེའུ་ཁུང་ནས་[YES]ལ་ཞིབ་འཇུག་བྱེད་རོགས།</translation>
+     </message>
+diff --git a/translations/kylin-connectivity_mn.ts b/translations/kylin-connectivity_mn.ts
+index 0575921..6c65127 100644
+--- a/translations/kylin-connectivity_mn.ts
++++ b/translations/kylin-connectivity_mn.ts
+@@ -408,6 +408,7 @@
+         <location filename="../ui/mainwindow.cpp" line="1432"/>
+         <location filename="../ui/mainwindow.cpp" line="1488"/>
+         <location filename="../ui/mainwindow.cpp" line="1800"/>
++        <location filename="../ui/mainwindow.cpp" line="1818"/>
+         <source>CLOSE</source>
+         <translation>ᠬᠠᠭᠠᠬᠤ</translation>
+     </message>
+@@ -432,7 +433,7 @@
+         <translation>ᠵᠠᠯᠭᠠᠬᠤ ᠦᠶ᠎ᠡ ᠡᠴᠡ ᠬᠡᠲᠦᠷᠡᠭᠦᠯᠦᠨ᠎ᠡ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1991"/>
++        <location filename="../ui/mainwindow.cpp" line="2003"/>
+         <source>There is currently a connection in progress!</source>
+         <translation>ᠣᠳᠣ ᠶᠠᠭ ᠬᠣᠯᠪᠣᠵᠤ ᠪᠠᠢ᠌ᠨ᠎ᠠ !</translation>
+     </message>
+@@ -510,7 +511,17 @@
+         <translation>ᠬᠣᠯᠪᠣᠭᠳᠠᠯ ᠦᠭᠡᠢ ᠦᠷ᠎ᠡ ᠳ᠋ᠦᠩ</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="2005"/>
++        <location filename="../ui/mainwindow.cpp" line="1812"/>
++        <source>Not currently supported</source>
++        <translation>ᠲᠤᠢᠷ ᠳᠡᠮᠵᠢᠬᠦ ᠤᠢᠭᠡᠢ</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1814"/>
++        <source>The Wayland version system currently does not support mobile screen projection function.</source>
++        <translation>Wayland ᠬᠡᠪᠯᠡᠯ&#x202f;ᠦᠨ ᠰᠢᠰᠲ᠋ᠧᠮ ᠭᠠᠷ ᠤᠲᠠᠰᠤᠨ&#x202f;ᠤ ᠳᠡᠯᠭᠡᠴᠡ ᠬᠠᠶᠠᠬᠤ ᠴᠢᠳᠠᠮᠵᠢ&#x202f;ᠶᠢ ᠲᠦᠷ ᠳᠡᠮᠵᠢᠬᠦ ᠥᠬᠡᠶ</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="2017"/>
+         <source>The screen projection request has been sent to the connected device. Please click [Agree] in the opposite pop-up window</source>
+         <translation>ᠳᠡᠯᠬᠡᠴᠡ ᠪᠡᠷ ᠺᠢᠨᠣ᠋ ᠥᠭ᠍ᠬᠦ ᠭᠤᠶᠤᠴᠢᠯᠠᠯ ᠢ ᠨᠢᠭᠡᠨᠲᠡ ᠬᠣᠯᠪᠣᠭᠰᠠᠨ ᠲᠥᠬᠥᠭᠡᠷᠦᠮᠵᠢ ᠳᠦ ᠬᠦᠷᠭᠡᠬᠦ ᠪᠡᠷ ᠭᠤᠶᠤᠴᠢᠯᠠᠵᠠᠢ ᠃ ᠡᠰᠡᠷᠭᠦ ᠲᠠᠯ᠎ᠠ ᠶᠢᠨ ᠪᠥᠮᠪᠥᠭᠡᠨ ᠴᠣᠩᠬᠣᠨ ᠳᠣᠲᠣᠷ᠎ᠠ ᠳᠠᠷᠤᠭᠠᠷᠠᠢ 〔 ᠵᠥᠪᠰᠢᠶᠡᠷᠡᠯ 〕</translation>
+     </message>
+@@ -525,9 +536,9 @@
+         <location filename="../ui/mainwindow.cpp" line="1500"/>
+         <location filename="../ui/mainwindow.cpp" line="1571"/>
+         <location filename="../ui/mainwindow.cpp" line="1593"/>
+-        <location filename="../ui/mainwindow.cpp" line="1987"/>
+-        <location filename="../ui/mainwindow.cpp" line="1993"/>
+-        <location filename="../ui/mainwindow.cpp" line="2010"/>
++        <location filename="../ui/mainwindow.cpp" line="1999"/>
++        <location filename="../ui/mainwindow.cpp" line="2005"/>
++        <location filename="../ui/mainwindow.cpp" line="2022"/>
+         <source>OK</source>
+         <translation>ᠪᠠᠰᠠ ᠪᠣᠯᠣᠨ᠎ᠠ ᠃</translation>
+     </message>
+@@ -554,13 +565,13 @@
+         <translation>ᠪᠠᠭᠤᠯᠭᠠᠵᠤ ᠬᠦᠷᠦᠨ᠎ᠡ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1981"/>
+-        <location filename="../ui/mainwindow.cpp" line="2003"/>
++        <location filename="../ui/mainwindow.cpp" line="1993"/>
++        <location filename="../ui/mainwindow.cpp" line="2015"/>
+         <source>Request sent successfully!</source>
+         <translation>ᠠᠮᠵᠢᠯᠲᠠ ᠣᠯᠣᠭᠤᠯᠬᠤ ᠪᠠᠷ ᠭᠤᠶᠤᠴᠢᠯᠠᠭᠠᠷᠠᠢ !</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1982"/>
++        <location filename="../ui/mainwindow.cpp" line="1994"/>
+         <source>The connection request has been sent to the selected device. Please click [YES] in the opposite pop-up window</source>
+         <translation>ᠬᠣᠯᠪᠣᠬᠤ ᠭᠤᠶᠤᠴᠢᠯᠠᠯ ᠢ ᠨᠢᠭᠡᠨᠲᠡ ᠰᠣᠩᠭᠣᠭᠰᠠᠨ ᠲᠥᠬᠥᠭᠡᠷᠦᠮᠵᠢ ᠳᠦ ᠬᠦᠷᠭᠡᠵᠦ ᠥᠭ᠍ᠬᠦ ᠪᠡᠷ ᠭᠤᠶᠤᠴᠢᠯᠠᠵᠠᠢ ᠃ ᠡᠰᠡᠷᠭᠦ ᠲᠠᠯ᠎ᠠ ᠶᠢᠨ ᠪᠥᠮᠪᠥᠭᠡ ᠴᠣᠩᠬᠣᠨ ᠳᠣᠲᠣᠷ᠎ᠠ ᠳᠠᠩ ᠴᠣᠬᠢᠯᠭ᠎ᠠ 〔 ᠪᠣᠯ 〕</translation>
+     </message>
+diff --git a/translations/kylin-connectivity_zh_CN.ts b/translations/kylin-connectivity_zh_CN.ts
+index 9da970d..c6137ad 100644
+--- a/translations/kylin-connectivity_zh_CN.ts
++++ b/translations/kylin-connectivity_zh_CN.ts
+@@ -408,6 +408,7 @@
+         <location filename="../ui/mainwindow.cpp" line="1432"/>
+         <location filename="../ui/mainwindow.cpp" line="1488"/>
+         <location filename="../ui/mainwindow.cpp" line="1800"/>
++        <location filename="../ui/mainwindow.cpp" line="1818"/>
+         <source>CLOSE</source>
+         <translation>关闭</translation>
+     </message>
+@@ -432,7 +433,7 @@
+         <translation>连接超时</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1991"/>
++        <location filename="../ui/mainwindow.cpp" line="2003"/>
+         <source>There is currently a connection in progress!</source>
+         <translation>当前有连接正在进行!</translation>
+     </message>
+@@ -510,7 +511,17 @@
+         <translation>无相关结果</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="2005"/>
++        <location filename="../ui/mainwindow.cpp" line="1812"/>
++        <source>Not currently supported</source>
++        <translation>暂不支持</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1814"/>
++        <source>The Wayland version system currently does not support mobile screen projection function.</source>
++        <translation>Wayland版本系统暂不支持手机投屏功能</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="2017"/>
+         <source>The screen projection request has been sent to the connected device. Please click [Agree] in the opposite pop-up window</source>
+         <translation>已将投屏请求发送至已连接设备，请在对端弹窗中点击【同意】</translation>
+     </message>
+@@ -525,9 +536,9 @@
+         <location filename="../ui/mainwindow.cpp" line="1500"/>
+         <location filename="../ui/mainwindow.cpp" line="1571"/>
+         <location filename="../ui/mainwindow.cpp" line="1593"/>
+-        <location filename="../ui/mainwindow.cpp" line="1987"/>
+-        <location filename="../ui/mainwindow.cpp" line="1993"/>
+-        <location filename="../ui/mainwindow.cpp" line="2010"/>
++        <location filename="../ui/mainwindow.cpp" line="1999"/>
++        <location filename="../ui/mainwindow.cpp" line="2005"/>
++        <location filename="../ui/mainwindow.cpp" line="2022"/>
+         <source>OK</source>
+         <translation>确定</translation>
+     </message>
+@@ -554,13 +565,13 @@
+         <translation>下载到</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1981"/>
+-        <location filename="../ui/mainwindow.cpp" line="2003"/>
++        <location filename="../ui/mainwindow.cpp" line="1993"/>
++        <location filename="../ui/mainwindow.cpp" line="2015"/>
+         <source>Request sent successfully!</source>
+         <translation>请求发送成功！</translation>
+     </message>
+     <message>
+-        <location filename="../ui/mainwindow.cpp" line="1982"/>
++        <location filename="../ui/mainwindow.cpp" line="1994"/>
+         <source>The connection request has been sent to the selected device. Please click [YES] in the opposite pop-up window</source>
+         <translation>已将连接请求发送至所选设备，请在对端弹窗中点击【同意】</translation>
+     </message>
+diff --git a/translations/kylin-connectivity_zh_HK.ts b/translations/kylin-connectivity_zh_HK.ts
+new file mode 100644
+index 0000000..550b8c9
+--- /dev/null
++++ b/translations/kylin-connectivity_zh_HK.ts
+@@ -0,0 +1,890 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh">
++<context>
++    <name>AndroidHomePage</name>
++    <message>
++        <location filename="../ui/filemanageview/androidhomepage.cpp" line="14"/>
++        <source>Storage</source>
++        <translation>存儲</translation>
++    </message>
++</context>
++<context>
++    <name>AndroidItem</name>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="69"/>
++        <source>Picture</source>
++        <translation>圖片</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="72"/>
++        <source>Video</source>
++        <translation>視頻</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="75"/>
++        <source>Music</source>
++        <translation>音樂</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="78"/>
++        <source>Document</source>
++        <translation>文件</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="81"/>
++        <source>WeChat</source>
++        <translation>微信</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="84"/>
++        <source>QQ</source>
++        <translation>QQ</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="87"/>
++        <source>Storage</source>
++        <translation>存儲</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="100"/>
++        <source>All File</source>
++        <translation>所有檔</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/androiditem.cpp" line="102"/>
++        <source>items</source>
++        <translation>項</translation>
++    </message>
++</context>
++<context>
++    <name>BaseDevice</name>
++    <message>
++        <location filename="../projection/device/basedevice.cpp" line="404"/>
++        <source>Control Devices Supported</source>
++        <translation>已支援反控設備</translation>
++    </message>
++    <message>
++        <location filename="../projection/device/basedevice.cpp" line="408"/>
++        <source>Control device not supported</source>
++        <translation>未支援反控設備</translation>
++    </message>
++</context>
++<context>
++    <name>ConnectInterface</name>
++    <message>
++        <location filename="../ui/connectinterface/connectinterface.cpp" line="19"/>
++        <source>Back</source>
++        <translation>返回</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/connectinterface.cpp" line="33"/>
++        <source>Nearby device</source>
++        <translation>附近設備</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/connectinterface.cpp" line="34"/>
++        <source>Connect Phone</source>
++        <translation>連接手機</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/connectinterface.cpp" line="35"/>
++        <source>Device Code</source>
++        <translation>設備碼連接</translation>
++    </message>
++</context>
++<context>
++    <name>ConnectedWin</name>
++    <message>
++        <location filename="../ui/view/connectedwin.cpp" line="38"/>
++        <source>CONNECTED</source>
++        <translation>已連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/connectedwin.cpp" line="114"/>
++        <location filename="../ui/view/connectedwin.cpp" line="122"/>
++        <source>ComputerScreen</source>
++        <translation>電腦投屏</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/connectedwin.cpp" line="120"/>
++        <source>MobileScreen</source>
++        <translation>手機投屏</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/connectedwin.cpp" line="175"/>
++        <source>ExitScreen</source>
++        <translation>退出投屏</translation>
++    </message>
++</context>
++<context>
++    <name>DeviceCodeWidget</name>
++    <message>
++        <location filename="../ui/connectinterface/devicecodewidget.cpp" line="28"/>
++        <source>Please enter the connection code of the other device</source>
++        <translation>請輸入對方設備的連接碼</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/devicecodewidget.cpp" line="37"/>
++        <source>The connection code of the device can be obtained on the homepage of the other party&apos;s &apos;multi terminal collaboration&apos; application</source>
++        <translation>設備的連接碼，可在對方“多端協同”應用的首頁中獲取</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/devicecodewidget.cpp" line="65"/>
++        <source>Connection</source>
++        <translation>連接</translation>
++    </message>
++</context>
++<context>
++    <name>FileManageWin</name>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="25"/>
++        <source>Go Back</source>
++        <translation>後退</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="37"/>
++        <source>Go Forward</source>
++        <translation>前進</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="57"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="406"/>
++        <source>Search File</source>
++        <translation>搜索檔</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="85"/>
++        <source>Select</source>
++        <translation>編輯</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="106"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="626"/>
++        <source>List Mode</source>
++        <translation>清單模式</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="118"/>
++        <source>Refresh</source>
++        <translation>刷新</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="124"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="432"/>
++        <source>Select File</source>
++        <translation>選擇檔案</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="133"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="212"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="646"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="650"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="658"/>
++        <source>Select All</source>
++        <translation>全選</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="142"/>
++        <source>Finish</source>
++        <translation>完成</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="210"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="647"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="649"/>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="657"/>
++        <source>Deselect All</source>
++        <translation>取消全選</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.cpp" line="631"/>
++        <source>Icon Mode</source>
++        <translation>圖示模式</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="91"/>
++        <source>List of Files</source>
++        <translation>檔案清單</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="92"/>
++        <source>Picture</source>
++        <translation>圖片</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="93"/>
++        <source>Video</source>
++        <translation>視頻</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="94"/>
++        <source>Music</source>
++        <translation>音樂</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="95"/>
++        <source>Doc</source>
++        <translation>文件</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="96"/>
++        <source>QQ</source>
++        <translation>QQ</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="97"/>
++        <source>WeChat</source>
++        <translation>微信</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/filemanagewin.h" line="98"/>
++        <source>Storage</source>
++        <translation>存儲</translation>
++    </message>
++</context>
++<context>
++    <name>FileView</name>
++    <message>
++        <location filename="../ui/filemanageview/fileview.cpp" line="132"/>
++        <location filename="../ui/filemanageview/fileview.cpp" line="525"/>
++        <source>Download</source>
++        <translation>下載至本地</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/fileview.cpp" line="405"/>
++        <source>Choose folder</source>
++        <translation>選擇資料夾</translation>
++    </message>
++    <message>
++        <location filename="../ui/filemanageview/fileview.cpp" line="523"/>
++        <source>Open</source>
++        <translation>打開</translation>
++    </message>
++</context>
++<context>
++    <name>HomePage</name>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="42"/>
++        <source>Multiterminal</source>
++        <translation>多端協同</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="48"/>
++        <source>Cross equipment and cross system collaboration. It is more convenient to share resources and screens, and more convenient and efficient to work!</source>
++        <translation>跨設備、跨平臺協同，檔、螢幕實時共用，打造高效辦公方式！</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="55"/>
++        <source>Device Code:</source>
++        <translation>本機設備碼：</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="66"/>
++        <source>Folder</source>
++        <translation>檔共用</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="70"/>
++        <source>Share</source>
++        <translation>屏幕共用</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="74"/>
++        <source>Cross</source>
++        <translation>跨屏操控</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="77"/>
++        <source>Connect Now</source>
++        <translation>立即連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/homepage.cpp" line="185"/>
++        <source>No network</source>
++        <translation>無網路</translation>
++    </message>
++</context>
++<context>
++    <name>MainWindow</name>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="381"/>
++        <location filename="../ui/mainwindow.cpp" line="1380"/>
++        <source>kylin-connectivity</source>
++        <translation>多端協同</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="481"/>
++        <source>Agreed to connect</source>
++        <translation>同意連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="483"/>
++        <source>Peer has agreed</source>
++        <translation>對方已同意</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="485"/>
++        <source>Establishing connection, please wait...</source>
++        <translation>正在建立連接，請稍候</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="489"/>
++        <source>CANCEL</source>
++        <translation>取消</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="939"/>
++        <source>Not currently connected, please connect</source>
++        <translation>當前未連接，請連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="695"/>
++        <location filename="../ui/mainwindow.cpp" line="1368"/>
++        <source>file download failed</source>
++        <translation>檔案下載失敗</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1086"/>
++        <source>Connection request received from&quot;</source>
++        <translation>收到來自 ”</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1086"/>
++        <location filename="../ui/mainwindow.cpp" line="1408"/>
++        <source>&quot;</source>
++        <translation>」 的請求</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1087"/>
++        <source>After consent, the other party can view and download all the files on the device, and can share the other party&apos;s desktop to this screen.</source>
++        <translation>同意后，對方可查看、下載本設備上的所有檔，以及可將對方桌面共用至本螢幕上。</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1093"/>
++        <location filename="../ui/mainwindow.cpp" line="1414"/>
++        <source>NO</source>
++        <translation>拒絕</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1092"/>
++        <location filename="../ui/mainwindow.cpp" line="1413"/>
++        <source>YES</source>
++        <translation>同意</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1350"/>
++        <source>File open exception!</source>
++        <translation>檔打開異常！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1426"/>
++        <source>The other party has refused your screen projection request!</source>
++        <translation>對方拒絕了你的投屏請求！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1427"/>
++        <source>Failed to cast the screen. Please contact the other party and try again.</source>
++        <translation>投屏失敗，請聯繫對方后重新嘗試。</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1112"/>
++        <location filename="../ui/mainwindow.cpp" line="1431"/>
++        <source>RECONNECT</source>
++        <translation>重新連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1107"/>
++        <source>The other party has rejected your connection request!</source>
++        <translation>對方拒絕了您的連接請求！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1108"/>
++        <source>Connection failed. Please contact the other party and try again.</source>
++        <translation>連接失敗，請聯繫對方後重新嘗試。</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1113"/>
++        <location filename="../ui/mainwindow.cpp" line="1432"/>
++        <location filename="../ui/mainwindow.cpp" line="1488"/>
++        <location filename="../ui/mainwindow.cpp" line="1800"/>
++        <location filename="../ui/mainwindow.cpp" line="1818"/>
++        <source>CLOSE</source>
++        <translation>關閉</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1211"/>
++        <source>Please install kylin-assistant on the Android terminal!</source>
++        <translation>請在手機端下載麒麟手機助手app！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1221"/>
++        <source>Please use the USB to connect your phone device!</source>
++        <translation>請使用USB連接手機設備</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1232"/>
++        <source>Connection error</source>
++        <translation>連接失敗</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1234"/>
++        <source>Connection timed out</source>
++        <translation>連接超時</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="2003"/>
++        <source>There is currently a connection in progress!</source>
++        <translation>當前有連接正在進行！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1381"/>
++        <source>Version:</source>
++        <translation>版本：</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1263"/>
++        <source>No Content</source>
++        <translation>無內容</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1383"/>
++        <source>Mobile Assistant is an interconnection tool of Android device and Kirin operating system, which supports Android file synchronization, file transfer, screen mirroring and other functions, which is simple and fast to operate</source>
++        <translation>多端協同是一款麒麟操作系統之間的互通互聯工具，同時也支援Android檔同步、檔傳輸、螢幕鏡像等功能，操作簡單快捷。</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1407"/>
++        <source>Received screen projection request from &quot;</source>
++        <translation>收到來自 ”</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1409"/>
++        <source>After consent, the other party can share the device desktop to this screen.</source>
++        <translation>同意后，對方可將設備桌面共用至本螢幕上。</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1446"/>
++        <source>The other party agreed to your screen projection request!</source>
++        <translation>對方同意了您的投屏請求！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1447"/>
++        <source>The screen is being cast, please wait...</source>
++        <translation>正在投屏，請稍等...</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1472"/>
++        <location filename="../ui/mainwindow.cpp" line="1495"/>
++        <source>End of screen projection</source>
++        <translation>投屏結束</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1473"/>
++        <location filename="../ui/mainwindow.cpp" line="1496"/>
++        <source>The other party has finished the screen projection function.</source>
++        <translation>對方已結束了投屏功能。</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1569"/>
++        <source>Search data loading failed!</source>
++        <translation>搜索數據載入失敗！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1587"/>
++        <location filename="../ui/mainwindow.cpp" line="1590"/>
++        <source>Transmission interruption</source>
++        <translation>傳輸中斷</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1588"/>
++        <source>The other party&apos;s device has insufficient local storage!</source>
++        <translation>對方設備空間不足！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1590"/>
++        <source>Insufficient local storage space!</source>
++        <translation>本地設備空間不足！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1609"/>
++        <source>No relevant results</source>
++        <translation>無相關結果</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1812"/>
++        <source>Not currently supported</source>
++        <translation>暫不支持</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1814"/>
++        <source>The Wayland version system currently does not support mobile screen projection function.</source>
++        <translation>Wayland版本系統暫不支持手機投屏功能</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="2017"/>
++        <source>The screen projection request has been sent to the connected device. Please click [Agree] in the opposite pop-up window</source>
++        <translation>已將投屏請求發送至已連接設備，請在對端彈窗中點擊【同意】</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="941"/>
++        <location filename="../ui/mainwindow.cpp" line="1213"/>
++        <location filename="../ui/mainwindow.cpp" line="1223"/>
++        <location filename="../ui/mainwindow.cpp" line="1296"/>
++        <location filename="../ui/mainwindow.cpp" line="1352"/>
++        <location filename="../ui/mainwindow.cpp" line="1451"/>
++        <location filename="../ui/mainwindow.cpp" line="1477"/>
++        <location filename="../ui/mainwindow.cpp" line="1500"/>
++        <location filename="../ui/mainwindow.cpp" line="1571"/>
++        <location filename="../ui/mainwindow.cpp" line="1593"/>
++        <location filename="../ui/mainwindow.cpp" line="1999"/>
++        <location filename="../ui/mainwindow.cpp" line="2005"/>
++        <location filename="../ui/mainwindow.cpp" line="2022"/>
++        <source>OK</source>
++        <translation>確定</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1482"/>
++        <location filename="../ui/mainwindow.cpp" line="1794"/>
++        <source>Screen projection loading error</source>
++        <translation>投屏載入失敗</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1484"/>
++        <location filename="../ui/mainwindow.cpp" line="1796"/>
++        <source>Please check whether to install the projection expansion package [kylin connectivity tools]</source>
++        <translation>請檢查是否安裝投屏擴展包[kylin-connectivity-tools]</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1784"/>
++        <source>Uploaded to</source>
++        <translation>上傳至</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1755"/>
++        <source>Downloaded to</source>
++        <translation>下載到</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1993"/>
++        <location filename="../ui/mainwindow.cpp" line="2015"/>
++        <source>Request sent successfully!</source>
++        <translation>請求發送成功！</translation>
++    </message>
++    <message>
++        <location filename="../ui/mainwindow.cpp" line="1994"/>
++        <source>The connection request has been sent to the selected device. Please click [YES] in the opposite pop-up window</source>
++        <translation>已將連接請求發送至所選設備，請在對端彈窗中點擊【同意】</translation>
++    </message>
++</context>
++<context>
++    <name>MessageDialog</name>
++    <message>
++        <location filename="../ui/basewidget/messagedialog.cpp" line="29"/>
++        <source>kylin-connectivity</source>
++        <translation>多端協同</translation>
++    </message>
++    <message>
++        <location filename="../ui/basewidget/messagedialog.cpp" line="40"/>
++        <source>Close</source>
++        <translation>關閉</translation>
++    </message>
++</context>
++<context>
++    <name>MobileConnectWin</name>
++    <message>
++        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="24"/>
++        <source>ScanCode</source>
++        <translation>掃碼連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="25"/>
++        <source>USBConnect</source>
++        <translation>USB連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="43"/>
++        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="103"/>
++        <source>Your phone model: </source>
++        <translation>您的手機型號： </translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileconnectwin.h" line="49"/>
++        <source>vivo</source>
++        <translation>vivo</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileconnectwin.h" line="50"/>
++        <source>HUAWEI</source>
++        <translation>華為</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileconnectwin.h" line="51"/>
++        <source>Xiaomi</source>
++        <translation>小米</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileconnectwin.h" line="53"/>
++        <source>OPPO</source>
++        <translation>OPPO</translation>
++    </message>
++</context>
++<context>
++    <name>MobileQRcode</name>
++    <message>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="27"/>
++        <source>No network</source>
++        <translation>未連接網路</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="83"/>
++        <source>Connect the mobile phone and computer to the same network,open the mobile phone app and scan the QR code.</source>
++        <translation>將手機和電腦接入同一網路，打開手機App掃描此二維碼</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="86"/>
++        <source>Use the mobile app to scan this code</source>
++        <translation>使用手機端app掃描此碼</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="45"/>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="56"/>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="95"/>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="101"/>
++        <source>No app installed? Install Now</source>
++        <translation>未裝App？ 立即安裝</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="50"/>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="61"/>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="171"/>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="176"/>
++        <source>view supported phone types&gt;&gt;</source>
++        <translation>查看支援手機類型&gt;&gt;</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="181"/>
++        <source>Please scan this QR code with your mobile browser to download the app</source>
++        <translation>請使用手機瀏覽器掃描此二維碼以下載App</translation>
++    </message>
++</context>
++<context>
++    <name>ScrollSettingWidget</name>
++    <message>
++        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="22"/>
++        <source>Mouse sensitivity</source>
++        <translation>滾輪靈敏度</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="34"/>
++        <source>slow</source>
++        <translation>慢</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="35"/>
++        <source>quick</source>
++        <translation>快</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="40"/>
++        <source>ok</source>
++        <translation>確定</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="41"/>
++        <source>cancel</source>
++        <translation>取消</translation>
++    </message>
++</context>
++<context>
++    <name>SearchDeviceWin</name>
++    <message>
++        <location filename="../ui/connectinterface/searchdevicewin.cpp" line="40"/>
++        <source>Searching for nearby available devices...</source>
++        <translation>搜尋附近可用裝置...</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/searchdevicewin.cpp" line="76"/>
++        <source>No network</source>
++        <translation>未連接網路</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/searchdevicewin.cpp" line="178"/>
++        <source>Search</source>
++        <translation>重新搜索</translation>
++    </message>
++</context>
++<context>
++    <name>SuspendTabBar</name>
++    <message>
++        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="101"/>
++        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="176"/>
++        <source>Back to the desktop</source>
++        <translation>回到桌面</translation>
++    </message>
++    <message>
++        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="105"/>
++        <source>Resume screen projection</source>
++        <translation>恢復投屏</translation>
++    </message>
++    <message>
++        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="175"/>
++        <source>Counter control (activate Ctrl+H, cancel Ctrl+G)</source>
++        <translation>反控（啟動Ctrl+H，取消Ctrl+G）</translation>
++    </message>
++    <message>
++        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="177"/>
++        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="214"/>
++        <source>End screen projection</source>
++        <translation>結束投屏</translation>
++    </message>
++    <message>
++        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="213"/>
++        <source>End Counter Control (Ctrl+G)</source>
++        <translation>結束反控（Ctrl+G）</translation>
++    </message>
++</context>
++<context>
++    <name>Titlebar</name>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="199"/>
++        <source>Menu</source>
++        <translation>選項</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="45"/>
++        <source>kylin-connectivity</source>
++        <translation>多端協同</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="57"/>
++        <source>Minimize</source>
++        <translation>最小化</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="67"/>
++        <location filename="../ui/view/titlebar.cpp" line="124"/>
++        <source>Maximize</source>
++        <translation>最大化</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="77"/>
++        <source>Close</source>
++        <translation>關閉</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="128"/>
++        <source>Reduction</source>
++        <translation>還原</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="216"/>
++        <location filename="../ui/view/titlebar.cpp" line="256"/>
++        <source>Help</source>
++        <translation>説明</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="217"/>
++        <location filename="../ui/view/titlebar.cpp" line="258"/>
++        <source>About</source>
++        <translation>關於</translation>
++    </message>
++    <message>
++        <location filename="../ui/view/titlebar.cpp" line="218"/>
++        <location filename="../ui/view/titlebar.cpp" line="260"/>
++        <source>Quit</source>
++        <translation>退出</translation>
++    </message>
++</context>
++<context>
++    <name>TransmissionDialog</name>
++    <message>
++        <location filename="../ui/basewidget/transmissiondialog.cpp" line="16"/>
++        <source>Current progress</source>
++        <translation>當前進度</translation>
++    </message>
++</context>
++<context>
++    <name>UsbConnectWin</name>
++    <message>
++        <location filename="../ui/connectinterface/usbconnectwin.cpp" line="71"/>
++        <source>Connect now</source>
++        <translation>設置完成，立即連接</translation>
++    </message>
++    <message>
++        <location filename="../ui/connectinterface/usbconnectwin.cpp" line="116"/>
++        <source>No tutorial</source>
++        <translation>暫無教程</translation>
++    </message>
++</context>
++<context>
++    <name>VideoForm</name>
++    <message>
++        <location filename="../projection/device/deviceui/videoform.cpp" line="776"/>
++        <source>Control device not supported</source>
++        <translation>當前連接不支援控制設備</translation>
++    </message>
++</context>
++<context>
++    <name>VideoTitle</name>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="66"/>
++        <source>kylin-connectivity</source>
++        <translation>多端協同</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="145"/>
++        <location filename="../projection/uibase/videotitle.cpp" line="183"/>
++        <source>Hide Navigation Button</source>
++        <translation>隱藏導航欄</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="146"/>
++        <source>Stay on top</source>
++        <translation>置頂</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="147"/>
++        <location filename="../projection/uibase/videotitle.cpp" line="209"/>
++        <source>FullScreen</source>
++        <translation>全屏</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="148"/>
++        <source>Mouse sensitivity</source>
++        <translation>滾輪靈敏度</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="149"/>
++        <source>Quit</source>
++        <translation>退出</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="180"/>
++        <source>Show Navigation Button</source>
++        <translation>顯示導航欄</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="193"/>
++        <source>Stay On Top</source>
++        <translation>置頂</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="197"/>
++        <source>Cancel Stay On Top</source>
++        <translation>取消置頂</translation>
++    </message>
++    <message>
++        <location filename="../projection/uibase/videotitle.cpp" line="213"/>
++        <source>Cancel FullScreen</source>
++        <translation>取消全屏</translation>
++    </message>
++</context>
++<context>
++    <name>videoForm</name>
++    <message>
++        <location filename="../projection/device/deviceui/videoform.ui" line="17"/>
++        <source>kylin-connectivity</source>
++        <translation>多端協同</translation>
++    </message>
++</context>
++</TS>
+diff --git a/translations/peony-send-to-connectivity_bo_CN.ts b/translations/peony-send-to-connectivity_bo_CN.ts
+index 0bd4bc2..9b04db7 100644
+--- a/translations/peony-send-to-connectivity_bo_CN.ts
++++ b/translations/peony-send-to-connectivity_bo_CN.ts
+@@ -4,10 +4,20 @@
+ <context>
+     <name>Peony::SendToKConnectivity</name>
+     <message>
+-        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="70"/>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="66"/>
+         <source>send to connectivity</source>
+         <translation>ཕན་ཚུན་འབྲེལ་མཐུད་བྱེད་པར་བསྐྱལ་</translation>
+     </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Warning</source>
++        <translation>ཐ་ཚིག་</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Please open kylin-connectivity</source>
++        <translation>རོགས་།སྣེ་མང་མཐུན་སྦྱོར་ཁ་ཕྱེ་།</translation>
++    </message>
+     <message>
+         <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.h" line="58"/>
+         <source>Send to a connectivity</source>
+diff --git a/translations/peony-send-to-connectivity_mn.ts b/translations/peony-send-to-connectivity_mn.ts
+index a6b6d08..28c7c16 100644
+--- a/translations/peony-send-to-connectivity_mn.ts
++++ b/translations/peony-send-to-connectivity_mn.ts
+@@ -4,10 +4,20 @@
+ <context>
+     <name>Peony::SendToKConnectivity</name>
+     <message>
+-        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="70"/>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="66"/>
+         <source>send to connectivity</source>
+         <translation>ᠵᠠᠯᠭᠠᠬᠤ</translation>
+     </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Warning</source>
++        <translation>ᠰᠡᠷᠡᠮᠵᠢᠯᠡᠭᠦᠯᠬᠦ</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Please open kylin-connectivity</source>
++        <translation>ᠣᠯᠠᠨ ᠦᠵᠦᠭᠦᠷ&#x202f;ᠢ ᠨᠡᠭᠡᠭᠡᠵᠦ ᠬᠠᠮᠵᠢᠯᠴᠠᠭᠠᠷᠠᠢ</translation>
++    </message>
+     <message>
+         <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.h" line="58"/>
+         <source>Send to a connectivity</source>
+diff --git a/translations/peony-send-to-connectivity_zh_CN.ts b/translations/peony-send-to-connectivity_zh_CN.ts
+index 8030f6d..028a110 100644
+--- a/translations/peony-send-to-connectivity_zh_CN.ts
++++ b/translations/peony-send-to-connectivity_zh_CN.ts
+@@ -4,10 +4,20 @@
+ <context>
+     <name>Peony::SendToKConnectivity</name>
+     <message>
+-        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="70"/>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="66"/>
+         <source>send to connectivity</source>
+         <translation>发送到多端协同</translation>
+     </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Warning</source>
++        <translation>警告</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Please open kylin-connectivity</source>
++        <translation>请打开多端协同</translation>
++    </message>
+     <message>
+         <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.h" line="58"/>
+         <source>Send to a connectivity</source>
+diff --git a/translations/peony-send-to-connectivity_zh_HK.ts b/translations/peony-send-to-connectivity_zh_HK.ts
+new file mode 100644
+index 0000000..e911a8d
+--- /dev/null
++++ b/translations/peony-send-to-connectivity_zh_HK.ts
+@@ -0,0 +1,27 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh">
++<context>
++    <name>Peony::SendToKConnectivity</name>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="66"/>
++        <source>send to connectivity</source>
++        <translation>發送到連接</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Warning</source>
++        <translation>警告</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.cpp" line="76"/>
++        <source>Please open kylin-connectivity</source>
++        <translation>請打開多端協同</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-send-to-connectivity/send-to-connectivity.h" line="58"/>
++        <source>Send to a connectivity</source>
++        <translation>發送到連接</translation>
++    </message>
++</context>
++</TS>
+diff --git a/translations/peony-vfs-kylin-multiterminal_zh_HK.ts b/translations/peony-vfs-kylin-multiterminal_zh_HK.ts
+new file mode 100644
+index 0000000..f0ed584
+--- /dev/null
++++ b/translations/peony-vfs-kylin-multiterminal_zh_HK.ts
+@@ -0,0 +1,56 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_Hant">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="272"/>
++        <source>File does not exist</source>
++        <translation>檔不存在</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="243"/>
++        <source>Failed to copy. Reason: %1</source>
++        <translation>複製失敗。原因： %1</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="265"/>
++        <source>This is not a local file</source>
++        <translation>這不是本地檔</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="277"/>
++        <source>This is not a file</source>
++        <translation>這不是檔</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="306"/>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="524"/>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="559"/>
++        <source>Operation not supported</source>
++        <translation>不支援操作</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="311"/>
++        <source>MULT may not have started</source>
++        <translation>MULT 可能尚未啟動</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="358"/>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/peony-vfs-multiterminal.h" line="67"/>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/peony-vfs-multiterminal.h" line="71"/>
++        <source>Multiterminal</source>
++        <translation>多終端</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-file.cpp" line="443"/>
++        <source>Incorrect path</source>
++        <translation>路徑不正確</translation>
++    </message>
++    <message>
++        <location filename="../plugin/peony-vfs-kylin-multiterminal/multiterminal-vfs-register.h" line="51"/>
++        <source>Default multiterminal vfs of peony</source>
++        <translation>牡丹的預設多終端vfs</translation>
++    </message>
++</context>
++</TS>
+diff --git a/ui/mainwindow.cpp b/ui/mainwindow.cpp
+index fb35a60..0c41167 100644
+--- a/ui/mainwindow.cpp
++++ b/ui/mainwindow.cpp
+@@ -1255,7 +1255,7 @@ void MainWindow::slotCurrentDirectoryList(const QMap<QString, FileInfo> &map)
+ {
+     if (m_isDbusOperation) {
+         // dbus操作
+-        Q_EMIT sigFileInfoList(map);
++        //Q_EMIT sigFileInfoList(map);
+         m_isDbusOperation = false;
+     } else {
+         clearView();
+@@ -1807,6 +1807,18 @@ bool MainWindow::setScreenOption()
+         }
+     } else {
+         if (m_connectInfo.deviceType == ConnectionService::DeviceType::ANDROID) {
++            if (QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
++                QString str1 = QString(tr("Not currently supported"));
++                QString str2 = QString(
++                    tr("The Wayland version system currently does not support mobile screen projection function."));
++                m_messageBox = new MessageDialog(this);
++                m_messageBox->setText(str1, str2);
++                m_messageBox->setIconPixmap(QIcon::fromTheme("dialog-warning"));
++                m_messageBox->addButton(QString(tr("CLOSE")));
++                moveMessageBox();
++                return false;
++            }
++
+             // 手机投屏埋点
+             GenerateTools::buriedPoint(kabase::BuriedPoint::PT::KylinMobileAssistantMobileScreen);
+             if (m_deviceManage == nullptr) {

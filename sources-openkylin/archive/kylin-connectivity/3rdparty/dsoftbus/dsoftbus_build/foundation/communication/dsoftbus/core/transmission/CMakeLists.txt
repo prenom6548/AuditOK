@@ -1,0 +1,5 @@
+add_subdirectory(common)
+add_subdirectory(ipc)
+add_subdirectory(pending_packet)
+add_subdirectory(session)
+add_subdirectory(trans_channel)

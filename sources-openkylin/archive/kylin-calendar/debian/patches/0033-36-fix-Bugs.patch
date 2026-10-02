@@ -1,0 +1,210 @@
+From: =?utf-8?b?6JKL6IOc6L6+?= <jiangshengda@kylinos.cn>
+Date: Fri, 9 Aug 2024 01:10:28 +0000
+Subject: =?utf-8?q?!36_fix_Bugs_Merge_pull_request_!36_from_=E8=B4=BE?=
+ =?utf-8?q?=E5=A8=81/openkylin/nile?=
+
+---
+ lunarcalendarwidget/custommessagebox.cpp        | 19 ++++++++++++++++
+ lunarcalendarwidget/custommessagebox.h          |  1 +
+ lunarcalendarwidget/frmlunarcalendarwidget.cpp  |  1 -
+ lunarcalendarwidget/lunarcalendarwidget.cpp     | 29 +++++++++++++++----------
+ lunarcalendarwidget/schedulewidget.cpp          |  7 +++---
+ resources/org.kylin.calendar.plugin.gschema.xml | 14 ++++++++++++
+ 6 files changed, 55 insertions(+), 16 deletions(-)
+ create mode 100644 resources/org.kylin.calendar.plugin.gschema.xml
+
+diff --git a/lunarcalendarwidget/custommessagebox.cpp b/lunarcalendarwidget/custommessagebox.cpp
+index a965e28..2a9e0c2 100644
+--- a/lunarcalendarwidget/custommessagebox.cpp
++++ b/lunarcalendarwidget/custommessagebox.cpp
+@@ -7,6 +7,14 @@
+ #include <QDialog>
+ #include <QPainterPath>
+ #include <QPainter>
++#include <KWindowEffects>
++#include <KWindowSystem>
++#include <QDesktopWidget>
++#include <QApplication>
++#include <QGuiApplication>
++#include <QScreen>
++//#include "kborderlessbutton.h"
++#include "windowmanager/windowmanager.h"
+ #include <QGraphicsDropShadowEffect>
+ #include <QGSettings>
+ #include <QToolButton>
+@@ -172,3 +180,14 @@ CustomMessageBox::~CustomMessageBox()
+       styleGsettings = nullptr;
+   }
+ }
++void CustomMessageBox::showEvent(QShowEvent *event)
++{
++    QRect rect;
++    QWidget::showEvent(event);
++    QPoint screenCenter = QApplication::desktop()->availableGeometry().center();
++//    QSize dialogSize = msgBox->size();
++    rect.setRect(screenCenter.x() - this->width() / 2,screenCenter.y() - this->height() / 2,this->width(),this->height());
++    kdk::WindowManager::setGeometry(this->windowHandle(),rect);
++
++
++}
+diff --git a/lunarcalendarwidget/custommessagebox.h b/lunarcalendarwidget/custommessagebox.h
+index 23c428d..b8f4a75 100644
+--- a/lunarcalendarwidget/custommessagebox.h
++++ b/lunarcalendarwidget/custommessagebox.h
+@@ -19,6 +19,7 @@ public:
+     QLabel *textLabel = nullptr;
+ protected:
+     void paintEvent(QPaintEvent *) override;
++    void showEvent(QShowEvent *event) override;
+ signals:
+     void yesClicked();
+     void noClicked();
+diff --git a/lunarcalendarwidget/frmlunarcalendarwidget.cpp b/lunarcalendarwidget/frmlunarcalendarwidget.cpp
+index 9903780..f0394cd 100644
+--- a/lunarcalendarwidget/frmlunarcalendarwidget.cpp
++++ b/lunarcalendarwidget/frmlunarcalendarwidget.cpp
+@@ -471,7 +471,6 @@ void frmLunarCalendarWidget::changeWidowposFromClickButton(bool restore)
+             if(!m_widget->yijistate){
+                 setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,totalHeight-m_panelSize-LESSTWOSHCEDULE_CALENDAR_HEIGHT-WIDGET_GAP,
+                         ORIGIN_CALENDAR_WIDTH,LESSTWOSHCEDULE_CALENDAR_HEIGHT);
+-
+                 if(totalHeight-m_panelSize< LESSTWOSHCEDULE_CALENDAR_HEIGHT){
+                     m_widget->ScrollbarUnderTheResolution = true;
+                     setRect(rect,totalWidth-ORIGIN_CALENDAR_WIDTH - WIDGET_GAP,SCROLLA-WIDGET_GAP,ORIGIN_CALENDAR_WIDTH,totalHeight-m_panelSize-SCROLLA);
+diff --git a/lunarcalendarwidget/lunarcalendarwidget.cpp b/lunarcalendarwidget/lunarcalendarwidget.cpp
+index 29163f4..d646ec2 100644
+--- a/lunarcalendarwidget/lunarcalendarwidget.cpp
++++ b/lunarcalendarwidget/lunarcalendarwidget.cpp
+@@ -335,6 +335,7 @@ void LunarCalendarWidget::noSchedule()
+ }
+ void LunarCalendarWidget::updateFromItem(QString id)
+ {
++    QRect rect;
+     CustomMessageBox *msgBox = new CustomMessageBox(1,this);
+     msgBox->SetText(tr("Are you sure you want to delete this event?"));
+     msgBox->setWindowFlags(msgBox->windowFlags() | Qt::WindowStaysOnTopHint);
+@@ -342,7 +343,8 @@ void LunarCalendarWidget::updateFromItem(QString id)
+     QPoint screenCenter = QApplication::desktop()->availableGeometry().center();
+     QSize dialogSize = msgBox->size();
+     // 计算对话框应显示的中心点坐标，并将其移动到屏幕中心
+-    msgBox->move(screenCenter.x() - dialogSize.width() / 2, screenCenter.y() - dialogSize.height() / 2);
++//    msgBox->move(screenCenter.x() - dialogSize.width() / 2, screenCenter.y() - dialogSize.height() / 2);
++    rect.setRect(screenCenter.x() - dialogSize.width() / 2,screenCenter.y() - dialogSize.height() / 2,dialogSize.width(),dialogSize.height());
+ 
+     connect(msgBox, &CustomMessageBox::yesClicked, [&]() {
+         foreach(MarkInfo info, m_markInfoList) {
+@@ -360,8 +362,7 @@ void LunarCalendarWidget::updateFromItem(QString id)
+     connect(msgBox, &CustomMessageBox::noClicked, [&]() {
+         delete msgBox;
+     });
+-       msgBox->exec();
+-
++    msgBox->exec();
+ }
+ /**
+  * @brief LunarCalendarWidget::twoLessSchedule
+@@ -1102,7 +1103,7 @@ void LunarCalendarWidget::CreateSchedule(QDate date)
+ 
+ void LunarCalendarWidget::slotAddSchedule()
+ {
+-//    QRect rect;
++    QRect rect;
+     dlg = new CSchceduleDlg(1,this,true);
+     dlg->setWindowFlags(dlg->windowFlags());
+     // 获取屏幕中心点和尺寸
+@@ -1111,15 +1112,17 @@ void LunarCalendarWidget::slotAddSchedule()
+     qDebug()<<"获得的屏幕中心坐标是"<<screenCenter.x()<<screenCenter.y();
+     // 计算对话框应显示的中心点坐标，并将其移动到屏幕中心
+ 
+-    dlg->move(screenCenter.x() - dialogSize.width() / 2, screenCenter.y() - dialogSize.height() / 2);
+-//    rect.setRect(screenCenter.x() - dialogSize.width() / 2,screenCenter.y() - dialogSize.height() / 2,444,524);
+-//    qDebug()<<rect;
+-//    kdk::WindowManager::setGeometry(dlg->windowHandle(),rect);
++//    dlg->move(screenCenter.x() - dialogSize.width() / 2, screenCenter.y() - dialogSize.height() / 2);
++    rect.setRect(screenCenter.x() - dialogSize.width() / 2,screenCenter.y() - dialogSize.height() / 2,dialogSize.width(),dialogSize.height());
++    qDebug()<<"------------rect"<<rect;
+     KWindowSystem::setState(dlg->winId(),NET::SkipPager|NET::SkipTaskbar|NET::SkipSwitcher);
+     connect(dlg,&CSchceduleDlg::NeedDelete,this,[=](){
+        dlg->deleteLater();
+     });
++    dlg->setFocus();
+     dlg->show();
++    kdk::WindowManager::setGeometry(dlg->windowHandle(),rect);
++
+ }
+ void LunarCalendarWidget::slotEditSchedulefromMenu(QString id)
+ {
+@@ -1128,7 +1131,7 @@ void LunarCalendarWidget::slotEditSchedulefromMenu(QString id)
+ void LunarCalendarWidget::slotEditSchedule(QString id)
+ {
+     //    CalendarDataBase::getInstance().m_markInfoList;
+-
++    QRect rect;
+     dlg = new CSchceduleDlg(0,this,true);
+     dlg->setId(id);
+     dlg->setStatusFromId(id);
+@@ -1137,15 +1140,19 @@ void LunarCalendarWidget::slotEditSchedule(QString id)
+     QPoint screenCenter = QApplication::desktop()->availableGeometry().center();
+     QSize dialogSize = dlg->size();
+     // 计算对话框应显示的中心点坐标，并将其移动到屏幕中心
+-    dlg->move(screenCenter.x() - dialogSize.width() / 2, screenCenter.y() - dialogSize.height() / 2);
++//    dlg->move(screenCenter.x() - dialogSize.width() / 2, screenCenter.y() - dialogSize.height() / 2);
++    rect.setRect(screenCenter.x() - dialogSize.width() / 2,screenCenter.y() - dialogSize.height() / 2,dialogSize.width(),dialogSize.height());
++    KWindowSystem::setState(dlg->winId(),NET::SkipPager|NET::SkipTaskbar|NET::SkipSwitcher);
+ 
+     connect(dlg, &QDialog::accepted, this, [=](){
+         updateAllSchedule();
+         updateLayout();
+         // 若有必要，也可以在这里发射信号 Q_EMIT Up(m_markInfoList.count());
+     });
+-
++    dlg->setFocus();
+     dlg->show();
++    kdk::WindowManager::setGeometry(dlg->windowHandle(),rect);
++
+ 
+ }
+ 
+diff --git a/lunarcalendarwidget/schedulewidget.cpp b/lunarcalendarwidget/schedulewidget.cpp
+index 5c0e578..8580065 100644
+--- a/lunarcalendarwidget/schedulewidget.cpp
++++ b/lunarcalendarwidget/schedulewidget.cpp
+@@ -604,15 +604,14 @@ void CSchceduleDlg::initWindow()
+     m_textEdit = new QTextEdit(this);
+     m_textEdit->setFixedSize(378, 90);
+     m_textEdit->setAcceptRichText(false);
+-
+     //设置关联控件，用于QTextEdit控件捕获MouseButtonPress等事件
+-    QWidget *mpContentWidget = m_textEdit->viewport();
++//    QWidget *mpContentWidget = m_textEdit->viewport();
+     //这一行创建了一个指向m_textEdit的视口（viewport）的指针。在Qt
+     //中，视口是负责绘制控件内容并处理输入事件的窗口部件。QTextEdit有一个视口，它负责显示文本并处理与文本编辑相关的输入事件，如鼠标点击、键盘输入等。
+-    mpContentWidget->installEventFilter(this);
++//    mpContentWidget->installEventFilter(this);
+     m_textEdit->setWordWrapMode(QTextOption::WrapAnywhere);
+     //设置事件过滤器
+-    m_textEdit->installEventFilter(this);
++//    m_textEdit->installEventFilter(this);
+     contentLabellayout->addWidget(m_textEdit);
+     // 如果是占位符文本
+     m_textEdit->setPlaceholderText(tr("Enter the content of the event"));
+diff --git a/resources/org.kylin.calendar.plugin.gschema.xml b/resources/org.kylin.calendar.plugin.gschema.xml
+new file mode 100644
+index 0000000..f70be64
+--- /dev/null
++++ b/resources/org.kylin.calendar.plugin.gschema.xml
+@@ -0,0 +1,14 @@
++<schemalist gettext-domain="kylin-calendar-plugin">
++  <schema id="org.kylin.calendar.plugin" path="/org/kylin/canlendar/plugin/">
++    <key type="s" name="lunar-date">
++      <default>""</default>
++      <summary>record the lunar day today</summary>
++      <description>record the lunar day today</description>
++    </key>
++    <key type="b" name="yijistatus">
++      <default>false</default>
++      <summary>Whether to show the lunar date in the calendar</summary>
++      <description>Controls whether the lunar date is displayed in the calendar.</description>
++    </key>
++  </schema>
++</schemalist>

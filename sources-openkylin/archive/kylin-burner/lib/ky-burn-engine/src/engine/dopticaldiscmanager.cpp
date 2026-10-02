@@ -1,0 +1,334 @@
+#include "dopticaldiscmanager.h"
+#include "dopticaldiscinfo.h"
+
+#include "dopticaldiscmanager_p.h"
+#include "dxorrisoengine.h"
+
+#include <QDebug>
+#include <QUrl>
+#include <QPointer>
+
+DFM_BURN_USE_NS
+
+DOpticalDiscManager::DOpticalDiscManager(const QString &dev, QObject *parent)
+    : QObject(parent), dptr(new DOpticalDiscManagerPrivate)
+{
+    dptr->curDev = dev;
+}
+
+DOpticalDiscManager::~DOpticalDiscManager()
+{
+}
+
+bool DOpticalDiscManager::setStageFile(const QString &diskPath, const QString &isoPath)
+{
+    QUrl diskUrl { diskPath };
+    QUrl isoUrl { isoPath };
+
+    if (diskUrl.isEmpty() || !diskUrl.isValid()) {
+        dptr->errorMsg = "Invalid disk path";
+        return false;
+    }
+    if (isoUrl.isEmpty() || !isoUrl.isValid()) {
+        dptr->errorMsg = "Invalid iso path";
+        return false;
+    }
+
+    dptr->files.first = diskPath;
+    dptr->files.second = isoPath;
+
+    return true;
+}
+
+/*!
+ * \brief DISOMaster::commit  Burn all staged files to the disc.
+ * \param opts   burning options
+ * \param speed  desired writing speed in kilobytes per second
+ * \param volId  volume name of the disc
+ * \return       true on success, false on failure
+ */
+bool DOpticalDiscManager::commit(const BurnOptions &opts, int speed, const QString &volId)
+{
+    bool ret { false };
+
+    if (opts.testFlag(BurnOption::kUDF102Supported)) {
+        //do not support udf engine
+    } else {
+        QScopedPointer<DXorrisoEngine> xorrisoEngine { new DXorrisoEngine };
+        QPointer<DXorrisoEngine> ptr = QPointer<DXorrisoEngine>(xorrisoEngine.data());
+
+        connect(xorrisoEngine.data(), &DXorrisoEngine::jobStatusChanged, this,
+                [this, ptr](JobStatus status, int progress, QString speed) {
+                    if (ptr)
+                        Q_EMIT jobStatusChanged(status, progress, speed, ptr->takeInfoMessages());
+                },
+                Qt::DirectConnection);
+
+        if (!xorrisoEngine->acquireDevice(dptr->curDev)){
+            qWarning() << "[dfm-burn] Cannot acquire device";
+
+            QStringList errorInfoList;
+            errorInfoList << "cannot acquire device";
+            Q_EMIT jobStatusChanged(JobStatus::kFailed, -1, "", errorInfoList);
+
+            return false;
+        }
+
+        using XJolietSupport = DXorrisoEngine::JolietSupport;
+        using XRockRageSupport = DXorrisoEngine::RockRageSupport;
+        using XKeepAppendable = DXorrisoEngine::KeepAppendable;
+        XJolietSupport joliet = opts.testFlag(BurnOption::kJolietSupport)
+                ? XJolietSupport::kTrue
+                : XJolietSupport::kFalse;
+        XRockRageSupport rockRage = opts.testFlag(BurnOption::kRockRidgeSupport)
+                ? XRockRageSupport::kTrue
+                : XRockRageSupport::kFalse;
+        XKeepAppendable keepAppendable = opts.testFlag(BurnOption::kKeepAppendable)
+                ? XKeepAppendable::kTrue
+                : XKeepAppendable::kFalse;
+
+        ret = xorrisoEngine->doBurn(dptr->files, speed, volId, joliet, rockRage, keepAppendable);
+        xorrisoEngine->releaseDevice();
+    }
+
+    return ret;
+}
+
+bool DOpticalDiscManager::createISO(const BurnOptions &opts, int speed, const QString &volId)
+{
+    bool ret { false };
+
+    if (opts.testFlag(BurnOption::kUDF102Supported)) {
+        //do not support udf engine
+    } else {
+        QScopedPointer<DXorrisoEngine> xorrisoEngine { new DXorrisoEngine };
+        QPointer<DXorrisoEngine> ptr = QPointer<DXorrisoEngine>(xorrisoEngine.data());
+
+        connect(xorrisoEngine.data(), &DXorrisoEngine::jobStatusChanged, this,
+                [this, ptr](JobStatus status, int progress, QString speed) {
+                    if (ptr)
+                        Q_EMIT jobStatusChanged(status, progress, speed, ptr->takeInfoMessages());
+                },
+                Qt::DirectConnection);
+
+        if (!xorrisoEngine->acquireDevice(dptr->curDev)){
+            qWarning() << "[dfm-burn] Cannot acquire device";
+
+            QStringList errorInfoList;
+            errorInfoList << "cannot acquire device";
+            Q_EMIT jobStatusChanged(JobStatus::kFailed, -1, "", errorInfoList);
+
+            return false;
+        }
+
+        using XJolietSupport = DXorrisoEngine::JolietSupport;
+        using XRockRageSupport = DXorrisoEngine::RockRageSupport;
+        using XKeepAppendable = DXorrisoEngine::KeepAppendable;
+        XJolietSupport joliet = opts.testFlag(BurnOption::kJolietSupport)
+                ? XJolietSupport::kTrue
+                : XJolietSupport::kFalse;
+        XRockRageSupport rockRage = opts.testFlag(BurnOption::kRockRidgeSupport)
+                ? XRockRageSupport::kTrue
+                : XRockRageSupport::kFalse;
+
+        ret = xorrisoEngine->doCreateISO(dptr->files.first, dptr->files.second, volId, joliet, rockRage);
+        xorrisoEngine->releaseDevice();
+    }
+
+    return ret;
+}
+
+bool DOpticalDiscManager::erase()
+{
+    bool ret { false };
+    QScopedPointer<DXorrisoEngine> engine { new DXorrisoEngine };
+
+    QPointer<DXorrisoEngine> ptr = QPointer<DXorrisoEngine>(engine.data());
+    connect(engine.data(), &DXorrisoEngine::jobStatusChanged, this,
+            [this, ptr](JobStatus status, int progress, QString speed) {
+                if (ptr)
+                    Q_EMIT jobStatusChanged(status, progress, speed, ptr->takeInfoMessages());
+            },
+            Qt::DirectConnection);
+
+    if (!engine->acquireDevice(dptr->curDev)){
+        qWarning() << "[dfm-burn] Cannot acquire device";
+
+        QStringList errorInfoList;
+        errorInfoList << "cannot acquire device";
+        Q_EMIT jobStatusChanged(JobStatus::kFailed, -1, "", errorInfoList);
+
+        return false;
+    }
+
+    ret = engine->doErase();
+
+    engine->releaseDevice();
+    return ret;
+}
+
+bool DOpticalDiscManager::checkmedia(double *qgood, double *qslow, double *qbad)
+{
+    bool ret { false };
+    quint64 blocks { 0 };
+
+    {
+        QScopedPointer<DOpticalDiscInfo> info { DOpticalDiscManager::createOpticalInfo(dptr->curDev) };
+        if (!info)
+            return ret;
+        blocks = info->dataBlocks();
+    }
+
+    QScopedPointer<DXorrisoEngine> engine { new DXorrisoEngine };
+    QPointer<DXorrisoEngine> ptr = QPointer<DXorrisoEngine>(engine.data());
+    connect(engine.data(), &DXorrisoEngine::jobStatusChanged, this,
+            [this, ptr](JobStatus status, int progress, QString speed) {
+                if (ptr)
+                    Q_EMIT jobStatusChanged(status, progress, speed, ptr->takeInfoMessages());
+            },
+            Qt::DirectConnection);
+
+    if (!engine->acquireDevice(dptr->curDev)){
+        qWarning() << "[dfm-burn] Cannot acquire device";
+
+        QStringList errorInfoList;
+        errorInfoList << "cannot acquire device";
+        Q_EMIT jobStatusChanged(JobStatus::kFailed, -1, "", errorInfoList);
+        return false;
+    }
+
+    ret = engine->doCheckmedia(blocks, qgood, qslow, qbad);
+
+    engine->releaseDevice();
+
+    return ret;
+}
+
+bool DOpticalDiscManager::writeISO(const QString &isoPath, int speed)
+{
+    bool ret { false };
+    QScopedPointer<DXorrisoEngine> engine { new DXorrisoEngine };
+    QPointer<DXorrisoEngine> ptr = QPointer<DXorrisoEngine>(engine.data());
+    connect(engine.data(), &DXorrisoEngine::jobStatusChanged, this,
+            [this, ptr](JobStatus status, int progress, QString speed) {
+                if (ptr)
+                    Q_EMIT jobStatusChanged(status, progress, speed, ptr->takeInfoMessages());
+            },
+            Qt::DirectConnection);
+
+    if (!engine->acquireDevice(dptr->curDev)){
+        qWarning() << "[dfm-burn] Cannot acquire device";
+
+        QStringList errorInfoList;
+        errorInfoList << "cannot acquire device";
+        Q_EMIT jobStatusChanged(JobStatus::kFailed, -1, "", errorInfoList);
+        return false;
+    }
+
+    if (QUrl(isoPath).isEmpty() || !QUrl(isoPath).isValid()) {
+        dptr->errorMsg = QString("[dfm-burn]: Invalid path: %1 ").arg(isoPath);
+        return ret;
+    }
+
+    if (engine->mediaTypeProperty() == MediaType::kDVD_PLUS_R_DL) {
+        ret = engine->doWriteMultiISO(isoPath, speed);
+    } else {
+        ret = engine->doWriteISO(isoPath, speed);
+    }
+
+    engine->releaseDevice();
+
+    return ret;
+}
+
+bool DOpticalDiscManager::writeMultiISO(const QString &isoPath, int speed)
+{
+    bool ret { false };
+    QScopedPointer<DXorrisoEngine> engine { new DXorrisoEngine };
+    QPointer<DXorrisoEngine> ptr = QPointer<DXorrisoEngine>(engine.data());
+    connect(engine.data(), &DXorrisoEngine::jobStatusChanged, this,
+            [this, ptr](JobStatus status, int progress, QString speed) {
+                if (ptr)
+                    Q_EMIT jobStatusChanged(status, progress, speed, ptr->takeInfoMessages());
+            },
+            Qt::DirectConnection);
+
+    if (!engine->acquireDevice(dptr->curDev)){
+        qWarning() << "[dfm-burn] Cannot acquire device";
+
+        QStringList errorInfoList;
+        errorInfoList << "cannot acquire device";
+        Q_EMIT jobStatusChanged(JobStatus::kFailed, -1, "", errorInfoList);
+        return false;
+    }
+
+    if (QUrl(isoPath).isEmpty() || !QUrl(isoPath).isValid()) {
+        dptr->errorMsg = QString("[dfm-burn]: Invalid path: %1 ").arg(isoPath);
+        return ret;
+    }
+
+    ret = engine->doWriteMultiISO(isoPath, speed);
+
+    engine->releaseDevice();
+
+    return ret;
+}
+
+bool DOpticalDiscManager::dumpISO(const QString &isoPath)
+{
+    bool ret { false };
+    quint64 blocks { 0 };
+
+    {
+        QScopedPointer<DOpticalDiscInfo> info { DOpticalDiscManager::createOpticalInfo(dptr->curDev) };
+        if (!info)
+            return ret;
+        blocks = info->dataBlocks();
+    }
+
+    QScopedPointer<DXorrisoEngine> engine { new DXorrisoEngine };
+
+    QPointer<DXorrisoEngine> ptr = QPointer<DXorrisoEngine>(engine.data());
+    connect(engine.data(), &DXorrisoEngine::jobStatusChanged, this,
+            [this, ptr](JobStatus status, int progress, QString speed) {
+                if (ptr)
+                    emit jobStatusChanged(status, progress, speed, ptr->takeInfoMessages());
+            },
+            Qt::DirectConnection);
+
+    if (!engine->acquireDevice(dptr->curDev)){
+        qWarning() << "[dfm-burn] Cannot acquire device";
+
+        QStringList errorInfoList;
+        errorInfoList << "cannot acquire device";
+        Q_EMIT jobStatusChanged(JobStatus::kFailed, -1, "", errorInfoList);
+        return false;
+    }
+
+    if (QUrl(isoPath).isEmpty() || !QUrl(isoPath).isValid()) {
+        dptr->errorMsg = QString("[dfm-burn]: Invalid path: %1 ").arg(isoPath);
+        return ret;
+    }
+
+    ret = engine->doDumpISO(blocks, isoPath);
+
+    engine->releaseDevice();
+
+    return ret;
+}
+
+QString DOpticalDiscManager::lastError() const
+{
+    return dptr->errorMsg;
+}
+
+DOpticalDiscInfo *DOpticalDiscManager::createOpticalInfo(const QString &dev)
+{
+    auto info = new DOpticalDiscInfo(dev);
+    if (info && info->device().isEmpty()) {
+        delete info;
+        return nullptr;
+    }
+
+    return info;
+}

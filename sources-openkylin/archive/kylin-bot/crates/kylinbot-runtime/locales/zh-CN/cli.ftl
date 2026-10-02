@@ -1,0 +1,31 @@
+cli-wechat-pairing-required = 🔐 需要绑定 WeChat。一次性绑定码：{$code}
+cli-wechat-send-bind-command = 请在 WeChat 中发送 `{$command} <code>`。
+cli-wechat-qr-login = 📱 WeChat 二维码登录（{$attempt}/{$max}）
+cli-wechat-scan-to-connect = 请使用 WeChat 扫码连接。
+cli-wechat-qr-url = 二维码 URL：{$url}
+cli-wechat-qr-expired-giving-up = WeChat 二维码已过期 {$max} 次，停止重试。
+cli-wechat-qr-fetch-failed = 获取 WeChat 二维码失败。
+cli-wechat-qr-fetch-status-failed = 获取 WeChat 二维码失败（{$status}）：{$body}
+cli-wechat-missing-response-field = WeChat 响应缺少 {$field}。
+cli-wechat-scanned-confirm = 👀 已扫码！请在手机上确认...
+cli-wechat-qr-expired-refreshing = ⏳ 二维码已过期，正在刷新...
+cli-wechat-login-confirmed-missing-field = 登录已确认，但缺少 {$field}。
+cli-wechat-connected = ✅ WeChat 已连接！
+cli-wechat-bound-success = ✅ WeChat 账号绑定成功。现在可以和 KylinBot 对话了。
+cli-wechat-invalid-bind-code = ❌ 绑定码无效。请重试。
+
+## SkillHub gateway API messages
+skillhub-installed-successfully = 技能安装成功
+skillhub-uninstalled-successfully = 技能卸载成功
+skillhub-install-task-failed = 安装任务失败
+skillhub-uninstall-task-failed = 卸载任务失败
+skillhub-upgrade-task-failed = 升级任务失败
+skillhub-query-param-required = 查询参数 '{$param}' 是必需的
+skillhub-field-required = 字段 '{$field}' 是必需的
+skillhub-invalid-skill-slug = 无效的技能标识
+skillhub-search-failed = 搜索失败：{$error}
+skillhub-showcase-failed = 展示失败：{$error}
+skillhub-upgrade-failed = 升级失败：{$error}
+skillhub-detail-failed = 详情获取失败：{$error}
+skillhub-check-complete = 检查完成
+skillhub-upgrade-complete = 升级完成

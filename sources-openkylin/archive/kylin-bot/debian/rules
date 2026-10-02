@@ -1,0 +1,66 @@
+#!/usr/bin/make -f
+#export DH_VERBOSE = 1
+
+# Cargo from PATH when the `cargo` package is installed (see Build-Depends).
+# Override: `dpkg-buildpackage` → pass through environment, e.g. `CARGO=/path/to/cargo dpkg-buildpackage`.
+CARGO ?= cargo
+# sbuild sets HOME=/sbuild-nonexistent (not writable); keep cargo state in-tree.
+CARGO_HOME := $(CURDIR)/debian/.cargo-home
+export CARGO_HOME
+# Fat LTO writes LLVM bitcode into .rlib members. Kylin's GNU ld 2.41 cannot
+# consume rustc 1.9x / LLVM 22 bitcode and fails with:
+#   libring-*.rlib: error adding symbols: file format not recognized
+# dpkg-buildpackage sanitizes the environment, so this cannot be set in the
+# calling shell — it must be exported from debian/rules.
+export CARGO_PROFILE_RELEASE_LTO := off
+# rustc defaults to -C embed-bitcode=yes. The `cc` crate then compiles C
+# (sqlite3, aws-lc) with clang -flto, producing LLVM bitcode objects that
+# GNU ld rejects even when Rust LTO is off.
+# Use only stable RUSTFLAGS: `link-self-contained=+linker` is unstable on
+# rustc 1.96 and aborts the build unless -Z unstable-options is set.
+export RUSTFLAGS := -C embed-bitcode=no
+export CFLAGS := -fno-lto
+export CXXFLAGS := -fno-lto
+export CMAKE_INTERPROCEDURAL_OPTIMIZATION := OFF
+# Prefer gcc over clang so C crates emit ELF objects (clang -flto → bitcode).
+CC := $(shell command -v gcc 2>/dev/null || command -v cc 2>/dev/null)
+export CC
+DEB_HOST_RUST_TYPE := $(shell dpkg-architecture -qDEB_HOST_GNU_TYPE | sed 's/-gnu$$/_unknown_linux_gnu/' | tr '-' '_')
+export CC_$(DEB_HOST_RUST_TYPE)=$(CC)
+
+define setup_cargo_home
+	mkdir -p "$(CARGO_HOME)"
+	cp debian/cargo-config.toml "$(CARGO_HOME)/config.toml"
+endef
+
+%:
+	dh $@
+
+# debhelper does not detect Rust/Cargo; build the workspace explicitly.
+override_dh_auto_build:
+	$(setup_cargo_home)
+	$(CARGO) build --release --locked
+
+override_dh_auto_install:
+	install -D -m 0755 target/release/kylinbot \
+		debian/kylin-bot/usr/bin/kylin-bot
+	# Install default skills and config to /usr/share/kylinbot
+	debian/check-packaged-config-paths.sh debian/kylinbot
+	install -d debian/kylin-bot/usr/share/kylinbot
+	cp -a debian/kylinbot/. debian/kylin-bot/usr/share/kylinbot/
+	# Desktop session autostart (XDG)
+	install -D -m 0644 debian/kylin-bot-autostart.desktop \
+		debian/kylin-bot/etc/xdg/autostart/kylin-bot-autostart.desktop
+
+# GUI integration tests are not suitable for default package builds.
+override_dh_auto_test:
+	:
+
+override_dh_auto_clean:
+	dh_auto_clean
+	-$(setup_cargo_home)
+	-$(CARGO) clean
+	rm -rf debian/.cargo-home
+
+override_dh_shlibdeps:
+	@echo "skip dh_shlibdeps intentionally"

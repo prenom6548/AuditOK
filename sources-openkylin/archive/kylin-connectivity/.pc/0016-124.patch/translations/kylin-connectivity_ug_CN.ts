@@ -1,0 +1,890 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="ug">
+<context>
+    <name>AndroidHomePage</name>
+    <message>
+        <location filename="../ui/filemanageview/androidhomepage.cpp" line="14"/>
+        <source>Storage</source>
+        <translation>ساقلاش</translation>
+    </message>
+</context>
+<context>
+    <name>AndroidItem</name>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="69"/>
+        <source>Picture</source>
+        <translation>رەسىم</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="72"/>
+        <source>Video</source>
+        <translation>ۋىدېئو</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="75"/>
+        <source>Music</source>
+        <translation>ناخشا-مۇزىكا</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="78"/>
+        <source>Document</source>
+        <translation>ھۆججەت</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="81"/>
+        <source>WeChat</source>
+        <translation>ئۈندىدار</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="84"/>
+        <source>QQ</source>
+        <translation>QQ</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="87"/>
+        <source>Storage</source>
+        <translation>ساقلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="100"/>
+        <source>All File</source>
+        <translation>بارلىق ھۆججەت</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/androiditem.cpp" line="102"/>
+        <source>items</source>
+        <translation>تۈر</translation>
+    </message>
+</context>
+<context>
+    <name>BaseDevice</name>
+    <message>
+        <location filename="../projection/device/basedevice.cpp" line="404"/>
+        <source>Control Devices Supported</source>
+        <translation>كونترول ئۈسكۈنىلىرى قوللايدۇ</translation>
+    </message>
+    <message>
+        <location filename="../projection/device/basedevice.cpp" line="408"/>
+        <source>Control device not supported</source>
+        <translation>كونترول قىلىش ئۈسكۈنىسى قوللىمايدۇ</translation>
+    </message>
+</context>
+<context>
+    <name>ConnectInterface</name>
+    <message>
+        <location filename="../ui/connectinterface/connectinterface.cpp" line="19"/>
+        <source>Back</source>
+        <translation>كەينىگە يېنىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/connectinterface.cpp" line="33"/>
+        <source>Nearby device</source>
+        <translation>يېقىن ئەتراپتىكى ئۈسكۈنە</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/connectinterface.cpp" line="34"/>
+        <source>Connect Phone</source>
+        <translation>تېلېفوننى ئۇلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/connectinterface.cpp" line="35"/>
+        <source>Device Code</source>
+        <translation>ئۈسكۈنە كودى</translation>
+    </message>
+</context>
+<context>
+    <name>ConnectedWin</name>
+    <message>
+        <location filename="../ui/view/connectedwin.cpp" line="38"/>
+        <source>CONNECTED</source>
+        <translation>ئۇلانغان</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/connectedwin.cpp" line="114"/>
+        <location filename="../ui/view/connectedwin.cpp" line="122"/>
+        <source>ComputerScreen</source>
+        <translation>كومپيۇتېر ئېكرانى</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/connectedwin.cpp" line="120"/>
+        <source>MobileScreen</source>
+        <translation>MobileScreen</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/connectedwin.cpp" line="175"/>
+        <source>ExitScreen</source>
+        <translation>چېكىنىش ئېكرانى</translation>
+    </message>
+</context>
+<context>
+    <name>DeviceCodeWidget</name>
+    <message>
+        <location filename="../ui/connectinterface/devicecodewidget.cpp" line="28"/>
+        <source>Please enter the connection code of the other device</source>
+        <translation>باشقا ئۈسكۈنىنىڭ ئۇلىنىش كودىنى كىرگۈزۈڭ</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/devicecodewidget.cpp" line="37"/>
+        <source>The connection code of the device can be obtained on the homepage of the other party&apos;s &apos;multi terminal collaboration&apos; application</source>
+        <translation>ئۈسكۈنىنىڭ ئۇلىنىش كودى قارشى تەرەپنىڭ «كۆپ تېرمىنال ھەمكارلىقى» پروگراممىسىنىڭ باش بېتىدىن ئالغىلى بولىدۇ.</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/devicecodewidget.cpp" line="65"/>
+        <source>Connection</source>
+        <translation>ئۇلاش</translation>
+    </message>
+</context>
+<context>
+    <name>FileManageWin</name>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="25"/>
+        <source>Go Back</source>
+        <translation>قايت</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="37"/>
+        <source>Go Forward</source>
+        <translation>ئالدىغا ماڭ</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="57"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="406"/>
+        <source>Search File</source>
+        <translation>ئىزدەش ھۆججىتى</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="85"/>
+        <source>Select</source>
+        <translation>تاللاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="106"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="626"/>
+        <source>List Mode</source>
+        <translation>تىزىملىك ئەندىزىسى</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="118"/>
+        <source>Refresh</source>
+        <translation>يېڭىلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="124"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="432"/>
+        <source>Select File</source>
+        <translation>ھۆججەت تاللاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="133"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="212"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="646"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="650"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="658"/>
+        <source>Select All</source>
+        <translation>ھەممىنى تاللاڭ</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="142"/>
+        <source>Finish</source>
+        <translation>تاماملاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="210"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="647"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="649"/>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="657"/>
+        <source>Deselect All</source>
+        <translation>ھەممىنى دېسكىدىن ئۆچ</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.cpp" line="631"/>
+        <source>Icon Mode</source>
+        <translation>سىنبەلگىلىك مودى</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="91"/>
+        <source>List of Files</source>
+        <translation>ھۆججەتلەر تىزىملىكى</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="92"/>
+        <source>Picture</source>
+        <translation>رەسىم</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="93"/>
+        <source>Video</source>
+        <translation>ۋىدېئو</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="94"/>
+        <source>Music</source>
+        <translation>ناخشا-مۇزىكا</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="95"/>
+        <source>Doc</source>
+        <translation>دوكتۇر</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="96"/>
+        <source>QQ</source>
+        <translation>QQ</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="97"/>
+        <source>WeChat</source>
+        <translation>ئۈندىدار</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/filemanagewin.h" line="98"/>
+        <source>Storage</source>
+        <translation>ساقلاش</translation>
+    </message>
+</context>
+<context>
+    <name>FileView</name>
+    <message>
+        <location filename="../ui/filemanageview/fileview.cpp" line="132"/>
+        <location filename="../ui/filemanageview/fileview.cpp" line="525"/>
+        <source>Download</source>
+        <translation>چۈشۈرۈش</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/fileview.cpp" line="405"/>
+        <source>Choose folder</source>
+        <translation>ھۆججەت قىسقۇچنى تاللاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/filemanageview/fileview.cpp" line="523"/>
+        <source>Open</source>
+        <translation>ئېچىش</translation>
+    </message>
+</context>
+<context>
+    <name>HomePage</name>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="42"/>
+        <source>Multiterminal</source>
+        <translation>كۆپ تەرەپلىمىلىك</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="48"/>
+        <source>Cross equipment and cross system collaboration. It is more convenient to share resources and screens, and more convenient and efficient to work!</source>
+        <translation>ئۈسكۈنىلەرنى كېسىپ ئۆتۈش ۋە سىستېما ھالقىغان ھەمكارلىق. بايلىق ۋە ئېكراندىن ئورتاق بەھرىلىنىش تېخىمۇ قولاي، خىزمەتكە تېخىمۇ قولايلىق ۋە ئۈنۈملۈك!</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="55"/>
+        <source>Device Code:</source>
+        <translation>ئۈسكۈنە كودى:</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="66"/>
+        <source>Folder</source>
+        <translation>ھۆججەت قىسقۇچ</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="70"/>
+        <source>Share</source>
+        <translation>تەڭ بەھرىمان بولۇش</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="74"/>
+        <source>Cross</source>
+        <translation>قىرعىزچا</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="77"/>
+        <source>Connect Now</source>
+        <translation>ھازىر باغلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/homepage.cpp" line="185"/>
+        <source>No network</source>
+        <translation>تور يوق</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="381"/>
+        <location filename="../ui/mainwindow.cpp" line="1380"/>
+        <source>kylin-connectivity</source>
+        <translation>kylin-ئۇلىنىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="481"/>
+        <source>Agreed to connect</source>
+        <translation>ئۇلىنىشقا قوشۇلدى</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="483"/>
+        <source>Peer has agreed</source>
+        <translation>كەسىپداشلار قوشۇلدى</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="485"/>
+        <source>Establishing connection, please wait...</source>
+        <translation>ئۇلىنىش ئورنىتىپ، ساقلاپ تۇرۇڭ...</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="489"/>
+        <source>CANCEL</source>
+        <translation>ئەمەلدىن قالدۇرۇش</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="939"/>
+        <source>Not currently connected, please connect</source>
+        <translation>ھازىرچە ئۇلانمىدى، ئۇلاڭ</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="695"/>
+        <location filename="../ui/mainwindow.cpp" line="1368"/>
+        <source>file download failed</source>
+        <translation>ھۆججەت چۈشۈرۈش مەغلۇپ بولدى</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1086"/>
+        <source>Connection request received from&quot;</source>
+        <translation>ئۇلىنىش ئىلتىماسى تاپشۇرۇۋېلىندى&quot;</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1086"/>
+        <location filename="../ui/mainwindow.cpp" line="1408"/>
+        <source>&quot;</source>
+        <translation>&quot;</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1087"/>
+        <source>After consent, the other party can view and download all the files on the device, and can share the other party&apos;s desktop to this screen.</source>
+        <translation>ماقۇل بولغاندىن كېيىن قارشى تەرەپ ئۈسكۈنىدىكى بارلىق ھۆججەتلەرنى كۆرەلەيدۇ ۋە چۈشۈرەلەيدۇ، قارشى تەرەپنىڭ ئۈستەل يۈزىنى مۇشۇ ئېكرانغا ھەمبەھىرلىسە بولىدۇ.</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1093"/>
+        <location filename="../ui/mainwindow.cpp" line="1414"/>
+        <source>NO</source>
+        <translation>ياق</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1092"/>
+        <location filename="../ui/mainwindow.cpp" line="1413"/>
+        <source>YES</source>
+        <translation>شۇنداق</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1350"/>
+        <source>File open exception!</source>
+        <translation>ھۆججەت ئېچىش ئالاھىدە ئەھۋال!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1426"/>
+        <source>The other party has refused your screen projection request!</source>
+        <translation>قارشى تەرەپ سىزنىڭ ئىكراندىكى پرويېكسىيە تەلىپىڭىزنى رەت قىلدى!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1427"/>
+        <source>Failed to cast the screen. Please contact the other party and try again.</source>
+        <translation>ئېكراننى تاشلىمىدى. قارشى تەرەپ بىلەن ئالاقىلىشىپ قايتا سىناپ بېقىڭ.</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1112"/>
+        <location filename="../ui/mainwindow.cpp" line="1431"/>
+        <source>RECONNECT</source>
+        <translation>قايتا ئۇلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1107"/>
+        <source>The other party has rejected your connection request!</source>
+        <translation>قارشى تەرەپ سىزنىڭ ئۇلىنىش ئىلتىماسىڭىزنى رەت قىلدى!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1108"/>
+        <source>Connection failed. Please contact the other party and try again.</source>
+        <translation>ئۇلىنىش مەغلۇپ بولدى. قارشى تەرەپ بىلەن ئالاقىلىشىپ قايتا سىناپ بېقىڭ.</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1113"/>
+        <location filename="../ui/mainwindow.cpp" line="1432"/>
+        <location filename="../ui/mainwindow.cpp" line="1488"/>
+        <location filename="../ui/mainwindow.cpp" line="1800"/>
+        <location filename="../ui/mainwindow.cpp" line="1818"/>
+        <source>CLOSE</source>
+        <translation>يېپىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1211"/>
+        <source>Please install kylin-assistant on the Android terminal!</source>
+        <translation>Android تېرمىنالىغا Kylin-ياردەمچىسىنى قاچىلاڭ!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1221"/>
+        <source>Please use the USB to connect your phone device!</source>
+        <translation>تېلېفون ئۈسكۈنىڭىزنى ئۇلاش ئۈچۈن USB نى ئىشلىتىڭ!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1232"/>
+        <source>Connection error</source>
+        <translation>ئۇلاش خاتالىقى</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1234"/>
+        <source>Connection timed out</source>
+        <translation>ئۇلىنىش ۋاقتى ۋاقتسىز</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="2003"/>
+        <source>There is currently a connection in progress!</source>
+        <translation>نۆۋەتتە ئۇلىنىش داۋاملىشىۋاتىدۇ!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1381"/>
+        <source>Version:</source>
+        <translation>نەشرى:</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1263"/>
+        <source>No Content</source>
+        <translation>مەزمۇن يوق</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1383"/>
+        <source>Mobile Assistant is an interconnection tool of Android device and Kirin operating system, which supports Android file synchronization, file transfer, screen mirroring and other functions, which is simple and fast to operate</source>
+        <translation>يانفون ياردەمچىسى ئاندىرويىد ئۈسكۈنىسى بىلەن Kirin مەشغۇلات سىستېمىسىنىڭ ئۆزئارا تۇتاشتۇرۇش قورالى بولۇپ، ئاندىرويىد ھۆججەتلىرىنى ماسلاشتۇرۇش، ھۆججەت يۆتكەش، ئېكران ئەينىكى قاتارلىق ئىقتىدارلارنى قوللايدۇ، مەشغۇلاتى ئاددىي ھەم تېز</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1407"/>
+        <source>Received screen projection request from &quot;</source>
+        <translation>تاپشۇرۇۋالغان ئېكران پروزىلاش ئىلتىماسى &quot;</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1409"/>
+        <source>After consent, the other party can share the device desktop to this screen.</source>
+        <translation>ماقۇل بولغاندىن كېيىن قارشى تەرەپ ئۈسكۈنە ئۈستەل يۈزىنى مۇشۇ ئېكرانغا ھەمبەھىرلىسە بولىدۇ.</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1446"/>
+        <source>The other party agreed to your screen projection request!</source>
+        <translation>قارشى تەرەپ سىزنىڭ ئىكراندىكى پرويېكسىيە تەلىپىڭىزگە قوشۇلدى!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1447"/>
+        <source>The screen is being cast, please wait...</source>
+        <translation>ئىكران قۇيۇلىۋاتىدۇ، ساقلاپ تۇرۇڭ...</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1472"/>
+        <location filename="../ui/mainwindow.cpp" line="1495"/>
+        <source>End of screen projection</source>
+        <translation>ئېكران پروزىلاشنىڭ ئاخىرلىشىشى</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1473"/>
+        <location filename="../ui/mainwindow.cpp" line="1496"/>
+        <source>The other party has finished the screen projection function.</source>
+        <translation>قارشى تەرەپ ئېكران پروزىلاش ئىقتىدارىنى تاماملاپ بولدى.</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1569"/>
+        <source>Search data loading failed!</source>
+        <translation>ئىزدەش سانلىق مەلۇماتى قاچىلاش مەغلۇپ بولدى!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1587"/>
+        <location filename="../ui/mainwindow.cpp" line="1590"/>
+        <source>Transmission interruption</source>
+        <translation>يوللاش ئۈزۈلۈپ قېلىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1588"/>
+        <source>The other party&apos;s device has insufficient local storage!</source>
+        <translation>قارشى تەرەپنىڭ ئۈسكۈنىسى يەرلىك ساقلاش يېتەرلىك ئەمەس!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1590"/>
+        <source>Insufficient local storage space!</source>
+        <translation>يەرلىك ساقلاش بوشلۇقى يېتەرلىك ئەمەس!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1609"/>
+        <source>No relevant results</source>
+        <translation>مۇناسىۋەتلىك نەتىجە يوق</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1812"/>
+        <source>Not currently supported</source>
+        <translation>ھازىر قوللىمايمەن</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1814"/>
+        <source>The Wayland version system currently does not support mobile screen projection function.</source>
+        <translation>Wayland نۇسخىسى سىستېمىسى ۋاقتىنچە يانفوننىڭ ئېكرانغا تاشلاش ئىقتىدارىنى قوللىمايدۇ</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="2017"/>
+        <source>The screen projection request has been sent to the connected device. Please click [Agree] in the opposite pop-up window</source>
+        <translation>ئۇلانغان ئۈسكۈنىگە ئېكران پروزىلاش تەلىپى ئەۋەتىلدى. قارشى تەرەپتىكى چوڭ-چوڭ كۆزنەكتە [Agree] نى چېكىڭ</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="941"/>
+        <location filename="../ui/mainwindow.cpp" line="1213"/>
+        <location filename="../ui/mainwindow.cpp" line="1223"/>
+        <location filename="../ui/mainwindow.cpp" line="1296"/>
+        <location filename="../ui/mainwindow.cpp" line="1352"/>
+        <location filename="../ui/mainwindow.cpp" line="1451"/>
+        <location filename="../ui/mainwindow.cpp" line="1477"/>
+        <location filename="../ui/mainwindow.cpp" line="1500"/>
+        <location filename="../ui/mainwindow.cpp" line="1571"/>
+        <location filename="../ui/mainwindow.cpp" line="1593"/>
+        <location filename="../ui/mainwindow.cpp" line="1999"/>
+        <location filename="../ui/mainwindow.cpp" line="2005"/>
+        <location filename="../ui/mainwindow.cpp" line="2022"/>
+        <source>OK</source>
+        <translation>ماقۇل</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1482"/>
+        <location filename="../ui/mainwindow.cpp" line="1794"/>
+        <source>Screen projection loading error</source>
+        <translation>ئېكران پروزىسى قاچىلاش خاتالىقى</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1484"/>
+        <location filename="../ui/mainwindow.cpp" line="1796"/>
+        <source>Please check whether to install the projection expansion package [kylin connectivity tools]</source>
+        <translation>پرويېكسىيە كېڭەيتىش بولىقى [Kylin ئۇلىنىش قورالى] نى قاچىلاش ياكى قاچىلىماسلىقنى تەكشۈرۈڭ</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1784"/>
+        <source>Uploaded to</source>
+        <translation>يوللانغان ۋاقتى:</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1755"/>
+        <source>Downloaded to</source>
+        <translation>چۈشۈرۈلدى</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1993"/>
+        <location filename="../ui/mainwindow.cpp" line="2015"/>
+        <source>Request sent successfully!</source>
+        <translation>مۇۋەپپىقىيەتلىك ھالدا ئەۋەتىلگەن تەلەپ!</translation>
+    </message>
+    <message>
+        <location filename="../ui/mainwindow.cpp" line="1994"/>
+        <source>The connection request has been sent to the selected device. Please click [YES] in the opposite pop-up window</source>
+        <translation>ئۇلىنىش ئىلتىماسى تاللانغان ئۈسكۈنىگە ئەۋەتىلدى. قارشى تەرەپتىكى چوڭ-چوڭ كۆزنەكتە [YES] نى چېكىڭ</translation>
+    </message>
+</context>
+<context>
+    <name>MessageDialog</name>
+    <message>
+        <location filename="../ui/basewidget/messagedialog.cpp" line="29"/>
+        <source>kylin-connectivity</source>
+        <translation>kylin-ئۇلىنىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/basewidget/messagedialog.cpp" line="40"/>
+        <source>Close</source>
+        <translation>ياپ</translation>
+    </message>
+</context>
+<context>
+    <name>MobileConnectWin</name>
+    <message>
+        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="24"/>
+        <source>ScanCode</source>
+        <translation>ScanCode</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="25"/>
+        <source>USBConnect</source>
+        <translation>USBConnect</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="43"/>
+        <location filename="../ui/connectinterface/mobileconnectwin.cpp" line="103"/>
+        <source>Your phone model: </source>
+        <translation>يانفون مودېلىڭىز: </translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileconnectwin.h" line="49"/>
+        <source>vivo</source>
+        <translation>vivo</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileconnectwin.h" line="50"/>
+        <source>HUAWEI</source>
+        <translation>خۇاۋېي</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileconnectwin.h" line="51"/>
+        <source>Xiaomi</source>
+        <translation>شىياۋمى</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileconnectwin.h" line="53"/>
+        <source>OPPO</source>
+        <translation>OPPO</translation>
+    </message>
+</context>
+<context>
+    <name>MobileQRcode</name>
+    <message>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="27"/>
+        <source>No network</source>
+        <translation>تور يوق</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="83"/>
+        <source>Connect the mobile phone and computer to the same network,open the mobile phone app and scan the QR code.</source>
+        <translation>يانفون ۋە كومپيۇتېرنى ئوخشاش تورغا ئۇلاپ، يانفون ئەپ دېتالىنى ئېچىپ، QR كودىنى سىكاننېرلاش كېرەك.</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="86"/>
+        <source>Use the mobile app to scan this code</source>
+        <translation>يانفۇن ئەپ دېتالى ئارقىلىق بۇ كودنى سىكاننېرلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="45"/>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="56"/>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="95"/>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="101"/>
+        <source>No app installed? Install Now</source>
+        <translation>ئەپ قاچىلىمىدىمۇ؟ ھازىر قاچىلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="50"/>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="61"/>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="171"/>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="176"/>
+        <source>view supported phone types&gt;&gt;</source>
+        <translation>قوللايدىغان تېلېفون تىپلىرىنى كۆرۈش&gt;&gt;</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/mobileqrcode.cpp" line="181"/>
+        <source>Please scan this QR code with your mobile browser to download the app</source>
+        <translation>بۇ QR كودىنى يانفون تور كۆرگۈچىڭىز بىلەن سىكاننېرلاپ ئەپنى چۈشۈرۈڭ</translation>
+    </message>
+</context>
+<context>
+    <name>ScrollSettingWidget</name>
+    <message>
+        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="22"/>
+        <source>Mouse sensitivity</source>
+        <translation>مائۇس سەزگۈرلۈكى</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="34"/>
+        <source>slow</source>
+        <translation>ئاستا</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="35"/>
+        <source>quick</source>
+        <translation>تېز</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="40"/>
+        <source>ok</source>
+        <translation>ماقۇل</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/scrollsettingwidget.cpp" line="41"/>
+        <source>cancel</source>
+        <translation>ئەمەلدىن قالدۇرۇش</translation>
+    </message>
+</context>
+<context>
+    <name>SearchDeviceWin</name>
+    <message>
+        <location filename="../ui/connectinterface/searchdevicewin.cpp" line="40"/>
+        <source>Searching for nearby available devices...</source>
+        <translation>يېقىن ئەتراپتىكى ئىشلەتكىلى بولىدىغان ئۈسكۈنىلەرنى ئىزدەش...</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/searchdevicewin.cpp" line="76"/>
+        <source>No network</source>
+        <translation>تور يوق</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/searchdevicewin.cpp" line="178"/>
+        <source>Search</source>
+        <translation>ئىزدە</translation>
+    </message>
+</context>
+<context>
+    <name>SuspendTabBar</name>
+    <message>
+        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="101"/>
+        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="176"/>
+        <source>Back to the desktop</source>
+        <translation>ئۈستەل يۈزىگە قايتىش</translation>
+    </message>
+    <message>
+        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="105"/>
+        <source>Resume screen projection</source>
+        <translation>ئېكران پروزىلاشنى ئەسلىگە كەلتۈرۈش</translation>
+    </message>
+    <message>
+        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="175"/>
+        <source>Counter control (activate Ctrl+H, cancel Ctrl+G)</source>
+        <translation>قارشى كونترول قىلىش (Ctrl+H نى قوزغىتىش، Ctrl+G نى بىكار قىلىش)</translation>
+    </message>
+    <message>
+        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="177"/>
+        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="214"/>
+        <source>End screen projection</source>
+        <translation>ئېكراننىڭ ئاخىرقى مەنزىلى</translation>
+    </message>
+    <message>
+        <location filename="../pcscreenmanage/suspendtabbar.cpp" line="213"/>
+        <source>End Counter Control (Ctrl+G)</source>
+        <translation>قارشى كونتىرول قىلىشنى ئاخىرلاشتۇرۇش (Ctrl+G)</translation>
+    </message>
+</context>
+<context>
+    <name>Titlebar</name>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="199"/>
+        <source>Menu</source>
+        <translation>تىزىملىك</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="45"/>
+        <source>kylin-connectivity</source>
+        <translation>kylin-ئۇلىنىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="57"/>
+        <source>Minimize</source>
+        <translation>كىچىكلىتىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="67"/>
+        <location filename="../ui/view/titlebar.cpp" line="124"/>
+        <source>Maximize</source>
+        <translation>ئەڭ چوڭ چەككە</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="77"/>
+        <source>Close</source>
+        <translation>ياپ</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="128"/>
+        <source>Reduction</source>
+        <translation>ئازايتىش</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="216"/>
+        <location filename="../ui/view/titlebar.cpp" line="256"/>
+        <source>Help</source>
+        <translation>ياردەم</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="217"/>
+        <location filename="../ui/view/titlebar.cpp" line="258"/>
+        <source>About</source>
+        <translation>ھەققىدە</translation>
+    </message>
+    <message>
+        <location filename="../ui/view/titlebar.cpp" line="218"/>
+        <location filename="../ui/view/titlebar.cpp" line="260"/>
+        <source>Quit</source>
+        <translation>چېكىنىش</translation>
+    </message>
+</context>
+<context>
+    <name>TransmissionDialog</name>
+    <message>
+        <location filename="../ui/basewidget/transmissiondialog.cpp" line="16"/>
+        <source>Current progress</source>
+        <translation>نۆۋەتتىكى ئىلگىرىلەش</translation>
+    </message>
+</context>
+<context>
+    <name>UsbConnectWin</name>
+    <message>
+        <location filename="../ui/connectinterface/usbconnectwin.cpp" line="71"/>
+        <source>Connect now</source>
+        <translation>ھازىر ئۇلاش</translation>
+    </message>
+    <message>
+        <location filename="../ui/connectinterface/usbconnectwin.cpp" line="116"/>
+        <source>No tutorial</source>
+        <translation>دەرسلىك يوق</translation>
+    </message>
+</context>
+<context>
+    <name>VideoForm</name>
+    <message>
+        <location filename="../projection/device/deviceui/videoform.cpp" line="776"/>
+        <source>Control device not supported</source>
+        <translation>كونترول قىلىش ئۈسكۈنىسى قوللىمايدۇ</translation>
+    </message>
+</context>
+<context>
+    <name>VideoTitle</name>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="66"/>
+        <source>kylin-connectivity</source>
+        <translation>kylin-ئۇلىنىش</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="145"/>
+        <location filename="../projection/uibase/videotitle.cpp" line="183"/>
+        <source>Hide Navigation Button</source>
+        <translation>يول باشلاش كۇنۇپكىسىنى يوشۇر</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="146"/>
+        <source>Stay on top</source>
+        <translation>چوققىدا تۇرۇپ</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="147"/>
+        <location filename="../projection/uibase/videotitle.cpp" line="209"/>
+        <source>FullScreen</source>
+        <translation>تولۇق ئېكران</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="148"/>
+        <source>Mouse sensitivity</source>
+        <translation>مائۇس سەزگۈرلۈكى</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="149"/>
+        <source>Quit</source>
+        <translation>چېكىنىش</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="180"/>
+        <source>Show Navigation Button</source>
+        <translation>يول باشلاش كۇنۇپكىسىنى كۆرسەت</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="193"/>
+        <source>Stay On Top</source>
+        <translation>چوققىدا تۇر</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="197"/>
+        <source>Cancel Stay On Top</source>
+        <translation>چوققىدا تۇرۇشنى بىكار قىلىش</translation>
+    </message>
+    <message>
+        <location filename="../projection/uibase/videotitle.cpp" line="213"/>
+        <source>Cancel FullScreen</source>
+        <translation>تولۇق ئېكراننى بىكار قىلىش</translation>
+    </message>
+</context>
+<context>
+    <name>videoForm</name>
+    <message>
+        <location filename="../projection/device/deviceui/videoform.ui" line="17"/>
+        <source>kylin-connectivity</source>
+        <translation>kylin-ئۇلىنىش</translation>
+    </message>
+</context>
+</TS>
