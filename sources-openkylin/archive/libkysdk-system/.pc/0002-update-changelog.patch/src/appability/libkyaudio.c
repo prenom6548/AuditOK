@@ -1,0 +1,899 @@
+/*
+ * libkysdk-system's Library
+ *
+ * Copyright (C) 2025, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Yunhe Liu <liuyunhe@kylinos.cn>
+ *
+ */
+
+#include <dbus-1.0/dbus/dbus.h>
+#include "stdlib.h"
+#include "stdio.h"
+#include <string.h>
+
+int open_audio() 
+{
+    // 定义命令，直接打开音乐播放器
+    const char *command = "/usr/bin/kylin-music";
+
+    // 使用 fork 创建子进程
+    pid_t pid = fork();
+    
+    if (pid < 0) 
+    {
+        // fork 失败
+        perror("Fork failed");
+        return -1;  // 失败返回 -1
+    } 
+    else if (pid == 0) 
+    {
+        // 子进程
+        // 创建新会话，成为新的会话领导
+        if (setsid() < 0) 
+        {
+            perror("setsid failed");
+            exit(1);  // 退出子进程
+        }
+
+        // 使用 execlp 执行命令
+        execlp(command, command, (char *)NULL);
+        
+        // 如果 execlp 返回，说明执行失败
+        perror("execlp failed");
+        exit(1);  // 退出子进程
+    } 
+    else 
+    {
+        // 父进程可以选择继续运行而不等待子进程
+        return 1;  // 成功返回 1
+    }
+}
+
+int kdk_audio_exit()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "Exit");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_full_screen()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "FullScreen");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_next()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "Next");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_open_uri(const char* uri)
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+    DBusPendingCall *sendMsgPending = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "OpenUri");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 添加参数到消息中
+    if (!dbus_message_append_args(info_msg, DBUS_TYPE_STRING, &uri, DBUS_TYPE_INVALID))
+    {
+        ret = -1;  // 如果参数添加失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_pause()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "Pause");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_play()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "Play");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_play_pause()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "PlayPause");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_previous()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "Previous");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_seek(int offset)
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+    DBusPendingCall *sendMsgPending = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "Seek");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 添加参数到消息中
+    if (!dbus_message_append_args(info_msg, DBUS_TYPE_INT64, &offset, DBUS_TYPE_INVALID))
+    {
+        ret = -1;  // 如果参数添加失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_set_position(const char* trackid, int position)
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+    DBusPendingCall *sendMsgPending = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "SetPosition");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    int *postion1 = malloc(sizeof(long));
+    *postion1 = position;
+    if (!dbus_message_append_args(info_msg, DBUS_TYPE_STRING, &trackid, DBUS_TYPE_INT64, postion1, DBUS_TYPE_INVALID))
+    {
+        free(postion1);
+        ret = -1;  // 如果参数添加失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+    free(postion1);
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, 0))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    printf("%d\n", ret);
+    return ret; 
+}
+
+int kdk_audio_stop()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "Stop");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_volume_down()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "VolumeDown");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+int kdk_audio_volume_up()
+{
+    int ret = 1;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "VolumeUp");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = -1;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    // 发送消息，不需要等待返回值
+    if (!dbus_connection_send(conn, info_msg, NULL))  // 不等待回复
+    {
+        ret = -1;  // 如果消息发送失败，设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (info_msg)  // 如果消息对象不为空
+    {
+        dbus_message_unref(info_msg);  // 释放消息对象
+    }
+
+    dbus_connection_close(conn);  // 关闭 D-Bus 连接
+
+    return ret;
+
+out:
+    return ret; 
+}
+
+char* kdk_audio_get_state()
+{
+    char* ret = NULL;
+    DBusConnection *conn;
+    DBusError err;
+
+    dbus_error_init(&err);
+    conn = dbus_bus_get_private(DBUS_BUS_SESSION, &err);  // 尝试建立到系统总线的私有连接
+
+    if (NULL == conn)  // 如果连接失败
+    {
+        ret = NULL;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (dbus_error_is_set(&err))  // 检查是否有连接错误
+    {
+        fprintf(stderr, "Connection Error (%s)\n", err.message);  // 打印错误信息
+        dbus_error_free(&err);  // 释放错误信息
+    }
+
+    DBusMessage *info_msg = NULL;
+    DBusPendingCall *sendMsgPending = NULL;  // 挂起的消息调用
+    DBusMessage *replyMsg = NULL;
+
+    // 创建 D-Bus 方法调用消息
+    info_msg = dbus_message_new_method_call("org.mpris.MediaPlayer2.KylinMusic",  // 目标服务名称
+                                            "/org/mpris/MediaPlayer2", // 目标对象路径
+                                            "org.mpris.MediaPlayer2.Player",  // 接口名称
+                                            "getState");      // 方法名称
+    if (!info_msg)  // 如果消息创建失败
+    {
+        ret = NULL;  // 设置返回值为-1
+        goto out;  // 跳转到清理阶段
+    }
+
+    if (!dbus_connection_send_with_reply(conn, info_msg, &sendMsgPending, -1))
+    {
+        ret = NULL;
+        goto out;
+    }
+
+    if (sendMsgPending == NULL)
+    {
+        ret = NULL;
+        goto out;
+    }
+
+    dbus_connection_flush(conn);
+
+    if (info_msg)
+    {
+        dbus_message_unref(info_msg);
+    }
+
+    dbus_pending_call_block(sendMsgPending);
+    replyMsg = dbus_pending_call_steal_reply(sendMsgPending);
+    if (replyMsg == NULL)
+    {
+        ret = NULL;
+        goto out;
+    }
+
+    if (sendMsgPending)
+    {
+        dbus_pending_call_unref(sendMsgPending);
+    }
+
+    if (dbus_message_get_type(replyMsg) == DBUS_MESSAGE_TYPE_ERROR) 
+    {
+        // klog_err("DBus error: %s\n", dbus_message_get_error_name(replyMsg));
+        dbus_message_unref(replyMsg);
+        ret = NULL;
+        goto out;
+    }
+
+    DBusMessageIter args;
+
+    if (!dbus_message_iter_init(replyMsg, &args))
+    {
+        dbus_message_unref(replyMsg);
+        ret = NULL;
+        goto out;
+    }
+    else
+    {
+        dbus_message_iter_get_basic(&args, &ret);
+    }
+
+    if (replyMsg)
+    {
+        dbus_message_unref(replyMsg);
+    }
+    dbus_connection_close(conn);
+
+    return ret; 
+
+out:
+    return ret; 
+}
+
+
+
+

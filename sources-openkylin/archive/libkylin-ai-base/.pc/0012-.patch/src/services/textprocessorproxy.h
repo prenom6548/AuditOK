@@ -1,0 +1,70 @@
+/*
+ * Copyright 2024 KylinSoft Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#ifndef SERVICES_TEXTPROCESSORPROXY_H
+#define SERVICES_TEXTPROCESSORPROXY_H
+
+#include <functional>
+#include <string>
+#include "services/textprocessorglue.h"
+
+
+class TextProcessorProxy {
+public:
+    using ChatCallback = std::function<void(const std::string &, void *)>;
+
+public:
+    TextProcessorProxy();
+    ~TextProcessorProxy();
+
+    void initEngine(const std::string &engineName,
+        const std::string &apiKey = {}, const std::string &secretKey = {},
+        const std::string &appId = {});
+
+    void setChatCallback(ChatCallback callback) {
+        chatCallback = std::move(callback);
+    }
+
+    void setUserData(void *userData) { userData_ = userData; }
+
+    void chat(const std::string &question);
+    void stopChat();
+    void setActor(int actor);
+    void setContext(int size);
+    void clearContext();
+
+private:
+    void init();
+    void destroy();
+
+    friend void onChatResult(GDBusConnection *connection,
+                        const gchar      *sender_name,
+                        const gchar      *object_path,
+                        const gchar      *interface_name,
+                        const gchar      *signal_name,
+                        GVariant         *parameters,
+                        gpointer          user_data);
+
+    static void onChatResultReady(AisdkTextProcessor *delegate,
+                                  GAsyncResult *result, gpointer userData);
+
+private:
+    AisdkTextProcessor *delegate_ = nullptr;
+
+    ChatCallback chatCallback = nullptr;
+    void *userData_ = nullptr;
+};
+#endif

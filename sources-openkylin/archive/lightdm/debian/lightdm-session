@@ -1,0 +1,246 @@
+#!/bin/bash
+#
+# LightDM wrapper to run around X sessions.
+
+echo "Running X session wrapper"
+
+message () {
+  # pretty-print messages of arbitrary length; use xmessage if it
+  # is available and $DISPLAY is set
+  MESSAGE="$PROGNAME: $*"
+  echo "$MESSAGE" | fold -s -w ${COLUMNS:-80} >&2
+  if [ -n "$DISPLAY" ] && which xmessage > /dev/null 2>&1; then
+    echo "$MESSAGE" | fold -s -w ${COLUMNS:-80} | xmessage -center -file -
+  fi
+}
+
+errormsg () {
+  # exit script with error
+  message "$*"
+  exit 1
+}
+
+is_debug_log_open=1
+if [ -f "/usr/share/lightdm/debuglog" ]; then
+    if [ -x "/usr/bin/logger" ]; then
+        is_debug_log_open=1
+    fi
+fi
+
+print_to_syslog () {
+    if [ $is_debug_log_open -eq 1 ]; then
+        local message="$1"
+        /usr/bin/logger -p user.info "[lightdm] $message"
+    fi
+}
+
+# temporary storage of error messages
+ERR=$(mktemp --tmpdir config-err-XXXXXX)
+
+source_with_error_check () {
+    CONFIG_FILE="$1"
+    echo "Loading $CONFIG_FILE"
+    BASH_VERSION= . "$CONFIG_FILE" 2>"$ERR"
+    cat "$ERR" >&2
+}
+
+print_to_syslog "env source check begin"
+# Load profile
+for file in "/etc/profile" "$HOME/.profile" "/etc/xprofile" "$HOME/.xprofile"; do
+    if [ -f "$file" ]; then
+        source_with_error_check "$file"
+    fi
+done
+
+print_to_syslog "env source check end"
+# Load resources
+if type xrdb >/dev/null 2>&1; then
+    xresourcedir="/etc/X11/Xresources"
+    if [ -d "$xresourcedir" ]; then
+        for file in $xresourcedir/*; do
+            echo "Loading resource: $file"
+            xrdb -merge "$file"
+        done
+    fi
+    xresourcefile="$HOME/.Xresources"
+    if [ -f "$xresourcefile" ]; then
+        echo "Loading resource: $xresourcefile"
+        xrdb -merge "$xresourcefile"
+    fi
+fi
+
+print_to_syslog "xrdb loading source end"
+# Load keymaps
+if type setxkbmap >/dev/null 2>&1; then
+    for file in "/etc/X11/Xkbmap" "$HOME/.Xkbmap"; do
+        if [ -f "$file" ]; then
+            echo "Loading keymap: $file"
+            setxkbmap `cat "$file"`
+            XKB_IN_USE=yes
+        fi
+    done
+fi
+
+print_to_syslog "setxkbmap loding source end"
+# Load xmodmap if not using XKB
+if type xmodmap >/dev/null 2>&1; then
+    if [ -z "$XKB_IN_USE" ]; then
+        for file in "/etc/X11/Xmodmap" "$HOME/.Xmodmap"; do
+            if [ -f "$file" ]; then
+               echo "Loading modmap: $file"
+               xmodmap "$file"
+            fi
+        done
+    fi
+fi
+
+print_to_syslog "xmodmap loding source end"
+unset XKB_IN_USE
+
+# Run all system xinitrc shell scripts.
+xinitdir="/etc/X11/xinit/xinitrc.d"
+if [ -d "$xinitdir" ]; then
+    for script in $xinitdir/*; do
+        echo "Loading xinit script $script"
+        if [ -x "$script" -a ! -d "$script" ]; then
+            . "$script"
+        fi
+    done
+fi
+
+print_to_syslog "xinit loding scripts source end"
+# Check root disk is free
+is_root_disk_free () {
+    is_free_valid=1
+    disk_valid=
+    disk_used=
+    info_array=`df -B M | awk '{ if ($NF == "/") {print $(NF-2),$(NF-1),$(NF)}}'`
+    disk_valid=`echo $info_array | awk '{print $1}' | cut -dM -f1`
+    disk_used=`echo $info_array | awk '{print $2}' | cut -d% -f1`
+
+    if [ -n $disk_used ]; then
+        if [ $disk_used -ge 100 ]; then
+            if [ -n $disk_valid ]; then
+                if [ $disk_valid -lt 10 ]; then
+                    is_free_valid=0
+                fi
+            fi
+        fi
+    fi  
+
+    echo "get root disk info:" $disk_valid $disk_used
+    return $is_free_valid
+}
+
+# Load Xsession scripts
+# OPTIONFILE, USERXSESSION, USERXSESSIONRC and ALTUSERXSESSION are required
+# by the scripts to work
+xsessionddir="/etc/X11/Xsession.d"
+OPTIONFILE=/etc/X11/Xsession.options
+USERXSESSION=$HOME/.xsession
+USERXSESSIONRC=$HOME/.xsessionrc
+ALTUSERXSESSION=$HOME/.Xsession
+
+## do session runing setup
+if [ -x "/usr/lib/lightdm/lightdm-session-setup.sh" ];then
+    /usr/lib/lightdm/lightdm-session-setup.sh
+fi
+print_to_syslog "lightdm-session-setup end"
+
+## 如果在tty里登陆了用户，之后注销图形用户，此时systemd --user进程不会退出，
+## 再次重新登陆用户后，还会保存原来的环境变量，因此在登陆用户之前，先判断当前
+## 会话是否存在UKUI_QUICK_START环境变量，如果不存在，则清除systemd --user的环境
+## 变量。
+## 问题表现为:在tty里登陆一个用户，之后注销图形用户，登陆需要输入两次密码。 
+if [ -z "${UKUI_QUICK_START+x}" ]; then
+    if command -v systemctl >/dev/null 2>&1; then
+        # look for a line starting with UKUI_QUICK_START=
+        if systemctl --user show-environment 2>/dev/null | grep -q '^UKUI_QUICK_START='; then
+            echo "UKUI_QUICK_START present in systemd user environment; unsetting"
+            print_to_syslog "UKUI_QUICK_START present in systemd user environment; attempting to unset"
+            if systemctl --user unset-environment UKUI_QUICK_START; then
+                print_to_syslog "Successfully unset UKUI_QUICK_START in systemd user environment"
+            else
+                print_to_syslog "Failed to unset UKUI_QUICK_START in systemd user environment"
+            fi
+        fi
+    fi
+fi
+
+is_root_disk_free
+is_disk_free=$?
+
+# 95dbus_update-activation-env 故意不同步 XDG_SESSION_ID 等，也不会清掉
+# user@ 里上一登录残留的旧值。kylin-wlcom 经 StartUnit 继承 user@：若残留的是
+# 已失效的 SESSION_ID 就会异常。此处仅在 wlcom + 检测到残留不一致时修正。
+sync_user_session_environment () {
+    # 仅 kylin-wlcom；UKUI X 等默认不处理
+    case "${XDG_SESSION_DESKTOP:-${DESKTOP_SESSION:-}}" in
+        kylin-wlcom) ;;
+        *) return 0 ;;
+    esac
+
+    if ! command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+
+    if [ -z "${XDG_RUNTIME_DIR:-}" ] && [ -d "/run/user/$(id -u)" ]; then
+        export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+    fi
+
+    if [ -z "${XDG_RUNTIME_DIR:-}" ] || ! systemctl --user show-environment >/dev/null 2>&1; then
+        return 0
+    fi
+
+    # 当前登录未带 SESSION_ID 时无法判断/修正，跳过
+    if [ -z "${XDG_SESSION_ID:-}" ]; then
+        return 0
+    fi
+
+    user_session_id=
+    user_session_id=$(systemctl --user show-environment 2>/dev/null | sed -n 's/^XDG_SESSION_ID=//p')
+
+    # 默认不处理：user@ 无该变量，或已与当前登录一致
+    if [ -z "$user_session_id" ] || [ "$user_session_id" = "$XDG_SESSION_ID" ]; then
+        return 0
+    fi
+
+    print_to_syslog "stale user@ XDG_SESSION_ID=$user_session_id (current=$XDG_SESSION_ID); correcting"
+
+    # 异常路径：清掉过期值，再写入当前登录的 SESSION_ID（不主动写 VTNR/SEAT）
+    systemctl --user unset-environment XDG_SESSION_ID 2>/dev/null || true
+    systemctl --user set-environment "XDG_SESSION_ID=$XDG_SESSION_ID" 2>/dev/null || true
+
+    print_to_syslog "corrected user@ XDG_SESSION_ID=$XDG_SESSION_ID"
+}
+
+print_to_syslog "check disk free end"
+if [ -d "$xsessionddir" ]; then
+    for i in `ls $xsessionddir`; do
+        script="$xsessionddir/$i"
+        # if root disk not free can't load 90x11-common_ssh-agent script
+        is_can_continue=1
+        if [ "$i" == "90x11-common_ssh-agent" ]; then
+            if [ $is_disk_free -eq 0 ]; then
+                is_can_continue=0
+            fi
+        fi
+        if [ $is_can_continue -eq 1 ]; then
+            if [ "$i" == "99x11-common_start" ]; then
+                sync_user_session_environment
+            fi
+            echo "Loading X session script $script"
+            if [ -r "$script"  -a -f "$script" ] && expr "$i" : '^[[:alnum:]_-]\+$' > /dev/null; then
+                . "$script"
+            fi
+            print_to_syslog "Loading X session script:$script end"
+        else
+            echo "Don't Loading X session script $script,because root disk isn't free"
+        fi
+    done
+fi
+
+print_to_syslog "Loading all X session scripts end"
+echo "X session wrapper complete, running session $@"
+
+exec $@

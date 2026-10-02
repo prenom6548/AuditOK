@@ -1,0 +1,89 @@
+From: Adam Conrad <adconrad@ubuntu.com>
+Date: Wed, 25 May 2022 18:22:01 +0800
+Subject: Use initramfs-tools to work with initrds instead of being silly.
+
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/1778811
+Last-Update: 2018-06-26
+---
+ scripts/build/lb_binary_disk  | 20 +++++---------------
+ scripts/build/lb_chroot_hacks | 30 +++++-------------------------
+ 2 files changed, 10 insertions(+), 40 deletions(-)
+
+diff --git a/scripts/build/lb_binary_disk b/scripts/build/lb_binary_disk
+index ce11019..29ce048 100755
+--- a/scripts/build/lb_binary_disk
++++ b/scripts/build/lb_binary_disk
+@@ -97,24 +97,14 @@ case "${LB_INITRAMFS}" in
+ 		do
+ 			mkdir -p binary/uuid
+ 			cd binary/uuid
+-
+-			case "${LB_INITRAMFS_COMPRESSION}" in
+-				gzip)
+-					zcat "../../${INITRD}" | cpio --quiet -id conf/uuid.conf
+-					;;
+-
+-				bzip2)
+-					bzcat "../../${INITRD}" | cpio --quiet -id conf/uuid.conf
+-					;;
+-
+-				lzma)
+-					lzcat -S "" "../../${INITRD}" | cpio --quiet -id conf/uuid.conf
+-					;;
+-			esac
+-
++			unmkinitramfs "../../${INITRD}" .
+ 			if [ -e conf/uuid.conf ]
+ 			then
+ 				mv conf/uuid.conf "../.disk/casper-uuid${INITRD#binary/casper/initrd.img}"
++			# Multipart gets extracted as early/main:
++			elif [ -e main/conf/uuid.conf ]
++			then
++				mv main/conf/uuid.conf "../.disk/casper-uuid${INITRD#binary/casper/initrd.img}"
+ 			else
+ 				Echo_warning "Failed to find casper uuid.conf in '${INITRD}'"
+ 			fi
+diff --git a/scripts/build/lb_chroot_hacks b/scripts/build/lb_chroot_hacks
+index de5dff8..4e8d39e 100755
+--- a/scripts/build/lb_chroot_hacks
++++ b/scripts/build/lb_chroot_hacks
+@@ -184,34 +184,14 @@ esac
+ 
+ if [ "${LB_INITRAMFS}" != "none" ]
+ then
++	if [ -n "${LB_INITRAMFS_COMPRESSION}" ]; then
++		echo "COMPRESS=${LB_INITRAMFS_COMPRESSION}" \
++			> chroot/etc/initramfs-tools/conf.d/live-build.conf
++	fi
+ 	Chroot chroot "${UPDATE_INITRAMFS_OPTIONS} update-initramfs -k all -t -u"
++	rm -f chroot//etc/initramfs-tools/conf.d/live-build.conf
+ fi
+ 
+-# We probably ought to use COMPRESS= in a temporary file in
+-# /etc/initramfs-tools/conf.d/ instead, but it's hard to pass options that
+-# way.
+-case "${LB_INITRAMFS_COMPRESSION}" in
+-	gzip)
+-		;;
+-
+-	bzip2)
+-		for INITRAMFS in $(find chroot/boot -name 'initrd*' -not -type l); do
+-			zcat "${INITRAMFS}" | bzip2 -c ${BZIP2_OPTIONS} > "${INITRAMFS}.new"
+-			mv "${INITRAMFS}.new" "${INITRAMFS}"
+-		done
+-		;;
+-
+-	lzma)
+-		# We probably ought to use COMPRESS= in a temporary file in
+-		# /etc/initramfs-tools/conf.d/ instead, but it's hard to
+-		# pass options that way.
+-		for INITRAMFS in $(find chroot/boot -name 'initrd*' -not -type l); do
+-			zcat "${INITRAMFS}" | lzma -c ${LZMA_OPTIONS} > "${INITRAMFS}.new"
+-			mv "${INITRAMFS}.new" "${INITRAMFS}"
+-		done
+-		;;
+-esac
+-
+ # Ensure readable permissions on initramfs. loop-aes-utils sets umask to
+ # protect GPG keys, which live-build does not support.
+ # Note: Use find rather than chmod on the wildcard, one never knows what

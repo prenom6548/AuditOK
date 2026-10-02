@@ -1,0 +1,53 @@
+/*
+ * Copyright 2024 KylinSoft Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify it under
+ * the terms of the GNU General Public License as published by the Free Software
+ * Foundation, either version 3 of the License, or (at your option) any later
+ * version.
+ *
+ * This program is distributed in the hope that it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "visionsession.h"
+
+namespace vision {
+
+VisionSession::VisionSession() {}
+
+VisionResult VisionSession::init(
+        const std::string & engineName, const std::string & apiKey,
+        const std::string & secretKey, const std::string & appId) {
+    visionProcessorProxy_.initEngine(
+                engineName, apiKey, secretKey, appId);
+    return VisionResult::VISION_SUCCESS;
+}
+
+void VisionSession::setPromptImageCallback(
+        ImageResultCallback callback, std::any userData) {
+    visionProcessorProxy_.setPromptImageCallback(callback);
+}
+
+void VisionSession::setPromptImageSize(int width, int height) {
+    visionProcessorProxy_.setPromptImageSize(width, height);
+}
+
+void VisionSession::setPromptImageNumber(int number) {
+    visionProcessorProxy_.setPromptImageNumber(number);
+}
+
+void VisionSession::setPromptImageStyle(VisionImageStyle style) {
+    visionProcessorProxy_.setPromptImageStyle(style);
+}
+
+VisionResult VisionSession::promptImage(const char* prompt) {
+    visionProcessorProxy_.promptImage(prompt);
+    return VisionResult::VISION_SUCCESS;
+}
+
+}

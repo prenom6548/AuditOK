@@ -1,0 +1,115 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Thu, 24 Mar 2022 11:40:26 +0800
+Subject: fix syslinux theme live-build
+
+---
+ scripts/build/lb_binary_syslinux | 41 +++++++++++++++++++++-------------------
+ 1 file changed, 22 insertions(+), 19 deletions(-)
+
+diff --git a/scripts/build/lb_binary_syslinux b/scripts/build/lb_binary_syslinux
+index a0bc64c..6fba889 100755
+--- a/scripts/build/lb_binary_syslinux
++++ b/scripts/build/lb_binary_syslinux
+@@ -91,7 +91,7 @@ case "${LB_BUILD_WITH_CHROOT}" in
+ 
+ 		case "${LB_SYSLINUX_THEME}" in
+ 			live-build)
+-				Check_package chroot/usr/bin/rsvg librsvg2-bin
++				Check_package chroot/usr/bin/rsvg-convert librsvg2-bin
+ 				Check_package chroot/usr/lib/ISOLINUX/isolinux.bin isolinux
+ 				;;
+ 
+@@ -124,10 +124,10 @@ case "${LB_BUILD_WITH_CHROOT}" in
+ 
+ 		case "${LB_SYSLINUX_THEME}" in
+ 			live-build)
+-				if [ ! -e /usr/bin/rsvg ]
++				if [ ! -e /usr/bin/rsvg-convert ]
+ 				then
+ 					# librsvg2-bin
+-					Echo_error "/usr/bin/rsvg - no such file"
++					Echo_error "/usr/bin/rsvg-convert - no such file"
+ 					exit 1
+ 				fi
+ 				;;
+@@ -184,13 +184,13 @@ case "${LB_BUILD_WITH_CHROOT}" in
+ 			rm -rf chroot/$(basename ${_SOURCE})
+ 		else
+ 			Chroot chroot cp -aL ${_SOURCE} /root/$(basename ${_SOURCE}).tmp
+-		fi
++			case "${LB_MODE}" in
++				ubuntu)
++					Chroot chroot "tar xfz /usr/share/gfxboot-theme-ubuntu/bootlogo.tar.gz -C /root/$(basename ${_SOURCE}).tmp"
++					;;
++			esac
+ 
+-		case "${LB_MODE}" in
+-			ubuntu)
+-				Chroot chroot "tar xfz /usr/share/gfxboot-theme-ubuntu/bootlogo.tar.gz -C /root/$(basename ${_SOURCE}).tmp"
+-				;;
+-		esac
++		fi
+ 
+ 		mv chroot/root/$(basename ${_SOURCE}).tmp ${_TARGET}
+ 		;;
+@@ -216,12 +216,12 @@ then
+ 
+ 	case "${_FLAVOURS}" in
+ 		1)
+-			mv binary/live/vmlinuz-* binary/live/vmlinuz
+-			mv binary/live/initrd.img-* binary/live/initrd.img
++			mv binary/casper/vmlinuz-* binary/casper/vmlinuz
++			mv binary/casper/initrd.img-* binary/casper/initrd.img
+ 
+ 			sed -e "s|@FLAVOUR@|${LB_LINUX_FLAVOUR}|g" \
+-			    -e "s|@KERNEL@|/live/vmlinuz|g" \
+-			    -e "s|@INITRD@|/live/initrd.img|g" \
++			    -e "s|@KERNEL@|/casper/vmlinuz|g" \
++			    -e "s|@INITRD@|/casper/initrd.img|g" \
+ 			    -e "s|@LB_BOOTAPPEND_LIVE@|${LB_BOOTAPPEND_LIVE}|g" \
+ 			    -e "s|@LB_BOOTAPPEND_FAILSAFE@|${LB_BOOTAPPEND_FAILSAFE}|g" \
+ 			"${_TARGET}/live.cfg.in" >> "${_TARGET}/live.cfg"
+@@ -236,12 +236,12 @@ then
+ 			do
+ 				_NUMBER="$((${_NUMBER} + 1))"
+ 
+-				mv binary/live/vmlinuz-*-${_FLAVOUR} binary/live/vmlinuz${_NUMBER}
+-				mv binary/live/initrd.img-*-${_FLAVOUR} binary/live/initrd${_NUMBER}.img
++				mv binary/casper/vmlinuz-*-${_FLAVOUR} binary/casper/vmlinuz${_NUMBER}
++				mv binary/casper/initrd.img-*-${_FLAVOUR} binary/casper/initrd${_NUMBER}.img
+ 
+ 				sed -e "s|@FLAVOUR@|${_FLAVOUR}|g" \
+-				    -e "s|@KERNEL@|/live/vmlinuz${_NUMBER}|g" \
+-				    -e "s|@INITRD@|/live/initrd${_NUMBER}.img|g" \
++				    -e "s|@KERNEL@|/casper/vmlinuz${_NUMBER}|g" \
++				    -e "s|@INITRD@|/casper/initrd${_NUMBER}.img|g" \
+ 				    -e "s|@LB_BOOTAPPEND_LIVE@|${LB_BOOTAPPEND_LIVE}|g" \
+ 				    -e "s|@LB_BOOTAPPEND_FAILSAFE@|${LB_BOOTAPPEND_FAILSAFE}|g" \
+ 				"${_TARGET}/live.cfg.in" >> "${_TARGET}/live.cfg"
+@@ -335,13 +335,13 @@ then
+ 	case "${LB_BUILD_WITH_CHROOT}" in
+ 		true)
+ 			cp "${_TARGET}/splash.svg" chroot
+-			Chroot chroot "rsvg --format png --height 480 --width 640 splash.svg splash.png"
++			Chroot chroot "rsvg-convert --format png --height 480 --width 640 splash.svg -o splash.png"
+ 			mv chroot/splash.png "${_TARGET}"
+ 			rm -f chroot/splash.svg
+ 			;;
+ 
+ 		false)
+-			rsvg --format png --height 480 --width 640 "${_TARGET}/splash.svg" "${_TARGET}/splash.png"
++			rsvg-convert --format png --height 480 --width 640 "${_TARGET}/splash.svg" -o "${_TARGET}/splash.png"
+ 			;;
+ 	esac
+ 
+@@ -363,7 +363,10 @@ esac
+ # Hack around the removal of support in gfxboot for reading from outside
+ # the bootlogo archive.  This makes customisation harder and is not ideal.
+ tmpdir="$(mktemp -d)"
++if [ -e "${_TARGET}/bootlogo" ]
++then
+ (cd "$tmpdir" && cpio -i) < ${_TARGET}/bootlogo
++fi
+ cp -a -f	${_TARGET}/*.fnt \
+ 		${_TARGET}/*.hlp \
+ 		${_TARGET}/*.jpg \

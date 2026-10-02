@@ -1,0 +1,2801 @@
+From: =?utf-8?b?5p2o5pWP?= <yangmin@kylinos.cn>
+Date: Mon, 18 May 2026 13:23:05 +0000
+Subject: !15 update changelog
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Merge pull request !15 from 杨敏/openkylin/huanghe
+---
+ common/configuration.c           | 110 ++++++
+ common/configuration.h           |   4 +
+ common/user-list.c               |   1 +
+ configure.ac                     |  10 +
+ data/lightdm.conf                |   4 +
+ liblightdm-gobject/greeter.c     |   7 +-
+ liblightdm-qt/QLightDM/greeter.h |   1 +
+ src/Makefile.am                  |   2 +-
+ src/Makefile.in                  |   2 +-
+ src/display-manager-service.c    |   6 +
+ src/display-manager.c            |   6 +
+ src/greeter.c                    |  12 +-
+ src/lightdm.c                    | 212 ++++++++++-
+ src/logger.c                     |   2 +
+ src/logger.h                     |  20 ++
+ src/login1.c                     |  53 ++-
+ src/plymouth.c                   |   7 +-
+ src/seat.c                       | 757 +++++++++++++++++++++++++++++++++++++--
+ src/seat.h                       |   4 +
+ src/session-child.c              | 201 ++++++++++-
+ src/session.c                    | 145 +++++++-
+ src/session.h                    |   6 +
+ src/vt.c                         |  98 +++++
+ src/vt.h                         |   2 +
+ src/wayland-session.c            |  59 +++
+ src/x-authority.c                |   3 +-
+ src/x-server-local.c             |   4 +
+ tests/src/libsystem.c            |  12 +
+ 28 files changed, 1673 insertions(+), 77 deletions(-)
+
+diff --git a/common/configuration.c b/common/configuration.c
+index 30580ea..3e03b1a 100644
+--- a/common/configuration.c
++++ b/common/configuration.c
+@@ -9,7 +9,12 @@
+  * license.
+  */
+ 
++#define _GNU_SOURCE
++#define __USE_GNU
+ #include <string.h>
++#include <fcntl.h>
++#include <unistd.h>
++#include <stdio.h>
+ 
+ #include "configuration.h"
+ 
+@@ -36,6 +41,107 @@ G_DEFINE_TYPE_WITH_PRIVATE (Configuration, config, G_TYPE_OBJECT)
+ 
+ static Configuration *configuration_instance = NULL;
+ 
++
++static gboolean hasCheck = FALSE;
++static gboolean is990 = FALSE;
++
++#define HARDWARE_FILE "/proc/hardware"
++#define CMDLINE_FILE "/proc/cmdline"
++
++static gboolean is_oem_info_contains(gchar *session, gchar *key_word)
++{
++    if (!session || session[0] == '\0' || !key_word || key_word[0] == '\0') {
++        return FALSE;
++    }
++    GPtrArray *args_dmidecode = NULL;
++    gchar *stdout_dmidecode = NULL;
++    gint exit_status;
++
++    args_dmidecode = g_ptr_array_new ();
++    g_ptr_array_add(args_dmidecode, (gpointer)"/usr/sbin/dmidecode");
++    g_ptr_array_add(args_dmidecode, (gpointer)"-t");
++    g_ptr_array_add(args_dmidecode, (gpointer)"11");
++    g_ptr_array_add(args_dmidecode, NULL);
++
++    if (!g_spawn_sync(NULL, (char**)args_dmidecode->pdata, NULL, 
++                    G_SPAWN_STDERR_TO_DEV_NULL, NULL, NULL, 
++                    &stdout_dmidecode, NULL, &exit_status, NULL) || exit_status != 0) {
++        if (stdout_dmidecode)
++            g_free(stdout_dmidecode);
++        g_ptr_array_free (args_dmidecode, TRUE);
++        return FALSE;
++    }
++
++    if (stdout_dmidecode) {
++        //g_debug("check oem info:%s--%s:%s\n", stdout_dmidecode, session, key_word);
++        g_auto(GStrv) oem_infos = g_strsplit (stdout_dmidecode, "\n", -1);
++        g_ptr_array_free (args_dmidecode, TRUE);
++        g_free(stdout_dmidecode);
++        for (int i = 0; oem_infos[i]; i++) {
++            if (g_strstr_len(oem_infos[i], strlen(oem_infos[i]), session)
++                && g_strstr_len(oem_infos[i], strlen(oem_infos[i]), key_word)) {
++                return TRUE;
++            }
++        }
++        return FALSE;
++    }
++    g_ptr_array_free (args_dmidecode, TRUE);
++    return FALSE;
++}
++
++gboolean config_get_is990()
++{
++    if(hasCheck)
++        return is990;
++    
++    hasCheck = TRUE;	
++
++    if (is_oem_info_contains("String 4", "PGUX")) {  // PANGUX
++        is990 = TRUE;
++        g_debug("Is HW PGUX");
++    } else {
++        FILE *file;
++        char buf[1024];
++
++        if( (file = fopen(HARDWARE_FILE, "r")) == NULL) {
++            is990 = FALSE;
++            return is990;
++        }
++        memset(buf, 0, sizeof(buf));
++        fgets(buf, sizeof(buf), file);
++        fclose(file);
++
++        //由于fgets会保存一个换行符导致字符串匹配失败，因此使用strstr来代替
++        if(strcasestr(buf, "kirin")){
++            is990 = TRUE;
++        }else if(strcasestr(buf, "pangu") && strcasestr(buf, "m900")){
++            is990 = TRUE;
++        }else{
++            is990 = FALSE;
++        }
++    }
++    return is990;
++}
++
++gboolean config_get_is_install_mode()
++{
++    FILE *file;
++    if( (file = fopen(CMDLINE_FILE, "r")) == NULL) {
++        return FALSE;
++    }
++
++    char buf[2048] = {0};
++    fgets(buf, sizeof(buf), file);
++    fclose(file);
++
++    // 匹配boot=casper表示安装模式
++    if(strcasestr(buf, "boot=casper")){
++        return TRUE;
++    }else{
++        return FALSE;
++    }
++}
++
+ Configuration *
+ config_get_instance (void)
+ {
+@@ -386,9 +492,13 @@ config_init (Configuration *config)
+     g_hash_table_insert (config->priv->seat_keys, "autologin-guest", GINT_TO_POINTER (KEY_SUPPORTED));
+     g_hash_table_insert (config->priv->seat_keys, "autologin-user", GINT_TO_POINTER (KEY_SUPPORTED));
+     g_hash_table_insert (config->priv->seat_keys, "autologin-user-timeout", GINT_TO_POINTER (KEY_SUPPORTED));
++    g_hash_table_insert (config->priv->seat_keys, "autologin-greeter-timeout", GINT_TO_POINTER (KEY_SUPPORTED));
+     g_hash_table_insert (config->priv->seat_keys, "autologin-in-background", GINT_TO_POINTER (KEY_SUPPORTED));
+     g_hash_table_insert (config->priv->seat_keys, "autologin-session", GINT_TO_POINTER (KEY_SUPPORTED));
+     g_hash_table_insert (config->priv->seat_keys, "exit-on-failure", GINT_TO_POINTER (KEY_SUPPORTED));
++    /* Wayland greeter black-screen handling */
++    g_hash_table_insert (config->priv->seat_keys, "delay-greeter-exit", GINT_TO_POINTER (KEY_SUPPORTED));
++    g_hash_table_insert (config->priv->seat_keys, "draw-background", GINT_TO_POINTER (KEY_SUPPORTED));
+     g_hash_table_insert (config->priv->seat_keys, "xdg-seat", GINT_TO_POINTER (KEY_DEPRECATED));
+ 
+     g_hash_table_insert (config->priv->xdmcp_keys, "enabled", GINT_TO_POINTER (KEY_SUPPORTED));
+diff --git a/common/configuration.h b/common/configuration.h
+index fe7df90..2b65d7c 100644
+--- a/common/configuration.h
++++ b/common/configuration.h
+@@ -68,6 +68,10 @@ void config_set_boolean (Configuration *config, const gchar *section, const gcha
+ 
+ gboolean config_get_boolean (Configuration *config, const gchar *section, const gchar *key);
+ 
++gboolean config_get_is990();
++
++gboolean config_get_is_install_mode();
++
+ G_END_DECLS
+ 
+ #endif /* CONFIGURATION_H_ */
+diff --git a/common/user-list.c b/common/user-list.c
+index fc04a12..40085fe 100644
+--- a/common/user-list.c
++++ b/common/user-list.c
+@@ -632,6 +632,7 @@ add_accounts_user (CommonUserList *user_list, const gchar *path, gboolean emit_s
+     }
+     else
+         g_object_unref (user);
++    g_debug("Load user %s end!", path);
+ }
+ 
+ static void
+diff --git a/configure.ac b/configure.ac
+index 29c529c..7a3ca33 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -56,6 +56,9 @@ PKG_CHECK_MODULES(LIGHTDM, [
+     gio-unix-2.0
+     xdmcp
+     xcb
++    kysdk-sysinfo
++    kysdk-conf2
++    libcjson
+ ])
+ 
+ PKG_CHECK_MODULES(GLIB, [
+@@ -78,6 +81,11 @@ PKG_CHECK_MODULES(XCB, [
+     xcb
+ ])    
+ 
++PKG_CHECK_MODULES(XCB, [
++    kysdk-sysinfo
++    kysdk-conf2
++])
++
+ PKG_CHECK_MODULES(LIBLIGHTDM_GOBJECT, [
+     glib-2.0 >= 2.44
+     gio-2.0 >= 2.26
+@@ -85,6 +93,8 @@ PKG_CHECK_MODULES(LIBLIGHTDM_GOBJECT, [
+     gobject-2.0
+     libxklavier
+     x11
++    kysdk-sysinfo
++    kysdk-conf2
+ ])
+ 
+ AC_ARG_ENABLE(liblightdm-qt5,
+diff --git a/data/lightdm.conf b/data/lightdm.conf
+index 0d5be9a..a7462a6 100644
+--- a/data/lightdm.conf
++++ b/data/lightdm.conf
+@@ -71,6 +71,8 @@
+ # session-wrapper = Wrapper script to run session with
+ # greeter-wrapper = Wrapper script to run greeter with
+ # guest-wrapper = Wrapper script to run guest sessions with
++# delay-greeter-exit = True to delay greeter exit for Wayland sessions (avoid black screen during login)
++# draw-background = True to let compositor draw login background for user session (sets KYWC_OUTPUT_FILL_WALLPAPER)
+ # display-setup-script = Script to run when starting a greeter session (runs as root)
+ # display-stopped-script = Script to run after stopping the display server (runs as root)
+ # greeter-setup-script = Script to run when starting a greeter (runs as root)
+@@ -111,6 +113,8 @@ greeter-show-manual-login=false
+ #session-wrapper=lightdm-session
+ #greeter-wrapper=
+ #guest-wrapper=
++#delay-greeter-exit=true
++#draw-background=true
+ #display-setup-script=
+ #display-stopped-script=
+ #greeter-setup-script=
+diff --git a/liblightdm-gobject/greeter.c b/liblightdm-gobject/greeter.c
+index f8bc685..a8711d2 100644
+--- a/liblightdm-gobject/greeter.c
++++ b/liblightdm-gobject/greeter.c
+@@ -9,7 +9,6 @@
+  */
+ 
+ #include <config.h>
+-
+ #include <stdlib.h>
+ #include <string.h>
+ #include <gio/gio.h>
+@@ -654,12 +653,10 @@ handle_prompt_authentication (LightDMGreeter *greeter, guint8 *message, gsize me
+ 
+     guint32 n_messages = read_int (message, message_length, offset);
+     g_debug ("Prompt user with %d message(s)", n_messages);
+-
+     for (guint32 i = 0; i < n_messages; i++)
+     {
+         int style = read_int (message, message_length, offset);
+         g_autofree gchar *text = read_string (message, message_length, offset);
+-
+         // FIXME: Should stop on prompts?
+         switch (style)
+         {
+@@ -677,6 +674,10 @@ handle_prompt_authentication (LightDMGreeter *greeter, guint8 *message, gsize me
+         case PAM_TEXT_INFO:
+             g_signal_emit (G_OBJECT (greeter), signals[SHOW_MESSAGE], 0, text, LIGHTDM_MESSAGE_TYPE_INFO);
+             break;
++        case PAM_BINARY_PROMPT:
++            priv->n_responses_waiting++;
++            g_signal_emit (G_OBJECT (greeter), signals[SHOW_PROMPT], 0, text, LIGHTDM_PROMPT_TYPE_QUESTION);
++            break;
+         }
+     }
+ }
+diff --git a/liblightdm-qt/QLightDM/greeter.h b/liblightdm-qt/QLightDM/greeter.h
+index 720574f..de6e441 100644
+--- a/liblightdm-qt/QLightDM/greeter.h
++++ b/liblightdm-qt/QLightDM/greeter.h
+@@ -39,6 +39,7 @@ class Q_DECL_EXPORT Greeter : public QObject
+     Q_PROPERTY(QString motd READ motd CONSTANT)
+     Q_PROPERTY(bool hasGuestAccount READ hasGuestAccountHint CONSTANT)
+     Q_PROPERTY(bool locked READ lockHint CONSTANT)
++    Q_PROPERTY(bool showManualLogin READ showManualLoginHint CONSTANT)
+ 
+     Q_ENUMS(PromptType MessageType)
+ 
+diff --git a/src/Makefile.am b/src/Makefile.am
+index eb93aae..834f7bb 100644
+--- a/src/Makefile.am
++++ b/src/Makefile.am
+@@ -77,7 +77,7 @@ lightdm_CFLAGS = \
+ 	$(LIGHTDM_CFLAGS) \
+ 	-I"$(top_srcdir)/common" \
+ 	-DSBIN_DIR=\"$(sbindir)\" \
+-	-DUSERS_DIR=\"$(localstatedir)/lib/lightdm/data\" \
++	-DUSERS_DIR=\"$(localstatedir)/lib/lightdm-data\" \
+ 	-DLOG_DIR=\"$(localstatedir)/log/lightdm\" \
+ 	-DRUN_DIR=\"$(localstatedir)/run/lightdm\" \
+ 	-DCACHE_DIR=\"$(localstatedir)/cache/lightdm\" \
+diff --git a/src/Makefile.in b/src/Makefile.in
+index 917f267..aa038cb 100644
+--- a/src/Makefile.in
++++ b/src/Makefile.in
+@@ -519,7 +519,7 @@ lightdm_CFLAGS = \
+ 	$(LIGHTDM_CFLAGS) \
+ 	-I"$(top_srcdir)/common" \
+ 	-DSBIN_DIR=\"$(sbindir)\" \
+-	-DUSERS_DIR=\"$(localstatedir)/lib/lightdm/data\" \
++	-DUSERS_DIR=\"$(localstatedir)/lib/lightdm-data\" \
+ 	-DLOG_DIR=\"$(localstatedir)/log/lightdm\" \
+ 	-DRUN_DIR=\"$(localstatedir)/run/lightdm\" \
+ 	-DCACHE_DIR=\"$(localstatedir)/cache/lightdm\" \
+diff --git a/src/display-manager-service.c b/src/display-manager-service.c
+index f25392b..9a3a250 100644
+--- a/src/display-manager-service.c
++++ b/src/display-manager-service.c
+@@ -270,6 +270,10 @@ handle_seat_get_property (GDBusConnection       *connection,
+         return g_variant_new_boolean (seat_get_allow_guest (entry->seat));
+     else if (g_strcmp0 (property_name, "Sessions") == 0)
+         return get_session_list (entry->service, entry->path);
++    else if (g_strcmp0 (property_name, "ShowManualLogin") == 0)
++        return g_variant_new_boolean (seat_get_show_manual_login (entry->seat));
++    else if (g_strcmp0 (property_name, "IsHideUsers") == 0)
++        return g_variant_new_boolean (seat_get_is_hide_users (entry->seat));
+ 
+     return NULL;
+ }
+@@ -574,6 +578,8 @@ bus_acquired_cb (GDBusConnection *connection,
+         "    <property name='CanSwitch' type='b' access='read'/>"
+         "    <property name='HasGuestAccount' type='b' access='read'/>"
+         "    <property name='Sessions' type='ao' access='read'/>"
++        "    <property name='ShowManualLogin' type='b' access='read'/>"
++        "    <property name='IsHideUsers' type='b' access='read'/>"
+         "    <method name='SwitchToGreeter'/>"
+         "    <method name='SwitchToUser'>"
+         "      <arg name='username' direction='in' type='s'/>"
+diff --git a/src/display-manager.c b/src/display-manager.c
+index 0dd1783..6b71343 100644
+--- a/src/display-manager.c
++++ b/src/display-manager.c
+@@ -118,6 +118,12 @@ display_manager_add_seat (DisplayManager *manager, Seat *seat)
+     g_signal_connect (seat, SEAT_SIGNAL_STOPPED, G_CALLBACK (seat_stopped_cb), manager);
+     g_signal_emit (manager, signals[SEAT_ADDED], 0, seat);
+ 
++    // when is stoping and the new seat not yet add to seats,need call stop the new seat
++    if (priv->stopping) {
++        g_debug ("Stopping new started seat");
++        seat_stop (seat);
++    }
++
+     return TRUE;
+ }
+ 
+diff --git a/src/greeter.c b/src/greeter.c
+index 75fe9ff..0d0b3bf 100644
+--- a/src/greeter.c
++++ b/src/greeter.c
+@@ -13,7 +13,7 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <gcrypt.h>
+-
++#include <syslog.h>
+ #include "greeter.h"
+ #include "configuration.h"
+ #include "shared-data-manager.h"
+@@ -396,12 +396,12 @@ pam_messages_cb (Session *session, Greeter *greeter)
+     {
+         write_int (message, MAX_MESSAGE_LENGTH, messages[i].msg_style, &offset);
+         write_string (message, MAX_MESSAGE_LENGTH, messages[i].msg, &offset);
+-
+         if (messages[i].msg_style == PAM_PROMPT_ECHO_OFF || messages[i].msg_style == PAM_PROMPT_ECHO_ON)
+             n_prompts++;
++        if (messages[i].msg_style == PAM_BINARY_PROMPT)
++            n_prompts++;
+     }
+     write_message (greeter, message, offset);
+-
+     /* Continue immediately if nothing to respond with */
+     // FIXME: Should probably give the greeter a chance to ack the message
+     if (n_prompts == 0)
+@@ -672,6 +672,10 @@ handle_continue_authentication (Greeter *greeter, gchar **secrets)
+         int msg_style = messages[i].msg_style;
+         if (msg_style == PAM_PROMPT_ECHO_OFF || msg_style == PAM_PROMPT_ECHO_ON)
+             n_prompts++;
++         
++        if(msg_style == PAM_BINARY_PROMPT){
++            n_prompts++;
++        }
+     }
+     if (g_strv_length (secrets) != n_prompts)
+     {
+@@ -686,7 +690,7 @@ handle_continue_authentication (Greeter *greeter, gchar **secrets)
+     for (int i = 0, j = 0; i < messages_length; i++)
+     {
+         int msg_style = messages[i].msg_style;
+-        if (msg_style == PAM_PROMPT_ECHO_OFF || msg_style == PAM_PROMPT_ECHO_ON)
++        if (msg_style == PAM_PROMPT_ECHO_OFF || msg_style == PAM_PROMPT_ECHO_ON || msg_style == PAM_BINARY_PROMPT )
+         {
+             size_t secret_length = strlen (secrets[j]) + 1;
+             response[i].resp = secure_malloc (greeter, secret_length);
+diff --git a/src/lightdm.c b/src/lightdm.c
+index 2f290d9..d31f5e0 100644
+--- a/src/lightdm.c
++++ b/src/lightdm.c
+@@ -18,9 +18,12 @@
+ #include <glib/gi18n.h>
+ #include <unistd.h>
+ #include <fcntl.h>
++#include <pwd.h>
+ #include <sys/stat.h>
+ #include <errno.h>
+-
++#include <syslog.h>
++#include <kysdk/kysdk-system/libkysysinfo.h>
++#include <kysdk/kysdk-base/libkysettings.h>
+ #include "configuration.h"
+ #include "display-manager.h"
+ #include "display-manager-service.h"
+@@ -35,6 +38,7 @@
+ #include "user-list.h"
+ #include "login1.h"
+ #include "log-file.h"
++#include "logger.h"
+ 
+ static gchar *config_path = NULL;
+ static GMainLoop *loop = NULL;
+@@ -115,6 +119,90 @@ log_init (void)
+     g_debug ("Logging to %s", path);
+ }
+ 
++static int get_allow_switch_user_from_conf2 (void) 
++{
++    static int allow_switch_user = -1;
++    if (allow_switch_user != -1) {
++        return allow_switch_user;
++    }
++
++    KSettings *setting = kdk_conf2_new("lightdm.powermanager", NULL);
++    if (!setting) {
++        syslog(LOG_DEBUG, "load conf2 failed!!");
++        return allow_switch_user;
++    }
++
++    if (!kdk_conf2_has_key(setting, "switch-user")) {
++        kdk_conf2_ksettings_destroy(setting);
++        syslog(LOG_DEBUG, "could not find switch user key!!");
++        return allow_switch_user;
++    }
++    allow_switch_user = kdk_conf2_get_default_boolean(setting, "switch-user");
++    syslog(LOG_DEBUG, "kdkconf2 switch-user:%d:%s\n", allow_switch_user, allow_switch_user ? "True" : "False");
++    kdk_conf2_ksettings_destroy(setting);
++    return allow_switch_user;
++}
++
++static int get_greeter_hide_users_from_conf2 (void) 
++{
++    static int greeter_hide_users = -1;
++    if (greeter_hide_users != -1) {
++        return greeter_hide_users;
++    }
++
++    KSettings *setting = kdk_conf2_new("lightdm.powermanager", NULL);
++    if (!setting) {
++        syslog(LOG_DEBUG, "load conf2 failed!!");
++        return greeter_hide_users;
++    }
++
++    if (!kdk_conf2_has_key(setting, "greeter-hide-users")) {
++        kdk_conf2_ksettings_destroy(setting);
++        syslog(LOG_DEBUG, "could not find hide users key!!");
++        return greeter_hide_users;
++    }
++    greeter_hide_users = kdk_conf2_get_default_boolean(setting, "greeter-hide-users");
++    syslog(LOG_DEBUG, "kdkconf2 greeter-hide-users:%d:%s\n", greeter_hide_users, greeter_hide_users ? "True" : "False");
++    kdk_conf2_ksettings_destroy(setting);
++    return greeter_hide_users;
++}
++
++static void get_is_hw_cloud()
++{
++    char *res = NULL;
++    res = kdk_system_get_hostCloudPlatform();
++    if(res){
++    	if(strcmp(res,"huawei") == 0){
++	    g_debug("kdk_system_get_hostCloudPlatform is huawei");
++	    //华为云时禁用切换用户功能(ukui-session非lightdm拉起，缺少环境变量XDG_SEAT_PATH，不能调用lightdm的切换用户相关接口)
++	    config_set_boolean (config_get_instance (), "Seat:*", "allow-user-switching", FALSE);
++	    //华为云时禁用秒级登录功能
++            config_set_boolean (config_get_instance (), "Seat:*", "enable-autologin-user-lock", FALSE);	    
++	}
++    }
++}
++
++static void get_is_hw990()
++{
++    if(config_get_is990()){
++        g_debug("get_is_hw990");
++        config_set_boolean (config_get_instance (), "Seat:*", "enable-autologin-user-lock", FALSE);
++    }
++}
++
++static void check_is_debuglog_open()
++{
++    FILE *file;
++    char buf[1024];
++
++    if( (file = fopen("/usr/share/lightdm/debuglog", "r")) == NULL) {
++        return;
++    } else {
++        fclose(file);
++        g_debug_log_open = TRUE;
++    }
++}
++
+ static GList*
+ get_config_sections (const gchar *seat_name)
+ {
+@@ -516,6 +604,51 @@ login1_add_seat (Login1Seat *login1_seat)
+     return update_login1_seat (login1_seat);
+ }
+ 
++static gboolean
++get_show_greeter_prompt()
++{
++    // load greeter prompt file
++    g_autoptr(GError) error = NULL;
++    g_autoptr(GKeyFile) greeter_prompt_file = g_key_file_new ();
++    gboolean result = g_key_file_load_from_file (greeter_prompt_file, "/usr/share/ukui-greeter/ukui-greeter.conf", G_KEY_FILE_NONE, &error);
++    if (error) {
++        g_debug ("Failed to load greeter prompt file %s", error->message);
++    }
++    if (!result) {
++        return false;
++    }
++    bool show_prompt = g_key_file_get_boolean(greeter_prompt_file, "Greeter", "showLoginPrompt", NULL);
++    if (!show_prompt) {
++        return false;
++    }
++    g_autofree gchar *prompt_title = g_key_file_get_string(greeter_prompt_file, "Greeter", "promptTitle", NULL);
++    if (!prompt_title || prompt_title[0] == '\0') {
++        return false;
++    }
++    g_autofree gchar *prompt_text = g_key_file_get_string(greeter_prompt_file, "Greeter", "promptText", NULL);
++    if (!prompt_text || prompt_text[0] == '\0') {
++        g_autofree gchar *prompt_text_file_path = g_key_file_get_string(greeter_prompt_file, "Greeter", "promptTextFilePath", NULL);
++        if (!prompt_text_file_path || prompt_text_file_path[0] == '\0') {
++            return false;
++        }
++        g_autoptr(GFile) file = g_file_new_for_path(prompt_text_file_path);
++        if (!file) {
++            return false;
++        }
++        g_autoptr(GError) error_info = NULL;
++        g_autoptr(GFileInfo) file_info = g_file_query_info(file, G_FILE_ATTRIBUTE_STANDARD_SIZE, 
++                                                            G_FILE_QUERY_INFO_NONE, NULL, &error_info);
++        if (error_info) {
++            g_debug ("Failed to query file info: %s", error_info->message);
++            return false;
++        }
++        if (g_file_info_get_attribute_uint64(file_info, G_FILE_ATTRIBUTE_STANDARD_SIZE) <= 0) {
++            return false;
++        }
++    }
++    return true; 
++}
++
+ static void
+ login1_service_seat_added_cb (Login1Service *service, Login1Seat *login1_seat)
+ {
+@@ -536,6 +669,25 @@ login1_service_seat_removed_cb (Login1Service *service, Login1Seat *login1_seat)
+     remove_login1_seat (login1_seat);
+ }
+ 
++static void
++get_auto_login_user_lock_enable()
++{
++    g_autoptr(GKeyFile) file = g_key_file_new ();
++    if (!g_key_file_load_from_file (file,"/var/lib/lightdm/.cache/ukui-greeter.conf", G_KEY_FILE_NONE, NULL))
++        return ;
++    g_autofree gchar *name = g_key_file_get_string (file, "Greeter", "lastLoginUser1", NULL);
++    if (!name || strcmp(name,"") == 0)
++    {
++        return ;
++    }
++    
++    struct passwd *entry = getpwnam(name);
++    if(entry == NULL)
++        return ;
++    config_set_string (config_get_instance (), "LightDM", "autologin-user-lock", name);
++    g_debug("lastloginuser1 = %s\n",name);
++}
++
+ int
+ main (int argc, char **argv)
+ {
+@@ -556,11 +708,14 @@ main (int argc, char **argv)
+      * http://stackoverflow.com/questions/8369506/why-does-sigpipe-exist
+      */
+     signal (SIGPIPE, SIG_IGN);
++    /*check if open debuglog*/
++    check_is_debuglog_open();
+ 
+     /* When lightdm starts sessions it needs to run itself in a new mode */
+     if (argc >= 2 && strcmp (argv[1], "--session-child") == 0)
+         return session_child_run (argc, argv);
+-
++    
++    syslog(LOG_INFO, "[lightdm:%d] start begin!!", getpid());
+ #if !defined(GLIB_VERSION_2_36)
+     g_type_init ();
+ #endif
+@@ -764,6 +919,8 @@ main (int argc, char **argv)
+         config_set_boolean (config_get_instance (), "LightDM", "backup-logs", TRUE);
+     if (!config_has_key (config_get_instance (), "LightDM", "dbus-service"))
+         config_set_boolean (config_get_instance (), "LightDM", "dbus-service", TRUE);
++    if (!config_has_key (config_get_instance (), "Seat:*", "autologin-greeter-timeout"))
++	config_set_integer (config_get_instance (), "Seat:*", "autologin-greeter-timeout", 0);
+     if (!config_has_key (config_get_instance (), "Seat:*", "type"))
+         config_set_string (config_get_instance (), "Seat:*", "type", "local");
+     if (!config_has_key (config_get_instance (), "Seat:*", "pam-service"))
+@@ -780,8 +937,15 @@ main (int argc, char **argv)
+         config_set_boolean (config_get_instance (), "Seat:*", "xserver-share", TRUE);
+     if (!config_has_key (config_get_instance (), "Seat:*", "start-session"))
+         config_set_boolean (config_get_instance (), "Seat:*", "start-session", TRUE);
+-    if (!config_has_key (config_get_instance (), "Seat:*", "allow-user-switching"))
+-        config_set_boolean (config_get_instance (), "Seat:*", "allow-user-switching", TRUE);
++    // lightdm配置了支持切换则以lightdm的配置优先，没配置则以conf2优先
++    if (!config_has_key (config_get_instance (), "Seat:*", "allow-user-switching")) {
++        int allow_switch_user = get_allow_switch_user_from_conf2();
++        if (allow_switch_user == -1 || allow_switch_user) {
++            config_set_boolean (config_get_instance (), "Seat:*", "allow-user-switching", TRUE);
++        } else {
++            config_set_boolean (config_get_instance (), "Seat:*", "allow-user-switching", FALSE);
++        }
++    }
+     if (!config_has_key (config_get_instance (), "Seat:*", "allow-guest"))
+         config_set_boolean (config_get_instance (), "Seat:*", "allow-guest", TRUE);
+     if (!config_has_key (config_get_instance (), "Seat:*", "greeter-allow-guest"))
+@@ -820,6 +984,15 @@ main (int argc, char **argv)
+         config_set_string (config_get_instance (), "XDMCPServer", "hostname", g_get_host_name ());
+     if (!config_has_key (config_get_instance (), "LightDM", "logind-check-graphical"))
+         config_set_boolean (config_get_instance (), "LightDM", "logind-check-graphical", TRUE);
++    // lightdm配置了支持切换则以lightdm的配置优先，没配置则以conf2优先
++    if (!config_has_key (config_get_instance (), "Seat:*", "greeter-hide-users")) {
++        int greeter_hide_users = get_greeter_hide_users_from_conf2();
++	if (greeter_hide_users == -1 || !greeter_hide_users) {
++            config_set_boolean (config_get_instance (), "Seat:*", "greeter-hide-users", FALSE);
++        } else {
++            config_set_boolean (config_get_instance (), "Seat:*", "greeter-hide-users", TRUE);
++        }
++    }
+ 
+     /* Override defaults */
+     if (log_dir)
+@@ -832,6 +1005,10 @@ main (int argc, char **argv)
+         config_set_string (config_get_instance (), "LightDM", "cache-directory", cache_dir);
+     g_free (cache_dir);
+ 
++    if (config_get_is_install_mode()) {
++        config_set_boolean (config_get_instance (), "LightDM", "install-mode", TRUE);
++    }
++
+     /* Create run and cache directories */
+     g_autofree gchar *log_dir_path = config_get_string (config_get_instance (), "LightDM", "log-directory");
+     if (g_mkdir_with_parents (log_dir_path, S_IRWXU | S_IXGRP | S_IXOTH) < 0)
+@@ -845,6 +1022,15 @@ main (int argc, char **argv)
+ 
+     log_init ();
+ 
++    get_is_hw_cloud();
++    get_is_hw990();
++
++    if (config_get_boolean (config_get_instance (), "Seat:*", "enable-autologin-user-lock") && 
++        !config_get_boolean (config_get_instance (), "Seat:*", "greeter-show-manual-login"))
++    {
++	    get_auto_login_user_lock_enable();
++    }
++
+     /* Show queued messages once logging is complete */
+     for (GList *link = messages; link; link = link->next)
+         g_debug ("%s", (gchar *)link->data);
+@@ -854,7 +1040,18 @@ main (int argc, char **argv)
+         g_debug ("Running in user mode");
+     if (getenv ("DISPLAY"))
+         g_debug ("Using Xephyr for X servers");
+-
++    
++    const gchar *autologin_username = config_get_string (config_get_instance (), "Seat:*", "autologin-user");
++
++    if (autologin_username == NULL || g_strcmp0 (autologin_username, "") == 0 || !getpwnam(autologin_username)){
++        //未开启自动登录
++    }else{
++        gboolean show_greeter = get_show_greeter_prompt();
++        if(show_greeter){
++            config_set_integer (config_get_instance (), "Seat:*", "autologin-greeter-timeout", 1);
++        }
++    }
++    syslog_debug("[lightdm] new display manager!");
+     display_manager = display_manager_new ();
+     g_signal_connect (display_manager, DISPLAY_MANAGER_SIGNAL_STOPPED, G_CALLBACK (display_manager_stopped_cb), NULL);
+     g_signal_connect (display_manager, DISPLAY_MANAGER_SIGNAL_SEAT_REMOVED, G_CALLBACK (display_manager_seat_removed_cb), NULL);
+@@ -869,9 +1066,10 @@ main (int argc, char **argv)
+     }
+     else
+         start_display_manager ();
+-
++    syslog_debug("[lightdm] Start shared data manager!");
+     shared_data_manager_start (shared_data_manager_get_instance ());
+ 
++    syslog_debug("[lightdm] Monitor login1 service begin!");
+     /* Connect to logind */
+     if (login1_service_connect (login1_service_get_instance ()))
+     {
+@@ -920,6 +1118,7 @@ main (int argc, char **argv)
+         }
+     }
+ 
++    syslog(LOG_INFO, "[lightdm:%d] started!!", getpid());
+     g_main_loop_run (loop);
+ 
+     /* Clean up shared data manager */
+@@ -935,5 +1134,6 @@ main (int argc, char **argv)
+     g_clear_object (&display_manager);
+ 
+     g_debug ("Exiting with return value %d", exit_code);
++    syslog(LOG_INFO, "[lightdm:%d] Exiting with return value %d!!", getpid(), exit_code);
+     return exit_code;
+ }
+diff --git a/src/logger.c b/src/logger.c
+index c5eb4a7..76bb70c 100644
+--- a/src/logger.c
++++ b/src/logger.c
+@@ -2,6 +2,8 @@
+ 
+ G_DEFINE_INTERFACE (Logger, logger, G_TYPE_INVALID)
+ 
++gboolean g_debug_log_open = TRUE;
++
+ static void
+ logger_logv_default (Logger *self, GLogLevelFlags log_level, const gchar *format, va_list ap) __attribute__ ((format (printf, 3, 0)));
+ 
+diff --git a/src/logger.h b/src/logger.h
+index 53f3bb8..181cdcd 100644
+--- a/src/logger.h
++++ b/src/logger.h
+@@ -2,6 +2,7 @@
+ #define LOGGER_H_
+ 
+ #include <glib-object.h>
++#include <syslog.h>
+ 
+ #ifdef __cplusplus
+ #include <cstdarg>  /* for va_list */
+@@ -9,6 +10,8 @@
+ #include <stdarg.h>  /* for va_list */
+ #endif
+ 
++extern gboolean g_debug_log_open;
++
+ G_BEGIN_DECLS
+ 
+ #define LOGGER_TYPE (logger_get_type ())
+@@ -55,6 +58,23 @@ void logger_log (Logger *self, GLogLevelFlags log_level, const gchar *format, ..
+ #define l_warning(self, ...) \
+     logger_log (LOGGER (self), G_LOG_LEVEL_WARNING, __VA_ARGS__)
+ 
++/*log to syslog for*/
++#ifdef __va_arg_pack
++__fortify_function void
++syslog_debug (const char *__fmt, ...)
++{
++    if (g_debug_log_open) {
++        syslog (LOG_INFO, __fmt, __va_arg_pack ());
++    }
++}
++#elif !defined __cplusplus
++#define syslog_debug(...) \
++    do { if (g_debug_log_open) { syslog (LOG_INFO, __VA_ARGS__); } } while (0)
++#else
++#define syslog_debug(...) \
++    do { } while (0)
++#endif
++
+ G_END_DECLS
+ 
+ #endif /* !LOGGER_H_ */
+diff --git a/src/login1.c b/src/login1.c
+index 42e8fe2..d06f2fa 100644
+--- a/src/login1.c
++++ b/src/login1.c
+@@ -14,6 +14,8 @@
+ #include <gio/gio.h>
+ 
+ #include "login1.h"
++#include "logger.h"
++#include <unistd.h>
+ 
+ #define LOGIN1_SERVICE_NAME "org.freedesktop.login1"
+ #define LOGIN1_OBJECT_NAME "/org/freedesktop/login1"
+@@ -203,6 +205,7 @@ add_seat (Login1Service *service, const gchar *id, const gchar *path)
+     }
+ 
+     priv->seats = g_list_append (priv->seats, seat);
++    g_debug("logind add seat:%s-%d-%p\n", s_priv->id, getpid(), g_thread_self());
+ 
+     return seat;
+ }
+@@ -223,24 +226,30 @@ signal_cb (GDBusConnection *connection,
+     {
+         const gchar *id, *path;
+         g_variant_get (parameters, "(&s&o)", &id, &path);
+-
+-        Login1Seat *seat = login1_service_get_seat (service, id);
+-        if (!seat)
+-        {
+-            seat = add_seat (service, id, path);
+-            g_signal_emit (service, service_signals[SEAT_ADDED], 0, seat);
++        g_debug("logind add seat signal_cb:%s-%d-%p-%d\n", id, getpid(), g_thread_self(), priv->connected);
++        if (priv->connected) {
++            Login1Seat *seat = login1_service_get_seat (service, id);
++            if (!seat)
++            {
++                g_debug("logind add seat signal_cb1:%s-%d-%p\n", id, getpid(), g_thread_self());
++                seat = add_seat (service, id, path);
++                g_signal_emit (service, service_signals[SEAT_ADDED], 0, seat);
++            }
+         }
+     }
+     else if (strcmp (signal_name, "SeatRemoved") == 0)
+     {
+         const gchar *id, *path;
+         g_variant_get (parameters, "(&s&o)", &id, &path);
+-
+-        g_autoptr(Login1Seat) seat = login1_service_get_seat (service, id);
+-        if (seat)
+-        {
+-            priv->seats = g_list_remove (priv->seats, seat);
+-            g_signal_emit (service, service_signals[SEAT_REMOVED], 0, seat);
++        g_debug("logind remove seat signal_cb:%s-%d-%p-%d\n", id, getpid(), g_thread_self(), priv->connected);
++        if (priv->connected) {
++            g_autoptr(Login1Seat) seat = login1_service_get_seat (service, id);
++            if (seat)
++            {
++                g_debug("logind remove seat signal_cb1:%s-%d-%p\n", id, getpid(), g_thread_self());
++                priv->seats = g_list_remove (priv->seats, seat);
++                g_signal_emit (service, service_signals[SEAT_REMOVED], 0, seat);
++            }
+         }
+     }
+ }
+@@ -255,6 +264,8 @@ login1_service_connect (Login1Service *service)
+     if (priv->connected)
+         return TRUE;
+ 
++    syslog_debug("[lightdm] login1 connect dbus begin");
++
+     g_autoptr(GError) error = NULL;
+     priv->connection = g_bus_get_sync (G_BUS_TYPE_SYSTEM, NULL, &error);
+     if (error)
+@@ -262,6 +273,8 @@ login1_service_connect (Login1Service *service)
+     if (!priv->connection)
+         return FALSE;
+ 
++    syslog_debug("[lightdm] login1 call listseats begin");
++
+     priv->signal_id = g_dbus_connection_signal_subscribe (priv->connection,
+                                                           LOGIN1_SERVICE_NAME,
+                                                           LOGIN1_MANAGER_INTERFACE_NAME,
+@@ -292,9 +305,21 @@ login1_service_connect (Login1Service *service)
+     g_autoptr(GVariantIter) seat_iter = NULL;
+     g_variant_get (result, "(a(so))", &seat_iter);
+ 
++    syslog_debug("[lightdm] login1 call listseats end");
++
+     const gchar *id, *path;
+-    while (g_variant_iter_loop (seat_iter, "(&s&o)", &id, &path))
+-        add_seat (service, id, path);
++    while (g_variant_iter_loop (seat_iter, "(&s&o)", &id, &path)) {
++
++        syslog_debug("[lightdm] login1 call seat attribute begin");
++        g_debug("login1 call seat attribute begin:%d-%p", getpid(), g_thread_self());
++        Login1Seat *seat = login1_service_get_seat (service, id);
++        if (!seat) {
++            add_seat (service, id, path);
++        }
++
++        syslog_debug("[lightdm] login1 call seat attribute end");
++        g_debug("login1 call seat attribute end:%d-%p", getpid(), g_thread_self());
++    }
+ 
+     priv->connected = TRUE;
+ 
+diff --git a/src/plymouth.c b/src/plymouth.c
+index d1ed91f..29caf3e 100644
+--- a/src/plymouth.c
++++ b/src/plymouth.c
+@@ -13,6 +13,7 @@
+ #include <sys/wait.h>
+ 
+ #include "plymouth.h"
++#include "logger.h"
+ 
+ static gboolean have_pinged = FALSE;
+ static gboolean have_checked_active_vt = FALSE;
+@@ -26,11 +27,13 @@ plymouth_run_command (const gchar *command, gint *exit_status)
+ {
+     g_autofree gchar *command_line = g_strdup_printf ("plymouth %s", command);
+     g_autoptr(GError) error = NULL;
++    syslog_debug("[lightdm] plymouth run :%s", command_line);
+     gboolean result = g_spawn_command_line_sync (command_line, NULL, NULL, exit_status, &error);
+ 
+     if (error)
+         g_debug ("Could not run %s: %s", command_line, error->message);
+ 
++    syslog_debug("[lightdm] plymouth run end:%d", result);
+     return result;
+ }
+ 
+@@ -59,7 +62,9 @@ plymouth_get_is_running (void)
+ gboolean
+ plymouth_get_is_active (void)
+ {
+-    return plymouth_get_is_running () && is_active;
++    gboolean running = plymouth_get_is_running ();
++    g_debug ("plymouth is active: %d : %d \n", (int)running, (int)is_active);
++    return running && is_active;
+ }
+ 
+ gboolean
+diff --git a/src/seat.c b/src/seat.c
+index cc37949..a06ac46 100644
+--- a/src/seat.c
++++ b/src/seat.c
+@@ -12,13 +12,15 @@
+ #include <stdlib.h>
+ #include <string.h>
+ #include <sys/wait.h>
+-
++#include <unistd.h>
+ #include "seat.h"
+ #include "configuration.h"
+ #include "guest-account.h"
+ #include "greeter-session.h"
+ #include "session-config.h"
+-
++#include "vt.h"
++#include "session.h"
++#include <gio/gio.h>
+ enum {
+     SESSION_ADDED,
+     RUNNING_USER_SESSION,
+@@ -27,6 +29,7 @@ enum {
+     LAST_SIGNAL
+ };
+ static guint signals[LAST_SIGNAL] = { 0 };
++#define  STARTUP_MUSIC_PATH "/usr/bin/ukui-login-sound"
+ 
+ typedef struct
+ {
+@@ -68,6 +71,15 @@ typedef struct
+ 
+     /* The greeter to be started to replace the current one */
+     GreeterSession *replacement_greeter;
++
++    /* Source ID for activation check timer (to clean up on session stop) */
++    guint activation_check_source_id;
++    
++    /* Source ID for fixed greeter-exit delay timer */
++    guint greeter_exit_delay_source_id;
++
++    /* Counter for ukui-session process polling (5s per step, max 6 times = 30s) */
++    guint greeter_owner_check_count;
+ } SeatPrivate;
+ 
+ static void seat_logger_iface_init (LoggerInterface *iface);
+@@ -237,6 +249,47 @@ set_greeter_idle (gpointer greeter)
+     return FALSE;
+ }
+ 
++/* Forward declaration for the callbacks used in seat_set_active_session */
++static gboolean seat_check_vt_activation (gpointer user_data);
++static gboolean should_apply_wayland_commit_behavior (Seat *seat, Session *user_session);
++static void process_greeters_after_session_ready (Seat *seat, Session *session);
++static gboolean greeter_exit_after_delay_cb (gpointer user_data);
++
++/* 通用布尔配置读取逻辑：
++ * 1. 优先从 Seat 属性（即 lightdm.conf / *.conf 中解析出来的 Seat:* 配置）读取；
++ * 2. 如果 Seat 属性中没有该键，再尝试从指定的系统配置文件读取；
++ * 3. 如果文件不存在或没有该键，则返回给定的默认值。*/
++static gboolean
++seat_get_boolean_with_system_fallback (Seat       *seat,
++                                       const gchar *key,
++                                       const gchar *system_conf_path,
++                                       gboolean     default_value)
++{
++    /* Step 1: Seat 级别配置（包括 /etc 和 /usr/share 下 normal lightdm.conf.d） */
++    if (seat_get_string_property (seat, key) != NULL)
++        return seat_get_boolean_property (seat, key);
++
++    /* Step 2: 额外的系统配置文件（例如 /etc/lightdm/draw-background.conf），
++     * 该文件不在 lightdm.conf.d 搜索路径中，不会自动进入 Seat 属性，可用于运行期调整。*/
++    if (system_conf_path && system_conf_path[0] != '\0')
++    {
++        g_autoptr(GKeyFile) key_file = g_key_file_new ();
++        g_autoptr(GError) error = NULL;
++
++        if (g_key_file_load_from_file (key_file, system_conf_path, G_KEY_FILE_NONE, &error))
++        {
++            /* 均按 Seat:* 小节读取，和 lightdm.conf 中保持一致 */
++            if (g_key_file_has_key (key_file, "Seat:*", key, NULL))
++            {
++                return g_key_file_get_boolean (key_file, "Seat:*", key, NULL);
++            }
++        }
++    }
++
++    /* Step 3: 全部都没有时使用默认值 */
++    return default_value;
++}
++
+ void
+ seat_set_active_session (Seat *seat, Session *session)
+ {
+@@ -244,14 +297,226 @@ seat_set_active_session (Seat *seat, Session *session)
+ 
+     g_return_if_fail (seat != NULL);
+ 
++    /* Clean up any existing activation check timer */
++    if (priv->activation_check_source_id != 0)
++    {
++        g_source_remove (priv->activation_check_source_id);
++        priv->activation_check_source_id = 0;
++    }
++    /* Clean up any existing greeter-exit delay timer */
++    if (priv->greeter_exit_delay_source_id != 0)
++    {
++        g_source_remove (priv->greeter_exit_delay_source_id);
++        priv->greeter_exit_delay_source_id = 0;
++    }
++
++    DisplayServer *display_server = session_get_display_server (session);
+     SEAT_GET_CLASS (seat)->set_active_session (seat, session);
+ 
+-    /* Stop any greeters */
++    /* Lock previous sessions */
++    if (priv->active_session && session != priv->active_session && !IS_GREETER_SESSION (priv->active_session))
++        session_lock (priv->active_session);
++
++    session_activate (session);
++    g_clear_object (&priv->active_session);
++    priv->active_session = g_object_ref (session);
++
++    /* 配置项：是否在 Wayland 会话下延迟退出 greeter。
++     * 读取顺序：
++     *   1) Seat:* 里的 delay-greeter-exit
++     *   2) /etc/lightdm/draw-background.conf
++     *   3) 默认 true */
++    gboolean delay_greeter = seat_get_boolean_with_system_fallback (
++        seat,
++        "delay-greeter-exit",
++        "/etc/lightdm/draw-background.conf",
++        TRUE);
++
++    /*wayland会话下延迟退出greeter，x下和有代码保持一致*/
++    if (!IS_GREETER_SESSION (session) &&
++        should_apply_wayland_commit_behavior (seat, session) &&
++        delay_greeter)
++    {
++        /* Poll ukui-session process at 5s intervals; exit when found or after 6 checks (30s) */
++        priv->activation_check_source_id = g_timeout_add (5000, (GSourceFunc) seat_check_vt_activation, g_object_ref (seat));
++        priv->greeter_owner_check_count = 0;
++    } else {
++        /* Stop any greeters */
++        for (GList *link = priv->sessions; link; link = link->next)
++        {
++            Session *s = link->data;
++
++            if (s == session || session_get_is_stopping (s))
++                continue;
++
++            if (IS_GREETER_SESSION (s))
++            {
++                Greeter *greeter = greeter_session_get_greeter (GREETER_SESSION (s));
++                if (greeter_get_resettable (greeter))
++                {
++                    if (priv->active_session == s)
++                    {
++                        l_debug (seat, "Idling greeter");
++                        /* Do this in an idle callback, because we might very well
++                           be in the middle of responding to a START_SESSION
++                           request by a greeter.  So they won't expect an IDLE
++                           call during that.  Plus, this isn't time-sensitive. */
++                        g_idle_add (set_greeter_idle, greeter);
++                    }
++                }
++                else
++                {
++                    l_debug (seat, "Stopping greeter");
++                    session_stop (s);
++                }
++            }
++        }
++    }
++}
++
++/* 检测会话是否激活和启动，当会话彻底启动完成后，才退出greeter */
++static gboolean
++seat_check_vt_activation(gpointer user_data)
++{
++    Seat *seat = SEAT(user_data);
++    SeatPrivate *priv = seat_get_instance_private(seat);
++    
++    /* Ensure we have an active session to check */
++    if (!priv->active_session)
++    {
++        priv->activation_check_source_id = 0;
++        g_object_unref (seat);
++        return FALSE; /* nothing to wait for */
++    }
++
++    /* Check if session is stopping (e.g., user logged out immediately) */
++    if (session_get_is_stopping (priv->active_session))
++    {
++        priv->activation_check_source_id = 0;
++        g_object_unref (seat);
++        return FALSE; /* session stopped, no need to continue */
++    }
++
++    /* Check if the activated session is actually on the active VT yet */
++    DisplayServer *ds = session_get_display_server (priv->active_session);
++    if (!ds)
++    {
++        /* No display server yet; keep waiting */
++        return TRUE;
++    }
++
++    gint expected_vt = display_server_get_vt (ds);
++    gint current_vt = vt_get_active ();
++    if (expected_vt < 0 || expected_vt != current_vt)
++    {
++        /* Not active yet; continue polling */
++        return TRUE;
++    }
++
++    /* If session has started running, check if ukui-session process is running.
++     * Check every 5 seconds, maximum 6 times (30 seconds total). */
++    if (!IS_GREETER_SESSION (priv->active_session) && session_get_is_run (priv->active_session))
++    {
++        /* If not in gated Wayland scenario, stop this timer and keep default behavior */
++        if (!should_apply_wayland_commit_behavior (seat, priv->active_session))
++        {
++            priv->activation_check_source_id = 0;
++            g_object_unref (seat);
++            return FALSE;
++        }
++
++        gboolean session_ready = FALSE;
++        
++        /* 只有ukui-session进程启动后，才认为会话启动完成。如果是其他会话，30s后登录界面也会退出，因此
++	 * 这里暂时不判断其他进程。如果需要，可将should_apply_wayland_commit_behavior函数中对wayland类型
++	 * 会话的判断改为kylin-wlcom */
++        const gchar *username = session_get_username (priv->active_session);
++        if (username)
++        {
++            if (detectProcessByName ((char *)"ukui-session", (char *)username) == 0)
++            {
++                l_debug (seat, "Found ukui-session process");
++                session_ready = TRUE;
++            }
++        }
++        
++        if (session_ready)
++        {
++            l_debug (seat, "ukui-session is running, exiting greeter");
++            process_greeters_after_session_ready (seat, priv->active_session);
++            priv->activation_check_source_id = 0;
++            g_object_unref (seat);
++            return FALSE;
++        }
++
++        /* Check if we've exceeded maximum retry count (6 times = 30 seconds) */
++        priv->greeter_owner_check_count++;
++        if (priv->greeter_owner_check_count >= 6)
++        {
++            l_debug (seat, "ukui-session check timeout after 6 attempts, exiting greeter");
++            process_greeters_after_session_ready (seat, priv->active_session);
++            priv->activation_check_source_id = 0;
++            g_object_unref (seat);
++            return FALSE;
++        }
++
++        l_debug (seat, "ukui-session not found yet, check %d/6", priv->greeter_owner_check_count);
++        return TRUE; /* keep polling */
++    }
++
++    /* Session not running yet, continue polling */
++    return TRUE;
++}
++
++/* Process greeters after the session is ready (VT switched and session running).
++ * This is called when ukui-session process is detected or timeout is reached. */
++static void
++process_greeters_after_session_ready (Seat *seat, Session *session)
++{
++    SeatPrivate *priv = seat_get_instance_private(seat);
++
++    /* Double-check that this is still the active session and not stopping */
++    if (session != priv->active_session)
++    {
++        l_debug (seat, "Session changed, skipping greeter processing");
++        return;
++    }
++
++    /* Check if session is stopping (e.g., user logged out during greeter exit) */
++    if (session_get_is_stopping (session))
++    {
++        l_debug (seat, "Session is stopping, skipping greeter processing");
++        return;
++    }
++
++    /* For user sessions, verify VT is active and session is running */
++    if (!IS_GREETER_SESSION (session))
++    {
++        DisplayServer *ds = session_get_display_server (session);
++        if (ds)
++        {
++            gint expected_vt = display_server_get_vt (ds);
++            gint current_vt = vt_get_active ();
++            if (expected_vt >= 0 && expected_vt != current_vt)
++            {
++                l_debug (seat, "VT not yet active for session, deferring greeter processing");
++                return;
++            }
++        }
++
++        if (!session_get_is_run (session))
++        {
++            l_debug (seat, "Session not running yet, deferring greeter processing");
++            return;
++        }
++    }
++
++    /* Now process greeters */
+     for (GList *link = priv->sessions; link; link = link->next)
+     {
+         Session *s = link->data;
+ 
+-        if (s == session || session_get_is_stopping (s))
++        if (s == priv->active_session || session_get_is_stopping (s))
+             continue;
+ 
+         if (IS_GREETER_SESSION (s))
+@@ -259,15 +524,12 @@ seat_set_active_session (Seat *seat, Session *session)
+             Greeter *greeter = greeter_session_get_greeter (GREETER_SESSION (s));
+             if (greeter_get_resettable (greeter))
+             {
+-                if (priv->active_session == s)
+-                {
+-                    l_debug (seat, "Idling greeter");
+-                    /* Do this in an idle callback, because we might very well
+-                       be in the middle of responding to a START_SESSION
+-                       request by a greeter.  So they won't expect an IDLE
+-                       call during that.  Plus, this isn't time-sensitive. */
+-                    g_idle_add (set_greeter_idle, greeter);
+-                }
++                l_debug (seat, "Idling greeter");
++                /* Do this in an idle callback, because we might very well
++                   be in the middle of responding to a START_SESSION
++                   request by a greeter.  So they won't expect an IDLE
++                   call during that.  Plus, this isn't time-sensitive. */
++                g_idle_add (set_greeter_idle, greeter);
+             }
+             else
+             {
+@@ -276,14 +538,88 @@ seat_set_active_session (Seat *seat, Session *session)
+             }
+         }
+     }
++}
+ 
+-    /* Lock previous sessions */
+-    if (priv->active_session && session != priv->active_session && !IS_GREETER_SESSION (priv->active_session))
+-        session_lock (priv->active_session);
++/* 判断要登录的桌面环境为wayland类型，并且登录界面的进程为ukui-greeter-wlcom。*/
++static gboolean
++should_apply_wayland_commit_behavior (Seat *seat, Session *user_session)
++{
++    if (!seat || !user_session)
++        return FALSE;
+ 
+-    session_activate (session);
+-    g_clear_object (&priv->active_session);
+-    priv->active_session = g_object_ref (session);
++    /* User session must be Wayland */
++    const gchar *user_session_type = session_get_session_type (user_session);
++    if (!user_session_type || g_strcmp0 (user_session_type, "wayland") != 0)
++        return FALSE;
++
++    /* Greeter detection: prefer configured greeter-session name */
++    const gchar *greeter_session_name = seat_get_string_property (seat, "greeter-session");
++    if (greeter_session_name && g_strcmp0 (greeter_session_name, "ukui-greeter-wlcom") == 0)
++        return TRUE;
++
++    /* If not matched by name, try to find a greeter session and see if it's Wayland via session type */
++    SeatPrivate *priv = seat_get_instance_private (seat);
++    for (GList *link = priv->sessions; link; link = link->next)
++    {
++        Session *s = link->data;
++        if (IS_GREETER_SESSION (s))
++        {
++            const gchar *greeter_type = session_get_session_type (s);
++            if (greeter_type && g_strcmp0 (greeter_type, "wayland") == 0)
++                return TRUE;
++        }
++    }
++
++    return FALSE;
++}
++
++/* One-shot callback to exit greeter after a fixed delay (5s). Re-checks state
++ * before stopping greeter to handle logout/cancel between scheduling and fire. */
++static gboolean
++greeter_exit_after_delay_cb (gpointer user_data)
++{
++    Seat *seat = SEAT(user_data);
++    SeatPrivate *priv = seat_get_instance_private (seat);
++
++    /* Clear source id first to avoid double-remove */
++    priv->greeter_exit_delay_source_id = 0;
++
++    if (!priv->active_session)
++    {
++        g_object_unref (seat);
++        return FALSE;
++    }
++
++    /* If session is stopping or VT no longer matches, abort */
++    if (session_get_is_stopping (priv->active_session))
++    {
++        g_object_unref (seat);
++        return FALSE;
++    }
++
++    DisplayServer *ds = session_get_display_server (priv->active_session);
++    if (ds)
++    {
++        gint expected_vt = display_server_get_vt (ds);
++        gint current_vt = vt_get_active ();
++        if (expected_vt >= 0 && expected_vt != current_vt)
++        {
++            g_object_unref (seat);
++            return FALSE;
++        }
++    }
++
++    if (!session_get_is_run (priv->active_session))
++    {
++        g_object_unref (seat);
++        return FALSE;
++    }
++
++    /* Proceed to stop greeter now */
++    process_greeters_after_session_ready (seat, priv->active_session);
++
++    g_object_unref (seat);
++    return FALSE;
+ }
+ 
+ Session *
+@@ -365,6 +701,20 @@ seat_get_allow_guest (Seat *seat)
+     return seat_get_boolean_property (seat, "allow-guest") && guest_account_is_installed ();
+ }
+ 
++gboolean
++seat_get_show_manual_login (Seat *seat)
++{
++    g_return_val_if_fail (seat != NULL, FALSE);
++    return seat_get_boolean_property (seat, "greeter-show-manual-login");
++}
++
++gboolean 
++seat_get_is_hide_users (Seat *seat)
++{
++    g_return_val_if_fail (seat != NULL, FALSE);
++    return seat_get_boolean_property (seat, "greeter-hide-users");
++}
++
+ static gboolean
+ run_script (Seat *seat, DisplayServer *display_server, const gchar *script_name, User *user)
+ {
+@@ -453,6 +803,53 @@ check_stopped (Seat *seat)
+     }
+ }
+ 
++static void
++restart_lightdm_service (Seat *seat)
++{
++    g_autoptr(GError) error = NULL;
++    g_autoptr(GDBusConnection) connection = g_bus_get_sync (G_BUS_TYPE_SYSTEM, NULL, &error);
++    
++    if (error)
++    {
++        l_debug (seat, "Failed to get system bus for restarting lightdm.service: %s", error->message);
++        return;
++    }
++    
++    if (!connection)
++    {
++        l_debug (seat, "Failed to get system bus connection for restarting lightdm.service");
++        return;
++    }
++    
++    l_debug (seat, "Restarting lightdm.service via systemd dbus interface");
++    
++    /* Call RestartUnit method on systemd Manager interface
++     * Method signature: RestartUnit(ss) -> o
++     * Parameters: unit name, mode
++     * Returns: job object path
++     */
++    g_autoptr(GVariant) result = g_dbus_connection_call_sync (connection,
++                                                              "org.freedesktop.systemd1",
++                                                              "/org/freedesktop/systemd1",
++                                                              "org.freedesktop.systemd1.Manager",
++                                                              "RestartUnit",
++                                                              g_variant_new ("(ss)", "lightdm.service", "replace"),
++                                                              G_VARIANT_TYPE ("(o)"),
++                                                              G_DBUS_CALL_FLAGS_NONE,
++                                                              -1,
++                                                              NULL,
++                                                              &error);
++    
++    if (error)
++    {
++        l_debug (seat, "Failed to restart lightdm.service via systemd dbus: %s", error->message);
++    }
++    else
++    {
++        l_debug (seat, "Successfully called systemd to restart lightdm.service");
++    }
++}
++
+ static void
+ display_server_stopped_cb (DisplayServer *display_server, Seat *seat)
+ {
+@@ -508,8 +905,10 @@ display_server_stopped_cb (DisplayServer *display_server, Seat *seat)
+         if (!active_session || session_get_display_server (active_session) == display_server)
+         {
+             l_debug (seat, "Active display server stopped, starting greeter");
+-            if (!seat_switch_to_greeter (seat))
+-            {
++            if (config_get_boolean (config_get_instance (), "LightDM", "install-mode")) {
++                l_debug(seat,"Restarting lightdm.service for install mode when display server stopped");
++                restart_lightdm_service(seat);
++            } else if (!seat_switch_to_greeter (seat)) {
+                 l_debug (seat, "Stopping; failed to start a greeter");
+                 seat_stop (seat);
+             }
+@@ -607,8 +1006,9 @@ switch_to_greeter_from_failed_session (Seat *seat, Session *session)
+             session_set_display_server (SESSION (greeter_session), session_get_display_server (session));
+         else
+         {
+-            DisplayServer *display_server = create_display_server (seat, session);
+-            session_set_display_server (session, display_server);
++            //解决密码过期时，开启自动登陆后开机黑屏的问题
++            DisplayServer *display_server = create_display_server (seat, greeter_session);
++            session_set_display_server (greeter_session, display_server);
+             if (!start_display_server (seat, display_server))
+             {
+                 l_debug (seat, "Failed to start display server for greeter");
+@@ -675,7 +1075,12 @@ run_session (Seat *seat, Session *session)
+ 
+     session_run (session);
+ 
+-    // FIXME: Wait until the session is ready
++    /* For user sessions: in the Wayland-gated scenario we delay greeter exit
++     * via polling; otherwise keep the original immediate processing. */
++    if (!IS_GREETER_SESSION (session) && !should_apply_wayland_commit_behavior (seat, session))
++    {
++        process_greeters_after_session_ready (seat, session);
++    }
+ 
+     if (session == priv->session_to_activate)
+     {
+@@ -737,9 +1142,19 @@ session_authentication_complete_cb (Session *session, Seat *seat)
+         Session *s = find_user_session (seat, session_get_username (session), session);
+         if (s)
+         {
+-            l_debug (seat, "Session authenticated, switching to existing user session");
+-            seat_set_active_session (seat, s);
+-            session_stop (session);
++            /* Only switch to existing session if it's actually running.
++             * If it's stopped or stopping, run a new session instead. */
++            if (session_get_is_stopping (s) || !session_get_is_run (s))
++            {
++                l_debug (seat, "Existing session is not running, running new session");
++                run_session (seat, session);
++            }
++            else
++            {
++                l_debug (seat, "Session authenticated, switching to existing user session");
++                seat_set_active_session (seat, s);
++                session_stop (session);
++            }
+         }
+         else
+         {
+@@ -766,6 +1181,19 @@ session_stopped_cb (Session *session, Seat *seat)
+ 
+     l_debug (seat, "Session stopped");
+ 
++    /* Clean up activation check timer if this was the active session */
++    if (session == priv->active_session && priv->activation_check_source_id != 0)
++    {
++        g_source_remove (priv->activation_check_source_id);
++        priv->activation_check_source_id = 0;
++    }
++    /* Also clear delayed greeter-exit timer if pending */
++    if (session == priv->active_session && priv->greeter_exit_delay_source_id != 0)
++    {
++        g_source_remove (priv->greeter_exit_delay_source_id);
++        priv->greeter_exit_delay_source_id = 0;
++    }
++
+     g_signal_handlers_disconnect_matched (session, G_SIGNAL_MATCH_DATA, 0, 0, NULL, NULL, seat);
+     priv->sessions = g_list_remove (priv->sessions, session);
+     if (session == priv->active_session)
+@@ -862,6 +1290,42 @@ session_stopped_cb (Session *session, Seat *seat)
+         }
+     }
+ 
++    /* If this is a greeter session, stop all user sessions that are still authenticating
++     * and using the same display server (created by greeter_create_session_cb) */
++    if (IS_GREETER_SESSION (session) && display_server)
++    {
++        GList *sessions_to_stop = NULL;
++        for (GList *link = priv->sessions; link; link = link->next)
++        {
++            Session *s = link->data;
++
++            /* Skip greeter sessions and sessions not using this display server */
++            if (IS_GREETER_SESSION (s) || session_get_display_server (s) != display_server)
++                continue;
++
++            /* Skip sessions that are already stopping */
++            if (session_get_is_stopping (s))
++                continue;
++
++            /* Stop sessions that are still authenticating (not yet running) */
++            if (!session_get_is_run (s))
++            {
++                l_debug (seat, "Stopping authenticating user session %s when greeter stops",
++                         session_get_username (s) ? session_get_username (s) : "unknown");
++                sessions_to_stop = g_list_prepend (sessions_to_stop, g_object_ref (s));
++            }
++        }
++
++        /* Stop the sessions */
++        for (GList *link = sessions_to_stop; link; link = link->next)
++        {
++            Session *s = link->data;
++            session_stop (s);
++            g_object_unref (s);
++        }
++        g_list_free (sessions_to_stop);
++    }
++
+     g_signal_emit (seat, signals[SESSION_REMOVED], 0, session);
+     g_object_unref (session);
+ 
+@@ -997,6 +1461,48 @@ configure_session (Session *session, SessionConfig *config, const gchar *session
+     }
+ }
+ 
++// find and replace fisrt substring from original string, if not found return NULL
++static gchar* replace_first_substring(Seat *seat, const gchar* str_orig, const gchar* old_substr, const gchar* new_substr)
++{
++    if (!str_orig || !old_substr || !new_substr) {
++        return NULL;
++    }
++    gsize old_substr_len = strlen(old_substr);
++    gsize new_substr_len = strlen(new_substr);
++    gchar* result = NULL;
++    gsize result_len = 0;
++    gsize i = 0;
++
++    if (g_strstr_len(str_orig, strlen(str_orig), old_substr) != NULL) {
++        // 计算新字符串的总长度
++        result_len = strlen(str_orig) + (new_substr_len - old_substr_len);
++        result = g_malloc0(result_len + 1); // +1 for the null terminator
++
++        if (result == NULL) {
++            l_debug (seat, "Memory allocation failed");
++            return NULL; // In practice, you should handle this error more gracefully
++        }
++
++        i = 0;
++        const gchar* p = str_orig;
++        gboolean is_replaced = FALSE;
++        while (*p) {
++            if (!is_replaced && g_strstr_len(p, strlen(p), old_substr) == p) {
++                strcpy(&result[i], new_substr);
++                i += new_substr_len;
++                p += old_substr_len;
++                is_replaced = TRUE;
++            } else {
++                result[i++] = *p++;
++            }
++        }
++        result[i] = '\0';
++        return result;
++    } else {
++        return NULL;
++    }
++}
++
+ static Session *
+ create_user_session (Seat *seat, const gchar *username, gboolean autostart)
+ {
+@@ -1034,9 +1540,42 @@ create_user_session (Seat *seat, const gchar *username, gboolean autostart)
+     configure_session (session, session_config, session_name, language);
+     session_set_username (session, username);
+     session_set_do_authenticate (session, TRUE);
++
++    const gchar *autologin_username = seat_get_string_property (seat, "autologin-user");
++    const gchar *autologin_username_lock = config_get_string (config_get_instance (), "LightDM", "autologin-user-lock");
++    if (autologin_username == NULL || g_strcmp0 (autologin_username, "") == 0){
++        if(autologin_username_lock && g_strcmp0(autologin_username_lock, "") != 0){
++            g_auto(GStrv) argv = get_session_argv (seat, session_config, seat_get_string_property (seat, "session-wrapper"));
++            config_set_string (config_get_instance (), "LightDM", "autologin-user-lock", "");
++            session_set_env (session, "UKUI_QUICK_START", "1");
++            session_set_argv (session, argv);
++            return g_steal_pointer (&session);
++        }
++    }
++
+     g_auto(GStrv) argv = get_session_argv (seat, session_config, seat_get_string_property (seat, "session-wrapper"));
+     session_set_argv (session, argv);
+ 
++    /* 需要 wlcom 绘制背景时设置 KYWC_OUTPUT_FILL_WALLPAPER=1 的环境变量。
++     * 读取顺序：
++     *   1) Seat:* 里的 draw-background
++     *   2) /etc/lightdm/draw-background.conf
++     *   3) 默认 true */
++    gboolean draw_background = seat_get_boolean_with_system_fallback (
++        seat,
++        "draw-background",
++        "/etc/lightdm/draw-background.conf",
++        TRUE);
++
++    if (!autostart && !IS_GREETER_SESSION (session) && draw_background)
++    {
++        const gchar *quick_start = session_get_env (session, "UKUI_QUICK_START");
++        if (!quick_start || g_strcmp0 (quick_start, "1") != 0)
++        {
++            session_set_env (session, "KYWC_OUTPUT_FILL_WALLPAPER", "1");
++        }
++    }
++
+     return g_steal_pointer (&session);
+ }
+ 
+@@ -1123,6 +1662,16 @@ greeter_start_session_cb (Greeter *greeter, SessionType type, const gchar *sessi
+ {
+     SeatPrivate *priv = seat_get_instance_private (seat);
+ 
++    /* Seat 级别键：draw-background，支持系统级回退文件：
++     *   1) Seat:* 里的 draw-background
++     *   2) /etc/lightdm/draw-background.conf
++     *   3) 默认 true */
++    gboolean draw_background = seat_get_boolean_with_system_fallback (
++        seat,
++        "draw-background",
++        "/etc/lightdm/draw-background.conf",
++        TRUE);
++
+     /* Get the session to use */
+     Session *session;
+     if (greeter_get_guest_authenticated (greeter))
+@@ -1131,6 +1680,19 @@ greeter_start_session_cb (Greeter *greeter, SessionType type, const gchar *sessi
+         if (!session)
+             return FALSE;
+         session_set_pam_service (session, seat_get_string_property (seat, "pam-autologin-service"));
++
++	/* 需要wlcom 绘制背景时设置KYWC_OUTPUT_FILL_WALLPAPER=1的环境变量,
++         * 自动登录，秒级登录以及登录界面不设置(自动登录其实可以设置，这里
++         * 先不区分自动登录以及秒级登录了，需要时再加上)。
++         * draw-background=false 时关闭此行为。*/
++	if (!IS_GREETER_SESSION (session) && draw_background)
++        {
++            const gchar *quick_start = session_get_env (session, "UKUI_QUICK_START");
++            if (!quick_start || g_strcmp0 (quick_start, "1") != 0)
++            {
++                session_set_env (session, "KYWC_OUTPUT_FILL_WALLPAPER", "1");
++            }
++        }
+     }
+     else
+     {
+@@ -1180,22 +1742,45 @@ greeter_start_session_cb (Greeter *greeter, SessionType type, const gchar *sessi
+         configure_session (session, session_config, session_name, language);
+         g_auto(GStrv) argv = get_session_argv (seat, session_config, seat_get_string_property (seat, "session-wrapper"));
+         session_set_argv (session, argv);
++
++	/* 需要wlcom 绘制背景时设置KYWC_OUTPUT_FILL_WALLPAPER=1的环境变量,
++         * 自动登录，秒级登录以及登录界面不设置(自动登录其实可以设置，这里
++         * 先不区分自动登录以及秒级登录了，需要时再加上)。
++         * draw-background=false 时关闭此行为。*/
++	if (!IS_GREETER_SESSION (session) && draw_background)
++        {
++            const gchar *quick_start = session_get_env (session, "UKUI_QUICK_START");
++            if (!quick_start || g_strcmp0 (quick_start, "1") != 0)
++            {
++                session_set_env (session, "KYWC_OUTPUT_FILL_WALLPAPER", "1");
++            }
++        }
+     }
+ 
+     /* Switch to this session when it is ready */
+     g_clear_object (&priv->session_to_activate);
+     priv->session_to_activate = session;
+ 
+-    /* Return to existing session if it is open */
++    /* Return to existing session if it is open and running */
+     const gchar *username = session_get_username (session);
+     Session *existing_session = find_user_session (seat, username, NULL);
+     if (existing_session && session != existing_session)
+     {
+-        l_debug (seat, "Returning to existing user session %s", username);
+-        session_stop (session);
+-        session_unlock (existing_session);
+-        seat_set_active_session (seat, existing_session);
+-        return TRUE;
++        /* Only return to existing session if it's actually running.
++         * If it's stopped or stopping, create a new session instead. */
++        if (session_get_is_stopping (existing_session) || !session_get_is_run (existing_session))
++        {
++            l_debug (seat, "Existing session for %s is not running, creating new session", username);
++            existing_session = NULL;
++        }
++        else
++        {
++            l_debug (seat, "Returning to existing user session %s", username);
++            session_stop (session);
++            session_unlock (existing_session);
++            seat_set_active_session (seat, existing_session);
++            return TRUE;
++        }
+     }
+ 
+     /* If can re-use the display server, stop the greeter first */
+@@ -1295,6 +1880,12 @@ create_greeter_session (Seat *seat)
+         autologin_session = NULL;
+     int autologin_timeout = seat_get_integer_property (seat, "autologin-user-timeout");
+     gboolean autologin_guest = seat_get_boolean_property (seat, "autologin-guest");
++
++    int autologin_greeter_timeout = config_get_integer (config_get_instance (), "Seat:*", "autologin-greeter-timeout"); 
++    if(autologin_timeout == 0 &&  autologin_greeter_timeout > 0)
++        autologin_timeout = autologin_greeter_timeout;
++
++    config_set_integer (config_get_instance (), "Seat:*", "autologin-greeter-timeout", 0);
+     if (autologin_timeout > 0)
+     {
+         g_autofree gchar *value = g_strdup_printf ("%d", autologin_timeout);
+@@ -1328,6 +1919,33 @@ find_session_for_display_server (Seat *seat, DisplayServer *display_server)
+     return NULL;
+ }
+ 
++/**
++ * @brief 播放开机音乐
++*/
++static void
++startup_music_stopped_cb (Process *process, Seat *seat)
++{
++    l_debug (seat, "startup music stopped");
++    g_clear_object(&process);
++}
++
++/**
++ * @brief 播放开机音乐
++*/
++static void
++run_startup_music(Seat *seat)
++{
++    if(access(STARTUP_MUSIC_PATH, F_OK) != 0)
++        return ;
++
++    Process* command = process_new (NULL, NULL);
++    g_signal_connect (command, PROCESS_SIGNAL_STOPPED, G_CALLBACK (startup_music_stopped_cb), seat);
++    process_set_command (command, STARTUP_MUSIC_PATH);
++
++    process_set_clear_environment (command, FALSE);
++    process_start (command, FALSE);
++}
++
+ static void
+ display_server_ready_cb (DisplayServer *display_server, Seat *seat)
+ {
+@@ -1340,12 +1958,37 @@ display_server_ready_cb (DisplayServer *display_server, Seat *seat)
+         return;
+     }
+ 
++    run_startup_music(seat);
++
+     emit_upstart_signal ("login-session-start");
+ 
+     /* Start the session waiting for this display server */
+     Session *session = find_session_for_display_server (seat, display_server);
+     if (session)
+     {
++        if (!IS_GREETER_SESSION (session) && should_apply_wayland_commit_behavior (seat, session))
++        {
++            /* 
++             * 只有“从登录界面登录进入桌面”的会话才设置非刷新模式：
++             * - 会话不是 greeter
++             * - 会话使用的 PAM 服务不是自动登录服务（即非 autologin 会话）
++             * 这样可以避免自动登录或仅进入登录界面时调用 vt_set_non_refresh_mode。
++             */
++            const gchar *pam_service = session_get_pam_service (session);
++            const gchar *autologin_pam_service = seat_get_string_property (seat, "pam-autologin-service");
++
++            if (!autologin_pam_service || !pam_service || g_strcmp0 (pam_service, autologin_pam_service) != 0)
++            {
++                /*为要登录的会话设置属性，设置后切换tty，能够显示上个tty最后的画面，避免黑屏过程*/
++                gint vt = display_server_get_vt (display_server);
++                if (vt > 0)
++                {
++                    l_debug (seat, "Setting VT %d to non-refresh mode for user session (Wayland)", vt);
++                    vt_set_non_refresh_mode (vt);
++                }
++            }
++        }
++
+         if (session_get_is_authenticated (session))
+         {
+             l_debug (seat, "Display server ready, running session");
+@@ -1445,10 +2088,24 @@ switch_authentication_complete_cb (Session *session, Seat *seat)
+         Session *s = find_user_session (seat, session_get_username (session), session);
+         if (s)
+         {
+-            l_debug (seat, "Session authenticated, switching to existing user session");
+-            session_unlock (s);
+-            seat_set_active_session (seat, s);
+-            session_stop (session);
++            /* Only switch to existing session if it's actually running.
++             * If it's stopped or stopping, create a new session instead. */
++            if (session_get_is_stopping (s) || !session_get_is_run (s))
++            {
++                l_debug (seat, "Existing session is not running, starting display server for new session");
++                g_clear_object (&priv->session_to_activate);
++                priv->session_to_activate = g_object_ref (session);
++                DisplayServer *display_server = create_display_server (seat, session);
++                session_set_display_server (session, display_server);
++                start_display_server (seat, display_server);
++            }
++            else
++            {
++                l_debug (seat, "Session authenticated, switching to existing user session");
++                session_unlock (s);
++                seat_set_active_session (seat, s);
++                session_stop (session);
++            }
+         }
+         else
+         {
+@@ -1687,12 +2344,33 @@ seat_real_start (Seat *seat)
+ 
+     /* Get autologin settings */
+     const gchar *autologin_username = seat_get_string_property (seat, "autologin-user");
+-    if (g_strcmp0 (autologin_username, "") == 0)
++    const gchar *autologin_username_lock = config_get_string (config_get_instance (), "LightDM", "autologin-user-lock");
++    if (autologin_username == NULL || g_strcmp0 (autologin_username, "") == 0) {
+         autologin_username = NULL;
++    	if(autologin_username_lock && g_strcmp0(autologin_username_lock, "") != 0) {
++            const gchar *session_name = NULL;
++            g_autoptr(User) user = accounts_get_user_by_name (autologin_username_lock);
++            if (user) {
++                session_name = user_get_xsession (user);
++            }
++            if (!session_name) {
++                session_name = seat_get_string_property (seat, "user-session");
++            }
++            l_debug(seat,"session name: %s\n", session_name);
++            if (session_name && (g_strcmp0 (session_name, "ukui") == 0 || g_strcmp0 (session_name, "kylin-wlcom") == 0)) {
++                autologin_username = autologin_username_lock;
++            }
++        }
++    }
+     int autologin_timeout = seat_get_integer_property (seat, "autologin-user-timeout");
+     gboolean autologin_guest = seat_get_boolean_property (seat, "autologin-guest");
+     gboolean autologin_in_background = seat_get_boolean_property (seat, "autologin-in-background");
+ 
++    int autologin_greeter_timeout = config_get_integer (config_get_instance (), "Seat:*", "autologin-greeter-timeout");
++    if(autologin_timeout == 0 &&  autologin_greeter_timeout > 0)
++        autologin_timeout = autologin_greeter_timeout;
++
++    l_debug(seat,"autologin_greeter_timeout = %d\n",autologin_greeter_timeout);
+     /* Autologin if configured */
+     Session *session = NULL, *background_session = NULL;
+     if (autologin_timeout == 0 || autologin_in_background)
+@@ -1902,6 +2580,9 @@ seat_init (Seat *seat)
+ 
+     priv->properties = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+     priv->share_display_server = TRUE;
++    priv->activation_check_source_id = 0;
++    priv->greeter_exit_delay_source_id = 0;
++    priv->greeter_owner_check_count = 0;
+ }
+ 
+ static void
+diff --git a/src/seat.h b/src/seat.h
+index 5622883..1402de1 100644
+--- a/src/seat.h
++++ b/src/seat.h
+@@ -104,8 +104,12 @@ gboolean seat_get_can_switch (Seat *seat);
+ 
+ gboolean seat_get_allow_guest (Seat *seat);
+ 
++gboolean seat_get_show_manual_login (Seat *seat);
++
+ gboolean seat_get_greeter_allow_guest (Seat *seat);
+ 
++gboolean seat_get_is_hide_users (Seat *seat);
++
+ gboolean seat_switch_to_greeter (Seat *seat);
+ 
+ gboolean seat_switch_to_user (Seat *seat, const gchar *username, const gchar *session_name);
+diff --git a/src/session-child.c b/src/session-child.c
+index 16986c9..3079eea 100644
+--- a/src/session-child.c
++++ b/src/session-child.c
+@@ -13,9 +13,11 @@
+ #include <grp.h>
+ #include <glib.h>
+ #include <security/pam_appl.h>
++#include <security/pam_misc.h>
+ #include <utmp.h>
+ #include <utmpx.h>
+ #include <sys/mman.h>
++#include <locale.h>
+ 
+ #if HAVE_LIBAUDIT
+ #include <libaudit.h>
+@@ -30,6 +32,8 @@
+ #include "privileges.h"
+ #include "x-authority.h"
+ #include "configuration.h"
++#include "logger.h"
++#include <cjson/cJSON.h>
+ 
+ /* Child process being run */
+ static GPid child_pid = 0;
+@@ -43,6 +47,17 @@ static gboolean do_authenticate;
+ static gboolean authentication_complete = FALSE;
+ static pam_handle_t *pam_handle;
+ 
++enum BinaryPromptType {
++    BinaryPromptAuthType, //认证类型
++    BinaryPromptNumber,   //数字类型消息，暂不使用
++    BinaryPromptMessage,  //消息类型
++    BinaryPromptImage,    //图片类型，暂不使用
++    BinaryPromptQrcodeStr,   //二维码字符串
++    BinaryPromptPromptMessage,//绑定密码框中的消息
++    BinaryPromptErrorMessage,  //绑定密码框下方的错误消息
++    BinaryPromptEmergMsg       //OTP紧急口令
++};
++
+ /* Maximum length of a string to pass between daemon and session */
+ #define MAX_STRING_LENGTH 65535
+ 
+@@ -132,11 +147,122 @@ pam_conv_cb (int msg_length, const struct pam_message **msg, struct pam_response
+     write_data (&auth_complete, sizeof (auth_complete));
+     size_t length = msg_length;
+     write_data (&length, sizeof (length));
++    
+     for (int i = 0; i < msg_length; i++)
+     {
+         const struct pam_message *m = msg[i];
+-        write_data (&m->msg_style, sizeof (m->msg_style));
+-        write_string (m->msg);
++        if (m->msg_style == PAM_BINARY_PROMPT){
++            write_data (&m->msg_style, sizeof (m->msg_style));
++            pamc_bp_t binary_prompt = NULL;
++            const char *auth_mode;
++            int idata;
++            int pic_len;
++            const unsigned char *pic_buf;
++            const char *str_data;
++            int msgType = -1;
++            int binaryNum;
++            if (!m->msg) {
++                syslog(LOG_INFO,"msg is null!");
++                write_string("");
++                continue;
++            }
++            binary_prompt = (pamc_bp_t)m->msg;
++            cJSON *rootJson = cJSON_CreateObject();
++
++            switch (binary_prompt->control) {
++                case 0x10: {
++		    msgType = BinaryPromptAuthType;
++                    auth_mode = (const char *)PAM_BP_RDATA(binary_prompt);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddStringToObject(rootJson,"binaryStr",auth_mode);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string(jsonStr);
++                    free(jsonStr);
++		    break;
++		}
++		case 0x11: {
++                    msgType = BinaryPromptNumber;
++                    idata = *(int *)PAM_BP_RDATA(binary_prompt);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddNumberToObject(rootJson,"binaryInt",idata);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string(jsonStr);
++                    free(jsonStr);
++                    break;
++		}
++		case 0x12: {
++                    msgType = BinaryPromptMessage;
++                    str_data = (const char *)PAM_BP_RDATA(binary_prompt);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddStringToObject(rootJson,"binaryStr",str_data);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string(jsonStr);
++                    free(jsonStr);
++                    break; 
++                }
++                case 0x13: {
++                    msgType = BinaryPromptImage;
++                    pic_len = binary_prompt->length - PAM_BP_MIN_SIZE;
++                    pic_buf = PAM_BP_RDATA(binary_prompt);
++                    char *base64_str = g_base64_encode(pic_buf,pic_len);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddStringToObject(rootJson,"binaryStr",base64_str);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string("");
++                    free(jsonStr);
++                    free(base64_str);
++                    break;
++                }
++		case 0x14: {
++                    msgType = BinaryPromptQrcodeStr;
++                    str_data = (const char *)PAM_BP_RDATA(binary_prompt);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddStringToObject(rootJson,"binaryStr",str_data);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string(jsonStr);
++                    free(jsonStr);
++                    break;
++                }
++                case 0x15: {
++                    msgType = BinaryPromptPromptMessage;
++                    str_data = (const char *)PAM_BP_RDATA(binary_prompt);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddStringToObject(rootJson,"binaryStr",str_data);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string(jsonStr);
++                    free(jsonStr);
++                    break; 
++                }
++                case 0x16: {
++                    msgType = BinaryPromptErrorMessage;
++                    str_data = (const char *)PAM_BP_RDATA(binary_prompt);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddStringToObject(rootJson,"binaryStr",str_data);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string(jsonStr);
++                    free(jsonStr);
++                    break;
++                }
++                case 0x17: {
++                    msgType = BinaryPromptEmergMsg;
++                    str_data = (const char *)PAM_BP_RDATA(binary_prompt);
++                    cJSON_AddNumberToObject(rootJson,"type",msgType);
++                    cJSON_AddStringToObject(rootJson,"binaryStr",str_data);
++                    char *jsonStr = cJSON_Print(rootJson);
++                    write_string(jsonStr);
++                    free(jsonStr);
++                    break;
++                }
++		default:{
++                    write_string("");
++                    break;
++		}
++                cJSON_Delete(rootJson);
++	    }
++        } else {
++            write_data (&m->msg_style, sizeof (m->msg_style));
++            write_string (m->msg);
++        }
+     }
+ 
+     /* Get response */
+@@ -239,6 +365,18 @@ audit_event (int type, const gchar *username, uid_t uid, const gchar *remote_hos
+ }
+ #endif
+ 
++//针对lightdm默认账户，还原语言设置
++static void
++restoreLangSet (const gchar *lang)
++{
++    if (!lang || strcmp (lang, "") == 0){
++        return;
++    }
++
++    setenv("LANGUAGE", g_strdup_printf("%s", lang), 1);
++    setlocale(LC_MESSAGES, lang);
++}
++
+ int
+ session_child_run (int argc, char **argv)
+ {
+@@ -293,12 +431,30 @@ session_child_run (int argc, char **argv)
+     g_autofree gchar *remote_host_name = read_string ();
+     g_autofree gchar *xdisplay = read_string ();
+     g_autoptr(XAuthority) x_authority = read_xauth ();
++    g_autofree gchar *wayland_utmp_display = NULL;
++    if(xdisplay){
++    	wayland_utmp_display = g_strdup_printf ("%s", xdisplay);
++    }
+ 
+     /* Setup PAM */
+     struct pam_conv conversation = { pam_conv_cb, NULL };
++    User *user_pam = NULL;
++    user_pam = accounts_get_user_by_name (username);
++    gchar *saveLanguage = "";
++    if (user_pam && strcmp (username, "lightdm") != 0)//lightdm用户过滤,登录默认session的pam校验语言设置异常
++    {
++        const gchar *accountsLang = user_get_language (user_pam);
++        if (accountsLang && accountsLang[0] != '\0') {
++            saveLanguage = getenv ("LANGUAGE");
++            setenv("LANGUAGE", g_strdup_printf("%s", accountsLang), 1);
++            setlocale(LC_MESSAGES, accountsLang);
++        }
++    }
+     int result = pam_start (service, username, &conversation, &pam_handle);
+     if (result != PAM_SUCCESS)
+     {
++        //还原语言设置
++        restoreLangSet(saveLanguage);     
+         g_printerr ("Failed to start PAM: %s", pam_strerror (NULL, result));
+         return EXIT_FAILURE;
+     }
+@@ -337,6 +493,8 @@ session_child_run (int argc, char **argv)
+         if (pam_get_item (pam_handle, PAM_USER, (const void **) &new_username) != PAM_SUCCESS)
+         {
+             pam_end (pam_handle, 0);
++            //还原语言设置
++            restoreLangSet(saveLanguage);
+             return EXIT_FAILURE;
+         }
+         g_free (username);
+@@ -454,6 +612,8 @@ session_child_run (int argc, char **argv)
+     if (authentication_result != PAM_SUCCESS)
+     {
+         pam_end (pam_handle, 0);
++        //还原语言设置
++        restoreLangSet(saveLanguage);
+         return EXIT_FAILURE;
+     }
+ 
+@@ -492,6 +652,8 @@ session_child_run (int argc, char **argv)
+     {
+         pam_setcred (pam_handle, PAM_REINITIALIZE_CRED);
+         pam_end (pam_handle, 0);
++        //还原语言设置
++        restoreLangSet(saveLanguage);
+         return EXIT_SUCCESS;
+     }
+ 
+@@ -529,15 +691,21 @@ session_child_run (int argc, char **argv)
+     {
+         g_printerr ("Failed to establish PAM credentials: %s\n", pam_strerror (pam_handle, result));
+         pam_end (pam_handle, 0);
++        //还原语言设置
++        restoreLangSet(saveLanguage);
+         return EXIT_FAILURE;
+     }
+ 
+     /* Open the session */
++    syslog_debug("[lightdm] pam_open_session begin:%s\n", username);
+     result = pam_open_session (pam_handle, 0);
++    syslog_debug("[lightdm] pam_open_session result: %s/%d\n", username, result);
+     if (result != PAM_SUCCESS)
+     {
+         g_printerr ("Failed to open PAM session: %s\n", pam_strerror (pam_handle, result));
+         pam_end (pam_handle, 0);
++        //还原语言设置
++        restoreLangSet(saveLanguage);
+         return EXIT_FAILURE;
+     }
+ 
+@@ -549,6 +717,8 @@ session_child_run (int argc, char **argv)
+     if (!bus)
+     {
+         pam_end (pam_handle, 0);
++        //还原语言设置
++        restoreLangSet(saveLanguage);
+         return EXIT_FAILURE;
+     }
+ 
+@@ -606,8 +776,13 @@ session_child_run (int argc, char **argv)
+     if (x_authority)
+     {
+         gboolean drop_privileges = geteuid () == 0;
+-        if (drop_privileges)
++        if (drop_privileges) {
++            if (x_authority_filename && chown (x_authority_filename, user_get_uid (user), user_get_gid (user)) < 0)
++                g_warning ("Failed to set ownership of user authority file: %s", strerror (errno));
+             privileges_drop (user_get_uid (user), user_get_gid (user));
++            if (x_authority_filename && chmod (x_authority_filename, S_IRUSR | S_IWUSR) < 0)
++                g_warning ("Failed to set access of user authority file: %s", strerror (errno));
++        }
+ 
+         g_autoptr(GError) error = NULL;
+         gboolean result = x_authority_write (x_authority, XAUTH_WRITE_MODE_REPLACE, x_authority_filename, &error);
+@@ -619,6 +794,8 @@ session_child_run (int argc, char **argv)
+         if (!result)
+         {
+             pam_end (pam_handle, 0);
++            //还原语言设置
++            restoreLangSet(saveLanguage);
+             return EXIT_FAILURE;
+         }
+ 
+@@ -696,12 +873,16 @@ session_child_run (int argc, char **argv)
+             memset (&ut, 0, sizeof (ut));
+             ut.ut_type = USER_PROCESS;
+             ut.ut_pid = child_pid;
+-            if (xdisplay)
++            if (wayland_utmp_display && (g_strcmp0 (pam_getenv (pam_handle, "XDG_SESSION_TYPE"), "wayland") == 0))
++                strncpy (ut.ut_id, wayland_utmp_display, sizeof (ut.ut_id));
++	    else if (xdisplay)
+                 strncpy (ut.ut_id, xdisplay, sizeof (ut.ut_id));
+             if (tty && g_str_has_prefix (tty, "/dev/"))
+                 strncpy (ut.ut_line, tty + strlen ("/dev/"), sizeof (ut.ut_line));
+             strncpy (ut.ut_user, username, sizeof (ut.ut_user));
+-            if (xdisplay)
++            if (wayland_utmp_display && (g_strcmp0 (pam_getenv (pam_handle, "XDG_SESSION_TYPE"), "wayland") == 0))
++                strncpy (ut.ut_host, wayland_utmp_display, sizeof (ut.ut_host));
++	    else if (xdisplay)
+                 strncpy (ut.ut_host, xdisplay, sizeof (ut.ut_host));
+             else if (remote_host_name)
+                 strncpy (ut.ut_host, remote_host_name, sizeof (ut.ut_host));
+@@ -737,12 +918,16 @@ session_child_run (int argc, char **argv)
+             memset (&ut, 0, sizeof (ut));
+             ut.ut_type = DEAD_PROCESS;
+             ut.ut_pid = child_pid;
+-            if (xdisplay)
++	    if (wayland_utmp_display && (g_strcmp0 (pam_getenv (pam_handle, "XDG_SESSION_TYPE"), "wayland") == 0))
++                strncpy (ut.ut_id, wayland_utmp_display, sizeof (ut.ut_id));
++	    else if (xdisplay)
+                 strncpy (ut.ut_id, xdisplay, sizeof (ut.ut_id));
+             if (tty && g_str_has_prefix (tty, "/dev/"))
+                 strncpy (ut.ut_line, tty + strlen ("/dev/"), sizeof (ut.ut_line));
+             strncpy (ut.ut_user, username, sizeof (ut.ut_user));
+-            if (xdisplay)
++	    if (wayland_utmp_display && (g_strcmp0 (pam_getenv (pam_handle, "XDG_SESSION_TYPE"), "wayland") == 0))
++	    	strncpy (ut.ut_host, wayland_utmp_display, sizeof (ut.ut_host));
++	    else if (xdisplay)
+                 strncpy (ut.ut_host, xdisplay, sizeof (ut.ut_host));
+             else if (remote_host_name)
+                 strncpy (ut.ut_host, remote_host_name, sizeof (ut.ut_host));
+@@ -796,5 +981,7 @@ session_child_run (int argc, char **argv)
+     pam_handle = NULL;
+ 
+     /* Return result of session process to the daemon */
++    //还原语言设置
++    restoreLangSet(saveLanguage);
+     return return_code;
+ }
+diff --git a/src/session.c b/src/session.c
+index fce12a0..3c971b2 100644
+--- a/src/session.c
++++ b/src/session.c
+@@ -15,7 +15,9 @@
+ #include <string.h>
+ #include <errno.h>
+ #include <unistd.h>
++#include <sys/types.h>
+ #include <sys/wait.h>
++#include <sys/time.h>
+ #include <fcntl.h>
+ #include <glib/gstdio.h>
+ #include <grp.h>
+@@ -173,6 +175,14 @@ session_set_pam_service (Session *session, const gchar *pam_service)
+     priv->pam_service = g_strdup (pam_service);
+ }
+ 
++const gchar *
++session_get_pam_service (Session *session)
++{
++    SessionPrivate *priv = session_get_instance_private (session);
++    g_return_val_if_fail (session != NULL, NULL);
++    return priv->pam_service;
++}
++
+ void
+ session_set_username (Session *session, const gchar *username)
+ {
+@@ -446,6 +456,106 @@ read_string_from_child (Session *session)
+     return value;
+ }
+ 
++static int
++get_uid_by_name (const char *username, uid_t *out_uid)
++{
++    struct passwd *pwd;
++
++    g_return_val_if_fail (username != NULL, -1);
++    g_return_val_if_fail (out_uid != NULL, -1);
++
++    pwd = getpwnam (username);
++    if (pwd == NULL)
++        return -1;
++
++    *out_uid = pwd->pw_uid;
++    return 0;
++}
++
++int detectProcessByName(char * processName, char * userName)
++{
++    FILE* fp = NULL;
++    int buffSize = 100;
++    char buf[buffSize];
++    char command[150];
++    uid_t uid;
++    memset(buf, 0, sizeof(buf));
++    memset(command, 0, sizeof(command));
++
++    if (get_uid_by_name (userName, &uid) < 0)
++        return -1;
++
++    if(snprintf(command, sizeof(command), "ps -u %d | grep %s", (int) uid, processName) < 0)
++        return -1;
++
++    if((fp = popen(command,"r")) == NULL)
++        return -2;
++
++    if((fgets(buf, buffSize, fp))!= NULL)
++    {
++        pclose(fp);
++        fp = NULL;
++        if(NULL != strstr(buf, processName))
++            return 0;
++    }
++
++    if(fp){
++        pclose(fp);
++        fp = NULL;
++    }
++
++    return -3;
++}
++
++int killProcess(char *processName, char * userName)
++{
++    FILE* fp = NULL;
++    int buffSize = 100;
++    char buf[buffSize];
++    char command[150];
++    uid_t uid;
++    memset(buf, 0, sizeof(buf));
++    memset(command, 0, sizeof(command));
++
++    int p = NULL;
++
++    if (get_uid_by_name (userName, &uid) < 0)
++        return -1;
++
++    if (snprintf(command, sizeof(command), "ps -u %d | grep %s", (int) uid, processName) < 0)
++        return -1;
++
++    if ((fp = popen(command, "r")) == NULL)
++        return -2;
++
++    if ((fgets(buf, buffSize, fp)) != NULL)
++    {
++        pclose(fp);
++        fp = NULL;
++        if (strtok(buf, " ") == NULL)
++            return -3;
++        if (strlen(strtok(buf, " ")) == 0)
++            return -3;
++
++        p=atoi(strtok(buf, " "));
++        if (p == 0)
++            return -3;
++
++        int ret = kill(p, 9);
++        if(0==ret)
++            return 0;
++        else
++            return -4;
++    }
++
++    if(fp){
++        pclose(fp);
++        fp = NULL;
++    }
++
++    return -5;
++}
++
+ static void
+ session_watch_cb (GPid pid, gint status, gpointer data)
+ {
+@@ -455,7 +565,40 @@ session_watch_cb (GPid pid, gint status, gpointer data)
+     priv->child_watch = 0;
+ 
+     if (WIFEXITED (status))
++    {
++        l_debug (session, "PAM authentication_result %d", priv->authentication_result);
+         l_debug (session, "Exited with return value %d", WEXITSTATUS (status));
++        if (WEXITSTATUS (status) != 0 && priv->authentication_result == 0 /* PAM_SUCCESS */)
++        {
++            int hasKWin = detectProcessByName("ukui-kwin_x11", priv->username);
++            if (hasKWin == 0) {
++                l_debug (session, "have ukui-kwin_x11 process");
++                int iskill = killProcess("ukui-kwin_x11", priv->username);
++                if (iskill == 0) {
++                    l_debug (session, "wait ukui-kwin_x11 exit");
++                    int time_use = 0;
++	                struct timeval start;
++	                struct timeval end;
++	                gettimeofday(&start,NULL);
++                    while (hasKWin == 0)
++                    {
++                        hasKWin = detectProcessByName("ukui-kwin_x11", priv->username);
++                        gettimeofday(&end, NULL);
++                        time_use = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
++                        if (time_use >= 3000000)
++                        {
++                            l_debug (session, "kill ukui-kwin_x11 timeout");
++                            break;
++                        }
++                    }
++                    if (hasKWin)
++                    {
++                        l_debug (session, "Successfully killed ukui-kwin_x11");
++                    }
++                }
++            }
++        }
++    }
+     else if (WIFSIGNALED (status))
+         l_debug (session, "Terminated with signal %d", WTERMSIG (status));
+ 
+@@ -823,7 +966,7 @@ session_real_run (Session *session)
+     }
+ 
+     /* Open socket to allow in-session greeter */
+-    if (priv->config && session_config_get_allow_greeter (priv->config))
++    if (priv->config /*&& session_config_get_allow_greeter (priv->config)*/)
+     {
+         g_autofree gchar *run_dir = config_get_string (config_get_instance (), "LightDM", "run-directory");
+         g_autofree gchar *dir = g_build_filename (run_dir, priv->username, NULL);
+diff --git a/src/session.h b/src/session.h
+index e1130e8..76b9c33 100644
+--- a/src/session.h
++++ b/src/session.h
+@@ -77,6 +77,8 @@ const gchar *session_get_session_type (Session *session);
+ 
+ void session_set_pam_service (Session *session, const gchar *pam_service);
+ 
++const gchar *session_get_pam_service (Session *session);
++
+ void session_set_username (Session *session, const gchar *username);
+ 
+ void session_set_do_authenticate (Session *session, gboolean do_authenticate);
+@@ -150,6 +152,10 @@ void session_stop (Session *session);
+ 
+ gboolean session_get_is_stopping (Session *session);
+ 
++int detectProcessByName(char * processName, char * userName);
++
++int killProcess(char * processName, char * userName);
++
+ G_END_DECLS
+ 
+ #endif /* SESSION_H_ */
+diff --git a/src/vt.c b/src/vt.c
+index 920ae68..97fd7a8 100644
+--- a/src/vt.c
++++ b/src/vt.c
+@@ -20,6 +20,9 @@
+ #include <linux/vt.h>
+ #endif
+ 
++#include <sys/kd.h>
++#include <signal.h>
++
+ #include "vt.h"
+ #include "configuration.h"
+ 
+@@ -70,6 +73,101 @@ vt_get_active (void)
+ #endif
+ }
+ 
++#define RELEASE_DISPLAY_SIGNAL (SIGRTMAX)
++#define ACQUIRE_DISPLAY_SIGNAL (SIGRTMAX - 1)
++
++// 当前设置的VT编号（用于信号处理）
++static gint current_vt_for_signal_handlers = -1;
++
++// 挂起信号处理：通知内核释放显示
++static void
++on_release_display(int sig) {
++    if (current_vt_for_signal_handlers < 0)
++        return;
++    g_autofree gchar *tty_path = g_strdup_printf ("/dev/tty%d", current_vt_for_signal_handlers);
++    int fd = open(tty_path, O_RDWR | O_NOCTTY);
++    if (fd >= 0) {
++        ioctl(fd, VT_RELDISP, 1);
++        close(fd);
++    }
++}
++
++// 恢复信号处理：通知内核重新获取显示
++static void
++on_acquire_display(int sig) {
++    if (current_vt_for_signal_handlers < 0)
++        return;
++    g_autofree gchar *tty_path = g_strdup_printf ("/dev/tty%d", current_vt_for_signal_handlers);
++    int fd = open(tty_path, O_RDWR | O_NOCTTY);
++    if (fd >= 0) {
++        ioctl(fd, VT_RELDISP, VT_ACKACQ);
++        close(fd);
++    }
++}
++
++/**
++ * Set VT to non-refresh mode (graphics mode with VT_PROCESS).
++ * This prevents the VT from being cleared when switching away.
++ * 
++ * @param vt_number The VT number to configure (must be >= 1)
++ * @return 0 on success, non-zero on error
++ */
++gint
++vt_set_non_refresh_mode (gint vt_number)
++{
++#ifdef __linux__
++    if (getuid () != 0)
++        return 1;
++
++    if (vt_number < 1)
++        return 1;
++
++    g_autofree gchar *tty_path = g_strdup_printf ("/dev/tty%d", vt_number);
++    g_debug ("Setting VT %d to non-refresh mode", vt_number);
++
++    int fd = open(tty_path, O_RDWR | O_NOCTTY);
++    if (fd < 0)
++    {
++        g_warning ("Error opening %s: %s", tty_path, strerror (errno));
++        return 1;
++    }
++
++    /* Set graphics mode */
++    if (ioctl(fd, KDSETMODE, KD_GRAPHICS) < 0)
++    {
++        g_warning ("Error setting KD_GRAPHICS mode on %s: %s", tty_path, strerror (errno));
++        close(fd);
++        return 1;
++    }
++
++    /* Set VT_PROCESS mode with signal handlers */
++    struct vt_mode mode = {0};
++    mode.mode = VT_PROCESS;
++    mode.relsig = RELEASE_DISPLAY_SIGNAL;
++    mode.acqsig = ACQUIRE_DISPLAY_SIGNAL;
++    if (ioctl(fd, VT_SETMODE, &mode) < 0)
++    {
++        g_warning ("Error setting VT_PROCESS mode on %s: %s", tty_path, strerror (errno));
++        close(fd);
++        return 1;
++    }
++
++    close(fd);
++
++    /* Update current VT for signal handlers and set up signal handlers */
++    current_vt_for_signal_handlers = vt_number;
++    signal(RELEASE_DISPLAY_SIGNAL, on_release_display);
++    signal(ACQUIRE_DISPLAY_SIGNAL, on_acquire_display);
++
++    return 0;
++#else
++    return 1;
++#endif
++}
++
++/* vt_is_effective_owner removed */
++
++
+ void
+ vt_set_active (gint number)
+ {
+diff --git a/src/vt.h b/src/vt.h
+index a731bec..67414ca 100644
+--- a/src/vt.h
++++ b/src/vt.h
+@@ -28,4 +28,6 @@ void vt_unref (gint number);
+ 
+ void vt_set_active (gint number);
+ 
++gint vt_set_non_refresh_mode (gint vt_number);
++
+ #endif /* VT_H_ */
+diff --git a/src/wayland-session.c b/src/wayland-session.c
+index 187bf1f..7f00fc4 100644
+--- a/src/wayland-session.c
++++ b/src/wayland-session.c
+@@ -12,11 +12,22 @@
+ #include "wayland-session.h"
+ #include "vt.h"
+ 
++#include <string.h>
++#include <fcntl.h>
++#include <sys/stat.h>
++#include <errno.h>
++#include <glib/gstdio.h>
++#include <stdlib.h>
++
++#include "configuration.h"
++#include "process.h"
++
+ typedef struct
+ {
+     /* VT to run on */
+     gint vt;
+     gboolean have_vt_ref;
++    guint xdisplay;
+ } WaylandSessionPrivate;
+ 
+ G_DEFINE_TYPE_WITH_PRIVATE (WaylandSession, wayland_session, DISPLAY_SERVER_TYPE)
+@@ -65,6 +76,19 @@ wayland_session_connect_session (DisplayServer *display_server, Session *session
+     {
+         g_autofree gchar *value = g_strdup_printf ("%d", priv->vt);
+         session_set_env (session, "XDG_VTNR", value);
++
++	g_autofree gchar *tty_text = NULL;
++        tty_text = g_strdup_printf ("/dev/tty%d", priv->vt);
++        session_set_tty (session, tty_text);
++        l_debug(session,"tty_text = %s\n",tty_text);
++    }
++
++    // set xwayland's xdisplay
++    gchar* xdisplay_addr = g_strdup_printf (":%u", priv->xdisplay);
++    if (xdisplay_addr) {
++        session_set_xdisplay (session, xdisplay_addr);
++        g_free (xdisplay_addr);
++        xdisplay_addr = NULL;
+     }
+ }
+ 
+@@ -73,11 +97,46 @@ wayland_session_disconnect_session (DisplayServer *display_server, Session *sess
+ {
+     session_unset_env (session, "XDG_SESSION_TYPE");
+     session_unset_env (session, "XDG_VTNR");
++    // set xwayland's xdisplay
++    session_set_xdisplay (session, NULL);
++}
++
++static gboolean
++display_number_in_use (guint display_number)
++{
++    /* See if an X server that we don't know of has a lock on that number */
++    g_autofree gchar *path = g_strdup_printf ("/tmp/.X11-unix/X%d", display_number);
++    gboolean in_use = g_file_test (path, G_FILE_TEST_EXISTS);
++
++    /* See if that lock file is valid, ignore it if the contents are invalid or the process doesn't exist */
++    /*g_autofree gchar *data = NULL;
++    if (in_use && g_file_get_contents (path, &data, NULL, NULL))
++    {
++        int pid = atoi (g_strstrip (data));
++
++        errno = 0;
++        if (pid < 0 || (kill (pid, 0) < 0 && errno == ESRCH))
++            in_use = FALSE;
++    }*/
++
++    return in_use;
++}
++
++static guint
++get_unused_xdisplay_number (void)
++{
++    guint number = config_get_integer (config_get_instance (), "LightDM", "minimum-display-number");
++    while (display_number_in_use (number))
++        number++;
++
++    return number;
+ }
+ 
+ static void
+ wayland_session_init (WaylandSession *session)
+ {
++    WaylandSessionPrivate *priv = wayland_session_get_instance_private (session);
++    priv->xdisplay = get_unused_xdisplay_number();
+ }
+ 
+ static void
+diff --git a/src/x-authority.c b/src/x-authority.c
+index a04f76a..857d141 100644
+--- a/src/x-authority.c
++++ b/src/x-authority.c
+@@ -302,7 +302,8 @@ x_authority_write (XAuthority *auth, XAuthWriteMode mode, const gchar *filename,
+         if (!matched &&
+             priv->family == a_priv->family &&
+             address_matches &&
+-            strcmp (priv->number, a_priv->number) == 0)
++            strcmp (priv->number, a_priv->number) == 0 &&
++            strcmp (priv->authorization_name, a_priv->authorization_name) == 0)
+         {
+             matched = TRUE;
+             if (mode == XAUTH_WRITE_MODE_REMOVE)
+diff --git a/src/x-server-local.c b/src/x-server-local.c
+index 7c4ab87..ac90b01 100644
+--- a/src/x-server-local.c
++++ b/src/x-server-local.c
+@@ -16,6 +16,7 @@
+ #include <errno.h>
+ #include <glib/gstdio.h>
+ #include <stdlib.h>
++#include <syslog.h>
+ 
+ #include "x-server-local.h"
+ #include "configuration.h"
+@@ -370,6 +371,7 @@ got_signal_cb (Process *process, int signum, XServerLocal *server)
+     if (signum == SIGUSR1 && !priv->got_signal)
+     {
+         priv->got_signal = TRUE;
++        syslog(LOG_INFO, "[lightdm:%d] Got X server signal started:%d!!", getpid(), priv->display_number);
+         l_debug (server, "Got signal from X server :%d", priv->display_number);
+ 
+         // FIXME: Check return value
+@@ -382,6 +384,7 @@ stopped_cb (Process *process, XServerLocal *server)
+ {
+     XServerLocalPrivate *priv = x_server_local_get_instance_private (server);
+ 
++    syslog(LOG_INFO, "[lightdm:%d] X server stopped:%d!!", getpid(), priv->display_number);
+     l_debug (server, "X server stopped");
+ 
+     /* Release VT and display number for re-use */
+@@ -542,6 +545,7 @@ x_server_local_start (DisplayServer *display_server)
+     if (g_getenv ("LIGHTDM_TEST_ROOT"))
+         process_set_env (priv->x_server_process, "LIGHTDM_TEST_ROOT", g_getenv ("LIGHTDM_TEST_ROOT"));
+ 
++    syslog(LOG_INFO, "[lightdm:%d] start X server begin:%d!!", getpid(), priv->display_number);
+     gboolean result = process_start (priv->x_server_process, FALSE);
+     if (result)
+         l_debug (display_server, "Waiting for ready signal from X server :%d", priv->display_number);
+diff --git a/tests/src/libsystem.c b/tests/src/libsystem.c
+index ebb60e7..79ca984 100644
+--- a/tests/src/libsystem.c
++++ b/tests/src/libsystem.c
+@@ -49,6 +49,18 @@ static int active_vt = 7;
+ static gboolean status_connected = FALSE;
+ static GKeyFile *config;
+ 
++int
++__xstat (int version, const char *path, struct stat *buf);
++
++int
++__xstat64 (int version, const char *path, struct stat64 *buf);
++
++int
++__fxstatat(int ver, int dirfd, const char *pathname, struct stat *buf, int flags);
++
++int
++__fxstatat64(int ver, int dirfd, const char *pathname, struct stat64 *buf, int flags);
++
+ static void connect_status (void)
+ {
+     if (status_connected)

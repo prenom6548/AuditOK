@@ -1,0 +1,89 @@
+#!/bin/sh
+
+## live-build(7) - System Build Scripts
+## Copyright (C) 2006-2012 Daniel Baumann <daniel@debian.org>
+##
+## This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.
+## This is free software, and you are welcome to redistribute it
+## under certain conditions; see COPYING for details.
+
+
+set -e
+
+# Including common functions
+( . "${LIVE_BUILD}/scripts/build.sh" > /dev/null 2>&1 || true ) || . /usr/lib/live/build.sh
+
+# Setting static variables
+DESCRIPTION="$(Echo 'install kare packages')"
+HELP=""
+USAGE="${PROGRAM} [--force]"
+
+Arguments "${@}"
+
+# Reading configuration files
+Read_conffiles config/all config/common config/bootstrap config/chroot config/binary config/source
+Set_defaults
+
+Echo_message "Begin install kare packages..."
+
+# Requiring stage file
+Require_stagefile .build/config .build/bootstrap .build/binary_chroot
+
+# Checking stage file
+Check_stagefile .build/binary_kare-install
+
+# Checking lock file
+Check_lockfile .lock
+
+# Creating lock file
+Create_lockfile .lock
+
+#安装kare基础环境包
+if [ -d "kare-env-base/" ] && ls kare-env-base/*deb >/dev/null 2>&1; then
+        Echo_message "检测到 kare-env-base 及 deb 文件，开始安装kare 基础环境包..."
+
+       # 构建目录并复制deb包
+        mv kare-env-base/ chroot/chroot/
+
+        # 在chroot中安装kare基础环境包
+        chroot chroot/chroot/ /bin/sh -c '
+           dpkg -i kare-env-base/*.deb
+	   rm -r kare-env-base/
+        '
+else
+        Echo_message "跳过：未找到 kare-env-base 目录或目录内无deb文件"
+fi
+
+# 如果安装了kare命令行工具，则构建shadow环境
+if [ -f "chroot/chroot/usr/bin/kare" ]; then
+	#构建kare影子环境
+	Echo_message "构建kare影子环境"
+	chroot chroot/chroot/ /bin/sh -c 'kare -b shadow'
+fi
+
+#检查条件：karePackage/ 目录存在且内部有deb包
+if [ -d "karePackage/" ] && ls karePackage/*.deb >/dev/null 2>&1; then
+    Echo_message "检测到 karePackage 及 deb 文件，开始安装kare应用..."
+
+    # 构建目录并复制deb包
+    mv karePackage/ chroot/chroot/tmp/karePackage/
+
+    # 挂载proc
+    chroot chroot/chroot/ mount -t proc /proc /proc
+
+    # 在chroot中安装kare应用包
+    chroot chroot/chroot/ /bin/sh -c '
+        for package in /tmp/karePackage/*.deb; do
+            echo "正在安装 $package..."
+            kare -e shadow -i "$package" --chroot True
+        done
+	rm -r /tmp/karePackage/
+    '
+
+    # 卸载proc
+    chroot chroot/chroot/ umount /proc
+else
+    Echo_message "跳过：未找到 karePackage 目录或目录内无deb文件"
+fi
+
+Create_stagefile .build/binary_kare-install

@@ -1,0 +1,229 @@
+From: Xie Wei <xiewei@kylinos.cn>
+Date: Wed, 2 Jul 2025 14:49:17 +0800
+Subject: =?utf-8?b?b3N0cmVlIGNvbW1pdOS4gOiHtOmXrumimA==?=
+
+---
+ scripts/build/lb_ostree_commit | 148 +++++++++++++++++++++--------------------
+ 1 file changed, 77 insertions(+), 71 deletions(-)
+
+diff --git a/scripts/build/lb_ostree_commit b/scripts/build/lb_ostree_commit
+index 7ae1434..1ea9c49 100644
+--- a/scripts/build/lb_ostree_commit
++++ b/scripts/build/lb_ostree_commit
+@@ -74,6 +74,20 @@ if [ -L chroot/chroot/usr/etc/LICENSE ]; then
+     echo "/usr/etc/LICENSE" >>chroot/skip-files.txt
+ fi
+ 
++#ostree 物料中，不应存在casper、kylin-os-installer 物料
++if [ -f chroot/chroot/usr/etc/casper.conf ]; then
++    echo "/usr/etc/casper.conf" >>chroot/skip-files.txt
++fi
++
++if [ -L chroot/chroot/usr/etc/systemd/system/final.target.wants/casper.service ]; then
++    echo "/usr/etc/systemd/system/final.target.wants/casper.service" >>chroot/skip-files.txt
++fi
++
++if [ -L chroot/chroot/usr/etc/systemd/system/graphical.target.wants/kylin-os-installer.service ]; then
++    echo "/usr/etc/systemd/system/graphical.target.wants/kylin-os-installer.service" >>chroot/skip-files.txt
++fi
++
++
+ while read os_release_file_line
+ do
+ 	if [ "$os_release_file_line" = "[info]" ]; then
+@@ -180,48 +194,6 @@ ln -s var/srv chroot/chroot/srv
+ Check_package chroot/usr/bin/ostree ostree
+ Install_package
+ 
+-cat > binary.sh << EOF
+-#!/bin/sh
+-export LANG=C.UTF-8
+-
+-os_version_name=$1
+-ostree_branch_name=$2
+-mate_data_add_string=$3
+-info_version_string=$4
+-
+-#echo "---------->>>>>>>>>000000 4"
+-ostree admin init-fs sysroot
+-
+-#echo "---------->>>>>>>>>000000 5"
+-ln -s /sysroot/ostree chroot/ostree
+-
+-#echo "---------->>>>>>>>>000000 6"
+-ostree admin os-init "$os_version_name" --sysroot=sysroot
+-echo "---------->>>>>>>>>000000 7"
+-ostree commit --repo=sysroot/ostree/repo -b "$ostree_branch_name" -s "$info_version_string" $mate_data_add_string --skip-list=./skip-files.txt chroot/
+-EOF
+-
+-mv binary.sh chroot/
+-
+-chroot_exec() {
+-    script_path="binary.sh"  # 脚本文件的路径
+-
+-    # 将参数传递给脚本（这里假设最多传递4个参数）
+-    chroot chroot /bin/sh "$script_path" "$@"
+-}
+-
+-chroot_exec "$os_version_name" "$ostree_branch_name" "$mate_data_add_string" "$info_version_string"
+-
+-mkdir usr_etc_file
+-
+-for etcfile in fstab passwd shadow group locale.gen localtime hostname hosts timezone subuid subgid
+-do
+-	chroot_etc_file="chroot/chroot/usr/etc/${etcfile}"
+-	if [ -e "$chroot_etc_file" ] || [ -L "$chroot_etc_file" ]; then
+-		mv "$chroot_etc_file" ./usr_etc_file/
+-	fi
+-done
+-
+ cp -r chroot/chroot/usr/etc chroot/chroot/
+ 
+ #创建overlay目录
+@@ -235,58 +207,89 @@ mount -t overlay overlay \
+ -o lowerdir=chroot/chroot,upperdir=chroot/overlay_dir/upper,workdir=chroot/overlay_dir/work \
+ chroot/overlay_dir/merged
+ 
+-#将后续操作转移到overlay 层,先改下chroot名，避免误操作
+-mv chroot/chroot chroot/chroot.orig
+ 
+ #在overlay的merged层进行删包操作
+ chroot_exec(){
+     chroot chroot/overlay_dir/merged /bin/sh -c "$1"
+ }
+ 
+- chroot_exec '
+- if (dpkg -l | grep -q kylin-os-installer) || (dpkg -l | grep -q casper); then
+-     dpkg -P kylin-os-installer casper ubiquity ukui-installer-wayland
+-     exit 0
+- else
+-     exit 0
+- fi
+- '
++chroot_exec '
++    if (dpkg -l | grep -q kylin-os-installer) || (dpkg -l | grep -q casper); then
++	dpkg -P kylin-os-installer casper ubiquity ukui-installer-wayland
++	exit 0
++    else
++	exit 0
++    fi
++'
++
++mkdir usr_etc_file
++
++for etcfile in fstab passwd shadow group locale.gen localtime hostname hosts timezone subuid subgid
++do
++	chroot_etc_file="chroot/overlay_dir/merged/usr/etc/${etcfile}"
++	if [ -e "$chroot_etc_file" ] || [ -L "$chroot_etc_file" ]; then
++		mv "$chroot_etc_file" ./usr_etc_file/
++	fi
++done
+ 
+-# remove etc
+-rm -r chroot/overlay_dir/merged/etc
++#remove etc
++if [ -d chroot/overlay_dir/merged/etc  ]; then
++	rm -r chroot/overlay_dir/merged/etc/
++fi
+ 
+-#将overlay的merged层作为提交点
+-cat > binary1.sh << EOF
++cat > binary.sh << EOF
+ #!/bin/sh
+ export LANG=C.UTF-8
+ 
+-ostree_push_branch_name=$1
+-info_version_string=$2
++os_version_name=$1
++ostree_branch_name=$2
+ mate_data_add_string=$3
++info_version_string=$4
++
++echo "---------->>>>>>>>>000000 1"
++ostree admin init-fs sysroot
++
++echo "---------->>>>>>>>>000000 2"
++ln -s /sysroot/ostree chroot/ostree
++
++echo "---------->>>>>>>>>000000 3"
++ostree admin os-init "$os_version_name" --sysroot=sysroot
+ 
+-echo "---------->>>>>>>>>000000 4"
++echo "---------->>>>>>>>>000000 4 提交初始ostree commit,用于安装部署"
++commit_id=\$(ostree commit --repo=sysroot/ostree/repo -b "$ostree_branch_name" -s "$info_version_string" $mate_data_add_string --skip-list=./skip-files.txt overlay_dir/merged/)
++
++echo "----------4.1 ostree_branch_name commit:"
++ostree log --repo=./sysroot/ostree/repo "$ostree_branch_name"
++
++echo "---------->>>>>>>>>000000 5 本地构建一个用于提交到ostree服务器的仓库"
+ ostree init --repo=./repo --mode=archive-z2
+ 
+-echo "---------->>>>>>>>>000000 7"
+-ostree commit --repo=./repo -b "$ostree_push_branch_name" -s "$info_version_string" $mate_data_add_string --skip-list=./skip-files.txt overlay_dir/merged
++echo "---------->>>>>>>>>000000 6 ostree pull-local 拉取本地仓库用于提交服务器"
++ostree pull-local --repo=./repo ./sysroot/ostree/repo "\$commit_id"
++
++echo "---------->>>>>>>>>000000 6.1 创建新分支指向相同的commit"
++ostree refs --repo=./repo --create="$ostree_push_branch_name" "\$commit_id"
++
++echo "----------6.2 ostree_push_branch_name commit:"
++ostree log --repo=./repo "$ostree_push_branch_name"
+ 
+ ostree summary --repo=./repo -u
+ 
+-# 输出commit信息到base.commit, 之后要拷贝到binary/.disk/里
++echo "---------->>>>>>>>>000000 7 输出commit信息到base.commit, 之后要拷贝到binary/.disk/里"
+ ostree log --repo=./repo "$ostree_push_branch_name" > base.commit
+ 
+ EOF
+-
+-mv binary1.sh chroot/
++mv binary.sh chroot/
+ 
+ chroot_exec() {
+-    script_path="binary1.sh"  # 脚本文件的路径
++    script_path="binary.sh"  # 脚本文件的路径
+ 
+     # 将参数传递给脚本（这里假设最多传递4个参数）
+     chroot chroot /bin/sh "$script_path" "$@"
+ }
+ 
+-chroot_exec "$ostree_push_branch_name" "$info_version_string" "$mate_data_add_string"
++chroot_exec "$os_version_name" "$ostree_branch_name" "$mate_data_add_string" "$info_version_string"
++
+ # base.commit转移出来，因为chroot可能会在lb binary_rootfs中被删除
+ mv chroot/base.commit .
+ 
+@@ -303,24 +306,27 @@ else
+ 	Echo_message "config/ostree文件不存在，跳过ostree-push"	
+ fi
+ 
+-#恢复原始 chroot
+-mv chroot/chroot.orig chroot/chroot
+ 
+ #卸载overlay
+ umount chroot/overlay_dir/merged
+ rm -rf chroot/overlay_dir
+ 
+ rm -rf chroot/skip-files.txt
+-
+-mv ./usr_etc_file/* chroot/chroot/usr/etc/
+-rm -r usr_etc_file
+ rm -r chroot/chroot/data chroot/chroot/backup chroot/chroot/sysroot
+ 
++cp -a ./usr_etc_file/* chroot/chroot/usr/etc/
++
+ #提交完成后，将etc目录拷贝出来，外面则是一个完成的根文件系统
+ rm -r chroot/chroot/etc
+ cp -a chroot/chroot/usr/etc chroot/chroot
+ mv chroot/sysroot chroot/chroot/sysroot
+ 
++#在/sysroot 中拷贝之前ostree commit 时移除的 etc 文件，安装器会将这些文件拷贝到部署的系统里面
++mkdir -p chroot/chroot/sysroot/etc/
++cp -a ./usr_etc_file/* chroot/chroot/sysroot/etc/
++
++rm -r usr_etc_file
++
+ #安装kare基础环境包
+ if [ -d "kare-env-base/" ] && ls kare-env-base/*deb >/dev/null 2>&1; then
+         echo "检测到 kare-env-base 及 deb 文件，开始安装kare 基础环境包..."

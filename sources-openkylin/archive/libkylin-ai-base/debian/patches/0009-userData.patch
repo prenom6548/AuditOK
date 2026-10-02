@@ -1,0 +1,92 @@
+From: zhaokexin <zhaokexin@kylinos.cn>
+Date: Sat, 20 Apr 2024 09:26:08 +0800
+Subject: =?utf-8?b?5bCG55So5oi355qEdXNlckRhdGHmraPnoa7ov5Tlm54=?=
+
+---
+ src/services/visionprocessorproxy.cpp | 2 +-
+ src/services/visionprocessorproxy.h   | 6 ++++--
+ src/visionsession.cpp                 | 5 ++++-
+ test/testVisionApi.cpp                | 7 ++++---
+ 4 files changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/src/services/visionprocessorproxy.cpp b/src/services/visionprocessorproxy.cpp
+index 4b3b490..a1a45cc 100644
+--- a/src/services/visionprocessorproxy.cpp
++++ b/src/services/visionprocessorproxy.cpp
+@@ -61,7 +61,7 @@ void onPromptImageResult(GDBusConnection *connection,
+     VisionImageData visionImageData {
+         (VisionImageFormat)*format, *height, *width, *total,
+         *index, (unsigned char*)vec.data(), (int)vec.size(), *error };
+-    proxy->promptImageCallback_(visionImageData, nullptr);
++    proxy->promptImageCallback_(visionImageData);
+ }
+ 
+ VisionProcessorProxy::VisionProcessorProxy() { init(); }
+diff --git a/src/services/visionprocessorproxy.h b/src/services/visionprocessorproxy.h
+index 0d1631a..a1979c3 100644
+--- a/src/services/visionprocessorproxy.h
++++ b/src/services/visionprocessorproxy.h
+@@ -25,10 +25,12 @@
+ 
+ class VisionProcessorProxy {
+ public:
++    using PromptImageResultCallback = std::function<void(VisionImageData result)>;
++
+     VisionProcessorProxy();
+     ~VisionProcessorProxy();
+ 
+-    void setPromptImageCallback(ImageResultCallback callback) {
++    void setPromptImageCallback(PromptImageResultCallback callback) {
+         promptImageCallback_ = callback;
+     }
+ 
+@@ -67,7 +69,7 @@ private:
+ private:
+     AisdkVisionProcessor *delegate_ = nullptr;
+ 
+-    ImageResultCallback promptImageCallback_ = nullptr;
++    PromptImageResultCallback promptImageCallback_ = nullptr;
+ 
+     const char *objectPath_ = "/org/openkylin/aisdk/visionprocessor";
+     const char *interfaceName_ = "org.openkylin.aisdk.visionprocessor";
+diff --git a/src/visionsession.cpp b/src/visionsession.cpp
+index a98d9c6..7d2b357 100644
+--- a/src/visionsession.cpp
++++ b/src/visionsession.cpp
+@@ -30,7 +30,10 @@ VisionResult VisionSession::init(
+ 
+ void VisionSession::setPromptImageCallback(
+         ImageResultCallback callback, std::any userData) {
+-    visionProcessorProxy_.setPromptImageCallback(callback);
++    visionProcessorProxy_.setPromptImageCallback(
++                [callback, userData](VisionImageData result) {
++        callback(result, std::any_cast<void *>(userData));
++    });
+ }
+ 
+ void VisionSession::setPromptImageSize(int width, int height) {
+diff --git a/test/testVisionApi.cpp b/test/testVisionApi.cpp
+index d99c3d1..cd925fe 100644
+--- a/test/testVisionApi.cpp
++++ b/test/testVisionApi.cpp
+@@ -25,16 +25,17 @@ int main(int argc, char *argv[]) {
+     vision_create_session(&session);
+     vision_init_session(session);
+ 
+-    void* a = nullptr;
++    int a = 100;
+     vision_set_prompt2image_callback(
+                 session,
+                 [](VisionImageData data, void* user_data) {
+         std::cout << "---testVisionApi--data--"
+                   << data.data << "--index--" << data.index
+                   << "--total--" << data.total
+-                  << "--width--" << data.width << std::endl;
++                  << "--width--" << data.width
++                  << "--userdata--" << *(int*)user_data << std::endl;
+     },
+-    a);
++    &a);
+ //    vision_set_prompt2image_size(session, 1024, 1024);
+ //    vision_set_prompt2image_number(session, 1);
+ //    vision_set_prompt2image_style(session, VisionImageStyle::EXPLORE_INFINITY);

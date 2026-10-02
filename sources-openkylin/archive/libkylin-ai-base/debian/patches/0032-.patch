@@ -1,0 +1,75 @@
+From: zhaokexin <zhaokexin@kylinos.cn>
+Date: Sat, 18 May 2024 10:59:56 +0800
+Subject: =?utf-8?b?5L+u5pS56K6+572u5qih5Z6L6YWN572u55qE5pa55byP?=
+
+---
+ src/settings/childsettings.cpp | 30 +++++++++++++++++++++++++++---
+ src/settings/childsettings.h   |  3 +++
+ 2 files changed, 30 insertions(+), 3 deletions(-)
+
+diff --git a/src/settings/childsettings.cpp b/src/settings/childsettings.cpp
+index 1d1e186..8063839 100644
+--- a/src/settings/childsettings.cpp
++++ b/src/settings/childsettings.cpp
+@@ -116,15 +116,17 @@ Json::Value ChildSettings::getModelConfig(DeployPolicy policy, const std::string
+ bool ChildSettings::setModelConfig(DeployPolicy policy, const std::string& model, const std::string& json) {
+     Json::Reader reader;
+     Json::Value config;
+-    if (!reader.parse(json, config)) {
+-        return false;
+-    }
+ 
+     Json::Value root;
+     if (!loadSettingsJsonValue(modelConfigKey, root)) {
+         return false;
+     }
+ 
++    std::string oldJsonStr = getModelConfig(policy, model).toStyledString();
++    if (!reader.parse(mergeJson(oldJsonStr, json), config)) {
++        return false;
++    }
++
+     root[getDeployPolicyName(policy)][model] = config;
+ 
+     saveSettingsJsonValue(modelConfigKey, root);
+@@ -166,4 +168,26 @@ void ChildSettings::saveSettingsJsonValue(const char* key, const Json::Value& ro
+     g_settings_set_value(&settings_, key, value);
+ }
+ 
++std::string ChildSettings::mergeJson(
++        const std::string& oldJsonStr, const std::string& newJsonStr) {
++    Json::Value oldRoot, newRoot, mergedRoot;
++    Json::Reader reader;
++
++    bool oldParseSuccess = reader.parse(oldJsonStr, oldRoot);
++    if (oldParseSuccess) {
++        for (auto it = oldRoot.begin(); it != oldRoot.end(); ++it) {
++            mergedRoot[it.key().asString()] = it->asString();
++        }
++    }
++
++    bool newParseSuccess = reader.parse(newJsonStr, newRoot);
++    if (newParseSuccess) {
++        for (auto it = newRoot.begin(); it != newRoot.end(); ++it) {
++            mergedRoot[it.key().asString()] = it->asString();
++        }
++    }
++
++    return mergedRoot.toStyledString();
++}
++
+ }
+diff --git a/src/settings/childsettings.h b/src/settings/childsettings.h
+index c2a7435..4d4d12c 100644
+--- a/src/settings/childsettings.h
++++ b/src/settings/childsettings.h
+@@ -48,6 +48,9 @@ public:
+ private:
+     bool loadSettingsJsonValue(const char* key, Json::Value& root) const;
+     void saveSettingsJsonValue(const char* key, const Json::Value& root);
++
++    std::string mergeJson(const std::string& oldJsonStr,
++                          const std::string& newJsonStr);
+ };
+ 
+ }

@@ -1,0 +1,448 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Fri, 30 Sep 2022 15:48:31 +0800
+Subject: add kylin and openkylin mode
+
+---
+ functions/defaults.sh                    | 55 ++++++++++++++++++++++++++------
+ scripts/build/lb_binary_debian-installer |  4 +--
+ scripts/build/lb_binary_disk             | 12 +++++++
+ scripts/build/lb_binary_package-lists    | 47 ++++++++++++++++++---------
+ scripts/build/lb_binary_rootfs           |  8 ++---
+ scripts/build/lb_binary_syslinux         | 28 ++++++++++++++--
+ scripts/build/lb_chroot_archives         | 13 ++++++--
+ scripts/build/lb_source_disk             | 12 +++++++
+ 8 files changed, 144 insertions(+), 35 deletions(-)
+
+diff --git a/functions/defaults.sh b/functions/defaults.sh
+index 9db8a94..0143220 100755
+--- a/functions/defaults.sh
++++ b/functions/defaults.sh
+@@ -28,7 +28,7 @@ Set_defaults ()
+ 		_DISTRIBUTOR="$(lsb_release -is | tr [A-Z] [a-z])"
+ 
+ 		case "${_DISTRIBUTOR}" in
+-			debian|progress|ubuntu)
++			debian|progress|ubuntu|kylin|openkylin)
+ 				LB_MODE="${LB_MODE:-${_DISTRIBUTOR}}"
+ 				;;
+ 
+@@ -197,7 +197,7 @@ Set_defaults ()
+ 	case "${LB_INITRAMFS}" in
+ 		auto)
+ 			case "${LB_MODE}" in
+-				ubuntu|kubuntu)
++				ubuntu|kubuntu|kylin|openkylin)
+ 					LB_INITRAMFS="casper"
+ 					;;
+ 
+@@ -222,7 +222,7 @@ Set_defaults ()
+ 
+ 	# Setting initsystem
+ 	case "${LB_MODE}" in
+-		ubuntu|kubuntu)
++		ubuntu|kubuntu|kylin|openkylin)
+ 			case "${LB_INITRAMFS}" in
+ 				live-boot)
+ 					LB_INITSYSTEM="${LB_INITSYSTEM:-upstart}"
+@@ -630,11 +630,16 @@ Set_defaults ()
+ 			LB_PARENT_ARCHIVE_AREAS="${LB_PARENT_ARCHIVE_AREAS:-${LB_ARCHIVE_AREAS}}"
+ 			;;
+ 
+-		ubuntu|kubuntu)
++		ubuntu|kubuntu|kylin)
+ 			LB_ARCHIVE_AREAS="${LB_ARCHIVE_AREAS:-main restricted}"
+ 			LB_PARENT_ARCHIVE_AREAS="${LB_PARENT_ARCHIVE_AREAS:-${LB_ARCHIVE_AREAS}}"
+ 			;;
+ 
++		openkylin)
++			LB_ARCHIVE_AREAS="${LB_ARCHIVE_AREAS:-main cross pty}"
++			LB_PARENT_ARCHIVE_AREAS="${LB_PARENT_ARCHIVE_AREAS:-${LB_ARCHIVE_AREAS}}"
++			;;
++
+ 		*)
+ 			LB_ARCHIVE_AREAS="${LB_ARCHIVE_AREAS:-main}"
+ 			LB_PARENT_ARCHIVE_AREAS="${LB_PARENT_ARCHIVE_AREAS:-${LB_ARCHIVE_AREAS}}"
+@@ -685,6 +690,14 @@ Set_defaults ()
+ 			LB_KEYRING_PACKAGES="${LB_KEYRING_PACKAGES:-ubuntu-keyring}"
+ 			;;
+ 
++		kylin)
++			LB_KEYRING_PACKAGES="${LB_KEYRING_PACKAGES:-kylin-keyring}"
++			;;
++
++		openkylin)
++			LB_KEYRING_PACKAGES="${LB_KEYRING_PACKAGES:-openkylin-keyring}"
++			;;
++
+ 		*)
+ 			LB_KEYRING_PACKAGES="${LB_KEYRING_PACKAGES:-debian-archive-keyring}"
+ 			;;
+@@ -721,7 +734,7 @@ Set_defaults ()
+ 
+ 		amd64)
+ 			case "${LB_MODE}" in
+-				ubuntu|kubuntu)
++				ubuntu|kubuntu|kylin|openkylin)
+ 					LB_LINUX_FLAVOURS="${LB_LINUX_FLAVOURS:-generic}"
+ 					;;
+ 
+@@ -745,7 +758,7 @@ Set_defaults ()
+ 					esac
+ 					;;
+ 
+-				ubuntu|kubuntu)
++				ubuntu|kubuntu|kylin|openkylin)
+ 					case "${LB_DISTRIBUTION}" in
+ 						precise)
+ 							LB_LINUX_FLAVOURS="${LB_LINUX_FLAVOURS:-generic-pae}"
+@@ -874,7 +887,7 @@ Set_defaults ()
+ 
+ 	# Set linux packages
+ 	case "${LB_MODE}" in
+-		ubuntu|kubuntu)
++		ubuntu|kubuntu|kylin|openkylin)
+ 			LB_LINUX_PACKAGES="${LB_LINUX_PACKAGES:-linux}"
+ 			;;
+ 
+@@ -1047,7 +1060,7 @@ Set_defaults ()
+ 
+ 			hdd*)
+ 				case "${LB_MODE}" in
+-					ubuntu|kubuntu)
++					ubuntu|kubuntu|kylin|openkylin)
+ 						if [ "${LB_DEBIAN_INSTALLER}" = "live" ]
+ 						then
+ 							_LB_BOOTAPPEND_PRESEED="file=/cdrom/install/${LB_DEBIAN_INSTALLER_PRESEEDFILE}"
+@@ -1107,6 +1120,14 @@ Set_defaults ()
+ 		kubuntu)
+ 			LB_ISO_APPLICATION="${LB_ISO_APPLICATION:-Kubuntu Live}"
+ 			;;
++
++		kylin)
++			LB_ISO_APPLICATION="${LB_ISO_APPLICATION:-Kylin Live}"
++			;;
++
++		openkylin)
++			LB_ISO_APPLICATION="${LB_ISO_APPLICATION:-openKylin Live}"
++			;;
+ 	esac
+ 
+ 	# Set iso preparer
+@@ -1144,6 +1165,14 @@ Set_defaults ()
+ 		kubuntu)
+ 			LB_HDD_LABEL="${LB_HDD_LABEL:-KUBUNTU}"
+ 			;;
++
++		kylin)
++			LB_HDD_LABEL="${LB_HDD_LABEL:-Kylin}"
++			;;
++
++		openkylin)
++			LB_HDD_LABEL="${LB_HDD_LABEL:-openKylin}"
++			;;
+ 	esac
+ 
+ 	# Setting hdd size
+@@ -1170,6 +1199,14 @@ Set_defaults ()
+ 		kubuntu)
+ 			LB_ISO_VOLUME="${LB_ISO_VOLUME:-Ubuntu ${LB_DISTRIBUTION} \$(date +%Y%m%d-%H:%M)}"
+ 			;;
++
++		kylin)
++			LB_ISO_VOLUME="${LB_ISO_VOLUME:-Kylin ${LB_DISTRIBUTION} \$(date +%Y%m%d-%H:%M)}"
++			;;
++
++		openKylin)
++			LB_ISO_VOLUME="${LB_ISO_VOLUME:-openKylin ${LB_DISTRIBUTION} \$(date +%Y%m%d-%H:%M)}"
++			;;
+ 	esac
+ 
+ 	# Setting memtest option
+@@ -1239,7 +1276,7 @@ Set_defaults ()
+ 
+ 	# Setting firmware option
+ 	case "${LB_MODE}" in
+-		ubuntu)
++		ubuntu|kylin|openkylin)
+ 			LB_FIRMWARE_CHROOT="${LB_FIRMWARE_CHROOT:-false}"
+ 			LB_FIRMWARE_BINARY="${LB_FIRMWARE_BINARY:-false}"
+ 			;;
+diff --git a/scripts/build/lb_binary_debian-installer b/scripts/build/lb_binary_debian-installer
+index e488a9e..0262fb0 100755
+--- a/scripts/build/lb_binary_debian-installer
++++ b/scripts/build/lb_binary_debian-installer
+@@ -352,7 +352,7 @@ then
+ 			DI_REQ_PACKAGES="lilo grub-pc"
+ 
+ 			case "${LB_MODE}" in
+-				ubuntu|kubuntu)
++				ubuntu|kubuntu|kylin|openkylin)
+ 					DI_PACKAGES="${DI_REQ_PACKAGES} linux-generic"
+ 					;;
+ 
+@@ -366,7 +366,7 @@ then
+ 			DI_REQ_PACKAGES="elilo lilo grub-pc"
+ 
+ 			case "${LB_MODE}" in
+-				ubuntu|kubuntu)
++				ubuntu|kubuntu|kylin|openkylin)
+ 					case "${LB_DISTRIBUTION}" in
+ 						precise)
+ 							DI_PACKAGES="${DI_REQ_PACKAGES} linux-generic-pae"
+diff --git a/scripts/build/lb_binary_disk b/scripts/build/lb_binary_disk
+index 7144f15..b045871 100755
+--- a/scripts/build/lb_binary_disk
++++ b/scripts/build/lb_binary_disk
+@@ -78,6 +78,18 @@ case "${LB_MODE}" in
+ 		TRACE="project/trace/archive-master.progress-linux.org"
+ 		;;
+ 
++	kylin)
++		TITLE="Kylin"
++		STRING="Build ${ARCHITECTURE}"
++		TRACE=""
++		;;
++
++	openkylin)
++		TITLE="openKylin"
++		STRING="Build ${ARCHITECTURE}"
++		TRACE=""
++		;;
++
+ 	*)
+ 		TITLE="Debian GNU/Linux"
+ 		STRING="Snapshot ${ARCHITECTURE}"
+diff --git a/scripts/build/lb_binary_package-lists b/scripts/build/lb_binary_package-lists
+index 59db99c..9412bbb 100755
+--- a/scripts/build/lb_binary_package-lists
++++ b/scripts/build/lb_binary_package-lists
+@@ -158,20 +158,33 @@ then
+ 
+ 		if echo "${SECTION}" | grep -qs contrib
+ 		then
+-			if [ "${LB_MODE}" = "ubuntu" ]
+-			then
+-				SECTION="multiverse"
+-			else
+-				SECTION="contrib"
+-			fi
++			case "${LB_MODE}" in
++				ubuntu|kylin)
++					SECTION="multiverse"
++					;;
++
++				openkylin)
++					SECTION="cross"
++					;;
++
++				*)
++					SECTION="contrib"
++					;;
++			esac
+ 		elif echo "${SECTION}" | grep -qs non-free
+ 		then
+-			if [ "${LB_MODE}" = "ubuntu" ]
+-			then
+-				SECTION="multiverse"
+-			else
+-				SECTION="non-free"
+-			fi
++			case "${LB_MODE}" in
++				ubuntu|kylin)
++					SECTION="multiverse"
++					;;
++
++				openkylin)
++					SECTION="pty"
++					;;
++
++				*)
++					SECTION="non-free"
++			esac
+ 		else
+ 			SECTION="main"
+ 		fi
+@@ -184,9 +197,13 @@ then
+ 	done
+ 
+ 	cd binary
+-	# kylin archive standard
+-        mkdir -p pool/main pool/restricted pool/universe pool/multiverse
+-        # end
++	case "${LB_MODE}" in
++		ubuntu|kylin)
++			# kylin archive standard
++			mkdir -p pool/main pool/restricted pool/universe pool/multiverse
++			# end
++			;;
++	esac
+ 
+ 	for SECTION in pool/*
+ 	do
+diff --git a/scripts/build/lb_binary_rootfs b/scripts/build/lb_binary_rootfs
+index 81dbfdd..a6d0cdd 100755
+--- a/scripts/build/lb_binary_rootfs
++++ b/scripts/build/lb_binary_rootfs
+@@ -147,7 +147,7 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 				mv chroot/filesystem.${LB_CHROOT_FILESYSTEM} binary/${INITFS}
+ 
+ 				case "${LB_MODE}" in
+-					ubuntu|kubuntu)
++					ubuntu|kubuntu|kylin|openkylin)
+ 						du -B 1 -s chroot/chroot | cut -f1 > binary/${INITFS}/filesystem.size
+ 						;;
+ 				esac
+@@ -364,7 +364,7 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 
+ 			*)
+ 				case "${LB_MODE}" in
+-					ubuntu|kubuntu)
++					ubuntu|kubuntu|kylin|openkylin)
+ 
+ 						;;
+ 					*)
+@@ -390,7 +390,7 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 				rm -f chroot/chroot/excludes
+ 
+ 				case "${LB_MODE}" in
+-					ubuntu|kubuntu)
++					ubuntu|kubuntu|kylin|openkylin)
+ 						du -B 1 -s chroot/chroot | cut -f1 > binary/${INITFS}/filesystem.size
+ 						;;
+ 				esac
+@@ -455,7 +455,7 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 				mksquashfs chroot binary/${INITFS}/filesystem.squashfs ${MKSQUASHFS_OPTIONS}
+ 
+ 				case "${LB_MODE}" in
+-					ubuntu|kubuntu)
++					ubuntu|kubuntu|kylin|openkylin)
+ 						du -B 1 -s chroot | cut -f1 > binary/${INITFS}/filesystem.size
+ 						;;
+ 				esac
+diff --git a/scripts/build/lb_binary_syslinux b/scripts/build/lb_binary_syslinux
+index 6fba889..f59b893 100755
+--- a/scripts/build/lb_binary_syslinux
++++ b/scripts/build/lb_binary_syslinux
+@@ -99,9 +99,13 @@ case "${LB_BUILD_WITH_CHROOT}" in
+ 				Check_package chroot/usr/share/syslinux/themes/${LB_SYSLINUX_THEME} syslinux-themes-${LB_SYSLINUX_THEME}
+ 
+ 				case "${LB_MODE}" in
+-					ubuntu)
++					ubuntu|kylin)
+ 						Check_package chroot/usr/share/gfxboot-theme-ubuntu/bootlogo.tar.gz gfxboot-theme-ubuntu
+ 						;;
++
++					openkylin)
++						Check_package chroot/usr/share/gfxboot-theme-openkylin/bootlogo.tar.gz gfxboot-theme-openkylin
++						;;
+ 				esac
+ 				;;
+ 		esac
+@@ -185,9 +189,13 @@ case "${LB_BUILD_WITH_CHROOT}" in
+ 		else
+ 			Chroot chroot cp -aL ${_SOURCE} /root/$(basename ${_SOURCE}).tmp
+ 			case "${LB_MODE}" in
+-				ubuntu)
++				ubuntu|kylin)
+ 					Chroot chroot "tar xfz /usr/share/gfxboot-theme-ubuntu/bootlogo.tar.gz -C /root/$(basename ${_SOURCE}).tmp"
+ 					;;
++
++				openkylin)
++					Chroot chroot "tar xfz /usr/share/gfxboot-theme-openkylin/bootlogo.tar.gz -C /root/$(basename ${_SOURCE}).tmp"
++					;;
+ 			esac
+ 
+ 		fi
+@@ -201,9 +209,13 @@ case "${LB_BUILD_WITH_CHROOT}" in
+ 		cp -aL ${_SOURCE}/* ${_TARGET}
+ 
+ 		case "${LB_MODE}" in
+-			ubuntu)
++			ubuntu|kylin)
+ 				tar xfz /usr/share/gfxboot-theme-ubuntu/bootlogo.tar.gz -C ${_TARGET}
+ 				;;
++
++			openkylin)
++				tar xfz /usr/share/gfxboot-theme-openkylin/bootlogo.tar.gz -C ${_TARGET}
++				;;
+ 		esac
+ 		;;
+ esac
+@@ -290,6 +302,16 @@ then
+ 			fi
+ 			;;
+ 
++		kylin)
++			_PROJECT="Kylin Linux"
++			_DESCRIPTION=""
++			;;
++
++		openkylin)
++			_PROJECT="openKylin Linux"
++			_DESCRIPTION=""
++			;;
++
+ 		*)
+ 			_PROJECT="Debian GNU/Linux"
+ 			_DESCRIPTION=""
+diff --git a/scripts/build/lb_chroot_archives b/scripts/build/lb_chroot_archives
+index 0894eb4..a6369c5 100755
+--- a/scripts/build/lb_chroot_archives
++++ b/scripts/build/lb_chroot_archives
+@@ -131,7 +131,7 @@ EOF
+ 					fi
+ 					;;
+ 
+-				ubuntu|kubuntu)
++				ubuntu|kubuntu|kylin|openkylin)
+ 					echo "deb ${LB_PARENT_MIRROR_CHROOT_SECURITY} ${LB_PARENT_DISTRIBUTION}-security ${LB_PARENT_ARCHIVE_AREAS}" >> chroot/etc/apt/${_PARENT_FILE}
+ 
+ 					if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+@@ -697,7 +697,7 @@ EOF
+ 					fi
+ 					;;
+ 
+-				ubuntu|kubuntu)
++				ubuntu|kubuntu|kylin|openkylin)
+ 					echo "deb ${LB_PARENT_MIRROR_BINARY_SECURITY} ${LB_PARENT_DISTRIBUTION}-security ${LB_PARENT_ARCHIVE_AREAS}" >> chroot/etc/apt/${_PARENT_FILE}
+ 
+ 					if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+@@ -879,6 +879,15 @@ EOF
+ 			mkdir -p chroot/var/lib/apt/lists/partial
+ 		fi
+ 
++		# Remove non-release pocket lists
++		case "${LB_MODE}" in
++			ubuntu|kylin|openkylin)
++			rm -f chroot/var/lib/apt/lists/*-updates_*
++			rm -f chroot/var/lib/apt/lists/*-security_*
++			rm -f chroot/var/lib/apt/lists/*-proposed_*
++			;;
++		esac
++
+ 		# Remove local package repository
+ 		rm -f chroot/etc/apt/sources.list.d/packages.list
+ 		rm -rf chroot/root/packages
+diff --git a/scripts/build/lb_source_disk b/scripts/build/lb_source_disk
+index e1216cc..aa15ba3 100755
+--- a/scripts/build/lb_source_disk
++++ b/scripts/build/lb_source_disk
+@@ -78,6 +78,18 @@ case "${LB_MODE}" in
+ 		TRACE="project/trace/archive-master.progress-linux.org"
+ 		;;
+ 
++	kylin)
++		TITLE="Kylin"
++		STRING="Build ${ARCHITECTURE}"
++		TRACE=""
++		;;
++
++	openkylin)
++		TITLE="openKylin"
++		STRING="Build ${ARCHITECTURE}"
++		TRACE=""
++		;;
++
+ 	*)
+ 		TITLE="Debian GNU/Linux"
+ 		STRING="Snapshot ${ARCHITECTURE}"

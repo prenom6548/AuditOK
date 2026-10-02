@@ -1,0 +1,182 @@
+#!/bin/bash
+#
+# LightDM wrapper to run around X sessions.
+
+echo "Running X session wrapper"
+
+message () {
+  # pretty-print messages of arbitrary length; use xmessage if it
+  # is available and $DISPLAY is set
+  MESSAGE="$PROGNAME: $*"
+  echo "$MESSAGE" | fold -s -w ${COLUMNS:-80} >&2
+  if [ -n "$DISPLAY" ] && which xmessage > /dev/null 2>&1; then
+    echo "$MESSAGE" | fold -s -w ${COLUMNS:-80} | xmessage -center -file -
+  fi
+}
+
+errormsg () {
+  # exit script with error
+  message "$*"
+  exit 1
+}
+
+is_debug_log_open=0
+if [ -f "/usr/share/lightdm/debuglog" ]; then
+    if [ -x "/usr/bin/logger" ]; then
+        is_debug_log_open=1
+    fi
+fi
+
+print_to_syslog () {
+    if [ $is_debug_log_open -eq 1 ]; then
+        local message="$1"
+        /usr/bin/logger -p user.info "[lightdm] $message"
+    fi
+}
+
+# temporary storage of error messages
+ERR=$(mktemp --tmpdir config-err-XXXXXX)
+
+source_with_error_check () {
+    CONFIG_FILE="$1"
+    echo "Loading $CONFIG_FILE"
+    BASH_VERSION= . "$CONFIG_FILE" 2>"$ERR"
+    cat "$ERR" >&2
+}
+
+print_to_syslog "env source check begin"
+# Load profile
+for file in "/etc/profile" "$HOME/.profile" "/etc/xprofile" "$HOME/.xprofile"; do
+    if [ -f "$file" ]; then
+        source_with_error_check "$file"
+    fi
+done
+
+print_to_syslog "env source check end"
+# Load resources
+if type xrdb >/dev/null 2>&1; then
+    xresourcedir="/etc/X11/Xresources"
+    if [ -d "$xresourcedir" ]; then
+        for file in $xresourcedir/*; do
+            echo "Loading resource: $file"
+            xrdb -merge "$file"
+        done
+    fi
+    xresourcefile="$HOME/.Xresources"
+    if [ -f "$xresourcefile" ]; then
+        echo "Loading resource: $xresourcefile"
+        xrdb -merge "$xresourcefile"
+    fi
+fi
+
+print_to_syslog "xrdb loading source end"
+# Load keymaps
+if type setxkbmap >/dev/null 2>&1; then
+    for file in "/etc/X11/Xkbmap" "$HOME/.Xkbmap"; do
+        if [ -f "$file" ]; then
+            echo "Loading keymap: $file"
+            setxkbmap `cat "$file"`
+            XKB_IN_USE=yes
+        fi
+    done
+fi
+
+print_to_syslog "setxkbmap loding source end"
+# Load xmodmap if not using XKB
+if type xmodmap >/dev/null 2>&1; then
+    if [ -z "$XKB_IN_USE" ]; then
+        for file in "/etc/X11/Xmodmap" "$HOME/.Xmodmap"; do
+            if [ -f "$file" ]; then
+               echo "Loading modmap: $file"
+               xmodmap "$file"
+            fi
+        done
+    fi
+fi
+
+print_to_syslog "xmodmap loding source end"
+unset XKB_IN_USE
+
+# Run all system xinitrc shell scripts.
+xinitdir="/etc/X11/xinit/xinitrc.d"
+if [ -d "$xinitdir" ]; then
+    for script in $xinitdir/*; do
+        echo "Loading xinit script $script"
+        if [ -x "$script" -a ! -d "$script" ]; then
+            . "$script"
+        fi
+    done
+fi
+
+print_to_syslog "xinit loding scripts source end"
+# Check root disk is free
+is_root_disk_free () {
+    is_free_valid=1
+    disk_valid=
+    disk_used=
+    info_array=`df -B M | awk '{ if ($NF == "/") {print $(NF-2),$(NF-1),$(NF)}}'`
+    disk_valid=`echo $info_array | awk '{print $1}' | cut -dM -f1`
+    disk_used=`echo $info_array | awk '{print $2}' | cut -d% -f1`
+
+    if [ -n $disk_used ]; then
+        if [ $disk_used -ge 100 ]; then
+            if [ -n $disk_valid ]; then
+                if [ $disk_valid -lt 10 ]; then
+                    is_free_valid=0
+                fi
+            fi
+        fi
+    fi
+    echo "get root disk info:" $disk_valid $disk_used
+    return $is_free_valid
+}
+
+# Load Xsession scripts
+# OPTIONFILE, USERXSESSION, USERXSESSIONRC and ALTUSERXSESSION are required
+# by the scripts to work
+xsessionddir="/etc/X11/Xsession.d"
+OPTIONFILE=/etc/X11/Xsession.options
+USERXSESSION=$HOME/.xsession
+USERXSESSIONRC=$HOME/.xsessionrc
+ALTUSERXSESSION=$HOME/.Xsession
+
+## do session runing setup
+if [ -x "/usr/lib/lightdm/lightdm-session-setup.sh" ];then
+    /usr/lib/lightdm/lightdm-session-setup.sh
+fi
+print_to_syslog "lightdm-session-setup end"
+
+#ukui-screensaver-dialog --lock-startup &
+/usr/bin/screensaver-startup.sh
+print_to_syslog "screensaver-startup end"
+
+is_root_disk_free
+is_disk_free=$?
+
+print_to_syslog "check disk free end"
+if [ -d "$xsessionddir" ]; then
+    for i in `ls $xsessionddir`; do
+        script="$xsessionddir/$i"
+        # if root disk not free can't load 90x11-common_ssh-agent script
+        is_can_continue=1
+        if [ "$i" == "90x11-common_ssh-agent" ]; then
+            if [ $is_disk_free -eq 0 ]; then
+                is_can_continue=0
+            fi
+        fi
+        if [ $is_can_continue -eq 1 ]; then 
+            echo "Loading X session script $script"
+            if [ -r "$script"  -a -f "$script" ] && expr "$i" : '^[[:alnum:]_-]\+$' > /dev/null; then
+                . "$script"
+            fi
+            print_to_syslog "Loading X session script:$script end"
+        else
+            echo "Don't Loading X session script $script,because root disk isn't free"
+        fi
+    done
+fi
+
+print_to_syslog "Loading all X session scripts end"
+echo "X session wrapper complete, running session $@"
+
+exec $@

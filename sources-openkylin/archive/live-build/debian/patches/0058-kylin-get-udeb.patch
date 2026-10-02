@@ -1,0 +1,182 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Mon, 24 Jul 2017 11:50:22 +0800
+Subject: kylin get udeb
+
+---
+ scripts/build/lb_binary_debian-installer | 120 +++++++++++++++++++------------
+ share/bin/get-udeb                       |  31 ++++++++
+ 2 files changed, 107 insertions(+), 44 deletions(-)
+ create mode 100755 share/bin/get-udeb
+
+diff --git a/scripts/build/lb_binary_debian-installer b/scripts/build/lb_binary_debian-installer
+index e1f3ca4..cd04928 100755
+--- a/scripts/build/lb_binary_debian-installer
++++ b/scripts/build/lb_binary_debian-installer
+@@ -631,54 +631,86 @@ then
+ 	fi
+ 
+ 	# Udeb handling
+-	mkdir binary.udeb
+-	cd binary.udeb
+-
+-	# Downloading udeb indices
+-	Download_file Packages.gz "${LB_PARENT_MIRROR_CHROOT}"/dists/"${LB_PARENT_DEBIAN_INSTALLER_DISTRIBUTION}"/main/debian-installer/binary-"${LB_ARCHITECTURES}"/Packages.gz
+-	gunzip -c Packages.gz > Packages
+-
+-	if [ "${LB_DERIVATIVE}" = "true" ]
+-	then
+-		Download_file Packages.derivative.gz "${LB_MIRROR_CHROOT}"/dists/"${LB_DEBIAN_INSTALLER_DISTRIBUTION}"/main/debian-installer/binary-"${LB_ARCHITECTURES}"/Packages.gz
+-		gunzip -c Packages.derivative.gz > Packages.derivative
+-	fi
+-
+-	# Sorting udebs
+-	if [ "${LB_DERIVATIVE}" = true ]
+-	then
+-		UDEBS="$(awk '/Filename: / { print $2 }' Packages.derivative)"
+-	fi
+-
+-	UDEBS="${UDEBS} $(awk '/Filename: / { print $2 }' Packages)"
+-
+-	# Downloading udebs packages
+-	Echo_message "Downloading udebs..."
+-
+-	if [ "${LB_DERIVATIVE}" = "true" ]
++	
++	if Find_files config/package-lists/*.list.udeb
+ 	then
+-		Echo_message "Building in derivative mode in debian+ layout.. a lot of 404 errors are ok here."
+-	fi
+-
+-	for UDEB in ${UDEBS}
+-	do
+-		if [ -f ../cache/packages.binary_debian-installer.udeb/"$(basename ${UDEB})" ]
+-		then
+-			# Copying cached udebs
+-			cp ../cache/packages.binary_debian-installer.udeb/"$(basename ${UDEB})" ./
+-		else
+-			# Downloading udebs
+-			if ! ls "$(basename ${UDEB} | awk -F_ '{ print $1 }')"_* > /dev/null 2>&1
++		cp /usr/share/live/build/bin/get-udeb chroot/bin
++		cp config/package-lists/*.list.udeb chroot/root/
++		Chroot chroot "/bin/get-udeb"
++		rm -f chroot/bin/get-udeb
++		rm -f chroot/root/*.list.udeb
++		mv chroot/root/binary.udeb ./
++		cd binary.udeb
++		UDEBS=""
++		for FILE in "$(ls *.udeb)"
++		do
++			SOURCE="$(dpkg -f ${FILE} Source | awk '{ print $1 }')"
++			if [ -z "${SOURCE}" ]
+ 			then
+-				wget ${WGET_OPTIONS} "${LB_MIRROR_CHROOT}"/${UDEB} || wget ${WGET_OPTIONS} "${LB_PARENT_MIRROR_CHROOT}"/${UDEB}
++				SOURCE="$(basename ${FILE} | awk -F_ '{ print $1 }')"
+ 			fi
++			case "${SOURCE}" in
++				lib?*)
++					LETTER="$(echo ${SOURCE} | sed 's|\(....\).*|\1|')"
++					;;
++	
++				*)
++					LETTER="$(echo ${SOURCE} | sed 's|\(.\).*|\1|')"
++					;;
++			esac
++			UDEBS="${UDEBS} pool/main/${LETTER}/${SOURCE}/${FILE}"
++		done
++		
++	else
++		mkdir binary.udeb
++		cd binary.udeb
++	
++		# Downloading udeb indices
++		Download_file Packages.gz "${LB_PARENT_MIRROR_CHROOT}"/dists/"${LB_PARENT_DEBIAN_INSTALLER_DISTRIBUTION}"/main/debian-installer/binary-"${LB_ARCHITECTURES}"/Packages.gz
++		gunzip -c Packages.gz > Packages
++	
++		if [ "${LB_DERIVATIVE}" = "true" ]
++		then
++			Download_file Packages.derivative.gz "${LB_MIRROR_CHROOT}"/dists/"${LB_DEBIAN_INSTALLER_DISTRIBUTION}"/main/debian-installer/binary-"${LB_ARCHITECTURES}"/Packages.gz
++			gunzip -c Packages.derivative.gz > Packages.derivative
+ 		fi
+-	done
+-
+-	# Caching udebs
+-	rm -rf ../cache/packages.binary_debian-installer.udeb
+-	mkdir -p ../cache/packages.binary_debian-installer.udeb
+-	cp *.udeb ../cache/packages.binary_debian-installer.udeb
++	
++		# Sorting udebs
++		if [ "${LB_DERIVATIVE}" = true ]
++		then
++			UDEBS="$(awk '/Filename: / { print $2 }' Packages.derivative)"
++		fi
++	
++		UDEBS="${UDEBS} $(awk '/Filename: / { print $2 }' Packages)"
++	
++		# Downloading udebs packages
++		Echo_message "Downloading udebs..."
++	
++		if [ "${LB_DERIVATIVE}" = "true" ]
++		then
++			Echo_message "Building in derivative mode in debian+ layout.. a lot of 404 errors are ok here."
++		fi
++	
++		for UDEB in ${UDEBS}
++		do
++			if [ -f ../cache/packages.binary_debian-installer.udeb/"$(basename ${UDEB})" ]
++			then
++				# Copying cached udebs
++				cp ../cache/packages.binary_debian-installer.udeb/"$(basename ${UDEB})" ./
++			else
++				# Downloading udebs
++				if ! ls "$(basename ${UDEB} | awk -F_ '{ print $1 }')"_* > /dev/null 2>&1
++				then
++					wget ${WGET_OPTIONS} "${LB_MIRROR_CHROOT}"/${UDEB} || wget ${WGET_OPTIONS} "${LB_PARENT_MIRROR_CHROOT}"/${UDEB}
++				fi
++			fi
++		done
++	
++		# Caching udebs
++		rm -rf ../cache/packages.binary_debian-installer.udeb
++		mkdir -p ../cache/packages.binary_debian-installer.udeb
++		cp *.udeb ../cache/packages.binary_debian-installer.udeb
++	fi
+ 
+ 	# Including local udebs
+ 	if Find_files ../config/packages.binary/*_"${LB_ARCHITECTURES}".udeb || Find_files ../config/packages/*_"${LB_ARCHITECTURES}".udeb
+diff --git a/share/bin/get-udeb b/share/bin/get-udeb
+new file mode 100755
+index 0000000..b65bfef
+--- /dev/null
++++ b/share/bin/get-udeb
+@@ -0,0 +1,31 @@
++#!/bin/bash
++
++cd /root
++APTDIR="`pwd`/udeb_tmp"
++
++rm -rf ${APTDIR}
++
++mkdir -p $APTDIR/state/lists/partial
++mkdir -p $APTDIR/state/mirrors/partial
++mkdir -p $APTDIR/cache/archives/partial
++echo -n > $APTDIR/state/status
++
++APT_GET="apt-get --assume-yes \
++        -o Dir::State=$APTDIR/state \
++        -o Debug::NoLocking=false \
++        -o Debug::pkgDepCache::AutoInstall=true \
++        -o Dir::Cache=$APTDIR/cache \
++        -o Acquire::Retries=3 \
++        -o Dir::State::Status=$APTDIR/state/status \
++        --allow-unauthenticated \
++       "
++
++set -e
++${APT_GET} update
++cat *.list.udeb | grep -v '^#' | xargs ${APT_GET} install -dy
++
++# move
++rm -rf binary.udeb
++mkdir binary.udeb
++mv $APTDIR/cache/archives/*.udeb binary.udeb
++rm -rf $APTDIR

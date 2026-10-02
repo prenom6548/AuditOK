@@ -1,0 +1,83 @@
+From: wangyan828 <wangyan@kylinos.cn>
+Date: Tue, 14 May 2024 12:46:45 +0000
+Subject: =?utf-8?b?ITQxIEZlYXQ6ZGF0YW1hbmFnZW1lbnTpgJrkv6Hkvb/nlKjni6znq4s=?=
+ =?utf-8?b?55qEc29ja2V05Zyw5Z2AIE1lcmdlIHB1bGwgcmVxdWVzdCAhNDEgZnJvbSB3YW5n?=
+ =?utf-8?b?eWFuODI4L29wZW5reWxpbi9uaWxlLWRldg==?=
+
+---
+ src/services/datamanagementprocessorproxy.cpp | 26 +++++++++++++++++++-------
+ src/services/datamanagementprocessorproxy.h   |  1 +
+ 2 files changed, 20 insertions(+), 7 deletions(-)
+
+diff --git a/src/services/datamanagementprocessorproxy.cpp b/src/services/datamanagementprocessorproxy.cpp
+index e251a77..4f78e3a 100644
+--- a/src/services/datamanagementprocessorproxy.cpp
++++ b/src/services/datamanagementprocessorproxy.cpp
+@@ -1,8 +1,8 @@
+ #include "services/datamanagementprocessorproxy.h"
+ 
+-#include "services/serverproxy.h"
+-
+ #include <iostream>
++#include <unistd.h>
++#include <string>
+ 
+ DataManagementProcessorProxy::DataManagementProcessorProxy(uid_t uid) : uid_(uid)
+ {
+@@ -17,20 +17,29 @@ DataManagementProcessorProxy::~DataManagementProcessorProxy()
+ void DataManagementProcessorProxy::init()
+ {
+     GError *error = nullptr;
+-    if (!ServerProxy::getInstance().available()) {
+-        g_printerr("Error creating speech processor proxy: Server proxy "
+-                   "connection is unavailable.\n");
++
++    std::string serverUnixPath = "unix:path=/tmp/org.openkylin.aisdk.aibusiness." + std::to_string(geteuid());
++    connection_ = g_dbus_connection_new_for_address_sync(
++        serverUnixPath.c_str(), G_DBUS_CONNECTION_FLAGS_AUTHENTICATION_CLIENT,
++        nullptr, /* GDBusAuthObserver */
++        nullptr, /* GCancellable */
++        &error);
++    if (connection_ == nullptr) {
++        g_printerr("Error connecting to D-Bus address %s: %s\n",
++                   serverUnixPath.c_str(), error->message);
++        g_error_free(error);
++
+         return;
+     }
+ 
+-    auto *connection = ServerProxy::getInstance().getConnection();
+     delegate_ = aisdk_data_management_processor_proxy_new_sync(
+-        connection, G_DBUS_PROXY_FLAGS_NONE, nullptr, objectPath_.c_str(),
++        connection_, G_DBUS_PROXY_FLAGS_NONE, nullptr, objectPath_.c_str(),
+         nullptr, &error);
+     if (delegate_ == nullptr) {
+         g_printerr("Error creating speech processor proxy %s: %s\n",
+                    objectPath_.c_str(), error->message);
+         g_error_free(error);
++        return;
+     }
+ }
+ 
+@@ -39,6 +48,9 @@ void DataManagementProcessorProxy::destroy()
+     if (delegate_ != nullptr) {
+         g_object_unref(delegate_);
+     }
++    if (connection_ != nullptr) {
++        g_object_unref(connection_);
++    }
+ }
+ 
+ int DataManagementProcessorProxy::similaritySearch(const std::string& searchConditions, std::string& searchResult)
+diff --git a/src/services/datamanagementprocessorproxy.h b/src/services/datamanagementprocessorproxy.h
+index 937d98a..dd94210 100644
+--- a/src/services/datamanagementprocessorproxy.h
++++ b/src/services/datamanagementprocessorproxy.h
+@@ -27,6 +27,7 @@ private:
+ 
+ private:
+     const std::string objectPath_ = "/org/openkylin/aisdk/datamanagementprocessor";
++    GDBusConnection *connection_ = nullptr;
+     void *userData_ = nullptr;
+     AisdkDataManagementProcessor *delegate_ = nullptr;
+     uid_t uid_;

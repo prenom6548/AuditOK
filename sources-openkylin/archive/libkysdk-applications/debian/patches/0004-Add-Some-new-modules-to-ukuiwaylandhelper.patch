@@ -1,0 +1,991 @@
+From: Jie Liu <liujie01@kylinos.cn>
+Date: Wed, 21 May 2025 11:38:39 +0800
+Subject: Add Some new modules to ukuiwaylandhelper
+
+1. Support to get global cursor pos and keystate.
+2. Support for virtual keyboard.
+
+Change-Id: I423e6668d19953608e7a0fb997d961335ce9a2ea
+---
+ kysdk-waylandhelper/protocols/keystate.xml         |  41 +++++
+ kysdk-waylandhelper/protocols/kywc-capture-v1.xml  | 183 +++++++++++++++++++++
+ .../protocols/virtual-keyboard-unstable-v1.xml     | 113 +++++++++++++
+ .../kysdk-ukuiwindowhelper.pro                     |  20 +++
+ .../src/kysdk-ukuiwindowhelper/ukuidisplay.cpp     |  11 ++
+ .../src/kysdk-ukuiwindowhelper/ukuidisplay_p.h     |   2 +
+ .../kysdk-ukuiwindowhelper/ukuiglobalcursor.cpp    | 135 +++++++++++++++
+ .../src/kysdk-ukuiwindowhelper/ukuiglobalcursor.h  |  25 +++
+ .../src/kysdk-ukuiwindowhelper/ukuikeystate.cpp    |  89 ++++++++++
+ .../src/kysdk-ukuiwindowhelper/ukuikeystate.h      |  51 ++++++
+ .../kysdk-ukuiwindowhelper/ukuivirtualkeyboard.cpp | 128 ++++++++++++++
+ .../kysdk-ukuiwindowhelper/ukuivirtualkeyboard.h   |  42 +++++
+ 12 files changed, 840 insertions(+)
+ create mode 100644 kysdk-waylandhelper/protocols/keystate.xml
+ create mode 100644 kysdk-waylandhelper/protocols/kywc-capture-v1.xml
+ create mode 100644 kysdk-waylandhelper/protocols/virtual-keyboard-unstable-v1.xml
+ create mode 100644 kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.cpp
+ create mode 100644 kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.h
+ create mode 100644 kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.cpp
+ create mode 100644 kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.h
+ create mode 100644 kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.cpp
+ create mode 100644 kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.h
+
+diff --git a/kysdk-waylandhelper/protocols/keystate.xml b/kysdk-waylandhelper/protocols/keystate.xml
+new file mode 100644
+index 0000000..b2afc43
+--- /dev/null
++++ b/kysdk-waylandhelper/protocols/keystate.xml
+@@ -0,0 +1,41 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="keystate">
++  <copyright><![CDATA[
++    SPDX-FileCopyrightText: 2019 Aleix Pol Gonzalez <aleixpol@kde.org>
++
++    SPDX-License-Identifier: LGPL-2.1-or-later
++  ]]></copyright>
++
++  <interface  name="org_kde_kwin_keystate" version="5">
++      <description summary="Key States">
++        Keeps track of the states of the different keys that have a state attached to it.
++      </description>
++      <enum name="key">
++        <entry name="capslock" value="0" />
++        <entry name="numlock" value="1"/>
++        <entry name="scrolllock" value="2"/>
++        <entry name="alt" value="3" since="5"/>
++        <entry name="control" value="4" since="5"/>
++        <entry name="shift" value="5" since="5"/>
++        <entry name="meta" value="6" since="5"/>
++        <entry name="altgr" value="7" since="5"/>
++      </enum>
++      <enum name="state">
++        <entry name="unlocked" value="0" />
++        <entry name="latched" value="1"/>
++        <entry name="locked" value="2"/>
++        <entry name="pressed" value="3" since="5"/>
++      </enum>
++      <request name="fetchStates">
++      </request>
++
++      <event name="stateChanged">
++        <description summary="Updates the state for a said key" />
++        <arg name="key" type="uint"/>
++        <arg name="state" type="uint"/>
++      </event>
++
++      <request name="destroy" type="destructor" since="4">
++      </request>
++  </interface>
++</protocol>
+diff --git a/kysdk-waylandhelper/protocols/kywc-capture-v1.xml b/kysdk-waylandhelper/protocols/kywc-capture-v1.xml
+new file mode 100644
+index 0000000..fae051c
+--- /dev/null
++++ b/kysdk-waylandhelper/protocols/kywc-capture-v1.xml
+@@ -0,0 +1,183 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="kywc_capture_v1">
++  <copyright><![CDATA[
++    SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
++    SPDX-License-Identifier: MulanPSL-2.0
++  ]]></copyright>
++
++  <interface name="kywc_capture_manager_v1" version="2">
++    <description summary="manager to inform clients and begin get capturing">
++      This object is a manager which offers requests to start capturing from a source.
++    </description>
++
++    <request name="capture_output">
++      <description summary="capture an output">
++        Capture the next frame of an entire output.
++      </description>
++      <arg name="frame" type="new_id" interface="kywc_capture_frame_v1"/>
++      <arg name="overlay_cursor" type="int" summary="composite cursor onto the frame"/>
++      <arg name="output" type="string" summary="unique id for an output"/>
++    </request>
++
++    <request name="capture_workspace">
++      <description summary="capture a workspace">
++        Capture the next frame of an entire workspace in one output.
++      </description>
++      <arg name="frame" type="new_id" interface="kywc_capture_frame_v1"/>
++      <arg name="workspace" type="string" summary="unique id for workspace"/>
++      <arg name="output" type="string" summary="unique id for output"/>
++    </request>
++
++    <request name="capture_toplevel">
++      <description summary="capture a toplevel">
++        Capture the next frame of an entire toplevel.
++      </description>
++      <arg name="frame" type="new_id" interface="kywc_capture_frame_v1"/>
++      <arg name="toplevel" type="string" summary="unique id for toplevel"/>
++      <arg name="without_decoration" type="uint" summary="no decoration"/>
++    </request>
++
++    <request name="capture_cursor">
++      <description summary="capture a cursor">
++        Capture the cursor of the seat and frame.
++      </description>
++      <arg name="cursor" type="new_id" interface= "kywc_capture_cursor_v1"/>
++      <arg name="seat" type="object" interface= "wl_seat"/>
++      <arg name="frame" type="object" interface="kywc_capture_frame_v1" allow-null="true"/>
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the manager">
++        All objects created by the manager will still remain valid, until their
++        appropriate destroy request has been called.
++      </description>
++    </request>
++  </interface>
++
++  <interface name="kywc_capture_frame_v1" version="2">
++    <description summary="a frame ready for copy">
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="delete this object, used or not">
++        Destroys the frame. This request can be sent at any time by the client.
++      </description>
++    </request>
++
++    <event name="failed">
++      <description summary="frame copy failed">
++        This event indicates that the attempted frame copy has failed.
++        After receiving this event, the client should destroy the object.
++      </description>
++    </event>
++
++    <event name="cancelled">
++      <description summary="frame copy has been cancelled">
++        Sent if the compositor cancels the frame because the source has gone.
++        Upon receiving this event, the client should destroy this object.
++      </description>
++    </event>
++
++    <enum name="flags" bitfield="true">
++      <entry name="dmabuf" value="1" summary="buffer is a dmabuf"/>
++      <entry name="reused" value="2" summary="buffer is reused"/>
++    </enum>
++
++    <event name="buffer">
++      <description summary="buffer information">
++        Provides information about buffer parameters that need to be
++        used for this frame.
++      </description>
++      <arg name="fd" type="fd" summary="buffer file descriptor"/>
++      <arg name="format" type="uint" summary="DRM_FORMAT code"/>
++      <arg name="width" type="uint" summary="buffer width in pixels"/>
++      <arg name="height" type="uint" summary="buffer height in pixels"/>
++      <arg name="offset" type="uint" summary="buffer offset in bytes"/>
++      <arg name="stride" type="uint" summary="buffer stride in bytes"/>
++      <arg name="modifier_hi" type="uint" summary="high 32 bits of layout modifier"/>
++      <arg name="modifier_lo" type="uint" summary="low 32 bits of layout modifier"/>
++      <arg name="flags" type="uint" enum="flags" summary="buffer flags"/>
++    </event>
++
++    <request name="release_buffer">
++      <description summary="buffer is not used anymore">
++        Mark the buffer is not used by client. This request is sent after buffer event.
++      </description>
++      <arg name="want_buffer" type="uint" summary="request send buffer event when buffer is changed"/>
++    </request>
++
++    <event name="buffer_with_plane" since="2">
++      <description summary="buffer information with plane">
++        Provides information about buffer parameters with the plane index
++        that need to be used for this frame.
++      </description>
++      <arg name="index" type="uint" summary="plane index"/>
++      <arg name="fd" type="fd" summary="buffer file descriptor"/>
++      <arg name="offset" type="uint" summary="buffer offset in bytes"/>
++      <arg name="stride" type="uint" summary="buffer stride in bytes"/>
++    </event>
++
++    <event name="buffer_done" since="2">
++      <description summary="all buffer parameters have been sent">
++      </description>
++    </event>
++  </interface>
++
++  <interface name="kywc_capture_cursor_v1" version="2">
++    <description summary="cursor handle">
++      When the seat or frame is destroyed, this object becomes inert.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="delete this object">
++        Destroys the object. This request can be sent at any time by the client.
++      </description>
++    </request>
++
++    <event name="enter">
++      <description summary="cursor entered a frame">
++        This event indicates that when a cursor enters the frame. It shall be
++        generated before the "position" and "hotspot" events.
++
++        If the pointer object referenced by the seat does not exist, this event
++        will not be triggered.
++      </description>
++    </event>
++
++    <event name="leave">
++      <description summary="cursor left frame">
++        This event indicates that when a cursor leaves the frame. No "position" or
++        "hotspot" event is generated for the cursor until the cursor enters the
++        frame again.
++
++        If the pointer object referenced by the seat is removed, this event will be sent.
++      </description>
++    </event>
++
++    <event name="position">
++      <description summary="informs cursor position">
++        This event informs the cursor position. The given position is
++        relative to the frame's top left corner in transformed buffer
++        pixel coordinates.
++
++        Note, if the frame parameter is set to null in the capture_cursor request,
++        the given position coordinates are global.
++      </description>
++      <arg name="x" type="int" summary="position x coordinates"/>
++      <arg name="y" type="int" summary="position y coordinates"/>
++    </event>
++
++    <event name="hotspot">
++      <description summary="informs cursor hotspot">
++        This event informs the cursor hotspot. The hotspot describes the offset
++        between the cursor image and the position of the input device.
++
++        The parameters x and y represent the offset of the new hotspot relative
++        to the origin of the cursor image, which is typically the top-left corner
++        of the image.
++      </description>
++      <arg name="x" type="int" summary="hotspot x coordinates"/>
++      <arg name="y" type="int" summary="hotspot y coordinates"/>
++    </event>
++  </interface>
++</protocol>
+diff --git a/kysdk-waylandhelper/protocols/virtual-keyboard-unstable-v1.xml b/kysdk-waylandhelper/protocols/virtual-keyboard-unstable-v1.xml
+new file mode 100644
+index 0000000..5095c91
+--- /dev/null
++++ b/kysdk-waylandhelper/protocols/virtual-keyboard-unstable-v1.xml
+@@ -0,0 +1,113 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="virtual_keyboard_unstable_v1">
++  <copyright>
++    Copyright © 2008-2011  Kristian Høgsberg
++    Copyright © 2010-2013  Intel Corporation
++    Copyright © 2012-2013  Collabora, Ltd.
++    Copyright © 2018       Purism SPC
++
++    Permission is hereby granted, free of charge, to any person obtaining a
++    copy of this software and associated documentation files (the "Software"),
++    to deal in the Software without restriction, including without limitation
++    the rights to use, copy, modify, merge, publish, distribute, sublicense,
++    and/or sell copies of the Software, and to permit persons to whom the
++    Software is furnished to do so, subject to the following conditions:
++
++    The above copyright notice and this permission notice (including the next
++    paragraph) shall be included in all copies or substantial portions of the
++    Software.
++
++    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++    IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
++    THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++    LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++    FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++    DEALINGS IN THE SOFTWARE.
++  </copyright>
++
++  <interface name="zwp_virtual_keyboard_v1" version="1">
++    <description summary="virtual keyboard">
++      The virtual keyboard provides an application with requests which emulate
++      the behaviour of a physical keyboard.
++
++      This interface can be used by clients on its own to provide raw input
++      events, or it can accompany the input method protocol.
++    </description>
++
++    <request name="keymap">
++      <description summary="keyboard mapping">
++        Provide a file descriptor to the compositor which can be
++        memory-mapped to provide a keyboard mapping description.
++
++        Format carries a value from the keymap_format enumeration.
++      </description>
++      <arg name="format" type="uint" summary="keymap format"/>
++      <arg name="fd" type="fd" summary="keymap file descriptor"/>
++      <arg name="size" type="uint" summary="keymap size, in bytes"/>
++    </request>
++
++    <enum name="error">
++      <entry name="no_keymap" value="0" summary="No keymap was set"/>
++    </enum>
++
++    <request name="key">
++      <description summary="key event">
++        A key was pressed or released.
++        The time argument is a timestamp with millisecond granularity, with an
++        undefined base. All requests regarding a single object must share the
++        same clock.
++
++        Keymap must be set before issuing this request.
++
++        State carries a value from the key_state enumeration.
++      </description>
++      <arg name="time" type="uint" summary="timestamp with millisecond granularity"/>
++      <arg name="key" type="uint" summary="key that produced the event"/>
++      <arg name="state" type="uint" summary="physical state of the key"/>
++    </request>
++
++    <request name="modifiers">
++      <description summary="modifier and group state">
++        Notifies the compositor that the modifier and/or group state has
++        changed, and it should update state.
++
++        The client should use wl_keyboard.modifiers event to synchronize its
++        internal state with seat state.
++
++        Keymap must be set before issuing this request.
++      </description>
++      <arg name="mods_depressed" type="uint" summary="depressed modifiers"/>
++      <arg name="mods_latched" type="uint" summary="latched modifiers"/>
++      <arg name="mods_locked" type="uint" summary="locked modifiers"/>
++      <arg name="group" type="uint" summary="keyboard layout"/>
++    </request>
++
++    <request name="destroy" type="destructor" since="1">
++      <description summary="destroy the virtual keyboard keyboard object"/>
++    </request>
++  </interface>
++
++  <interface name="zwp_virtual_keyboard_manager_v1" version="1">
++    <description summary="virtual keyboard manager">
++      A virtual keyboard manager allows an application to provide keyboard
++      input events as if they came from a physical keyboard.
++    </description>
++
++    <enum name="error">
++      <entry name="unauthorized" value="0" summary="client not authorized to use the interface"/>
++    </enum>
++
++    <request name="create_virtual_keyboard">
++      <description summary="Create a new virtual keyboard">
++        Creates a new virtual keyboard associated to a seat.
++
++        If the compositor enables a keyboard to perform arbitrary actions, it
++        should present an error when an untrusted client requests a new
++        keyboard.
++      </description>
++      <arg name="seat" type="object" interface="wl_seat"/>
++      <arg name="id" type="new_id" interface="zwp_virtual_keyboard_v1"/>
++    </request>
++  </interface>
++</protocol>
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/kysdk-ukuiwindowhelper.pro b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/kysdk-ukuiwindowhelper.pro
+index b5653b1..01ba85d 100644
+--- a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/kysdk-ukuiwindowhelper.pro
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/kysdk-ukuiwindowhelper.pro
+@@ -11,6 +11,15 @@ system(wayland-scanner private-code ../../protocols/ukui-startup-v1.xml  $$OUT_P
+ system(wayland-scanner client-header ../../protocols/ukui-shell-v1.xml $$OUT_PWD/wayland-ukui-shell-v1-client-protocol.h)
+ system(wayland-scanner private-code ../../protocols/ukui-shell-v1.xml  $$OUT_PWD/wayland-ukui-shell-v1-protocol.c)
+ 
++system(wayland-scanner client-header ../../protocols/kywc-capture-v1.xml $$OUT_PWD/wayland-kywc-capture-v1-client-protocol.h)
++system(wayland-scanner private-code ../../protocols/kywc-capture-v1.xml  $$OUT_PWD/wayland-kywc-capture-v1-protocol.c)
++
++system(wayland-scanner client-header ../../protocols/keystate.xml $$OUT_PWD/wayland-keystate-client-protocol.h)
++system(wayland-scanner private-code ../../protocols/keystate.xml  $$OUT_PWD/wayland-keystate-protocol.c)
++
++system(wayland-scanner client-header ../../protocols/virtual-keyboard-unstable-v1.xml $$OUT_PWD/wayland-virtual-keyboard-unstable-v1-client-protocol.h)
++system(wayland-scanner private-code ../../protocols/virtual-keyboard-unstable-v1.xml  $$OUT_PWD/wayland-virtual-keyboard-unstable-v1-protocol.c)
++
+ INCLUDEPATH += $$OUT_PWD
+ 
+ SOURCES += \
+@@ -18,16 +27,27 @@ SOURCES += \
+     ukuistartup.cpp \
+     wayland-ukui-startup-v1-protocol.c \
+     wayland-ukui-shell-v1-protocol.c \
++    wayland-kywc-capture-v1-protocol.c \
++    wayland-keystate-protocol.c \
++    wayland-virtual-keyboard-unstable-v1-protocol.c \
+     ukuidisplay.cpp \
++    ukuiglobalcursor.cpp \
++    ukuikeystate.cpp \
++    ukuivirtualkeyboard.cpp \
+ 
+ INSTALL_HEADERS += \
+     ukuiwindowhelper.h \
+     ukuistartup.h \
++    ukuiglobalcursor.h \
++    ukuikeystate.h \
++    ukuivirtualkeyboard.h \
+ 
+ PRIVATE_HEADERS += \
+     ukuidisplay_p.h \
+     wayland-ukui-startup-v1-client-protocol.h \
+     wayland-ukui-shell-v1-client-protocol.h \
++    wayland-kywc-capture-v1-client-protocol.h \
++    wayland-virtual-keyboard-unstable-v1-client-protocol.h \
+ 
+ HEADERS += \
+     $${INSTALL_HEADERS} \
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay.cpp b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay.cpp
+index ec73682..5fa7296 100644
+--- a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay.cpp
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay.cpp
+@@ -60,6 +60,12 @@ UkuiDisplay::UkuiDisplay(QObject *parent)
+         return;
+     }
+ 
++    m_seat = reinterpret_cast<wl_seat *>(fun(native, QByteArrayLiteral("wl_seat")));
++    if (!m_seat) {
++        qWarning() << "Failed to get wl_seat";
++        return;
++    }
++
+     m_registry = wl_display_get_registry(m_display);
+     if (!m_registry) {
+         qWarning() << "Failed to get wl_registry";
+@@ -85,6 +91,11 @@ wl_display *UkuiDisplay::display() const
+     return m_display;
+ }
+ 
++wl_seat *UkuiDisplay::seat() const
++{
++    return m_seat;
++}
++
+ void UkuiDisplay::handle_global(uint32_t name, const QString &interface, uint32_t version)
+ {
+     m_globalInterfaces.append({name, interface, version});
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay_p.h b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay_p.h
+index 31d28cf..9e9865c 100644
+--- a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay_p.h
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuidisplay_p.h
+@@ -13,6 +13,7 @@ public:
+     ~UkuiDisplay();
+ 
+     wl_display *display() const;
++    wl_seat *seat() const;
+ 
+     void *bind(const char *name, const wl_interface *t, uint32_t minVersion = 1);
+ 
+@@ -35,6 +36,7 @@ private:
+     QList<WaylandInterface> globalInterfaces();
+ 
+     wl_display *m_display = nullptr;
++    wl_seat *m_seat = nullptr;
+     wl_registry *m_registry = nullptr;
+ 
+     QList<WaylandInterface> m_globalInterfaces;
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.cpp b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.cpp
+new file mode 100644
+index 0000000..a8b3cb4
+--- /dev/null
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.cpp
+@@ -0,0 +1,135 @@
++#include "ukuiglobalcursor.h"
++#include "ukuidisplay_p.h"
++
++#include "wayland-kywc-capture-v1-client-protocol.h"
++
++#include <QDebug>
++
++class UkuiGolbalCursorPrivate
++{
++public:
++    UkuiGolbalCursorPrivate();
++    ~UkuiGolbalCursorPrivate();
++
++    std::function<void()> enter;
++    std::function<void()> leave;
++    std::function<void(int, int)> position;
++    std::function<void(int, int)> hotspot;
++
++private:
++    static kywc_capture_cursor_v1_listener s_kywc_capture_cursor_v1_listener;
++
++    static void handle_enter(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1);
++    static void handle_leave(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1);
++    static void handle_position(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1, int32_t x, int32_t y);
++    static void handle_hotspot(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1, int32_t x, int32_t y);
++
++    kywc_capture_manager_v1 *m_captureManager = nullptr;
++    kywc_capture_cursor_v1 *m_captureCursor = nullptr;
++};
++
++kywc_capture_cursor_v1_listener UkuiGolbalCursorPrivate::s_kywc_capture_cursor_v1_listener = {
++    UkuiGolbalCursorPrivate::handle_enter,
++    UkuiGolbalCursorPrivate::handle_leave,
++    UkuiGolbalCursorPrivate::handle_position,
++    UkuiGolbalCursorPrivate::handle_hotspot,
++};
++
++UkuiGolbalCursorPrivate::UkuiGolbalCursorPrivate()
++{
++    m_captureManager = static_cast<kywc_capture_manager_v1 *>(ukuiDisplay()->bind(kywc_capture_manager_v1_interface.name, &kywc_capture_manager_v1_interface, kywc_capture_manager_v1_interface.version));
++    if (!m_captureManager) {
++        qWarning() << "Failed to bind kywc_capture_manager_v1";
++        return;
++    }
++    m_captureCursor = kywc_capture_manager_v1_capture_cursor(m_captureManager, ukuiDisplay()->seat(), 0);
++    if (!m_captureCursor) {
++        qWarning() << "Failed to capture cursor";
++        return;
++    }
++    kywc_capture_cursor_v1_add_listener(m_captureCursor, &s_kywc_capture_cursor_v1_listener, this);
++}
++
++UkuiGolbalCursorPrivate::~UkuiGolbalCursorPrivate()
++{
++    if (m_captureCursor) {
++        kywc_capture_cursor_v1_destroy(m_captureCursor);
++        m_captureCursor = nullptr;
++    }
++    if (m_captureManager) {
++        kywc_capture_manager_v1_destroy(m_captureManager);
++        m_captureManager = nullptr;
++    }
++}
++
++void UkuiGolbalCursorPrivate::handle_enter(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1)
++{
++    UkuiGolbalCursorPrivate *self = static_cast<UkuiGolbalCursorPrivate *>(data);
++    if (self->enter) {
++        self->enter();
++    }
++}
++
++void UkuiGolbalCursorPrivate::handle_leave(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1)
++{
++    UkuiGolbalCursorPrivate *self = static_cast<UkuiGolbalCursorPrivate *>(data);
++    if (self->leave) {
++        self->leave();
++    }
++}
++
++void UkuiGolbalCursorPrivate::handle_position(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1, int32_t x, int32_t y)
++{
++    UkuiGolbalCursorPrivate *self = static_cast<UkuiGolbalCursorPrivate *>(data);
++    if (self->position) {
++        self->position(x, y);
++    }
++}
++
++void UkuiGolbalCursorPrivate::handle_hotspot(void *data, struct kywc_capture_cursor_v1 *kywc_capture_cursor_v1, int32_t x, int32_t y)
++{
++    UkuiGolbalCursorPrivate *self = static_cast<UkuiGolbalCursorPrivate *>(data);
++    if (self->hotspot) {
++        self->hotspot(x, y);
++    }
++}
++
++UkuiGolbalCursor *ukuiGolbalCursor()
++{
++    static UkuiGolbalCursor *instance = nullptr;
++    if (!instance) {
++        instance = new UkuiGolbalCursor();
++    }
++    return instance;
++}
++
++UkuiGolbalCursor::UkuiGolbalCursor()
++    : m_ukuiGolbalCursorPrivate(new UkuiGolbalCursorPrivate())
++{
++}
++
++UkuiGolbalCursor::~UkuiGolbalCursor()
++{
++    delete m_ukuiGolbalCursorPrivate;
++    m_ukuiGolbalCursorPrivate = nullptr;
++}
++
++std::function<void()> &UkuiGolbalCursor::on_enter()
++{
++    return m_ukuiGolbalCursorPrivate->enter;
++}
++
++std::function<void()> &UkuiGolbalCursor::on_leave()
++{
++    return m_ukuiGolbalCursorPrivate->leave;
++}
++
++std::function<void(int, int)> &UkuiGolbalCursor::on_position()
++{
++    return m_ukuiGolbalCursorPrivate->position;
++}
++
++std::function<void(int, int)> &UkuiGolbalCursor::on_hotspot()
++{
++    return m_ukuiGolbalCursorPrivate->hotspot;
++}
+\ No newline at end of file
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.h b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.h
+new file mode 100644
+index 0000000..4b30931
+--- /dev/null
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiglobalcursor.h
+@@ -0,0 +1,25 @@
++#pragma once
++
++#include <QObject>
++
++class UkuiGolbalCursor;
++class UkuiGolbalCursorPrivate;
++
++UkuiGolbalCursor *ukuiGolbalCursor();
++
++class UkuiGolbalCursor
++{
++public:
++    ~UkuiGolbalCursor();
++
++    std::function<void()> &on_enter();
++    std::function<void()> &on_leave();
++    std::function<void(int, int)> &on_position();
++    std::function<void(int, int)> &on_hotspot();
++
++private:
++    UkuiGolbalCursorPrivate *m_ukuiGolbalCursorPrivate = nullptr;
++
++    explicit UkuiGolbalCursor();
++    friend UkuiGolbalCursor *ukuiGolbalCursor();
++};
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.cpp b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.cpp
+new file mode 100644
+index 0000000..779b617
+--- /dev/null
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.cpp
+@@ -0,0 +1,89 @@
++#include "ukuikeystate.h"
++#include "ukuidisplay_p.h"
++
++#include "wayland-keystate-client-protocol.h"
++
++#include <QDebug>
++
++class UkuiKeyStatePrivate
++{
++public:
++    UkuiKeyStatePrivate();
++    ~UkuiKeyStatePrivate();
++
++    void fetchStates();
++    std::function<void(UkuiKeyState::Key, UkuiKeyState::State)> stateChanged;
++
++private:
++    static org_kde_kwin_keystate_listener s_org_kde_kwin_keystate_listener;
++    static void handle_state_changed(void *data, struct org_kde_kwin_keystate *org_kde_kwin_keystate, uint32_t key, uint32_t state);
++
++    org_kde_kwin_keystate *m_keystate = nullptr;
++};
++
++org_kde_kwin_keystate_listener UkuiKeyStatePrivate::s_org_kde_kwin_keystate_listener = {
++    UkuiKeyStatePrivate::handle_state_changed,
++};
++
++UkuiKeyStatePrivate::UkuiKeyStatePrivate()
++{
++    m_keystate = static_cast<org_kde_kwin_keystate *>(ukuiDisplay()->bind(org_kde_kwin_keystate_interface.name, &org_kde_kwin_keystate_interface, org_kde_kwin_keystate_interface.version));
++    if (!m_keystate) {
++        qWarning() << "Failed to bind org_kde_kwin_keystate";
++        return;
++    }
++    org_kde_kwin_keystate_add_listener(m_keystate, &s_org_kde_kwin_keystate_listener, this);
++}
++
++UkuiKeyStatePrivate::~UkuiKeyStatePrivate()
++{
++    org_kde_kwin_keystate_destroy(m_keystate);
++    m_keystate = nullptr;
++}
++
++void UkuiKeyStatePrivate::fetchStates()
++{
++    if (m_keystate) {
++        org_kde_kwin_keystate_fetchStates(m_keystate);
++    }
++}
++
++void UkuiKeyStatePrivate::handle_state_changed(void *data, struct org_kde_kwin_keystate *org_kde_kwin_keystate, uint32_t key, uint32_t state)
++{
++    UkuiKeyStatePrivate *self = static_cast<UkuiKeyStatePrivate *>(data);
++    if (self->stateChanged) {
++        self->stateChanged(UkuiKeyState::Key(key), UkuiKeyState::State(state));
++    }
++}
++
++UkuiKeyState *ukuiKeyState()
++{
++    static UkuiKeyState *instance = nullptr;
++    if (!instance) {
++        instance = new UkuiKeyState();
++    }
++    return instance;
++}
++
++UkuiKeyState::UkuiKeyState()
++    : m_ukuiKeyStatePrivate(new UkuiKeyStatePrivate())
++{
++}
++
++UkuiKeyState::~UkuiKeyState()
++{
++    delete m_ukuiKeyStatePrivate;
++    m_ukuiKeyStatePrivate = nullptr;
++}
++
++void UkuiKeyState::fetchStates()
++{
++    if (m_ukuiKeyStatePrivate) {
++        m_ukuiKeyStatePrivate->fetchStates();
++    }
++}
++
++std::function<void(UkuiKeyState::Key, UkuiKeyState::State)> &UkuiKeyState::on_state_changed()
++{
++    return m_ukuiKeyStatePrivate->stateChanged;
++}
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.h b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.h
+new file mode 100644
+index 0000000..e3dbfeb
+--- /dev/null
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuikeystate.h
+@@ -0,0 +1,51 @@
++#pragma once
++
++#include <cstdint>
++#include <functional>
++
++class UkuiKeyState;
++class UkuiKeyStatePrivate;
++
++UkuiKeyState *ukuiKeyState();
++
++class UkuiKeyState
++{
++public:
++    enum Key {
++        CapsLock = 0,
++        NumLock = 1,
++        ScrollLock = 2,
++        Alt = 3,
++        Control = 4,
++        Shift = 5,
++        Meta = 6,
++        AltGr = 7,
++    };
++
++    enum State {
++        Unlocked = 0,
++        Latched = 1,
++        Locked = 2,
++        Pressed = 3,
++    };
++
++    ~UkuiKeyState();
++
++    /*
++     * @brief fetch the current state of all keys
++     */
++    void fetchStates();
++
++    /*
++     * @brief handler for key state changed
++     * @param1  The key that changed state
++     * @param2  The new state of the key
++     */
++    std::function<void(Key /* key */, State /* key */)> &on_state_changed();
++
++private:
++    UkuiKeyStatePrivate *m_ukuiKeyStatePrivate = nullptr;
++
++    explicit UkuiKeyState();
++    friend UkuiKeyState *ukuiKeyState();
++};
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.cpp b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.cpp
+new file mode 100644
+index 0000000..286d097
+--- /dev/null
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.cpp
+@@ -0,0 +1,128 @@
++#include "ukuivirtualkeyboard.h"
++#include "ukuidisplay_p.h"
++
++#include "wayland-virtual-keyboard-unstable-v1-client-protocol.h"
++
++#include <fcntl.h>
++#include <sys/mman.h>
++#include <unistd.h>
++
++#include <QDebug>
++
++class UkuiVirtualKeyboardPrivate
++{
++public:
++    explicit UkuiVirtualKeyboardPrivate(const char *keymap);
++    ~UkuiVirtualKeyboardPrivate();
++
++    void keyPress(uint32_t key);
++    void keyRelease(uint32_t key);
++    void modifiers(uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked);
++
++private:
++    zwp_virtual_keyboard_manager_v1 *m_virtualKeyboardManager = nullptr;
++    zwp_virtual_keyboard_v1 *m_virtualKeyboard = nullptr;
++
++    uint32_t symToKeyCode(uint32_t sym) const;
++};
++
++UkuiVirtualKeyboardPrivate::UkuiVirtualKeyboardPrivate(const char *keymap)
++{
++    if (strlen(keymap) < 1) {
++        qWarning() << "Keymap is empty";
++        return;
++    }
++
++    m_virtualKeyboardManager = static_cast<zwp_virtual_keyboard_manager_v1 *>(ukuiDisplay()->bind(zwp_virtual_keyboard_manager_v1_interface.name, &zwp_virtual_keyboard_manager_v1_interface, zwp_virtual_keyboard_manager_v1_interface.version));
++    if (!m_virtualKeyboardManager) {
++        qWarning() << "Failed to bind zwp_virtual_keyboard_manager_v1";
++        return;
++    }
++    m_virtualKeyboard = zwp_virtual_keyboard_manager_v1_create_virtual_keyboard(m_virtualKeyboardManager, ukuiDisplay()->seat());
++    std::string keymap_file = "/tmp/waylandpp-XXXXXX";
++    int fd = mkstemp(const_cast<char *>(keymap_file.c_str()));
++    if (fd == -1) {
++        qWarning() << "Failed to create keymap file";
++        return;
++    }
++    unlink(keymap_file.c_str());
++    FILE *f = fdopen(fd, "w");
++    fprintf(f, "%s", keymap);
++    fflush(f);
++
++    size_t keymap_size = ftell(f);
++
++    zwp_virtual_keyboard_v1_keymap(m_virtualKeyboard, 0, fd, keymap_size);
++    fclose(f);
++}
++
++UkuiVirtualKeyboardPrivate::~UkuiVirtualKeyboardPrivate()
++{
++    if (m_virtualKeyboard) {
++        zwp_virtual_keyboard_v1_destroy(m_virtualKeyboard);
++        m_virtualKeyboard = nullptr;
++    }
++    if (m_virtualKeyboardManager) {
++        zwp_virtual_keyboard_manager_v1_destroy(m_virtualKeyboardManager);
++        m_virtualKeyboardManager = nullptr;
++    }
++}
++
++void UkuiVirtualKeyboardPrivate::keyPress(uint32_t key)
++{
++    if (!m_virtualKeyboard) {
++        qWarning() << "Virtual keyboard is not initialized";
++        return;
++    }
++    zwp_virtual_keyboard_v1_key(m_virtualKeyboard, 0, key, 1);
++}
++
++void UkuiVirtualKeyboardPrivate::keyRelease(uint32_t key)
++{
++    if (!m_virtualKeyboard) {
++        qWarning() << "Virtual keyboard is not initialized";
++        return;
++    }
++    zwp_virtual_keyboard_v1_key(m_virtualKeyboard, 0, key, 0);
++}
++
++void UkuiVirtualKeyboardPrivate::modifiers(uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked)
++{
++    if (!m_virtualKeyboard) {
++        qWarning() << "Virtual keyboard is not initialized";
++        return;
++    }
++    zwp_virtual_keyboard_v1_modifiers(m_virtualKeyboard, mods_depressed, mods_latched, mods_locked, 0);
++}
++
++UkuiVirtualKeyboard::UkuiVirtualKeyboard(const char *keymap)
++    : m_ukuiVirtualKeyboardPrivate(new UkuiVirtualKeyboardPrivate(keymap))
++{
++}
++
++UkuiVirtualKeyboard::~UkuiVirtualKeyboard()
++{
++    delete m_ukuiVirtualKeyboardPrivate;
++    m_ukuiVirtualKeyboardPrivate = nullptr;
++}
++
++void UkuiVirtualKeyboard::keyPress(uint32_t key)
++{
++    if (m_ukuiVirtualKeyboardPrivate) {
++        m_ukuiVirtualKeyboardPrivate->keyPress(key);
++    }
++}
++
++void UkuiVirtualKeyboard::keyRelease(uint32_t key)
++{
++    if (m_ukuiVirtualKeyboardPrivate) {
++        m_ukuiVirtualKeyboardPrivate->keyRelease(key);
++    }
++}
++
++void UkuiVirtualKeyboard::modifiers(uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked)
++{
++    if (m_ukuiVirtualKeyboardPrivate) {
++        m_ukuiVirtualKeyboardPrivate->modifiers(mods_depressed, mods_latched, mods_locked);
++    }
++}
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.h b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.h
+new file mode 100644
+index 0000000..ef7a897
+--- /dev/null
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuivirtualkeyboard.h
+@@ -0,0 +1,42 @@
++#pragma once
++
++#include <cstdint>
++#include <functional>
++
++class UkuiVirtualKeyboard;
++class UkuiVirtualKeyboardPrivate;
++
++class UkuiVirtualKeyboard
++{
++public:
++    /**
++     * @brief Constructor for UkuiVirtualKeyboard
++     * @param keymap The keymap to use for the virtual keyboard
++     */
++    UkuiVirtualKeyboard(const char *keymap);
++
++    ~UkuiVirtualKeyboard();
++
++    /**
++     * @brief Press a key on the virtual keyboard
++     * @param key The key to press
++     */
++    void keyPress(uint32_t key);
++
++    /**
++     * @brief Release a key on the virtual keyboard
++     * @param key The key to release
++     */
++    void keyRelease(uint32_t key);
++
++    /**
++     * @brief Set the modifiers on the virtual keyboard
++     * @param mods_depressed The modifiers that are currently depressed
++     * @param mods_latched The modifiers that are latched
++     * @param mods_locked The modifiers that are locked
++     */
++    void modifiers(uint32_t mods_depressed, uint32_t mods_latched, uint32_t mods_locked);
++
++private:
++    UkuiVirtualKeyboardPrivate *m_ukuiVirtualKeyboardPrivate = nullptr;
++};

@@ -1,0 +1,186 @@
+From: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Date: Tue, 18 Jul 2017 17:21:09 +0800
+Subject: strip-pool-for-di
+
+===================================================================
+---
+ scripts/build/lb_binary_debian-installer | 90 ++++++++++++++++++++++----------
+ scripts/build/lb_binary_package-lists    | 26 ++++-----
+ 2 files changed, 75 insertions(+), 41 deletions(-)
+
+diff --git a/scripts/build/lb_binary_debian-installer b/scripts/build/lb_binary_debian-installer
+index b7925d3..e1f3ca4 100755
+--- a/scripts/build/lb_binary_debian-installer
++++ b/scripts/build/lb_binary_debian-installer
+@@ -338,10 +338,15 @@ if [ "${DI_IMAGE_TYPE}" != "netboot" ]
+ then
+ 	# Downloading additional packages
+ 	mkdir -p chroot/binary.deb/archives/partial
+-
+-	mv chroot/var/lib/dpkg/status chroot/var/lib/dpkg/status.tmp
+-	touch chroot/var/lib/dpkg/status
+-
++	case "$LB_STRIP_POOL" in
++		true)
++			Echo_message "Will not create new dpkg/status"
++			;;
++		*)
++			mv chroot/var/lib/dpkg/status chroot/var/lib/dpkg/status.tmp
++			touch chroot/var/lib/dpkg/status
++			;;
++	esac
+ 	case "${LB_ARCHITECTURES}" in
+ 		amd64)
+ 			DI_REQ_PACKAGES="lilo grub-pc"
+@@ -483,22 +488,36 @@ then
+ 		# .debs must actually exist.
+ 
+ 		# Modify dpkg status to show the required packages are not installed.
+-		cp chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
+-		for PACKAGE in ${DI_REQ_PACKAGES}
+-		do
+-			awk -v f=0 '
+-				f == 1 { print "Status: purge ok not-installed"; f=0; next }
+-				/Package: '"${PACKAGE}"'/ { f=1; }
+-				{ print }
+-				' chroot/var/lib/dpkg/status > chroot/var/lib/dpkg/status.awk
+-			mv chroot/var/lib/dpkg/status.awk chroot/var/lib/dpkg/status
+-		done
++		case "$LB_STRIP_POOL" in
++			true)
++				Echo_message "Will not create new dpkg/status"
++				;;
++			*)
++				cp chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
++				for PACKAGE in ${DI_REQ_PACKAGES}
++				do
++					awk -v f=0 '
++						f == 1 { print "Status: purge ok not-installed"; f=0; next }
++						/Package: '"${PACKAGE}"'/ { f=1; }
++						{ print }
++						' chroot/var/lib/dpkg/status > chroot/var/lib/dpkg/status.awk
++					mv chroot/var/lib/dpkg/status.awk chroot/var/lib/dpkg/status
++				done
++				;;
++		esac
+ 
+ 		# Download .deb's that we just marked as "purged" which caused broken dependencies
+ 		Chroot chroot ${_LB_APT_COMMAND} -f dist-upgrade
+ 
+ 		# Revert dpkg status file
+-		mv chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
++		case "$LB_STRIP_POOL" in
++			true)
++				Echo_message "Will not create new dpkg/status"
++				;;
++			*)
++				mv chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
++				;;
++		esac
+ 
+ 		# Download .debs of the required packages
+ 		Chroot chroot ${_LB_APT_COMMAND} install ${DI_PACKAGES} ${DI_FIRMWARE_PACKAGES} ${DI_REQ_PACKAGES}
+@@ -507,7 +526,14 @@ then
+ 		Chroot chroot ${_LB_APT_COMMAND} install ${DI_PACKAGES} ${DI_FIRMWARE_PACKAGES}
+ 
+ 		# Revert dpkg status file
+-		mv chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
++		case "$LB_STRIP_POOL" in
++			true)
++				Echo_message "Will not create new dpkg/status"
++				;;
++			*)
++				mv chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
++				;;
++		esac
+ 	fi
+ 
+ 	mv chroot/binary.deb ./
+@@ -524,21 +550,27 @@ then
+ 			Install_file "${FILE}" "binary/pool"
+ 		done
+ 	fi
+-
+ 	if [ "${LB_DEBIAN_INSTALLER}" != "live" ]
+ 	then
+-		# Including base debian packages
+-		if ls cache/packages.bootstrap/*.deb > /dev/null 2>&1
+-		then
+-			for FILE in cache/packages.bootstrap/*.deb
+-			do
+-				Install_file "${FILE}" "binary/pool"
+-			done
+-		else
+-			Echo_error "Could not find packages in cache/packages.bootstrap."
+-			Echo_error "You selected values of LB_CACHE, LB_CACHE_PACKAGES, LB_CACHE_STAGES and LB_DEBIAN_INSTALLER which will result in 'bootstrap' packages not being cached - these are required when integrating the Debian Installer."
+-			exit 1
+-		fi
++		case "$LB_STRIP_POOL" in
++			true)
++				Echo_message "Will not copy debootstrap debs"
++				;;
++			*)
++				# Including base debian packages
++				if ls cache/packages.bootstrap/*.deb > /dev/null 2>&1
++				then
++					for FILE in cache/packages.bootstrap/*.deb
++					do
++						Install_file "${FILE}" "binary/pool"
++					done
++				else
++					Echo_error "Could not find packages in cache/packages.bootstrap."
++					Echo_error "You selected values of LB_CACHE, LB_CACHE_PACKAGES, LB_CACHE_STAGES and LB_DEBIAN_INSTALLER which will result in 'bootstrap' packages not being cached - these are required when integrating the Debian Installer."
++					exit 1
++				fi
++				;;
++		esac
+ 	fi
+ 
+ 	# Including local debs
+diff --git a/scripts/build/lb_binary_package-lists b/scripts/build/lb_binary_package-lists
+index a22da5a..836fd8b 100755
+--- a/scripts/build/lb_binary_package-lists
++++ b/scripts/build/lb_binary_package-lists
+@@ -94,20 +94,14 @@ then
+ 	fi
+ 
+ 	mkdir -p chroot/binary.deb/archives/partial
+-	mv chroot/var/lib/dpkg/status chroot/var/lib/dpkg/status.tmp
+-	touch chroot/var/lib/dpkg/status
+ 
+ 	case "$LB_STRIP_POOL" in
+ 		true)
+-			case "$LB_DEBIAN_INSTALLER" in
+-				false|"")
+-                   			Echo_message "Will strip pool"
+-					cp -f chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
+-					;;
+-				*)
+-                   			Echo_message "Will not strip pool as debian-installer enabled"
+-					;;
+-			esac
++			Echo_message "Will not create new dpkg/status"
++			;;
++		*)
++			mv chroot/var/lib/dpkg/status chroot/var/lib/dpkg/status.tmp
++			touch chroot/var/lib/dpkg/status
+ 	esac
+ 
+ 	for LIST in config/package-lists/*.list \
+@@ -206,7 +200,15 @@ then
+ 	rm -f chroot/bin/Packages
+ 
+ 	rm -rf chroot/binary.deb
+-	mv chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
++
++	case "$LB_STRIP_POOL" in
++		true)
++			Echo_message "Will not create new dpkg/status"
++			;;
++		*)
++			mv chroot/var/lib/dpkg/status.tmp chroot/var/lib/dpkg/status
++			;;
++	esac
+ 
+ 	case "${LB_BUILD_WITH_CHROOT}" in
+ 		true)

@@ -1,0 +1,66 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Mon, 6 May 2024 11:38:11 +0800
+Subject: fix start-stop-daemon missing
+
+---
+ scripts/build/lb_binary_rootfs |  5 +++++
+ scripts/build/lb_chroot_dpkg   | 16 +++++++++++-----
+ 2 files changed, 16 insertions(+), 5 deletions(-)
+
+diff --git a/scripts/build/lb_binary_rootfs b/scripts/build/lb_binary_rootfs
+index a6d0cdd..b9941f6 100755
+--- a/scripts/build/lb_binary_rootfs
++++ b/scripts/build/lb_binary_rootfs
+@@ -384,6 +384,11 @@ case "${LB_CHROOT_FILESYSTEM}" in
+ 					MKSQUASHFS_OPTIONS="${MKSQUASHFS_OPTIONS} -wildcards -ef /excludes"
+ 				fi
+ 
++				# check start-stop-daemon
++				if [ ! -e chroot/chroot/sbin/start-stop-daemon ]; then
++					Echo_error "chroot/sbin/start-stop-daemon is missing"
++					exit 1
++				fi
+ 				# Create image
+ 				Chroot chroot "mksquashfs chroot filesystem.squashfs ${MKSQUASHFS_OPTIONS}"
+ 
+diff --git a/scripts/build/lb_chroot_dpkg b/scripts/build/lb_chroot_dpkg
+index 1cdcc29..c3a12c7 100755
+--- a/scripts/build/lb_chroot_dpkg
++++ b/scripts/build/lb_chroot_dpkg
+@@ -70,7 +70,7 @@ EOF
+ 
+ 		# flash-kernel
+ 		Chroot chroot dpkg-divert --rename --quiet --add /usr/sbin/flash-kernel
+-		ln -s /bin/true chroot/usr/sbin/flash-kernel
++		ln -sf /bin/true chroot/usr/sbin/flash-kernel
+ 
+ 		# Creating stage file
+ 		Create_stagefile .build/chroot_dpkg
+@@ -88,8 +88,11 @@ EOF
+ 		# Manual hacks for special packages
+ 
+ 		# flash-kernel
+-		rm -f chroot/usr/sbin/flash-kernel
+-		Chroot chroot dpkg-divert --rename --quiet --remove /usr/sbin/flash-kernel
++		if [ -e chroot/usr/sbin/flash-kernel.distrib ]
++		then
++			rm -f chroot/usr/sbin/flash-kernel
++			Chroot chroot dpkg-divert --rename --quiet --remove /usr/sbin/flash-kernel
++		fi
+ 
+ 		# samhain
+ 		if [ -e /var/state/samhain/samhain_file.orig ]
+@@ -102,8 +105,11 @@ EOF
+ 		fi
+ 
+ 		# Remove custom start-stop-daemon program
+-		rm -f chroot/sbin/start-stop-daemon
+-		Chroot chroot dpkg-divert --rename --quiet --remove /sbin/start-stop-daemon
++		if [ -e chroot/sbin/start-stop-daemon.distrib ]
++		then
++			rm -f chroot/sbin/start-stop-daemon
++			Chroot chroot dpkg-divert --rename --quiet --remove /sbin/start-stop-daemon
++		fi
+ 
+ 		# Remove dpkg sync configuration
+ 		rm -f chroot/etc/dpkg/dpkg.cfg.d/live-build

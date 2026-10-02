@@ -1,0 +1,252 @@
+set(MCP_EXAMPLES_ROOT "${CMAKE_CURRENT_SOURCE_DIR}")
+
+function(mcp_configure_client_example target_name output_name source_relpath)
+    add_executable(${target_name} "${MCP_EXAMPLES_ROOT}/${source_relpath}")
+    set_target_properties(${target_name} PROPERTIES OUTPUT_NAME "${output_name}")
+    target_include_directories(${target_name} PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/include/client
+        ${CMAKE_SOURCE_DIR}/include/common
+        ${CMAKE_SOURCE_DIR}/src/client/client
+        ${CMAKE_SOURCE_DIR}/src/transport
+        ${CMAKE_SOURCE_DIR}/src/log
+        ${CMAKE_SOURCE_DIR}/src/net
+        ${CMAKE_SOURCE_DIR}/src/ipc
+        ${CMAKE_SOURCE_DIR}/src/protocol
+        ${CMAKE_SOURCE_DIR}/src/server
+        ${CMAKE_SOURCE_DIR}/src/session
+        ${CMAKE_SOURCE_DIR}/src/common
+    )
+    target_compile_definitions(${target_name} PRIVATE
+        MCP_SDK_INTERNAL_BUILD
+        CPPHTTPLIB_OPENSSL_SUPPORT
+        $<$<CONFIG:Release>:NDEBUG>
+    )
+    target_link_libraries(${target_name} PRIVATE
+        kysdk_mcp_client
+        Threads::Threads
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+endfunction()
+
+function(mcp_configure_server_example target_name output_name source_relpath)
+    set(example_sources "${MCP_EXAMPLES_ROOT}/${source_relpath}")
+    foreach(extra_source IN LISTS ARGN)
+        list(APPEND example_sources "${MCP_EXAMPLES_ROOT}/${extra_source}")
+    endforeach()
+    add_executable(${target_name} ${example_sources})
+    set_target_properties(${target_name} PROPERTIES OUTPUT_NAME "${output_name}")
+    target_include_directories(${target_name} PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/include/server
+        ${CMAKE_SOURCE_DIR}/include/common
+        ${CMAKE_SOURCE_DIR}/src/server
+        ${CMAKE_SOURCE_DIR}/src/transport
+        ${CMAKE_SOURCE_DIR}/src/log
+        ${CMAKE_SOURCE_DIR}/src/net
+        ${CMAKE_SOURCE_DIR}/src/ipc
+        ${CMAKE_SOURCE_DIR}/src/protocol
+        ${CMAKE_SOURCE_DIR}/src/server
+        ${CMAKE_SOURCE_DIR}/src/session
+        ${CMAKE_SOURCE_DIR}/src/common
+        ${CMAKE_SOURCE_DIR}/examples/server
+    )
+    target_compile_definitions(${target_name} PRIVATE
+        MCP_SDK_INTERNAL_BUILD
+        CPPHTTPLIB_OPENSSL_SUPPORT
+        $<$<CONFIG:Release>:NDEBUG>
+    )
+    target_link_libraries(${target_name} PRIVATE
+        kysdk_mcp_server
+        Threads::Threads
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+endfunction()
+
+mcp_configure_client_example(
+    client_client_mcp_client_http_demo
+    mcp_client_http_demo
+    "client/client_http_demo.cpp"
+)
+mcp_configure_client_example(
+    client_client_mcp_client_https_demo
+    mcp_client_https_demo
+    "client/client_https_demo.cpp"
+)
+mcp_configure_client_example(
+    client_client_mcp_client_ipc_demo
+    mcp_client_ipc_demo
+    "client/client_ipc_demo.cpp"
+)
+mcp_configure_client_example(
+    client_client_mcp_filesystem_client_http_example
+    mcp_filesystem_client_http_example
+    "client/filesystem_client_http_example.cpp"
+)
+mcp_configure_client_example(
+    client_client_mcp_filesystem_client_ipc_external_example
+    mcp_filesystem_client_ipc_external_example
+    "client/filesystem_client_ipc_external_example.cpp"
+)
+mcp_configure_client_example(
+    client_ipc_pipe_communication_example
+    client_pipe_communication_example
+    "client/developer/ipc/client_pipe_communication_example.cpp"
+)
+mcp_configure_client_example(
+    client_log_logger_example
+    client_logger_example
+    "client/developer/logging/client_logger_example.cpp"
+)
+mcp_configure_client_example(
+    client_mcp_protocol_mcp_protocol_example
+    client_mcp_protocol_example
+    "client/developer/protocol/client_mcp_protocol_example.cpp"
+)
+mcp_configure_client_example(
+    client_mcp_protocol_protocol_example
+    client_protocol_example
+    "client/developer/protocol/client_protocol_example.cpp"
+)
+mcp_configure_client_example(
+    client_net_localhost_mcp_demo
+    localhost_mcp_demo
+    "client/developer/network/localhost_mcp_demo.cpp"
+)
+mcp_configure_client_example(
+    client_net_netio_mcp_demo
+    netio_mcp_demo
+    "client/developer/network/netio_mcp_demo.cpp"
+)
+mcp_configure_client_example(
+    client_transport_ipc_example
+    client_transport_ipc_example
+    "client/developer/transport/client_transport_ipc_example.cpp"
+)
+mcp_configure_client_example(
+    client_transport_sse_http_example
+    client_sse_http_example
+    "client/developer/transport/client_sse_http_example.cpp"
+)
+mcp_configure_client_example(
+    client_transport_sse_https_example
+    client_sse_https_example
+    "client/developer/transport/client_sse_https_example.cpp"
+)
+mcp_configure_client_example(
+    client_transport_transport_example
+    client_transport_example
+    "client/developer/transport/client_transport_example.cpp"
+)
+
+mcp_configure_server_example(
+    server_ipc_ipc_client_example
+    ipc_client_example
+    "server/developer/ipc/ipc_client_example.cpp"
+)
+mcp_configure_server_example(
+    server_ipc_ipc_dual_mode_example
+    ipc_dual_mode_example
+    "server/developer/ipc/ipc_dual_mode_example.cpp"
+)
+mcp_configure_server_example(
+    server_ipc_ipc_server_example
+    ipc_server_example
+    "server/developer/ipc/ipc_server_example.cpp"
+)
+mcp_configure_server_example(
+    server_ipc_pipe_communication_example
+    server_pipe_communication_example
+    "server/developer/ipc/server_pipe_communication_example.cpp"
+)
+mcp_configure_server_example(
+    server_log_logger_example
+    server_logger_example
+    "server/developer/logging/server_logger_example.cpp"
+)
+mcp_configure_server_example(
+    server_mcp_protocol_protocol_example
+    server_protocol_example
+    "server/developer/protocol/server_protocol_example.cpp"
+)
+mcp_configure_server_example(
+    server_net_netio_http_demo
+    netio_http_demo
+    "server/developer/network/netio_http_demo.cpp"
+)
+mcp_configure_server_example(
+    server_net_netio_https_demo
+    netio_https_demo
+    "server/developer/network/netio_https_demo.cpp"
+)
+mcp_configure_server_example(
+    server_server_mcp_filesystem_server_http_example
+    server_filesystem_http_example
+    "server/filesystem_server_http_example.cpp"
+    "server/filesystem_server.cpp"
+)
+mcp_configure_server_example(
+    server_server_mcp_filesystem_server_ipc_example
+    server_filesystem_ipc_example
+    "server/filesystem_server_ipc_example.cpp"
+    "server/filesystem_server.cpp"
+)
+mcp_configure_server_example(
+    server_session_session_manager_example
+    session_manager_example
+    "server/developer/session/session_manager_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_ipc_example
+    server_transport_ipc_example
+    "server/developer/transport/server_transport_ipc_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_sse_http_example
+    server_sse_http_example
+    "server/developer/transport/server_sse_http_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_sse_https_example
+    server_sse_https_example
+    "server/developer/transport/server_sse_https_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_transport_client_example
+    transport_client_example
+    "server/developer/transport/transport_client_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_transport_dual_mode_example
+    transport_dual_mode_example
+    "server/developer/transport/transport_dual_mode_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_transport_example
+    server_transport_example
+    "server/developer/transport/server_transport_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_transport_server_client_example
+    transport_server_client_example
+    "server/developer/transport/transport_server_client_example.cpp"
+)
+mcp_configure_server_example(
+    server_transport_transport_server_example
+    transport_server_example
+    "server/developer/transport/transport_server_example.cpp"
+)
+
+mcp_configure_server_example(
+    server_mcp_server_full_example
+    mcp_server_full_example
+    "server/server_full_example.cpp"
+)
+
+mcp_configure_client_example(
+    client_mcp_client_full_example
+    mcp_client_full_example
+    "client/client_full_example.cpp"
+)

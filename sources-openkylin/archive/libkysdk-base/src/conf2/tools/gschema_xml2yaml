@@ -1,0 +1,165 @@
+#!/usr/bin/python3
+# 
+#  libkysdk-system's Library
+#  
+#  Copyright (C) 2023, KylinSoft Co., Ltd.
+# 
+#  This library is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU Lesser General Public
+#  License as published by the Free Software Foundation; either
+#  version 3 of the License, or (at your option) any later version.
+# 
+#  This library is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#  Lesser General Public License for more details.
+# 
+#  You should have received a copy of the GNU General Public License
+#  along with this library.  If not, see <https://www.gnu.org/licenses/>.
+# 
+#  Authors: tianshaoshuai <tianshaoshuai@kylinos.cn>
+# 
+# 
+
+import os
+import re
+import sys
+import xml.etree.ElementTree as ET
+import yaml
+import argparse
+from concurrent.futures import ThreadPoolExecutor
+from functools import partial
+import multiprocessing
+from collections import defaultdict
+
+def process_enum(enum, organization, version):
+    """处理单个enum元素"""
+    enum_list = []
+    enum_id = enum.attrib.get('id')
+    group_list = enum_id[len(organization) + 1:].split('.')
+    
+    for value in enum:
+        enum_list.append({
+            '_nick': value.get('nick'),
+            '_value': value.get('value')
+        })
+    
+    return group_list[0], f'enum_{enum_id}', enum_list
+
+def process_key(key):
+    """处理单个key元素"""
+    item = {}
+    key_name = key.attrib.get('name')
+    key_type = key.attrib.get('type')
+    
+    if key_type is None:
+        enumid = key.attrib.get('enum')
+        item['_range'] = f'@enum_{enumid}'
+        item['_type'] = 'enum'
+    else:
+        item['_type'] = key_type
+        
+    for child in key:
+        tag = child.tag
+        text = '' if child.text is None else child.text.strip().strip('\'\"').replace('\n\t','')
+        if tag == 'range':
+            text = f'{child.attrib.get("min")},{child.attrib.get("max")}'
+        item[f'_{tag}'] = text
+        
+    return key_name, item
+
+def convert_one_file(args):
+    """处理单个文件的转换"""
+    path, file, organization, version = args
+    file_data = defaultdict(lambda: {version: {}})
+    
+    try:
+        file_path = os.path.join(path, file)
+        if not os.path.exists(file_path):
+            print(f"File not found: {file_path}")
+            return file_data
+
+        tree = ET.parse(file_path)
+        root = tree.getroot()
+
+        # 处理枚举
+        for enum in root.findall('.//enum'):
+            group_name, enum_id, enum_list = process_enum(enum, organization, version)
+            if group_name not in file_data:
+                file_data[group_name] = {version: {}}
+            file_data[group_name][version][enum_id] = enum_list
+
+        # 处理schema
+        for schema in root.findall('.//schema'):
+            schema_id = schema.attrib.get('id')
+            group_list = schema_id[len(organization) + 1:].split('.')
+            
+            current = file_data[group_list[0]][version]
+            for group in group_list[1:]:
+                if group not in current:
+                    current[group] = {}
+                current = current[group]
+
+            # 处理所有key
+            for key in schema.findall('.//key'):
+                key_name, key_data = process_key(key)
+                current[key_name] = key_data
+
+        return file_data
+    except Exception as e:
+        print(f"Error processing {file}: {str(e)}")
+        return file_data
+
+def main():
+    parser = argparse.ArgumentParser(description='这是一个将gschema.xml文件转化为yaml格式的程序')
+    parser.add_argument('--id', '-i', type=str, required=True,
+                      help="指定一个gschema.xml的一个id,例如org.ukui.control-center")
+    parser.add_argument('--version', '-v', type=str,
+                      help="指定生成yaml文件的配置版本,默认为2.0.0.0-0k0.0")
+    parser.add_argument('--path', '-p', type=str,
+                      help="指定yaml文件的生成目录,默认为${HOME}/yaml")
+    args = parser.parse_args()
+
+    app = args.id
+    version = args.version or '2.0.0-0k0.0'
+    schema_path = '/usr/share/glib-2.0/schemas'
+    out_path = args.path or os.path.join(os.getenv('HOME'), 'yaml')
+    organization = app.rsplit('.', 1)[0]
+
+    # 获取文件列表
+    pattern = re.compile(f'^{re.escape(app)}.*\\.gschema\\.xml$')
+    file_list = [
+        f for f in os.listdir(schema_path)
+        if pattern.match(f)
+    ]
+    file_list.sort(key=lambda x: len(x.split('.')))
+
+    # 处理文件列表为空的情况
+    if not file_list:
+        print(f"No matching files found for {app}")
+        result = defaultdict(lambda: {version: {}})
+    else:
+        # 准备并行处理参数
+        process_args = [(schema_path, file, organization, version) for file in file_list]
+        
+        # 使用线程池并行处理文件
+        num_workers = max(1, min(multiprocessing.cpu_count() * 2, len(file_list)))
+        result = defaultdict(lambda: {version: {}})
+        
+        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+            for file_data in executor.map(convert_one_file, process_args):
+                for group, group_data in file_data.items():
+                    result[group][version].update(group_data[version])
+
+    # 确保输出目录存在
+    os.makedirs(out_path, exist_ok=True)
+    
+    # 生成yaml文件
+    output_file = os.path.join(out_path, f"{app}.yaml")
+    with open(output_file, 'w') as yaml_file:
+        yaml.safe_dump(dict(result), yaml_file, allow_unicode=True)
+
+    print(f"Conversion completed. Output file: {output_file}")
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,85 @@
+#!/bin/sh
+
+## live-build(7) - System Build Scripts
+## Copyright (C) 2006-2012 Daniel Baumann <daniel@debian.org>
+##
+## This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.
+## This is free software, and you are welcome to redistribute it
+## under certain conditions; see COPYING for details.
+
+
+set -e
+
+# Including common functions
+( . "${LIVE_BUILD}/scripts/build.sh" > /dev/null 2>&1 || true ) || . /usr/lib/live/build.sh
+
+# Setting static variables
+DESCRIPTION="$(Echo 'schedule live packages for installation')"
+HELP=""
+USAGE="${PROGRAM} [--force]"
+
+Arguments "${@}"
+
+# Reading configuration files
+Read_conffiles config/all config/common config/bootstrap config/chroot config/binary config/source config/kaiming
+Set_defaults
+
+# Requiring stage file
+Require_stagefile .build/chroot_install-packages.install
+
+# Checking stage file
+Check_stagefile .build/chroot_kaiming
+
+# Checking lock file
+Check_lockfile .lock
+
+# Creating lock file
+Create_lockfile .lock
+
+if [ -n "$KAIMING_REPO" ]; then
+	Echo_message "repo is $KAIMING_REPO"
+	Chroot chroot kaiming update
+	Chroot chroot kaiming remote-modify kaiming-repo --repo="$KAIMING_REPO"
+fi
+
+filename="config/package-lists/kylin.kaiming-chroot"
+kaiming_packages=""
+if [ -f "$filename" ];then
+	Echo_message "$filename exists"
+	kaiming_packages=$(Expand_packagelist $filename config/package-lists)
+	Echo_message "Kaiming package list: $kaiming_packages"
+fi
+
+# Install kaiming_packages
+set +e
+error_count=0
+MAX_RETRIES=5
+RETRY_DELAY=1
+
+# 安装开明包
+if [ -n "$kaiming_packages" ];then
+
+	while true; do
+		Echo_message "尝试安装 $TARGET_PKG ..."
+		Chroot chroot kaiming install $kaiming_packages -y
+
+		if [ $? -eq 0 ]; then
+			Echo_message "安装成功！"
+			break
+		else
+			error_count=$((error_count+1))
+			Echo_error "安装失败 (错误次数: $error_count)"
+		
+			if [ $error_count -gt $MAX_RETRIES ]; then
+				Echo_error "安装 $TARGET_PKG 失败（最大重试次数: $MAX_RETRIES）"
+    			exit 1
+			else
+				Echo_message "等待 ${RETRY_DELAY} 秒后重试..."
+				sleep "$RETRY_DELAY"
+			fi
+		fi
+	done
+fi
+
+# Creating stage file
+Create_stagefile .build/chroot_kaiming

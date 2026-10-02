@@ -1,0 +1,367 @@
+/*
+ * libkysdk-qtwidgets's Library
+ *
+ * Copyright (C) 2023, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Zhen Sun <sunzhen1@kylinos.cn>
+ *
+ */
+
+#include "kdialog.h"
+#include "parmscontroller.h"
+#include "xatom-helper.h"
+#include <QApplication>
+#include <QBoxLayout>
+#include <QDesktopWidget>
+#include "accessinfohelper.h"
+#include "ukuistylehelper/ukui-decoration-manager.h"
+#include "ukuistylehelper/ukui-shell-manager.h"
+#include <QStackedLayout>
+#include <QTimer>
+
+namespace kdk
+{
+static int loadingPixmapSize = 96;
+
+class KDialogPrivate : public QObject
+{
+    Q_OBJECT
+    Q_DECLARE_PUBLIC(KDialog)
+public:
+    KDialogPrivate(KDialog *parent);
+
+private:
+    KDialog *q_ptr;
+    KIconBar *m_pIconBar;
+    KWindowButtonBar *m_pWindowButtonBar;
+    QHBoxLayout *m_pTitleLayout;
+    QVBoxLayout *m_pMainLayout;
+    QWidget *m_pMainWidget;
+    QString m_IconName;
+
+    QWidget *m_pContentWidget;
+    QWidget *m_pLoadingWidget;
+    QVBoxLayout *m_pLoadingLayout;
+    QLabel *m_pLoadingLabel;
+    QStackedLayout *m_pStackedLayout;
+    bool m_loadingStatus;
+};
+
+KDialog::KDialog(QWidget *parent)
+    : QDialog(parent)
+    , d_ptr(new KDialogPrivate(this))
+{
+    Q_D(KDialog);
+    setAttribute(Qt::WA_AlwaysShowToolTips);
+    setFocusPolicy(Qt::ClickFocus);
+    setObjectName("Kdialog");
+
+    QString platform = QGuiApplication::platformName();
+    if (platform.startsWith(QLatin1String("xcb"), Qt::CaseInsensitive)) {
+        MotifWmHints hints;
+        hints.flags = MWM_HINTS_FUNCTIONS | MWM_HINTS_DECORATIONS;
+        hints.functions = MWM_FUNC_ALL;
+        hints.decorations = MWM_DECOR_BORDER;
+        XAtomHelper::getInstance()->setWindowMotifHint(this->winId(), hints);
+    }
+
+    connect(d->m_pWindowButtonBar->minimumButton(), &QPushButton::clicked, this, &KDialog::showMinimized);
+    connect(d->m_pWindowButtonBar->maximumButton(), &QPushButton::clicked, this, [=]() {
+        if (this->isMaximized())
+            showNormal();
+        else
+            showMaximized();
+    });
+    connect(d->m_pWindowButtonBar->closeButton(), &QPushButton::clicked, this, &KDialog::close);
+    connect(d->m_pWindowButtonBar, &KWindowButtonBar::doubleClick, this, [=]() {
+        if (this->isMaximized())
+            showNormal();
+        else
+            showMaximized();
+    });
+    connect(d->m_pIconBar, &KIconBar::doubleClick, this, [=]() {
+        if (this->isMaximized())
+            showNormal();
+        else
+            showMaximized();
+    });
+
+    changeIconStyle();
+    changeTheme();
+    connect(m_gsetting,&QGSettings::changed,this,[=](QString key){
+        if(key == "styleName" || key == "iconThemeName" || key == "widgetThemeName")
+        {
+            changeTheme();
+        }
+        if(key == "iconThemeName")
+        {
+            changeIconStyle();
+        }
+    });
+
+    connect(Parmscontroller::self(), &Parmscontroller::modeChanged, this, [=]() {
+        updateGeometry();
+    });
+    installEventFilter(this);
+    resize(600, 480);
+}
+
+KDialog::~KDialog()
+{
+}
+
+void KDialog::setWindowIcon(const QIcon &icon)
+{
+    Q_D(KDialog);
+    d->m_pIconBar->setIcon(icon);
+    d->m_IconName = icon.name();
+    QWidget::setWindowIcon(icon);
+    if(d->m_loadingStatus)
+    {
+        d->m_pLoadingLabel->setPixmap(icon.pixmap(loadingPixmapSize,loadingPixmapSize));
+    }
+}
+
+void KDialog::setWindowIcon(const QString &iconName)
+{
+    Q_D(KDialog);
+    d->m_IconName = iconName;
+    d->m_pIconBar->setIcon(iconName);
+    QWidget::setWindowIcon(QIcon::fromTheme(iconName));
+    if(d->m_loadingStatus)
+    {
+        d->m_pLoadingLabel->setPixmap(QIcon::fromTheme(iconName).pixmap(loadingPixmapSize,loadingPixmapSize));
+    }
+}
+
+void KDialog::setWindowTitle(const QString &title)
+{
+    Q_D(KDialog);
+    QVariant value = this->property("isAboutDialog");
+    if (value.isNull() || !value.toBool()) {
+        d->m_pIconBar->setWidgetName(title);
+    }
+    QDialog::setWindowTitle(title);
+}
+
+QPushButton *KDialog::maximumButton()
+{
+    Q_D(KDialog);
+    return d->m_pWindowButtonBar->maximumButton();
+}
+
+QPushButton *KDialog::minimumButton()
+{
+    Q_D(KDialog);
+    return d->m_pWindowButtonBar->minimumButton();
+}
+
+QPushButton *KDialog::closeButton()
+{
+    Q_D(KDialog);
+    return d->m_pWindowButtonBar->closeButton();
+}
+
+KMenuButton *KDialog::menuButton()
+{
+    Q_D(KDialog);
+    return d->m_pWindowButtonBar->menuButton();
+}
+
+QWidget *KDialog::mainWidget()
+{
+    Q_D(KDialog);
+    if (d->m_pContentWidget)
+        return d->m_pContentWidget;
+}
+
+KWindowButtonBar *KDialog::windowButtonBar()
+{
+    Q_D(KDialog);
+    return d->m_pWindowButtonBar;
+}
+
+KIconBar *KDialog::iconBar()
+{
+    Q_D(KDialog);
+    return d->m_pIconBar;
+}
+
+void KDialog::setLoadingStatus(bool flag)
+{
+    Q_D(KDialog);
+    d->m_loadingStatus = flag;
+    if(flag)
+    {
+        d->m_pStackedLayout->setCurrentIndex(1);
+        QIcon icon = windowIcon();
+        d->m_pLoadingLabel->setPixmap(icon.pixmap(loadingPixmapSize,loadingPixmapSize));
+    }
+    else
+    {
+        d->m_pStackedLayout->setCurrentIndex(0);
+    }
+}
+
+bool KDialog::eventFilter(QObject *target, QEvent *event)
+{
+    Q_D(KDialog);
+    if (target == this && (event->type() == QEvent::WindowStateChange || event->type() == QEvent::Show)) {
+        if (event->type() == QEvent::Show) {
+            if(d->m_pStackedLayout->sizeConstraint() != d->m_pMainLayout->sizeConstraint())
+                d->m_pStackedLayout->setSizeConstraint(d->m_pMainLayout->sizeConstraint());
+            MotifWmHints hints;
+            hints.flags = MWM_HINTS_FUNCTIONS | MWM_HINTS_DECORATIONS;
+            hints.functions = MWM_FUNC_ALL;
+            hints.decorations = MWM_DECOR_BORDER;
+            XAtomHelper::getInstance()->setWindowMotifHint(this->winId(), hints);
+
+            QWidget *parentWindow = qobject_cast<QWidget *>(this->parent());
+
+            while (parentWindow && parentWindow->parent())
+                parentWindow = qobject_cast<QWidget *>(parentWindow->parent());
+
+            QTimer::singleShot(0, this, [=]() {
+                if (parentWindow && parentWindow->isVisible()) {
+                    const QPoint parentWindowCenter = parentWindow->geometry().center();
+                    const QPoint dialogCenter = this->geometry().center();
+                    const QPoint moveOffset = parentWindowCenter - dialogCenter;
+                    move(pos() + moveOffset);
+                } else {
+                    QDesktopWidget desktop;
+                    int screenWidth = desktop.screen()->width();
+                    int screenHeight = desktop.screen()->height();
+
+                    int messageBox_X = (screenWidth - this->width()) / 2;
+                    int messageBox_Y = (screenHeight - this->height()) / 2;
+
+                    this->move(messageBox_X, messageBox_Y);
+                }
+            });
+        }
+        if (this->isMaximized())
+            d->m_pWindowButtonBar->setMaximumButtonState(MaximumButtonState::Restore);
+        else
+            d->m_pWindowButtonBar->setMaximumButtonState(MaximumButtonState::Maximum);
+    }
+    if (target == this && (event->type() == QEvent::WindowActivate || event->type() == QEvent::WindowDeactivate)) {
+        changeTheme();
+    }
+    QString platform = QGuiApplication::platformName();
+    if (platform.startsWith(QLatin1String("wayland"), Qt::CaseInsensitive)) {
+        if ((event->type() == QEvent::PlatformSurface || event->type() == QEvent::Show || event->type() == QEvent::UpdateRequest || event->type() == QEvent::ChildAdded || event->type() == QEvent::ChildPolished)) {
+#ifdef USE_UKUI_SHELL_PLUGIN
+            this->setProperty("ukui_surface_no_titlebar", true);
+#else
+#ifdef USE_UKUI_PROTOCOL
+            if (UkuiShellManager::getInstance()->ukuishellReady())
+                UkuiShellManager::getInstance()->removeHeaderBar(this->windowHandle());
+            else
+                UKUIDecorationManager::getInstance()->removeHeaderBar(this->windowHandle());
+#else
+            UKUIDecorationManager::getInstance()->removeHeaderBar(this->windowHandle());
+#endif
+#endif
+        }
+    }
+    if (target == this && (event->type() == QEvent::Close || event->type() == QEvent::Hide)) {
+        d->m_pWindowButtonBar->closeButton()->setAttribute(Qt::WA_UnderMouse, false);
+        QHoverEvent hoverEvent(QEvent::HoverLeave, QPoint(10, 10), QPoint(0, 0));
+        QCoreApplication::sendEvent(d->m_pWindowButtonBar->closeButton(), &hoverEvent);
+    }
+    return QDialog::eventFilter(target, event);
+}
+
+void KDialog::changeTheme()
+{
+    Q_D(KDialog);
+    initThemeStyle();
+    QPalette p = this->palette();
+    QColor color = ThemeController::getPaletteColorFromDT("base-active");
+    p.setColor(QPalette::Window, color);
+    this->setPalette(p);
+    if (!d->m_IconName.isEmpty())
+        this->setWindowIcon(d->m_IconName);
+}
+
+void KDialog::changeIconStyle()
+{
+    Q_D(KDialog);
+    initThemeStyle();
+    setWindowIcon(d->m_IconName);
+}
+
+QBoxLayout *KDialog::mainLayout()
+{
+    Q_D(KDialog);
+    return d->m_pMainLayout;
+}
+
+KDialogPrivate::KDialogPrivate(KDialog *parent)
+    : q_ptr(parent)
+{
+    Q_Q(KDialog);
+    m_pMainWidget = new QWidget(q);
+    m_pContentWidget = new QWidget(q);
+    m_pMainLayout = new QVBoxLayout(m_pMainWidget);
+    m_pTitleLayout = new QHBoxLayout();
+    m_pTitleLayout->setContentsMargins(0, 0, 0, 0);
+    m_pTitleLayout->setSpacing(0);
+    m_pTitleLayout = new QHBoxLayout;
+    m_pIconBar = new KIconBar(q);
+    m_pWindowButtonBar = new KWindowButtonBar(q);
+    m_pTitleLayout->addWidget(m_pIconBar);
+    m_pTitleLayout->addWidget(m_pWindowButtonBar);
+
+    m_pMainLayout->setSpacing(0);
+    m_pMainLayout->setContentsMargins(0, 0, 0, 0);
+    m_pMainLayout->addLayout(m_pTitleLayout, Qt::AlignTop);
+    m_pMainLayout->addWidget(m_pContentWidget);
+
+    // 暂时先默认只显示关闭按钮
+    m_pWindowButtonBar->maximumButton()->hide();
+    m_pWindowButtonBar->menuButton()->hide();
+    m_pWindowButtonBar->minimumButton()->hide();
+
+    m_pLoadingWidget = new QWidget(q);
+    m_pLoadingWidget->setAutoFillBackground(true);
+    m_pLoadingWidget->setBackgroundRole(QPalette::Base);
+    m_pLoadingLabel = new QLabel(m_pLoadingWidget);
+    m_pLoadingLayout = new QVBoxLayout(m_pLoadingWidget);
+    m_pLoadingLayout->setAlignment(Qt::AlignCenter);
+    m_pLoadingLayout->setContentsMargins(0,0,0,0);
+    m_pLoadingLayout->addWidget(m_pLoadingLabel);
+
+    m_pStackedLayout = new QStackedLayout(q);
+    m_pStackedLayout->addWidget(m_pMainWidget);
+    m_pStackedLayout->addWidget(m_pLoadingWidget);
+    m_pStackedLayout->setCurrentIndex(0);
+
+    q->setLayout(m_pStackedLayout);
+    setParent(parent);
+    m_loadingStatus = false;
+
+    KDK_ALL_INFO_FORMAT(m_pIconBar,"");
+    KDK_ALL_INFO_FORMAT(m_pWindowButtonBar,"");
+    KDK_ALL_INFO_FORMAT(m_pMainWidget,"");
+    KDK_ALL_INFO_FORMAT(m_pContentWidget,"");
+    KDK_ALL_INFO_FORMAT(m_pLoadingWidget,"");
+    KDK_ALL_INFO_FORMAT(m_pLoadingLabel,"");
+}
+}
+
+#include "kdialog.moc"
+#include "moc_kdialog.cpp"

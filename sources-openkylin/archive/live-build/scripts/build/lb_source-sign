@@ -1,0 +1,72 @@
+#!/bin/sh
+
+## live-build(7) - System Build Scripts
+## Copyright (C) 2006-2012 Daniel Baumann <daniel@debian.org>
+##
+## This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.
+## This is free software, and you are welcome to redistribute it
+## under certain conditions; see COPYING for details.
+
+set -e
+
+# Including common functions
+( . "${LIVE_BUILD}/scripts/build.sh" > /dev/null 2>&1 || true ) || . /usr/lib/live/build.sh
+
+# Setting static variables
+DESCRIPTION="$(Echo 'Signature of APT mirror source')"
+HELP=""
+USAGE="${PROGRAM} {generate export sign delete import}"
+
+
+Arguments "${@}"
+
+# Reading configuration files
+Read_conffiles config/all config/common config/bootstrap config/chroot config/binary config/source
+Set_defaults
+
+# 在当前目录创建子目录作为 GNUPGHOME
+GNUPGHOME="$PWD/gnupg_home"
+mkdir -p "$GNUPGHOME"
+chmod 700 "$GNUPGHOME"
+export GNUPGHOME
+
+PUBLIC_KEY_FILE="live-build_public-key.asc"
+EXPORT_PUBLIC_FILE="chroot/root/${PUBLIC_KEY_FILE}"
+APT_SOURCE_FILE="binary/dists/nile"
+
+case "${1}" in
+
+        generate)
+                generate_gpg_key
+                KEY_ID=$(get_key_id)
+                FINGERPRINT=$(get_fingerprint)
+                ;;
+        export)
+                if [ -z "$KEY_ID" ]; then
+                        KEY_ID=$(get_key_id)
+                fi
+                export_public_key "$KEY_ID" "${EXPORT_PUBLIC_FILE}"
+                ;;
+        sign)
+                if [ -z "$KEY_ID" ]; then
+                        KEY_ID=$(get_key_id)
+                fi
+                sign_apt_source "$KEY_ID" "${APT_SOURCE_FILE}"
+                ;;
+        delete)
+                if [ -z "$FINGERPRINT" ]; then
+                        FINGERPRINT=$(get_fingerprint)
+                fi
+                delete_gpg_key "$FINGERPRINT"
+                ;;
+        import)
+                #IMPORT_PUBLIC_FILE=$(ls /root/*_private_key.asc)
+                #import_private_key "${IMPORT_PUBLIC_FILE}"
+                apt_key_cmd="apt-key add /root/${PUBLIC_KEY_FILE}"
+                Chroot chroot "${apt_key_cmd}"
+                Chroot chroot "rm -f /root/${PUBLIC_KEY_FILE}"
+                ;;
+        *)
+                echo "无效的参数：$arg。可用参数：generate, export, sign, delete, import"
+                ;;
+esac

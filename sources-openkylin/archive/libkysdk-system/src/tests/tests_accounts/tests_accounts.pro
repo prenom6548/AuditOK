@@ -1,0 +1,48 @@
+QT += widgets gui dbus
+
+CONFIG += c++14 link_pkgconfig
+PKGCONFIG += \
+                gtest \
+                gtest_main \
+                glib-2.0 \
+                dbus-1 \
+                dbus-glib-1 \
+                polkit-gobject-1 \
+                kysdk-accessctl
+
+
+QMAKE_LFLAGS +=-fprofile-arcs -ftest-coverage
+QMAKE_CXXFLAGS += --coverage -fno-inline
+QMAKE_CFLAGS += --coverage -fno-inline
+
+INCLUDEPATH += /usr/include/kysdk/kysdk-base
+
+LIBS += -lgcov -lkylog -lpolkit-gobject-1 -lcjson -lpthread
+
+# The following define makes your compiler emit warnings if you use
+# any Qt feature that has been marked deprecated (the exact warnings
+# depend on your compiler). Please consult the documentation of the
+# deprecated API in order to know how to port your code away from it.
+DEFINES += QT_DEPRECATED_WARNINGS
+
+# You can also make your code fail to compile if it uses deprecated APIs.
+# In order to do so, uncomment the following line.
+# You can also select to disable deprecated APIs only up to a certain version of Qt.
+#DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
+
+INCLUDEPATH += \
+                ../../accounts
+
+SOURCES += \
+    kyaccounts-test.cpp \
+    ../../accounts/libkyaccounts.c \
+
+HEADERS += \
+    ../../accounts/libkyaccounts.h \
+
+# Default rules for deployment.
+headers.files = $${HEADERS}
+headers.path = /usr/include/kysdk/base/
+target.path = $$[QT_INSTALL_LIBS]
+INSTALLS += target headers
+

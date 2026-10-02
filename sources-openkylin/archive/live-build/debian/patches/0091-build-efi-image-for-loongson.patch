@@ -1,0 +1,138 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Tue, 2 Feb 2021 14:15:07 +0800
+Subject: build efi image for loongson
+
+---
+ scripts/build/lb_binary_grub2-efi     | 62 ++++++++++++++++++-----------------
+ scripts/build/lb_binary_package-lists |  4 +--
+ 2 files changed, 34 insertions(+), 32 deletions(-)
+
+diff --git a/scripts/build/lb_binary_grub2-efi b/scripts/build/lb_binary_grub2-efi
+index 4f95d8f..5e3e3df 100755
+--- a/scripts/build/lb_binary_grub2-efi
++++ b/scripts/build/lb_binary_grub2-efi
+@@ -41,30 +41,20 @@ Check_lockfile .lock
+ Create_lockfile .lock
+ 
+ # Check architecture
+-Check_architectures amd64 arm64 mips64el
++Check_architectures amd64 arm64 mips64el loongarch64
+ Check_crossarchitectures
+ 
+ # Checking depends
+ case ${ARCHITECTURE} in
+-        'amd64')
+-                Check_package chroot/usr/bin/grub-mkimage grub-efi-amd64
+-		Check_package chroot/sbin/mkfs.vfat dosfstools
+-		Check_package chroot/sbin/MAKEDEV makedev
+-                ;;
+-        'arm64')
+-                Check_package chroot/usr/bin/grub-mkimage grub-efi-arm64
+-		Check_package chroot/sbin/mkfs.vfat dosfstools
+-		Check_package chroot/sbin/MAKEDEV makedev
+-                ;;
+-        'mips64el')
+-                Check_package chroot/usr/bin/grub-mkimage grub-efi-mips64el
+-		Check_package chroot/sbin/mkfs.vfat dosfstools
+-		Check_package chroot/sbin/MAKEDEV makedev
+-                ;;
++		'amd64'|'arm64'|'mips64el'|'loongarch64')
++			Check_package chroot/usr/bin/grub-mkimage grub-efi-${ARCHITECTURE}
++			Check_package chroot/sbin/mkfs.vfat dosfstools
++			Check_package chroot/sbin/MAKEDEV makedev
++			;;
+         *)
+-                Echo_message "not amd64 or arm64 or mips64el, grub2-efi exit"
+-                exit 0
+-                ;;
++			Echo_message "not amd64 or arm64 or mips64el or loongarch64, grub2-efi exit"
++			exit 0
++			;;
+ esac
+ 
+ # Restoring cache
+@@ -75,7 +65,10 @@ Install_package
+ 
+ case ${LB_BINARY_IMAGES} in
+         iso*)
+-		if [ ! -d chroot/usr/lib/grub/x86_64-efi ] && [ ! -d chroot/usr/lib/grub/arm64-efi ] && [ ! -d chroot/usr/lib/grub/mips64el-efi ];then
++		if [ ! -d chroot/usr/lib/grub/x86_64-efi ] && \
++		[ ! -d chroot/usr/lib/grub/arm64-efi ] && \
++		[ ! -d chroot/usr/lib/grub/mips64el-efi ] && \
++		[ ! -d chroot/usr/lib/grub/loongarch64-efi ];then
+                         exit 0
+ 		fi
+                 ;;
+@@ -210,6 +203,10 @@ case ${ARCHITECTURE} in
+ 		Grub_live_entry "Try ${ORIGIN} without installing" "/casper/vmlinuz" "/casper/initrd.img" "console=tty1 boot=casper quiet splash loglevel=0 audit=0"
+ 		Grub_live_entry "Install ${ORIGIN}" "/casper/vmlinuz" "/casper/initrd.img" "console=tty1 boot=casper quiet splash loglevel=0 only-ubiquity audit=0"
+ 		;;
++	'loongarch64')
++		Grub_live_entry "Try ${ORIGIN} without installing" "/casper/vmlinuz" "/casper/initrd.img" "console=ttyS0,115200 boot=casper loglevel=0 audit=0"
++		Grub_live_entry "Install ${ORIGIN}" "/casper/vmlinuz" "/casper/initrd.img" "console=ttyS0,115200 boot=casper loglevel=0 only-ubiquity audit=0"
++		;;
+ esac
+ 
+ LINUX_LIVE="$(/bin/echo ${LINUX_LIVE} | sed -e 's|binary||g' -e 's|//|/|g')"
+@@ -279,17 +276,17 @@ cp -r "${TEMPLATES}"/* binary/boot/grub
+ 
+ case ${LB_BINARY_IMAGES} in
+ 	iso*)
+-                case ${ARCHITECTURE} in
+-                        'amd64')
+-                                FILES="chroot/usr/lib/grub/x86_64-efi chroot/usr/share/grub/*.pf2"
+-                                ;;
+-                        'arm64')
+-                                FILES="chroot/usr/lib/grub/arm64-efi chroot/usr/share/grub/*.pf2"
+-                                ;;
+-			'mips64el')
+-				FILES="chroot/usr/lib/grub/mips64el-efi chroot/usr/share/grub/*.pf2"
++		case ${ARCHITECTURE} in
++			'amd64')
++				FILES="chroot/usr/lib/grub/x86_64-efi chroot/usr/share/grub/*.pf2"
++				;;
++			'arm64'|'mips64el')
++				FILES="chroot/usr/lib/grub/${ARCHITECTURE}-efi chroot/usr/share/grub/*.pf2"
++				;;
++			'loongarch64')
++				FILES="chroot/usr/lib/grub/${ARCHITECTURE}-efi"
+ 				;;
+-                esac
++			esac
+                 ;;
+ esac
+ 
+@@ -330,6 +327,11 @@ elif  [ -d chroot/usr/lib/grub/mips64el-efi ];then
+     KY_EFI_NAME="mips64el-efi"
+     KY_BOOT_EFI_NAME="BOOTMIPS.EFI"
+     KY_GRUB_EFI_NAME="grubmips64.efi"
++elif  [ -d chroot/usr/lib/grub/loongarch64-efi ];then
++    KY_EFI="/usr/lib/grub/loongarch64-efi"
++    KY_EFI_NAME="loongarch64-efi"
++    KY_BOOT_EFI_NAME="BOOTLOONGARCH.EFI"
++    KY_GRUB_EFI_NAME="grubloongarch64.efi"
+ fi
+ 
+ mkdir -p binary/boot/grub
+diff --git a/scripts/build/lb_binary_package-lists b/scripts/build/lb_binary_package-lists
+index fbca8fb..59db99c 100755
+--- a/scripts/build/lb_binary_package-lists
++++ b/scripts/build/lb_binary_package-lists
+@@ -41,7 +41,7 @@ Create_lockfile .lock
+ #kylin add efi
+ ARCHITECTURE="$(echo ${LB_ARCHITECTURES} | sed -e 's| |/|g')"
+ case ${ARCHITECTURE} in
+-        'arm64'|'amd64')
++        'arm64'|'amd64'|'mips64el'|'loongarch64')
+                 ky_chroot_has_efi="$(cat binary/casper/filesystem.manifest | grep grub-efi- | wc -l)"
+                if [ "${ky_chroot_has_efi}" = "0" ];then
+                        touch .build/chroot_no_efi
+@@ -122,7 +122,7 @@ then
+ 
+ 	#kylin add efi
+ 	case ${ARCHITECTURE} in
+-		'arm64'|'amd64')
++		'arm64'|'amd64'|'mips64el'|'loongarch64')
+ 			efi_pkg_num="$(ls chroot/binary.deb/archives/grub-efi*.deb | wc -l)"
+ 			if [ "${efi_pkg_num}" = "0" ];then
+ 				touch .build/binary_no_efi

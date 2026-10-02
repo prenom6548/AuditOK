@@ -1,0 +1,504 @@
+From: zhaokexin <zhaokexin@kylinos.cn>
+Date: Tue, 14 May 2024 09:22:17 +0800
+Subject: =?utf-8?b?5rOo6YeK5YWz6ZSu5a2X6K+G5Yir5Yid5aeL5YyW77yM6Ziy5q2i5b2x?=
+ =?utf-8?b?5ZON5bqU55So5ZCv5Yqo6YCf5bqm?=
+
+---
+ src/nlpsession.cpp                    |  4 +--
+ src/services/speechprocessorproxy.cpp | 56 +++++++++++++++++++++++++++--------
+ src/services/speechprocessorproxy.h   | 21 ++++++-------
+ src/services/textprocessorproxy.cpp   | 16 +++++-----
+ src/services/textprocessorproxy.h     |  3 +-
+ src/services/visionprocessorproxy.cpp | 11 ++++---
+ src/services/visionprocessorproxy.h   |  3 +-
+ src/speech.cpp                        | 24 +++++----------
+ src/speechsession.cpp                 | 20 +++++--------
+ src/vision.cpp                        |  5 ++--
+ src/visionsession.cpp                 |  3 +-
+ 11 files changed, 93 insertions(+), 73 deletions(-)
+
+diff --git a/src/nlpsession.cpp b/src/nlpsession.cpp
+index 3eb4256..4bd723b 100644
+--- a/src/nlpsession.cpp
++++ b/src/nlpsession.cpp
+@@ -41,9 +41,7 @@ NlpResult nlp::NlpSession::chat(const std::string &message)
+     if (message.empty()) {
+         return NlpResult::NLP_PARAM_ERROR;
+     }
+-    textProcessor_.chat(message);
+-
+-    return NlpResult::NLP_SUCCESS;
++    return textProcessor_.chat(message);
+ }
+ 
+ void nlp::NlpSession::stopChat()
+diff --git a/src/services/speechprocessorproxy.cpp b/src/services/speechprocessorproxy.cpp
+index f4b3170..43e08f8 100644
+--- a/src/services/speechprocessorproxy.cpp
++++ b/src/services/speechprocessorproxy.cpp
+@@ -159,9 +159,9 @@ SpeechResult SpeechProcessorProxy::initEngine(
+         const std::string &engineName, const Json::Value &config,
+         gpointer userData) {
+     GError *error = nullptr;
+-    gint errorCode;
+     aisdk_speech_processor_call_init_sync(
+-        delegate_, engineName.c_str(), config.toStyledString().c_str(), &sessionId_, &errorCode, nullptr, &error);
++        delegate_, engineName.c_str(), config.toStyledString().c_str(),
++        &sessionId_, &initErrorCode_, nullptr, &error);
+ 
+     if (error) {
+         fprintf(stderr, "init engine error: %s\n", error->message);
+@@ -169,10 +169,13 @@ SpeechResult SpeechProcessorProxy::initEngine(
+     }
+     fprintf(stdout, "proxy initEngine sessionId: %d\n", sessionId_);
+     connectSignals();
+-    return (SpeechResult)errorCode;
++    return (SpeechResult)initErrorCode_;
+ }
+ 
+ SpeechResult SpeechProcessorProxy::startRecognizingAudio(const char *audioProperties) {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     GError *error = nullptr;
+     gint errorCode;
+     aisdk_speech_processor_call_start_recognizing_audio_sync(
+@@ -184,32 +187,47 @@ SpeechResult SpeechProcessorProxy::startRecognizingAudio(const char *audioProper
+     return (SpeechResult)errorCode;
+ }
+ 
+-void SpeechProcessorProxy::inputAudioData(const char *audioData,
+-                                          int audioDataLength) {
++SpeechResult SpeechProcessorProxy::inputAudioData(const char *audioData,
++                                                  int audioDataLength) {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     std::string data = base64Encode(std::string(audioData, audioDataLength));
+     //data.data()是编码后的数据
+     //audioDataLength是原始数据的数据长度
+     aisdk_speech_processor_call_input_audio_data(
+         delegate_, data.data(), audioDataLength, sessionId_, nullptr, nullptr, this);
++    return SpeechResult::SPEECH_SUCCESS;
+ }
+ 
+-void SpeechProcessorProxy::stopRecognizingAudio() {
++SpeechResult SpeechProcessorProxy::stopRecognizingAudio() {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     aisdk_speech_processor_call_stop_recognizing_audio(
+         delegate_, sessionId_, nullptr, nullptr, this);
++    return SpeechResult::SPEECH_SUCCESS;
+ }
+ 
+-void SpeechProcessorProxy::recognizingCompleteAudio(const char *audioProperties,
+-                                                    const char *audioData,
+-                                                    int audioDataLength) {
++SpeechResult SpeechProcessorProxy::recognizingCompleteAudio(const char *audioProperties,
++                                                            const char *audioData,
++                                                            int audioDataLength) {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     std::string data = base64Encode(std::string(audioData, audioDataLength));
+     //data.data()是编码后的数据
+     //audioDataLength是原始数据的数据长度
+     aisdk_speech_processor_call_recognizing_complete_audio(
+         delegate_, audioProperties, data.data(), audioDataLength, sessionId_,
+         nullptr, nullptr, this);
++    return SpeechResult::SPEECH_SUCCESS;
+ }
+ 
+ SpeechResult SpeechProcessorProxy::startSynthesizingAudio(const char *voiceProperties) {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     GError *error = nullptr;
+     gint errorCode;
+     aisdk_speech_processor_call_start_synthesizing_audio_sync(
+@@ -221,20 +239,32 @@ SpeechResult SpeechProcessorProxy::startSynthesizingAudio(const char *voicePrope
+     return (SpeechResult)errorCode;
+ }
+ 
+-void SpeechProcessorProxy::inputContinuousText(const char *text) {
++SpeechResult SpeechProcessorProxy::inputContinuousText(const char *text) {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     aisdk_speech_processor_call_input_continuous_text(
+         delegate_, text, sessionId_, nullptr, nullptr, this);
++    return SpeechResult::SPEECH_SUCCESS;
+ }
+ 
+-void SpeechProcessorProxy::stopSynthesizingAudio() {
++SpeechResult SpeechProcessorProxy::stopSynthesizingAudio() {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     aisdk_speech_processor_call_stop_synthesizing_audio(
+         delegate_, sessionId_, nullptr, nullptr, this);
++    return SpeechResult::SPEECH_SUCCESS;
+ }
+ 
+-void SpeechProcessorProxy::recognizingCompleteText(const char *voiceProperties,
+-                                                   const char *text) {
++SpeechResult SpeechProcessorProxy::recognizingCompleteText(const char *voiceProperties,
++                                                           const char *text) {
++    if (initErrorCode_) {
++        return (SpeechResult)initErrorCode_;
++    }
+     aisdk_speech_processor_call_recognizing_complete_text(
+         delegate_, voiceProperties, text, sessionId_, nullptr, nullptr, this);
++    return SpeechResult::SPEECH_SUCCESS;
+ }
+ 
+ 
+diff --git a/src/services/speechprocessorproxy.h b/src/services/speechprocessorproxy.h
+index 022222b..04ba2a6 100644
+--- a/src/services/speechprocessorproxy.h
++++ b/src/services/speechprocessorproxy.h
+@@ -54,19 +54,19 @@ public:
+     SpeechResult initEngine(const std::string &engineName, const Json::Value &config,
+                             gpointer userData);
+     SpeechResult startRecognizingAudio(const char *audioProperties);
+-    void inputAudioData(const char *audioData,
+-                        int audioDataLength);
+-    void stopRecognizingAudio();
+-    void recognizingCompleteAudio(const char *audioProperties,
+-                                  const char *audioData,
+-                                  int audioDataLength);
++    SpeechResult inputAudioData(const char *audioData,
++                                int audioDataLength);
++    SpeechResult stopRecognizingAudio();
++    SpeechResult recognizingCompleteAudio(const char *audioProperties,
++                                          const char *audioData,
++                                          int audioDataLength);
+ 
+     SpeechResult startSynthesizingAudio(const char *voiceProperties);
+-    void inputContinuousText(const char *text);
+-    void stopSynthesizingAudio();
++    SpeechResult inputContinuousText(const char *text);
++    SpeechResult stopSynthesizingAudio();
+ 
+-    void recognizingCompleteText(const char *voiceProperties,
+-                                 const char *text);
++    SpeechResult recognizingCompleteText(const char *voiceProperties,
++                                         const char *text);
+ 
+ private:
+     void init();
+@@ -119,5 +119,6 @@ private:
+     const char *interfaceName_ = "org.openkylin.aisdk.speechprocessor";
+ 
+     int sessionId_;
++    int initErrorCode_; //0表示初始化成功，非0表示初始化失败
+ };
+ #endif
+diff --git a/src/services/textprocessorproxy.cpp b/src/services/textprocessorproxy.cpp
+index c944570..1213dfe 100644
+--- a/src/services/textprocessorproxy.cpp
++++ b/src/services/textprocessorproxy.cpp
+@@ -65,11 +65,10 @@ NlpResult TextProcessorProxy::initEngine(const std::string &engineName,
+     const Json::Value &config)
+ {
+     GError *error = nullptr;
+-    gint errorCode;
+     aisdk_text_processor_call_init_sync(
+-                delegate_, engineName.c_str(), 
+-                config.toStyledString().c_str(), &sessionId_, 
+-                &errorCode,nullptr, &error);
++                delegate_, engineName.c_str(),
++                config.toStyledString().c_str(), &sessionId_,
++                &initErrorCode_, nullptr, &error);
+ 
+     if (error) {
+         fprintf(stderr, "Init engine error: %s\n", error->message);
+@@ -78,13 +77,16 @@ NlpResult TextProcessorProxy::initEngine(const std::string &engineName,
+ 
+     fprintf(stdout, "proxy init engine sessionId %i\n", sessionId_);
+     connectSignal();
+-    return (NlpResult)errorCode;
++    return (NlpResult)initErrorCode_;
+ }
+ 
+-
+-void TextProcessorProxy::chat(const std::string &question) {
++NlpResult TextProcessorProxy::chat(const std::string &question) {
++    if (initErrorCode_) {
++        return (NlpResult)initErrorCode_;
++    }
+     aisdk_text_processor_call_chat(
+         delegate_, question.c_str(), sessionId_, nullptr, nullptr, this);
++    return NlpResult::NLP_SUCCESS;
+ }
+ 
+ void TextProcessorProxy::stopChat()
+diff --git a/src/services/textprocessorproxy.h b/src/services/textprocessorproxy.h
+index 10cb012..10e1a5b 100644
+--- a/src/services/textprocessorproxy.h
++++ b/src/services/textprocessorproxy.h
+@@ -40,7 +40,7 @@ public:
+ 
+     void setUserData(void *userData) { userData_ = userData; }
+ 
+-    void chat(const std::string &question);
++    NlpResult chat(const std::string &question);
+     void stopChat();
+     void setActor(int actor);
+     void setContext(int size);
+@@ -68,5 +68,6 @@ private:
+     void *userData_ = nullptr;
+ 
+     int sessionId_;
++    int initErrorCode_; //0表示初始化成功，非0表示初始化失败
+ };
+ #endif
+diff --git a/src/services/visionprocessorproxy.cpp b/src/services/visionprocessorproxy.cpp
+index 957d1e5..0c36156 100644
+--- a/src/services/visionprocessorproxy.cpp
++++ b/src/services/visionprocessorproxy.cpp
+@@ -79,11 +79,10 @@ VisionProcessorProxy::~VisionProcessorProxy() { destroy(); }
+ VisionResult VisionProcessorProxy::initEngine(
+         const std::string &engineName, const Json::Value &config) {
+     GError *error = nullptr;
+-    gint  errorCode;
+ 
+     aisdk_vision_processor_call_init_sync(
+                 delegate_, engineName.c_str(), config.toStyledString().c_str(), &sessionId_,
+-                &errorCode, nullptr, &error);
++                &initErrorCode_, nullptr, &error);
+ 
+     if (error) {
+         fprintf(stderr, "init engine error: %s\n", error->message);
+@@ -91,7 +90,7 @@ VisionResult VisionProcessorProxy::initEngine(
+     }
+     fprintf(stdout, "proxy init engine sessionId: %d\n", sessionId_);
+     connectSignal();
+-    return (VisionResult)errorCode;
++    return (VisionResult)initErrorCode_;
+ }
+ 
+ void VisionProcessorProxy::setPromptImageSize(int width, int height) {
+@@ -121,9 +120,13 @@ std::string VisionProcessorProxy::getPrompt2imageSupportedParams() const {
+     return std::string(params);
+ }
+ 
+-void VisionProcessorProxy::promptImage(const char* prompt) {
++VisionResult VisionProcessorProxy::promptImage(const char* prompt) {
++    if (initErrorCode_) {
++        return (VisionResult)initErrorCode_;
++    }
+     aisdk_vision_processor_call_prompt_image(
+         delegate_, prompt, sessionId_, nullptr, nullptr, this);
++    return VisionResult::VISION_SUCCESS;
+ }
+ 
+ void VisionProcessorProxy::init() {
+diff --git a/src/services/visionprocessorproxy.h b/src/services/visionprocessorproxy.h
+index abee8a0..a0cf990 100644
+--- a/src/services/visionprocessorproxy.h
++++ b/src/services/visionprocessorproxy.h
+@@ -40,7 +40,7 @@ public:
+     void setPromptImageNumber(int number);
+     void setPromptImageStyle(VisionImageStyle style);
+     std::string getPrompt2imageSupportedParams() const;
+-    void promptImage(const char* prompt);
++    VisionResult promptImage(const char* prompt);
+ 
+ private:
+     void init();
+@@ -64,5 +64,6 @@ private:
+     const char *interfaceName_ = "org.openkylin.aisdk.visionprocessor";
+ 
+     int sessionId_;
++    int initErrorCode_; //0表示初始化成功，非0表示初始化失败
+ };
+ #endif
+diff --git a/src/speech.cpp b/src/speech.cpp
+index 87f31ea..2294be9 100644
+--- a/src/speech.cpp
++++ b/src/speech.cpp
+@@ -97,8 +97,7 @@ SpeechResult speech_start_continuous_recognition(SpeechSession session,
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+ 
+-    speechSession->startContinuousRecognition(params);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->startContinuousRecognition(params);
+ }
+ 
+ 
+@@ -113,8 +112,7 @@ SpeechResult speech_continuous_recognition_write_audio_data_async(
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+ 
+-    speechSession->writeContinuousAudioData(audio_data, audio_data_length);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->writeContinuousAudioData(audio_data, audio_data_length);
+ }
+ 
+ SpeechResult speech_stop_continuous_recognition(SpeechSession session) {
+@@ -122,8 +120,7 @@ SpeechResult speech_stop_continuous_recognition(SpeechSession session) {
+     if (!speechSession) {
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+-    speechSession->stopContinuousRecognition();
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->stopContinuousRecognition();
+ }
+ 
+ SpeechResult speech_recognize_once_async(
+@@ -137,8 +134,7 @@ SpeechResult speech_recognize_once_async(
+     if (!speechSession) {
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+-    speechSession->speechRecognizeOnce(params, audio_data, audio_data_length);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->speechRecognizeOnce(params, audio_data, audio_data_length);
+ }
+ 
+ SpeechResult speech_start_continuous_synthesis(SpeechSession session, const char* params) {
+@@ -150,8 +146,7 @@ SpeechResult speech_start_continuous_synthesis(SpeechSession session, const char
+     if (!speechSession) {
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+-    speechSession->startContinuousSynthesis(params);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->startContinuousSynthesis(params);
+ }
+ 
+ SpeechResult speech_continuous_synthesize_write_text_async(SpeechSession session, const char* text) {
+@@ -163,8 +158,7 @@ SpeechResult speech_continuous_synthesize_write_text_async(SpeechSession session
+     if (!speechSession) {
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+-    speechSession->writeContinuousText(text);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->writeContinuousText(text);
+ }
+ 
+ SpeechResult speech_stop_continuous_synthesis(SpeechSession session) {
+@@ -172,8 +166,7 @@ SpeechResult speech_stop_continuous_synthesis(SpeechSession session) {
+     if (!speechSession) {
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+-    speechSession->stopContinuousSynthesis();
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->stopContinuousSynthesis();
+ }
+ 
+ SpeechResult speech_synthesize_once_async(
+@@ -186,8 +179,7 @@ SpeechResult speech_synthesize_once_async(
+     if (!speechSession) {
+         return SpeechResult::SPEECH_SESSION_ERROR;
+     }
+-    speechSession->speechSynthesizeOnce(params, text);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechSession->speechSynthesizeOnce(params, text);
+ }
+ 
+ void speech_set_keyword_recognized_callback(SpeechSession session,
+diff --git a/src/speechsession.cpp b/src/speechsession.cpp
+index d991f3d..1f93fe7 100644
+--- a/src/speechsession.cpp
++++ b/src/speechsession.cpp
+@@ -25,7 +25,7 @@ SpeechResult SpeechSession::init(
+         const std::string &engineName, const Json::Value &config) {
+ 
+     //初始化关键字识别功能，接口加载模型时间会比较久
+-    keywordRecognizerProxy_.initKeywordRecognizer();
++//    keywordRecognizerProxy_.initKeywordRecognizer();
+ 
+     return speechProcessorProxy_.initEngine(
+                 engineName, config, nullptr);
+@@ -81,13 +81,11 @@ SpeechResult SpeechSession::writeContinuousAudioData(const void* audio_data,
+     if (audio_data == nullptr || audio_data_length == 0) {
+         return SpeechResult::SPEECH_PARAM_ERROR;
+     }
+-    speechProcessorProxy_.inputAudioData((char*)audio_data, audio_data_length);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechProcessorProxy_.inputAudioData((char*)audio_data, audio_data_length);
+ }
+ 
+ SpeechResult SpeechSession::stopContinuousRecognition() {
+-    speechProcessorProxy_.stopRecognizingAudio();
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechProcessorProxy_.stopRecognizingAudio();
+ }
+ 
+ SpeechResult SpeechSession::speechRecognizeOnce(const char* params,
+@@ -96,9 +94,8 @@ SpeechResult SpeechSession::speechRecognizeOnce(const char* params,
+     if (params == nullptr || audio_data == nullptr || audio_data_length == 0) {
+         return SpeechResult::SPEECH_PARAM_ERROR;
+     }
+-    speechProcessorProxy_.recognizingCompleteAudio(
++    return speechProcessorProxy_.recognizingCompleteAudio(
+         params, (char*)audio_data, audio_data_length);
+-    return SpeechResult::SPEECH_SUCCESS;
+ }
+ 
+ SpeechResult SpeechSession::startContinuousSynthesis(const char* params) {
+@@ -112,13 +109,11 @@ SpeechResult SpeechSession::writeContinuousText(const char* text) {
+     if (text == nullptr) {
+         return SpeechResult::SPEECH_PARAM_ERROR;
+     }
+-    speechProcessorProxy_.inputContinuousText(text);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechProcessorProxy_.inputContinuousText(text);
+ }
+ 
+ SpeechResult SpeechSession::stopContinuousSynthesis() {
+-    speechProcessorProxy_.stopSynthesizingAudio();
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechProcessorProxy_.stopSynthesizingAudio();
+ }
+ 
+ SpeechResult SpeechSession::speechSynthesizeOnce(const char* params,
+@@ -126,8 +121,7 @@ SpeechResult SpeechSession::speechSynthesizeOnce(const char* params,
+     if (params == nullptr || text == nullptr) {
+         return SpeechResult::SPEECH_PARAM_ERROR;
+     }
+-    speechProcessorProxy_.recognizingCompleteText(params, text);
+-    return SpeechResult::SPEECH_SUCCESS;
++    return speechProcessorProxy_.recognizingCompleteText(params, text);
+ }
+ 
+ void SpeechSession::setKeywordRecognizedCallback(SpeechRecognitionResultCallback callback, std::any userData) {
+diff --git a/src/vision.cpp b/src/vision.cpp
+index 1540f64..8a82307 100644
+--- a/src/vision.cpp
++++ b/src/vision.cpp
+@@ -97,8 +97,7 @@ VisionResult vision_prompt2image_async(VisionSession session, const char *prompt
+     if (!visionSession) {
+         return VISION_SESSION_ERROR;
+     }
+-    visionSession->promptImage(prompt);
+-    return VISION_SUCCESS;
++    return visionSession->promptImage(prompt);
+ }
+ 
+ const char *vision_get_prompt2image_supported_params(VisionSession session) {
+@@ -106,7 +105,7 @@ const char *vision_get_prompt2image_supported_params(VisionSession session) {
+     if (!visionSession) {
+         return nullptr;
+     }
+-    
++
+     static std::string params;
+     if (params.empty()) {
+         params = visionSession->getPrompt2imageSupportedParams();
+diff --git a/src/visionsession.cpp b/src/visionsession.cpp
+index 2c5a18d..4859e74 100644
+--- a/src/visionsession.cpp
++++ b/src/visionsession.cpp
+@@ -55,8 +55,7 @@ VisionResult VisionSession::promptImage(const char* prompt) {
+     if (prompt == nullptr) {
+         return VisionResult::VISION_PARAM_ERROR;
+     }
+-    visionProcessorProxy_.promptImage(prompt);
+-    return VisionResult::VISION_SUCCESS;
++    return visionProcessorProxy_.promptImage(prompt);
+ }
+ 
+ }

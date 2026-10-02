@@ -1,0 +1,981 @@
+From: guopengfei <guopengfei@kylinos.cn>
+Date: Mon, 13 May 2024 13:55:05 +0800
+Subject: =?utf-8?b?aW1wcm92ZW1lbnQ6IOiwg+aVtOiuvue9ruW8leaTjuebuOWFs2tleQ==?=
+ =?utf-8?b?55qE5pa55byPIAkgICAgIOmAmui/h+S8oOWFpWpzb27phY3nva7nmoTmlrnlvI8s?=
+ =?utf-8?b?5pa55L6/5ZCO57ut55qE5omp5bGV5ZKM5L+u5pS5?=
+
+---
+ include/kylin-ai/config.h             | 21 +++++++++++
+ src/nlp.cpp                           |  7 ++--
+ src/nlpsession.cpp                    |  7 ++--
+ src/nlpsession.h                      |  6 ++--
+ src/services/speechprocessorglue.c    | 66 ++++++++---------------------------
+ src/services/speechprocessorglue.h    | 12 ++-----
+ src/services/speechprocessorproxy.cpp |  7 ++--
+ src/services/speechprocessorproxy.h   |  4 +--
+ src/services/textprocessorglue.c      | 66 ++++++++---------------------------
+ src/services/textprocessorglue.h      | 12 ++-----
+ src/services/textprocessorproxy.cpp   | 11 +++---
+ src/services/textprocessorproxy.h     |  5 ++-
+ src/services/visionprocessorglue.c    | 66 ++++++++---------------------------
+ src/services/visionprocessorglue.h    | 12 ++-----
+ src/services/visionprocessorproxy.cpp |  7 ++--
+ src/services/visionprocessorproxy.h   |  4 +--
+ src/speech.cpp                        |  7 ++--
+ src/speechsession.cpp                 |  6 ++--
+ src/speechsession.h                   |  4 +--
+ src/vision.cpp                        |  9 ++---
+ src/visionsession.cpp                 |  9 +++--
+ src/visionsession.h                   |  5 ++-
+ 22 files changed, 115 insertions(+), 238 deletions(-)
+
+diff --git a/include/kylin-ai/config.h b/include/kylin-ai/config.h
+index 8c97d84..856eea8 100644
+--- a/include/kylin-ai/config.h
++++ b/include/kylin-ai/config.h
+@@ -100,6 +100,27 @@ unsigned long capability_settings_get_model_config_length(Capability capability,
+ ErrorCode capability_settings_get_model_config(Capability capability, DeployPolicy policy, const char* model, char* json);
+ // 设置某种AI具体能力使用的某种模型的配置。根据当前使用的公有云模型的不同，
+ // json内容的具体key和value是不一样的
++// 
++// 目前百度平台所有能力的配置是：
++// {
++//     "appId": "xxx",
++//     "apiKey": "xxx",
++//     "secretKey": "xxx"
++// }
++//
++// 科大讯飞平台音频相关的配置比较特殊：
++// {
++//     "appId": "xxx",
++//     "apiKeyRealTime": "xxx", // 实时语音识别
++//     "apiKeyContinuous": "xxx", // 流式语音识别/合成
++//     "secretKeyContinuous": "xxx" // 流式语音识别/合成
++// }
++// 科大讯飞其他能力的配置：
++// {
++//     "appId": "xxx",
++//     "apiKey": "xxx",
++//     "secretKey": "xxx"
++// }
+ ErrorCode capability_settings_set_model_config(Capability capability, DeployPolicy policy, const char* model, const char* json);
+ //获取某种AI具体能力支持的模型的密钥配置JSON字符串的长度
+ unsigned long capability_settings_get_model_key_config_length(Capability capability, DeployPolicy policy, const char* model);
+diff --git a/src/nlp.cpp b/src/nlp.cpp
+index 83cf3e9..dda829a 100644
+--- a/src/nlp.cpp
++++ b/src/nlp.cpp
+@@ -50,14 +50,11 @@ NlpResult nlp_init_session(NlpSession session)
+     const auto& nlpSettings = aisdk::GlobalSettings::getInstance().getChildSettings(CAPABILITY_NLP);
+ 
+     const std::string model = nlpSettings.getModel(nlpSettings.getDeployPolicy());
+-    fprintf(stdout, "nlp deploy policy:%i  model name: %s\n",
++    fprintf(stdout, "nlp deploy policy:%i,  model name: %s\n",
+             (int)nlpSettings.getDeployPolicy(), model.c_str());
+ 
+     auto config = nlpSettings.getModelConfig(nlpSettings.getDeployPolicy(), model);
+-    return nlpSession->init(model,
+-                            config.get("apiKey", "").asString(),
+-                            config.get("secretKey", "").asString(),
+-                            config.get("appId", "").asString());
++    return nlpSession->init(model, config);
+ }
+ 
+ 
+diff --git a/src/nlpsession.cpp b/src/nlpsession.cpp
+index 2afc522..3eb4256 100644
+--- a/src/nlpsession.cpp
++++ b/src/nlpsession.cpp
+@@ -15,13 +15,12 @@
+  */
+ 
+ #include "nlpsession.h"
++#include <jsoncpp/json/value.h>
+ 
+ 
+-NlpResult nlp::NlpSession::init(const std::string & engineName,
+-    const std::string & apiKey, const std::string & secretKey,
+-    const std::string & appId)
++NlpResult nlp::NlpSession::init(const std::string &engineName, const Json::Value &config)
+ {
+-    return textProcessor_.initEngine(engineName, apiKey, secretKey, appId);
++    return textProcessor_.initEngine(engineName, config);
+ }
+ 
+ void nlp::NlpSession::setResultCallback(NlpResultCallback callback, std::any userData)
+diff --git a/src/nlpsession.h b/src/nlpsession.h
+index bc6c38a..e346834 100644
+--- a/src/nlpsession.h
++++ b/src/nlpsession.h
+@@ -19,6 +19,7 @@
+ 
+ #include <jsoncpp/json/json.h>
+ #include <any>
++#include <jsoncpp/json/value.h>
+ #include "nlp.h"
+ #include "services/textprocessorproxy.h"
+ 
+@@ -27,9 +28,8 @@ namespace nlp {
+ class NlpSession
+ {
+ public:
+-    NlpResult init(const std::string &engineName,
+-        const std::string &apiKey = {}, const std::string &secretKey = {},
+-        const std::string &appId = {});
++    NlpResult init(const std::string &engineName, const Json::Value &config);
++
+     void setResultCallback(NlpResultCallback callback, std::any userData);
+     void setActor(int actorId);
+     NlpResult chat(const std::string &message);
+diff --git a/src/services/speechprocessorglue.c b/src/services/speechprocessorglue.c
+index 644ce49..fe1cc64 100644
+--- a/src/services/speechprocessorglue.c
++++ b/src/services/speechprocessorglue.c
+@@ -177,33 +177,11 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_IN_A
+   FALSE
+ };
+ 
+-static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_IN_ARG_app_id =
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_IN_ARG_config =
+ {
+   {
+     -1,
+-    (gchar *) "app_id",
+-    (gchar *) "s",
+-    NULL
+-  },
+-  FALSE
+-};
+-
+-static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_IN_ARG_api_key =
+-{
+-  {
+-    -1,
+-    (gchar *) "api_key",
+-    (gchar *) "s",
+-    NULL
+-  },
+-  FALSE
+-};
+-
+-static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_IN_ARG_secret_key =
+-{
+-  {
+-    -1,
+-    (gchar *) "secret_key",
++    (gchar *) "config",
+     (gchar *) "s",
+     NULL
+   },
+@@ -213,9 +191,7 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_IN_A
+ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_init_IN_ARG_pointers[] =
+ {
+   &_aisdk_speech_processor_method_info_init_IN_ARG_engine_name.parent_struct,
+-  &_aisdk_speech_processor_method_info_init_IN_ARG_app_id.parent_struct,
+-  &_aisdk_speech_processor_method_info_init_IN_ARG_api_key.parent_struct,
+-  &_aisdk_speech_processor_method_info_init_IN_ARG_secret_key.parent_struct,
++  &_aisdk_speech_processor_method_info_init_IN_ARG_config.parent_struct,
+   NULL
+ };
+ 
+@@ -1008,9 +984,7 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+    * @object: A #AisdkSpeechProcessor.
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_engine_name: Argument passed by remote caller.
+-   * @arg_app_id: Argument passed by remote caller.
+-   * @arg_api_key: Argument passed by remote caller.
+-   * @arg_secret_key: Argument passed by remote caller.
++   * @arg_config: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.init">init()</link> D-Bus method.
+    *
+@@ -1026,8 +1000,8 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    5,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
++    3,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-start-recognizing-audio:
+@@ -1229,9 +1203,7 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+  * aisdk_speech_processor_call_init:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_engine_name: Argument to pass with the method invocation.
+- * @arg_app_id: Argument to pass with the method invocation.
+- * @arg_api_key: Argument to pass with the method invocation.
+- * @arg_secret_key: Argument to pass with the method invocation.
++ * @arg_config: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1246,20 +1218,16 @@ void
+ aisdk_speech_processor_call_init (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "init",
+-    g_variant_new ("(ssss)",
++    g_variant_new ("(ss)",
+                    arg_engine_name,
+-                   arg_app_id,
+-                   arg_api_key,
+-                   arg_secret_key),
++                   arg_config),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1304,9 +1272,7 @@ _out:
+  * aisdk_speech_processor_call_init_sync:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_engine_name: Argument to pass with the method invocation.
+- * @arg_app_id: Argument to pass with the method invocation.
+- * @arg_api_key: Argument to pass with the method invocation.
+- * @arg_secret_key: Argument to pass with the method invocation.
++ * @arg_config: Argument to pass with the method invocation.
+  * @out_session_Id: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_errorCode: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+@@ -1322,9 +1288,7 @@ gboolean
+ aisdk_speech_processor_call_init_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     gint *out_session_Id,
+     gint *out_errorCode,
+     GCancellable *cancellable,
+@@ -1333,11 +1297,9 @@ aisdk_speech_processor_call_init_sync (
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "init",
+-    g_variant_new ("(ssss)",
++    g_variant_new ("(ss)",
+                    arg_engine_name,
+-                   arg_app_id,
+-                   arg_api_key,
+-                   arg_secret_key),
++                   arg_config),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+diff --git a/src/services/speechprocessorglue.h b/src/services/speechprocessorglue.h
+index c78d6c9..7a34aeb 100644
+--- a/src/services/speechprocessorglue.h
++++ b/src/services/speechprocessorglue.h
+@@ -34,9 +34,7 @@ struct _AisdkSpeechProcessorIface
+     AisdkSpeechProcessor *object,
+     GDBusMethodInvocation *invocation,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key);
++    const gchar *arg_config);
+ 
+   gboolean (*handle_input_audio_data) (
+     AisdkSpeechProcessor *object,
+@@ -163,9 +161,7 @@ void aisdk_speech_processor_complete_recognizing_complete_text (
+ void aisdk_speech_processor_call_init (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -180,9 +176,7 @@ gboolean aisdk_speech_processor_call_init_finish (
+ gboolean aisdk_speech_processor_call_init_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     gint *out_session_Id,
+     gint *out_errorCode,
+     GCancellable *cancellable,
+diff --git a/src/services/speechprocessorproxy.cpp b/src/services/speechprocessorproxy.cpp
+index 445c825..f4b3170 100644
+--- a/src/services/speechprocessorproxy.cpp
++++ b/src/services/speechprocessorproxy.cpp
+@@ -17,6 +17,7 @@
+ #include "services/speechprocessorproxy.h"
+ 
+ #include <iostream>
++#include <jsoncpp/json/value.h>
+ #include <openssl/bio.h>
+ #include <openssl/evp.h>
+ #include <openssl/buffer.h>
+@@ -155,14 +156,12 @@ SpeechProcessorProxy::SpeechProcessorProxy() { init(); }
+ SpeechProcessorProxy::~SpeechProcessorProxy() { destroy(); }
+ 
+ SpeechResult SpeechProcessorProxy::initEngine(
+-        const std::string &engineName, const std::string &appId,
+-        const std::string &apiKey, const std::string &secretKey,
++        const std::string &engineName, const Json::Value &config,
+         gpointer userData) {
+     GError *error = nullptr;
+     gint errorCode;
+     aisdk_speech_processor_call_init_sync(
+-        delegate_, engineName.c_str(), appId.c_str(), apiKey.c_str(),
+-        secretKey.c_str(), &sessionId_, &errorCode, nullptr, &error);
++        delegate_, engineName.c_str(), config.toStyledString().c_str(), &sessionId_, &errorCode, nullptr, &error);
+ 
+     if (error) {
+         fprintf(stderr, "init engine error: %s\n", error->message);
+diff --git a/src/services/speechprocessorproxy.h b/src/services/speechprocessorproxy.h
+index bffc87d..022222b 100644
+--- a/src/services/speechprocessorproxy.h
++++ b/src/services/speechprocessorproxy.h
+@@ -18,6 +18,7 @@
+ #define SERVICES_SPEECHPROCESSORPROXY_H
+ 
+ #include <functional>
++#include <jsoncpp/json/value.h>
+ #include <string>
+ 
+ #include "services/speechprocessorglue.h"
+@@ -50,8 +51,7 @@ public:
+         stopSynthesizingAudioCallback_ = callback;
+     }
+ 
+-    SpeechResult initEngine(const std::string &engineName, const std::string &appId,
+-                            const std::string &apiKey, const std::string &secretKey,
++    SpeechResult initEngine(const std::string &engineName, const Json::Value &config,
+                             gpointer userData);
+     SpeechResult startRecognizingAudio(const char *audioProperties);
+     void inputAudioData(const char *audioData,
+diff --git a/src/services/textprocessorglue.c b/src/services/textprocessorglue.c
+index 29eb249..316ebba 100644
+--- a/src/services/textprocessorglue.c
++++ b/src/services/textprocessorglue.c
+@@ -177,33 +177,11 @@ static const _ExtendedGDBusArgInfo _aisdk_text_processor_method_info_init_IN_ARG
+   FALSE
+ };
+ 
+-static const _ExtendedGDBusArgInfo _aisdk_text_processor_method_info_init_IN_ARG_app_id =
++static const _ExtendedGDBusArgInfo _aisdk_text_processor_method_info_init_IN_ARG_config =
+ {
+   {
+     -1,
+-    (gchar *) "app_id",
+-    (gchar *) "s",
+-    NULL
+-  },
+-  FALSE
+-};
+-
+-static const _ExtendedGDBusArgInfo _aisdk_text_processor_method_info_init_IN_ARG_api_key =
+-{
+-  {
+-    -1,
+-    (gchar *) "api_key",
+-    (gchar *) "s",
+-    NULL
+-  },
+-  FALSE
+-};
+-
+-static const _ExtendedGDBusArgInfo _aisdk_text_processor_method_info_init_IN_ARG_secret_key =
+-{
+-  {
+-    -1,
+-    (gchar *) "secret_key",
++    (gchar *) "config",
+     (gchar *) "s",
+     NULL
+   },
+@@ -213,9 +191,7 @@ static const _ExtendedGDBusArgInfo _aisdk_text_processor_method_info_init_IN_ARG
+ static const GDBusArgInfo * const _aisdk_text_processor_method_info_init_IN_ARG_pointers[] =
+ {
+   &_aisdk_text_processor_method_info_init_IN_ARG_engine_name.parent_struct,
+-  &_aisdk_text_processor_method_info_init_IN_ARG_app_id.parent_struct,
+-  &_aisdk_text_processor_method_info_init_IN_ARG_api_key.parent_struct,
+-  &_aisdk_text_processor_method_info_init_IN_ARG_secret_key.parent_struct,
++  &_aisdk_text_processor_method_info_init_IN_ARG_config.parent_struct,
+   NULL
+ };
+ 
+@@ -551,9 +527,7 @@ aisdk_text_processor_default_init (AisdkTextProcessorIface *iface)
+    * @object: A #AisdkTextProcessor.
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_engine_name: Argument passed by remote caller.
+-   * @arg_app_id: Argument passed by remote caller.
+-   * @arg_api_key: Argument passed by remote caller.
+-   * @arg_secret_key: Argument passed by remote caller.
++   * @arg_config: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-TextProcessor.init">init()</link> D-Bus method.
+    *
+@@ -569,8 +543,8 @@ aisdk_text_processor_default_init (AisdkTextProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    5,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
++    3,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING);
+ 
+   /**
+    * AisdkTextProcessor::handle-chat:
+@@ -696,9 +670,7 @@ aisdk_text_processor_default_init (AisdkTextProcessorIface *iface)
+  * aisdk_text_processor_call_init:
+  * @proxy: A #AisdkTextProcessorProxy.
+  * @arg_engine_name: Argument to pass with the method invocation.
+- * @arg_app_id: Argument to pass with the method invocation.
+- * @arg_api_key: Argument to pass with the method invocation.
+- * @arg_secret_key: Argument to pass with the method invocation.
++ * @arg_config: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -713,20 +685,16 @@ void
+ aisdk_text_processor_call_init (
+     AisdkTextProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "init",
+-    g_variant_new ("(ssss)",
++    g_variant_new ("(ss)",
+                    arg_engine_name,
+-                   arg_app_id,
+-                   arg_api_key,
+-                   arg_secret_key),
++                   arg_config),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -771,9 +739,7 @@ _out:
+  * aisdk_text_processor_call_init_sync:
+  * @proxy: A #AisdkTextProcessorProxy.
+  * @arg_engine_name: Argument to pass with the method invocation.
+- * @arg_app_id: Argument to pass with the method invocation.
+- * @arg_api_key: Argument to pass with the method invocation.
+- * @arg_secret_key: Argument to pass with the method invocation.
++ * @arg_config: Argument to pass with the method invocation.
+  * @out_session_Id: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_errorCode: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+@@ -789,9 +755,7 @@ gboolean
+ aisdk_text_processor_call_init_sync (
+     AisdkTextProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     gint *out_session_Id,
+     gint *out_errorCode,
+     GCancellable *cancellable,
+@@ -800,11 +764,9 @@ aisdk_text_processor_call_init_sync (
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "init",
+-    g_variant_new ("(ssss)",
++    g_variant_new ("(ss)",
+                    arg_engine_name,
+-                   arg_app_id,
+-                   arg_api_key,
+-                   arg_secret_key),
++                   arg_config),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+diff --git a/src/services/textprocessorglue.h b/src/services/textprocessorglue.h
+index e9f16ea..9c23a62 100644
+--- a/src/services/textprocessorglue.h
++++ b/src/services/textprocessorglue.h
+@@ -45,9 +45,7 @@ struct _AisdkTextProcessorIface
+     AisdkTextProcessor *object,
+     GDBusMethodInvocation *invocation,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key);
++    const gchar *arg_config);
+ 
+   gboolean (*handle_set_actor) (
+     AisdkTextProcessor *object,
+@@ -108,9 +106,7 @@ void aisdk_text_processor_complete_clear_context (
+ void aisdk_text_processor_call_init (
+     AisdkTextProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -125,9 +121,7 @@ gboolean aisdk_text_processor_call_init_finish (
+ gboolean aisdk_text_processor_call_init_sync (
+     AisdkTextProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     gint *out_session_Id,
+     gint *out_errorCode,
+     GCancellable *cancellable,
+diff --git a/src/services/textprocessorproxy.cpp b/src/services/textprocessorproxy.cpp
+index dc8842c..c944570 100644
+--- a/src/services/textprocessorproxy.cpp
++++ b/src/services/textprocessorproxy.cpp
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include "services/textprocessorproxy.h"
++#include "nlp.h"
+ #include "services/serverproxy.h"
+ #include <iostream>
+ 
+@@ -61,16 +62,17 @@ TextProcessorProxy::TextProcessorProxy() { init(); }
+ TextProcessorProxy::~TextProcessorProxy() { destroy(); }
+ 
+ NlpResult TextProcessorProxy::initEngine(const std::string &engineName,
+-    const std::string &apiKey, const std::string &secretKey, const std::string &appId)
++    const Json::Value &config)
+ {
+     GError *error = nullptr;
+     gint errorCode;
+     aisdk_text_processor_call_init_sync(
+-                delegate_, engineName.c_str(), appId.c_str(), apiKey.c_str(),
+-                secretKey.c_str(), &sessionId_, &errorCode, nullptr, &error);
++                delegate_, engineName.c_str(), 
++                config.toStyledString().c_str(), &sessionId_, 
++                &errorCode,nullptr, &error);
+ 
+     if (error) {
+-        fprintf(stderr, "init engine error: %s\n", error->message);
++        fprintf(stderr, "Init engine error: %s\n", error->message);
+         return NlpResult::NLP_SERVER_ERROR;
+     }
+ 
+@@ -79,6 +81,7 @@ NlpResult TextProcessorProxy::initEngine(const std::string &engineName,
+     return (NlpResult)errorCode;
+ }
+ 
++
+ void TextProcessorProxy::chat(const std::string &question) {
+     aisdk_text_processor_call_chat(
+         delegate_, question.c_str(), sessionId_, nullptr, nullptr, this);
+diff --git a/src/services/textprocessorproxy.h b/src/services/textprocessorproxy.h
+index 684f3a2..10cb012 100644
+--- a/src/services/textprocessorproxy.h
++++ b/src/services/textprocessorproxy.h
+@@ -18,6 +18,7 @@
+ #define SERVICES_TEXTPROCESSORPROXY_H
+ 
+ #include <functional>
++#include <jsoncpp/json/value.h>
+ #include <string>
+ #include <kylin-ai/ai-base/nlp.h>
+ #include "services/textprocessorglue.h"
+@@ -31,9 +32,7 @@ public:
+     TextProcessorProxy();
+     ~TextProcessorProxy();
+ 
+-    NlpResult initEngine(const std::string &engineName,
+-        const std::string &apiKey = {}, const std::string &secretKey = {},
+-        const std::string &appId = {});
++    NlpResult initEngine(const std::string &engineName, const Json::Value &config);
+ 
+     void setChatCallback(ChatCallback callback) {
+         chatCallback_ = callback;
+diff --git a/src/services/visionprocessorglue.c b/src/services/visionprocessorglue.c
+index 691a7e5..104b4de 100644
+--- a/src/services/visionprocessorglue.c
++++ b/src/services/visionprocessorglue.c
+@@ -177,33 +177,11 @@ static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_init_IN_A
+   FALSE
+ };
+ 
+-static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_init_IN_ARG_app_id =
++static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_init_IN_ARG_config =
+ {
+   {
+     -1,
+-    (gchar *) "app_id",
+-    (gchar *) "s",
+-    NULL
+-  },
+-  FALSE
+-};
+-
+-static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_init_IN_ARG_api_key =
+-{
+-  {
+-    -1,
+-    (gchar *) "api_key",
+-    (gchar *) "s",
+-    NULL
+-  },
+-  FALSE
+-};
+-
+-static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_init_IN_ARG_secret_key =
+-{
+-  {
+-    -1,
+-    (gchar *) "secret_key",
++    (gchar *) "config",
+     (gchar *) "s",
+     NULL
+   },
+@@ -213,9 +191,7 @@ static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_init_IN_A
+ static const GDBusArgInfo * const _aisdk_vision_processor_method_info_init_IN_ARG_pointers[] =
+ {
+   &_aisdk_vision_processor_method_info_init_IN_ARG_engine_name.parent_struct,
+-  &_aisdk_vision_processor_method_info_init_IN_ARG_app_id.parent_struct,
+-  &_aisdk_vision_processor_method_info_init_IN_ARG_api_key.parent_struct,
+-  &_aisdk_vision_processor_method_info_init_IN_ARG_secret_key.parent_struct,
++  &_aisdk_vision_processor_method_info_init_IN_ARG_config.parent_struct,
+   NULL
+ };
+ 
+@@ -676,9 +652,7 @@ aisdk_vision_processor_default_init (AisdkVisionProcessorIface *iface)
+    * @object: A #AisdkVisionProcessor.
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_engine_name: Argument passed by remote caller.
+-   * @arg_app_id: Argument passed by remote caller.
+-   * @arg_api_key: Argument passed by remote caller.
+-   * @arg_secret_key: Argument passed by remote caller.
++   * @arg_config: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-VisionProcessor.init">init()</link> D-Bus method.
+    *
+@@ -694,8 +668,8 @@ aisdk_vision_processor_default_init (AisdkVisionProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    5,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
++    3,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING);
+ 
+   /**
+    * AisdkVisionProcessor::handle-set-prompt-image-size:
+@@ -823,9 +797,7 @@ aisdk_vision_processor_default_init (AisdkVisionProcessorIface *iface)
+  * aisdk_vision_processor_call_init:
+  * @proxy: A #AisdkVisionProcessorProxy.
+  * @arg_engine_name: Argument to pass with the method invocation.
+- * @arg_app_id: Argument to pass with the method invocation.
+- * @arg_api_key: Argument to pass with the method invocation.
+- * @arg_secret_key: Argument to pass with the method invocation.
++ * @arg_config: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -840,20 +812,16 @@ void
+ aisdk_vision_processor_call_init (
+     AisdkVisionProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "init",
+-    g_variant_new ("(ssss)",
++    g_variant_new ("(ss)",
+                    arg_engine_name,
+-                   arg_app_id,
+-                   arg_api_key,
+-                   arg_secret_key),
++                   arg_config),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -898,9 +866,7 @@ _out:
+  * aisdk_vision_processor_call_init_sync:
+  * @proxy: A #AisdkVisionProcessorProxy.
+  * @arg_engine_name: Argument to pass with the method invocation.
+- * @arg_app_id: Argument to pass with the method invocation.
+- * @arg_api_key: Argument to pass with the method invocation.
+- * @arg_secret_key: Argument to pass with the method invocation.
++ * @arg_config: Argument to pass with the method invocation.
+  * @out_session_Id: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_errorCode: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+@@ -916,9 +882,7 @@ gboolean
+ aisdk_vision_processor_call_init_sync (
+     AisdkVisionProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     gint *out_session_Id,
+     gint *out_errorCode,
+     GCancellable *cancellable,
+@@ -927,11 +891,9 @@ aisdk_vision_processor_call_init_sync (
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "init",
+-    g_variant_new ("(ssss)",
++    g_variant_new ("(ss)",
+                    arg_engine_name,
+-                   arg_app_id,
+-                   arg_api_key,
+-                   arg_secret_key),
++                   arg_config),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+diff --git a/src/services/visionprocessorglue.h b/src/services/visionprocessorglue.h
+index 54f528f..d8c09bf 100644
+--- a/src/services/visionprocessorglue.h
++++ b/src/services/visionprocessorglue.h
+@@ -39,9 +39,7 @@ struct _AisdkVisionProcessorIface
+     AisdkVisionProcessor *object,
+     GDBusMethodInvocation *invocation,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key);
++    const gchar *arg_config);
+ 
+   gboolean (*handle_prompt_image) (
+     AisdkVisionProcessor *object,
+@@ -118,9 +116,7 @@ void aisdk_vision_processor_complete_prompt_image (
+ void aisdk_vision_processor_call_init (
+     AisdkVisionProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -135,9 +131,7 @@ gboolean aisdk_vision_processor_call_init_finish (
+ gboolean aisdk_vision_processor_call_init_sync (
+     AisdkVisionProcessor *proxy,
+     const gchar *arg_engine_name,
+-    const gchar *arg_app_id,
+-    const gchar *arg_api_key,
+-    const gchar *arg_secret_key,
++    const gchar *arg_config,
+     gint *out_session_Id,
+     gint *out_errorCode,
+     GCancellable *cancellable,
+diff --git a/src/services/visionprocessorproxy.cpp b/src/services/visionprocessorproxy.cpp
+index fd7ee6f..957d1e5 100644
+--- a/src/services/visionprocessorproxy.cpp
++++ b/src/services/visionprocessorproxy.cpp
+@@ -20,6 +20,7 @@
+ #include <iostream>
+ 
+ #include "services/serverproxy.h"
++#include "vision.h"
+ 
+ void onPromptImageResult(GDBusConnection *connection,
+                          const gchar *sender_name,
+@@ -76,14 +77,12 @@ VisionProcessorProxy::VisionProcessorProxy() { init(); }
+ VisionProcessorProxy::~VisionProcessorProxy() { destroy(); }
+ 
+ VisionResult VisionProcessorProxy::initEngine(
+-        const std::string &engineName, const std::string &apiKey,
+-        const std::string &secretKey, const std::string &appId) {
++        const std::string &engineName, const Json::Value &config) {
+     GError *error = nullptr;
+     gint  errorCode;
+ 
+     aisdk_vision_processor_call_init_sync(
+-                delegate_, engineName.c_str(), appId.c_str(),
+-                apiKey.c_str(), secretKey.c_str(), &sessionId_,
++                delegate_, engineName.c_str(), config.toStyledString().c_str(), &sessionId_,
+                 &errorCode, nullptr, &error);
+ 
+     if (error) {
+diff --git a/src/services/visionprocessorproxy.h b/src/services/visionprocessorproxy.h
+index 5c83593..abee8a0 100644
+--- a/src/services/visionprocessorproxy.h
++++ b/src/services/visionprocessorproxy.h
+@@ -22,6 +22,7 @@
+ 
+ #include "services/visionprocessorglue.h"
+ #include <kylin-ai/ai-base/vision.h>
++#include <jsoncpp/json/json.h>
+ 
+ class VisionProcessorProxy {
+ public:
+@@ -34,8 +35,7 @@ public:
+         promptImageCallback_ = callback;
+     }
+ 
+-    VisionResult initEngine(const std::string &engineName, const std::string &apiKey = {},
+-                    const std::string &secretKey = {}, const std::string &appId = {});
++    VisionResult initEngine(const std::string &engineName, const Json::Value &config);
+     void setPromptImageSize(int width, int height);
+     void setPromptImageNumber(int number);
+     void setPromptImageStyle(VisionImageStyle style);
+diff --git a/src/speech.cpp b/src/speech.cpp
+index ec67fc6..87f31ea 100644
+--- a/src/speech.cpp
++++ b/src/speech.cpp
+@@ -39,14 +39,11 @@ SpeechResult speech_init_session(SpeechSession session) {
+     const auto& speechSettings = aisdk::GlobalSettings::getInstance().getChildSettings(CAPABILITY_SPEECH);
+ 
+     const std::string model = speechSettings.getModel(speechSettings.getDeployPolicy());
+-    fprintf(stdout, "speech deploy policy:%i  model name: %s\n",
++    fprintf(stdout, "Speech deploy policy:%i,  model name: %s\n",
+             (int)speechSettings.getDeployPolicy(), model.c_str());
+ 
+-
+     auto config = speechSettings.getModelConfig(speechSettings.getDeployPolicy(), model);
+-    return speechSession->init(model, config.get("apiKey", "").asString(),
+-                               config.get("secretKey", "").asString(),
+-                               config.get("appId", "").asString());
++    return speechSession->init(model, config);
+ }
+ 
+ void speech_set_recognizing_callback(
+diff --git a/src/speechsession.cpp b/src/speechsession.cpp
+index 48fdc16..d991f3d 100644
+--- a/src/speechsession.cpp
++++ b/src/speechsession.cpp
+@@ -15,20 +15,20 @@
+  */
+ 
+ #include "speechsession.h"
++#include <jsoncpp/json/value.h>
+ 
+ namespace speech {
+ 
+ SpeechSession::SpeechSession() {}
+ 
+ SpeechResult SpeechSession::init(
+-        const std::string &engineName, const std::string &apiKey,
+-        const std::string &secretKey, const std::string &appId) {
++        const std::string &engineName, const Json::Value &config) {
+ 
+     //初始化关键字识别功能，接口加载模型时间会比较久
+     keywordRecognizerProxy_.initKeywordRecognizer();
+ 
+     return speechProcessorProxy_.initEngine(
+-                engineName, appId, apiKey, secretKey, nullptr);
++                engineName, config, nullptr);
+ }
+ 
+ void SpeechSession::setRecognizingCallback(
+diff --git a/src/speechsession.h b/src/speechsession.h
+index 1f5c82c..86f82b4 100644
+--- a/src/speechsession.h
++++ b/src/speechsession.h
+@@ -20,6 +20,7 @@
+ #include "speech.h"
+ #include "services/speechprocessorproxy.h"
+ #include "services/keywordrecognizerproxy.h"
++#include <jsoncpp/json/value.h>
+ #include <unordered_map>
+ #include <any>
+ 
+@@ -29,8 +30,7 @@ class SpeechSession {
+ public:
+     SpeechSession();
+     SpeechResult init(
+-        const std::string &engineName, const std::string &apiKey = {},
+-        const std::string &secretKey = {},const std::string &appId = {});
++        const std::string &engineName, const Json::Value &config);
+     void setRecognizingCallback(
+         SpeechRecognitionResultCallback callback, std::any userData);
+ 
+diff --git a/src/vision.cpp b/src/vision.cpp
+index a3afa5e..1540f64 100644
+--- a/src/vision.cpp
++++ b/src/vision.cpp
+@@ -43,14 +43,11 @@ VisionResult vision_init_session(VisionSession session) {
+     const auto& visionSettings = aisdk::GlobalSettings::getInstance().getChildSettings(CAPABILITY_VISION);
+ 
+     const std::string model = visionSettings.getModel(visionSettings.getDeployPolicy());
+-    fprintf(stdout, "vision deploy policy:%i  model name: %s\n",
++    fprintf(stdout, "Vision deploy policy:%i,  model name: %s\n",
+             (int)visionSettings.getDeployPolicy(), model.c_str());
+ 
+-    auto config = visionSettings.getModelConfig(visionSettings.getDeployPolicy(), model);
+-    return visionSession->init(model,
+-                               config.get("apiKey", "").asString(),
+-                               config.get("secretKey", "").asString(),
+-                               config.get("appId", "").asString());
++    auto config = visionSettings.getModelConfig(visionSettings.getDeployPolicy(), model);    
++    return visionSession->init(model, config);
+ }
+ 
+ void vision_set_prompt2image_callback(
+diff --git a/src/visionsession.cpp b/src/visionsession.cpp
+index b5a82e6..2c5a18d 100644
+--- a/src/visionsession.cpp
++++ b/src/visionsession.cpp
+@@ -15,17 +15,16 @@
+  */
+ 
+ #include "visionsession.h"
++#include "vision.h"
+ #include <cstdio>
++#include <jsoncpp/json/value.h>
+ 
+ namespace vision {
+ 
+ VisionSession::VisionSession() {}
+ 
+-VisionResult VisionSession::init(
+-        const std::string & engineName, const std::string & apiKey,
+-        const std::string & secretKey, const std::string & appId) {
+-    return visionProcessorProxy_.initEngine(
+-                engineName, apiKey, secretKey, appId);
++VisionResult VisionSession::init(const std::string &engineName, const Json::Value &config) {
++    return visionProcessorProxy_.initEngine(engineName, config);
+ }
+ 
+ void VisionSession::setPromptImageCallback(
+diff --git a/src/visionsession.h b/src/visionsession.h
+index 1111a6b..c422b9e 100644
+--- a/src/visionsession.h
++++ b/src/visionsession.h
+@@ -19,6 +19,7 @@
+ 
+ #include "vision.h"
+ #include "services/visionprocessorproxy.h"
++#include <jsoncpp/json/value.h>
+ #include <string>
+ #include <any>
+ #include <vector>
+@@ -28,9 +29,7 @@ namespace vision {
+ class VisionSession {
+ public:
+     VisionSession();
+-    VisionResult init(
+-            const std::string &engineName, const std::string &apiKey = {},
+-            const std::string &secretKey = {}, const std::string &appId = {});
++    VisionResult init(const std::string &engineName, const Json::Value &config);
+ 
+     void setPromptImageCallback(ImageResultCallback callback, std::any userData);
+ 

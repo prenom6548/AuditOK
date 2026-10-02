@@ -1,0 +1,655 @@
+From: wangzhenyu <wangzhenyu@kylinos.cn>
+Date: Thu, 18 Jun 2026 10:59:07 +0800
+Subject: =?utf-8?b?5ZCM5q2ldjExIDMuMC4xLjAtMGsxLjTniYjmnKzmlLnliqg=?=
+
+---
+ development-files/kysdk-watermark.pc              |   5 +
+ kysdk-desktop.pro                                 |   3 +-
+ kysdk-shortcut/kdkshortcut/main.cpp               |   1 +
+ kysdk-thememanager/src/kthememanager.cpp          |  43 +++-
+ kysdk-watermark/kysdk-watermark.pro               |  31 +++
+ kysdk-watermark/src/kwatermark.cpp                | 249 ++++++++++++++++++++++
+ kysdk-watermark/src/kwatermark.h                  | 106 +++++++++
+ kysdk-watermark/watermark-test/main.cpp           |  41 ++++
+ kysdk-watermark/watermark-test/watermark-test.pro |  31 +++
+ 9 files changed, 504 insertions(+), 6 deletions(-)
+ create mode 100644 development-files/kysdk-watermark.pc
+ create mode 100644 kysdk-watermark/kysdk-watermark.pro
+ create mode 100644 kysdk-watermark/src/kwatermark.cpp
+ create mode 100644 kysdk-watermark/src/kwatermark.h
+ create mode 100644 kysdk-watermark/watermark-test/main.cpp
+ create mode 100644 kysdk-watermark/watermark-test/watermark-test.pro
+
+diff --git a/development-files/kysdk-watermark.pc b/development-files/kysdk-watermark.pc
+new file mode 100644
+index 0000000..b4dbb9b
+--- /dev/null
++++ b/development-files/kysdk-watermark.pc
+@@ -0,0 +1,5 @@
++Name: libkysdk-watermark
++Description: kysdk watermark development library
++Version: 3.0.1.0
++Libs: -lkysdk-watermark
++Cflags: -I/usr/include/kysdk/desktop/
+\ No newline at end of file
+diff --git a/kysdk-desktop.pro b/kysdk-desktop.pro
+index 4dc0ad6..65e735a 100644
+--- a/kysdk-desktop.pro
++++ b/kysdk-desktop.pro
+@@ -7,7 +7,8 @@ SUBDIRS = \
+     kysdk-soundeffects \
+     kysdk-notification \
+     kysdk-shortcut \
+-    kysdk-thememanager
++    kysdk-thememanager \
++    kysdk-watermark
+ 
+ # Default rules for deployment.
+ headers.files = $${HEADERS}
+diff --git a/kysdk-shortcut/kdkshortcut/main.cpp b/kysdk-shortcut/kdkshortcut/main.cpp
+index 55aa6aa..40c747b 100644
+--- a/kysdk-shortcut/kdkshortcut/main.cpp
++++ b/kysdk-shortcut/kdkshortcut/main.cpp
+@@ -41,6 +41,7 @@ int main(int argc, char *argv[])
+                                    QDBusConnection::ExportAllSlots | QDBusConnection::ExportAllContents))
+     {
+         qDebug() << "/com/kylin/kysdk/shortcut 对象注册失败";
++        delete server;
+         return -1;
+     }
+ 
+diff --git a/kysdk-thememanager/src/kthememanager.cpp b/kysdk-thememanager/src/kthememanager.cpp
+index 6034583..7eea8ba 100644
+--- a/kysdk-thememanager/src/kthememanager.cpp
++++ b/kysdk-thememanager/src/kthememanager.cpp
+@@ -24,6 +24,9 @@
+ #include <QGSettings>
+ #include <QVariant>
+ #include <QDebug>
++#include <QSettings>
++#include <QFile>
++#include <QTextCodec>
+ 
+ // GTK主题
+ #define MATE_INTERFACE_SCHEMA   "org.mate.interface"
+@@ -62,6 +65,8 @@
+ #define AUTO_SCHEMA               "org.ukui.SettingsDaemon.plugins.color"
+ #define COLOR_KEY_AUTO_THEME      "theme-schedule-automatic"
+ 
++#define SYSTEM_THEME_CONF QString("/usr/share/config/globaltheme/globaltheme.conf")
++
+ namespace kdk {
+ 
+ QStringList styleList = {"ukui-dark", "ukui-default", "ukui-light"};
+@@ -75,12 +80,15 @@ public:
+     KThemeManagerPrivate(QObject *parent = nullptr);
+     virtual ~KThemeManagerPrivate();
+ 
++    void updateThemeColor();
++
+ public:
+     QGSettings *gtkSettings           = nullptr;
+     QGSettings *styleSettings         = nullptr;
+     QGSettings *mGlobalSettings       = nullptr;
+     QGSettings *personalsieSettings   = nullptr;
+-
++    QMap<QString, QString> m_controlMap;
++    QStringList colorList;
+     KThemeManager *q_ptr;
+ };
+ }
+@@ -102,6 +110,8 @@ kdk::KThemeManager::KThemeManager(QObject *parent)
+                 emit changed(SYSTEM_FONT_SIZE_KEY ,d->styleSettings->get(SYSTEM_FONT_SIZE_KEY));
+             } else if (key == "themeColor"){
+                 emit changed(COLOR_QT_KEY ,d->styleSettings->get(COLOR_QT_KEY));
++            } else if (key == "widgetThemeName"){
++                d->updateThemeColor();
+             }
+         });
+     }
+@@ -192,6 +202,9 @@ bool kdk::KThemeManager::setSystemFont(const QString &font)
+     if (!fonts.contains(font, Qt::CaseSensitive))
+         return false;
+ 
++    if (d->gtkSettings)
++        d->gtkSettings->trySet(FONT_GTK_KEY, font);
++
+     return d->styleSettings->trySet(SYSTEM_FONT_KEY, font);
+ }
+ 
+@@ -209,11 +222,10 @@ bool kdk::KThemeManager::setSystemThemeColor(const QString &color)
+ {
+     Q_D(KThemeManager);
+ 
+-    QStringList colorList = {"default","daybreakBlue","jamPurple","magenta","sunRed","sunsetOrange","dustGold","polarGreen"};
+-    if (!colorList.contains(color) || !d->styleSettings)
++    if (!d->colorList.contains(color) || !d->styleSettings)
+         return false;
+-
+-    return d->styleSettings->trySet(COLOR_QT_KEY, color);
++    QString str = d->m_controlMap.value(color);
++    return d->styleSettings->trySet(COLOR_QT_KEY, str);
+ }
+ 
+ bool kdk::KThemeManager::setPanelSpecialEffect(bool effect)
+@@ -247,11 +259,32 @@ kdk::KThemeManagerPrivate::KThemeManagerPrivate(QObject *parent)
+     if (QGSettings::isSchemaInstalled(GLOBAL_SCHEMA)) {
+         mGlobalSettings = new QGSettings(GLOBAL_SCHEMA, QByteArray(), this);
+     }
++
++    colorList =QStringList ({"kbrand1","kbrand2","kbrand3","kbrand4","kbrand5","kbrand6","kbrand7","kbrand8"});
++    updateThemeColor();
+ }
+ 
+ kdk::KThemeManagerPrivate::~KThemeManagerPrivate()
+ {
+ }
+ 
++void kdk::KThemeManagerPrivate::updateThemeColor()
++{
++    m_controlMap.clear();
++    QString systemPath = SYSTEM_THEME_CONF;
++    if (!QFile::exists(systemPath)) {
++        return;
++    }
++    QSettings* settings = new QSettings(systemPath, QSettings::NativeFormat, this);
++    settings->setIniCodec(QTextCodec::codecForName("utf-8"));
++
++    settings->beginGroup("theme-color");
++    for (const QString &key : settings->childKeys()) {
++        QString value = settings->value(key).toString();
++        m_controlMap.insert(key, value);
++    }
++    settings->endGroup();
++}
++
+ #include "kthememanager.moc"
+ #include "moc_kthememanager.cpp"
+diff --git a/kysdk-watermark/kysdk-watermark.pro b/kysdk-watermark/kysdk-watermark.pro
+new file mode 100644
+index 0000000..3293e45
+--- /dev/null
++++ b/kysdk-watermark/kysdk-watermark.pro
+@@ -0,0 +1,31 @@
++QT -= gui
++QT += dbus
++
++TEMPLATE = lib
++DEFINES += WATERMARK_LIBRARY
++
++CONFIG += c++11 link_pkgconfig
++PKGCONFIG += kysdk-sysinfo
++
++# The following define makes your compiler emit warnings if you use
++# any Qt feature that has been marked deprecated (the exact warnings
++# depend on your compiler). Please consult the documentation of the
++# deprecated API in order to know how to port your code away from it.
++DEFINES += QT_DEPRECATED_WARNINGS
++
++# You can also make your code fail to compile if it uses deprecated APIs.
++# In order to do so, uncomment the following line.
++# You can also select to disable deprecated APIs only up to a certain version of Qt.
++#DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
++
++SOURCES += \
++    src/kwatermark.cpp
++
++HEADERS += \
++    src/kwatermark.h
++
++# Default rules for deployment.
++headers.files = $${HEADERS}
++headers.path = /usr/include/kysdk/desktop/
++target.path = $$[QT_INSTALL_LIBS]
++INSTALLS += target headers
+diff --git a/kysdk-watermark/src/kwatermark.cpp b/kysdk-watermark/src/kwatermark.cpp
+new file mode 100644
+index 0000000..5903b10
+--- /dev/null
++++ b/kysdk-watermark/src/kwatermark.cpp
+@@ -0,0 +1,249 @@
++/*
++ * libkysdk-thememanager's Library
++ *
++ * Copyright (C) 2025, KylinSoft Co., Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: ShaoShuai Tian <tianshaoshuai@kylinos.cn>
++ *
++ */
++
++#include "kwatermark.h"
++#include <QDBusInterface>
++#include <QDBusReply>
++#include <QDebug>
++#include <libkysysinfo.h>
++
++namespace kdk
++{
++
++#define KWIN_SERVER "org.ukui.KWin"
++#define KWIN_PATH "/Watermark"
++#define KWIN_INTERFACE "org.ukui.kwin.Watermark"
++
++#define WLCOM_SERVER "com.kylin.Wlcom"
++#define WLCOM_PATH "/com/kylin/Wlcom/Watermark"
++#define WLCOM_INTERFACE "com.kylin.Wlcom.Watermark"
++
++    WatermarkData::WatermarkData()
++        : opticity(0),
++          x(0),
++          y(0),
++          expand(0),
++          topmost(false)
++    {
++    }
++
++    KWatermark::KWatermark()
++    {
++    }
++
++    KWatermark::~KWatermark()
++    {
++    }
++
++    WatermarkData KWatermark::createWatermark(QString path, double opticity, int x, int y, int expand, bool topmost)
++    {
++        const char *major = kdk_system_get_major_version();
++        if (0 == strncmp(major, "V10-SP1", strlen("V10-SP1")))
++        {
++            return createWatermarkSP1(path, opticity, x, y, expand, topmost);
++        }
++        else if (0 == strncmp(major, "V11", strlen("V11")))
++        {
++            return createWatermarkV11(path, opticity, x, y, expand, topmost);
++        }
++
++        return WatermarkData();
++    }
++
++    bool KWatermark::updateWatermark(WatermarkData &handle, QString path, double opticity, int x, int y, int expand, bool topmost)
++    {
++        const char *major = kdk_system_get_major_version();
++        if (0 == strncmp(major, "V10-SP1", strlen("V10-SP1")))
++        {
++            return updateWatermarkSP1(handle, path, opticity, x, y, expand, topmost);
++        }
++        else if (0 == strncmp(major, "V11", strlen("V11")))
++        {
++            return updateWatermarkV11(handle, path, opticity, x, y, expand, topmost);
++        }
++
++        return false;
++    }
++
++    void KWatermark::destroyWatermark(WatermarkData &handle)
++    {
++        const char *major = kdk_system_get_major_version();
++        if (0 == strncmp(major, "V10-SP1", strlen("V10-SP1")))
++        {
++            destroyWatermarkSP1(handle);
++        }
++        else if (0 == strncmp(major, "V11", strlen("V11")))
++        {
++            destroyWatermarkV11(handle);
++        }
++
++        return;
++    }
++
++    WatermarkData KWatermark::createWatermarkSP1(QString &path, double opticity, int x, int y, int expand, bool topmost)
++    {
++        WatermarkData data;
++        QDBusInterface interface(KWIN_SERVER, KWIN_PATH, KWIN_INTERFACE);
++        if (interface.isValid())
++        {
++            QDBusReply<void> reply = interface.call("updateWatermarkEx", path, opticity, x, y, expand, topmost);
++            if (reply.isValid())
++            {
++                data.path = path;
++                data.opticity = opticity;
++                data.x = x;
++                data.y = y;
++                data.expand = expand;
++                data.topmost = topmost;
++            }
++            else
++            {
++                qDebug() << reply.error().message();
++            }
++        }
++        else
++            qDebug() << "Connect dbus fail";
++
++        return data;
++    }
++
++    WatermarkData KWatermark::createWatermarkV11(QString &path, double opticity, int x, int y, int expand, bool topmost)
++    {
++        WatermarkData data;
++
++        QDBusInterface interface(WLCOM_SERVER, WLCOM_PATH, WLCOM_INTERFACE);
++        if (interface.isValid())
++        {
++            QDBusReply<QString> reply = interface.call("createWatermark", path, opticity, x, y, expand, topmost);
++            if (reply.isValid())
++            {
++                data.handle = reply.value();
++                qDebug() << data.handle;
++                data.path = path;
++                data.opticity = opticity;
++                data.x = x;
++                data.y = y;
++                data.expand = expand;
++                data.topmost = topmost;
++            }
++            else
++            {
++                qDebug() << reply.error().message();
++            }
++        }
++        else
++            qDebug() << "Connect dbus fail";
++
++        return data;
++    }
++
++    bool KWatermark::updateWatermarkSP1(WatermarkData &handle, QString &path, double opticity, int x, int y, int expand, bool topmost)
++    {
++        QDBusInterface interface(KWIN_SERVER, KWIN_PATH, KWIN_INTERFACE);
++        if (interface.isValid())
++        {
++            QDBusReply<void> reply = interface.call("updateWatermarkEx", "", handle.opticity, handle.x, handle.y, handle.expand, handle.topmost);
++            if (reply.isValid())
++            {
++                reply = interface.call("updateWatermarkEx", path, opticity, x, y, expand, topmost);
++                if (reply.isValid())
++                {
++                    handle.path = path;
++                    handle.opticity = opticity;
++                    handle.x = x;
++                    handle.y = y;
++                    handle.expand = expand;
++                    handle.topmost = topmost;
++                    return true;
++                }
++                else
++                {
++                    qDebug() << reply.error().message();
++                }
++            }
++        }
++
++        return false;
++    }
++
++    bool KWatermark::updateWatermarkV11(WatermarkData &handle, QString &path, double opticity, int x, int y, int expand, bool topmost)
++    {
++        QDBusInterface interface(WLCOM_SERVER, WLCOM_PATH, WLCOM_INTERFACE);
++        if (interface.isValid())
++        {
++            QDBusReply<bool> reply = interface.call("updateWatermark", handle.handle, path, opticity, x, y, expand, topmost);
++            if (reply.isValid() && reply.value())
++            {
++                handle.path = path;
++                handle.opticity = opticity;
++                handle.x = x;
++                handle.y = y;
++                handle.expand = expand;
++                handle.topmost = topmost;
++                return true;
++            }
++            else
++            {
++                qDebug() << reply.error().message();
++            }
++        }
++        else
++            qDebug() << "Connect dbus fail";
++
++        return false;
++    }
++
++    void KWatermark::destroyWatermarkSP1(WatermarkData &handle)
++    {
++        QDBusInterface interface(KWIN_SERVER, KWIN_PATH, KWIN_INTERFACE);
++        if (interface.isValid())
++        {
++            QDBusReply<void> reply = interface.call("updateWatermarkEx", "", handle.opticity, handle.x, handle.y, handle.expand, handle.topmost);
++            if (!reply.isValid())
++            {
++                qDebug() << reply.error().message();
++            }
++        }
++        else
++        {
++            qDebug() << "Connect dbus fail";
++        }
++    }
++
++    void KWatermark::destroyWatermarkV11(WatermarkData &handle)
++    {
++        QDBusInterface interface(WLCOM_SERVER, WLCOM_PATH, WLCOM_INTERFACE);
++        if (interface.isValid())
++        {
++            QDBusReply<void> reply = interface.call("destroyWatermark", handle.handle);
++            if (!reply.isValid())
++            {
++                qDebug() << reply.error().message();
++            }
++        }
++        else
++        {
++            qDebug() << "Connect dbus fail";
++        }
++    }
++
++}
+diff --git a/kysdk-watermark/src/kwatermark.h b/kysdk-watermark/src/kwatermark.h
+new file mode 100644
+index 0000000..e196ec7
+--- /dev/null
++++ b/kysdk-watermark/src/kwatermark.h
+@@ -0,0 +1,106 @@
++/*
++ * libkysdk-thememanager's Library
++ *
++ * Copyright (C) 2025, KylinSoft Co., Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: ShaoShuai Tian <tianshaoshuai@kylinos.cn>
++ *
++ */
++
++#ifndef WATERMARK_H
++#define WATERMARK_H
++
++#include <QString>
++#include <QVector>
++#include <QQueue>
++
++namespace kdk
++{
++
++/**
++ * @defgroup WatermarkModule
++ */
++
++/**
++ * @brief 水印控制类 提供屏幕水印功能
++ * @since 3.0.1.0
++ */
++
++    struct WatermarkData
++    {
++        WatermarkData();
++        QString handle;     // V11上创建水印返回的字符串
++        QString path;       // 水印路径
++        double opticity;    // 不透明度
++        int x;              // x坐标
++        int y;              // y坐标
++        int expand;         // 图片模式 0正常，1重复，2全屏，3按比例全屏
++        bool topmost;       // 显示层级 0水印层， 1置顶
++    };
++
++    class KWatermark
++    {
++    public:
++        KWatermark();
++        ~KWatermark();
++
++    public:
++        /**
++         * @brief Create a Watermark object
++         * 
++         * @param path png图片路劲
++         * @param opticity 不透明度0-1
++         * @param x x坐标
++         * @param y y坐标
++         * @param expand 图片模式 0正常，1重复，2全屏，3按比例全屏
++         * @param topmost 显示层级 0水印层， 1置顶
++         * @return WatermarkData 水印句柄
++         */
++        WatermarkData createWatermark(QString path, double opticity, int x, int y, int expand, bool topmost);
++
++        /**
++         * @brief 修改水印参数
++         * 
++         * @param handle 水印句柄
++         * @param path png图片路劲
++         * @param opticity 不透明度0-1
++         * @param x x坐标
++         * @param y y坐标
++         * @param expand 图片模式 0正常，1重复，2全屏，3按比例全屏
++         * @param topmost 显示层级 0水印层， 1置顶
++         * @return true 修改成功
++         * @return false 修改失败
++         */
++        bool updateWatermark(WatermarkData &handle, QString path, double opticity, int x, int y, int expand, bool topmost);
++
++        /**
++         * @brief 取消水印
++         * 
++         * @param handle 水印句柄
++         */
++        void destroyWatermark(WatermarkData &handle);
++
++    private:
++        WatermarkData createWatermarkSP1(QString &path, double opticity, int x, int y, int expand, bool topmost);
++        WatermarkData createWatermarkV11(QString &path, double opticity, int x, int y, int expand, bool topmost);
++        bool updateWatermarkSP1(WatermarkData &handle, QString &path, double opticity, int x, int y, int expand, bool topmost);
++        bool updateWatermarkV11(WatermarkData &handle, QString &path, double opticity, int x, int y, int expand, bool topmost);
++        void destroyWatermarkSP1(WatermarkData &handle);
++        void destroyWatermarkV11(WatermarkData &handle);
++    };
++}
++
++#endif // WATERMARK_H
+diff --git a/kysdk-watermark/watermark-test/main.cpp b/kysdk-watermark/watermark-test/main.cpp
+new file mode 100644
+index 0000000..5642124
+--- /dev/null
++++ b/kysdk-watermark/watermark-test/main.cpp
+@@ -0,0 +1,41 @@
++/*
++ * libkysdk-thememanager's Library
++ *
++ * Copyright (C) 2025, KylinSoft Co., Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: ShaoShuai Tian <tianshaoshuai@kylinos.cn>
++ *
++ */
++
++#include <QCoreApplication>
++#include <QDebug>
++#include "kwatermark.h"
++// #include "../src/kwatermark.h"
++
++int main(int argc, char *argv[])
++{
++    QCoreApplication a(argc, argv);
++
++    kdk::KWatermark mark;
++    kdk::WatermarkData data = mark.createWatermark("/home/kylin/111.png", 0.3, 200, 200, 3, 0);
++    qDebug() << QString("%1%2").arg("Create watermark:").arg(data.handle.isEmpty() ? data.path : data.handle);
++
++    qDebug() << "Update watermark:" << mark.updateWatermark(data, "/home/kylin/111.png", 0.3, 200, 200, 2, 1);
++
++    mark.destroyWatermark(data);
++
++    return a.exec();
++}
+diff --git a/kysdk-watermark/watermark-test/watermark-test.pro b/kysdk-watermark/watermark-test/watermark-test.pro
+new file mode 100644
+index 0000000..5cf0d9f
+--- /dev/null
++++ b/kysdk-watermark/watermark-test/watermark-test.pro
+@@ -0,0 +1,31 @@
++QT -= gui
++QT += dbus
++
++CONFIG += c++11 console link_pkgconfig
++CONFIG -= app_bundle
++
++PKGCONFIG += kysdk-watermark
++#PKGCONFIG += kysdk-sysinfo
++#SOURCES += ../src/kwatermark.cpp
++#HEADERS += ../src/kwatermark.h
++
++# The following define makes your compiler emit warnings if you use
++# any Qt feature that has been marked deprecated (the exact warnings
++# depend on your compiler). Please consult the documentation of the
++# deprecated API in order to know how to port your code away from it.
++DEFINES += QT_DEPRECATED_WARNINGS
++
++# You can also make your code fail to compile if it uses deprecated APIs.
++# In order to do so, uncomment the following line.
++# You can also select to disable deprecated APIs only up to a certain version of Qt.
++#DEFINES += QT_DISABLE_DEPRECATED_BEFORE=0x060000    # disables all the APIs deprecated before Qt 6.0.0
++
++SOURCES += \
++        main.cpp
++
++# Default rules for deployment.
++qnx: target.path = /tmp/$${TARGET}/bin
++else: unix:!android: target.path = /opt/$${TARGET}/bin
++!isEmpty(target.path): INSTALLS += target
++
++

@@ -1,0 +1,113 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Wed, 26 May 2021 15:08:56 +0800
+Subject: =?utf-8?b?5aKe5Yqg5pawaXNv5qC85byPaXNvLXhvcnLvvIzkvb/nlKh4b3JyaXNv?=
+ =?utf-8?b?5omT5YyF?=
+
+---
+ scripts/build/lb_binary_iso   | 29 +++++++++++++++++++++++++++--
+ scripts/build/lb_binary_zsync |  4 ++++
+ scripts/build/lb_config       |  2 +-
+ 3 files changed, 32 insertions(+), 3 deletions(-)
+
+diff --git a/scripts/build/lb_binary_iso b/scripts/build/lb_binary_iso
+index 78ad895..2d3436e 100755
+--- a/scripts/build/lb_binary_iso
++++ b/scripts/build/lb_binary_iso
+@@ -36,6 +36,10 @@ case "${LB_BINARY_IMAGES}" in
+ 		IMAGE="binary.hybrid.iso"
+ 		;;
+ 
++	iso-xorr)
++		IMAGE="binary.xorr.iso"
++		;;
++
+ 	*)
+ 		exit 0
+ 		;;
+@@ -64,6 +68,11 @@ then
+ 	Check_package chroot/usr/bin/isohybrid syslinux-utils
+ fi
+ 
++if [ "${LB_BINARY_IMAGES}" = "iso-xorr" ]
++then
++	Check_package chroot/usr/bin/xorriso xorriso
++fi
++
+ # Restoring cache
+ Restore_cache cache/packages.binary
+ 
+@@ -78,6 +87,7 @@ fi
+ 
+ # Handle genisoimage generic options
+ GENISOIMAGE_OPTIONS="-J -r -T -joliet-long -allow-leading-dots -l"
++XORRISO_OPTIONS=""
+ 
+ # Handle genisoimage live-build specific options
+ if [ "${_QUIET}" = "true" ]
+@@ -170,10 +180,17 @@ esac
+ # kylin uefi
+ if test -f "binary/images/efiboot.img"
+ then
+-        GENISOIMAGE_OPTIONS="${GENISOIMAGE_OPTIONS} -eltorito-alt-boot -e images/efiboot.img -no-emul-boot"
++	GENISOIMAGE_OPTIONS="${GENISOIMAGE_OPTIONS} -eltorito-alt-boot -e images/efiboot.img -no-emul-boot"
++	XORRISO_OPTIONS="${XORRISO_OPTIONS} -append_partition 2 0xef binary/images/efiboot.img -partition_cyl_align all"
+ elif test -f "binary/boot/grub/efi.img"
+ then
+-        GENISOIMAGE_OPTIONS="${GENISOIMAGE_OPTIONS} -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot"
++	GENISOIMAGE_OPTIONS="${GENISOIMAGE_OPTIONS} -eltorito-alt-boot -e boot/grub/efi.img -no-emul-boot"
++	XORRISO_OPTIONS="${XORRISO_OPTIONS} -append_partition 2 0xef binary/boot/grub/efi.img -partition_cyl_align all"
++fi
++
++if [ "${ARCHITECTURE}" = "amd64" ]
++then
++	XORRISO_OPTIONS="${XORRISO_OPTIONS} -isohybrid-gpt-basdat -isohybrid-apm-hfsplus"
+ fi
+ 
+ if [ "${LB_BOOTLOADER}" = "grub2" ]
+@@ -208,10 +225,18 @@ else
+ 	echo "#!/bin/sh" > binary.sh
+ fi
+ 
++if [ "${LB_BINARY_IMAGES}" = "iso-xorr" ]
++then
++cat >> binary.sh << EOF
++
++xorriso -as genisoimage ${GENISOIMAGE_OPTIONS} -o ${IMAGE} binary ${XORRISO_OPTIONS}
++EOF
++else
+ cat >> binary.sh << EOF
+ 
+ genisoimage ${GENISOIMAGE_OPTIONS} -o ${IMAGE} binary
+ EOF
++fi
+ 
+ if [ "${LB_BINARY_IMAGES}" = "iso-hybrid" ] && [ "${LB_DEBIAN_INSTALLER}" = "false" ]
+ then
+diff --git a/scripts/build/lb_binary_zsync b/scripts/build/lb_binary_zsync
+index f599bfc..2679f6e 100755
+--- a/scripts/build/lb_binary_zsync
++++ b/scripts/build/lb_binary_zsync
+@@ -61,6 +61,10 @@ case "${LB_BINARY_IMAGES}" in
+ 		_IMAGES="binary.hybrid.iso"
+ 		;;
+ 
++	iso-xorr)
++		_IMAGES="binary.xorr.iso"
++		;;
++
+ 	hdd)
+ 		_IMAGES="binary.img"
+ 		;;
+diff --git a/scripts/build/lb_config b/scripts/build/lb_config
+index 703644b..857e2cc 100755
+--- a/scripts/build/lb_config
++++ b/scripts/build/lb_config
+@@ -27,7 +27,7 @@ USAGE="${PROGRAM}   [--apt apt|aptitude]\n\
+ \t    [--apt-secure true|false]\n\
+ \t    [--apt-source-archives true|false]\n\
+ \t    [-a|--architectures ARCHITECTURE]\n\
+-\t    [-b|--binary-images iso|iso-hybrid|netboot|tar|hdd]\n\
++\t    [-b|--binary-images iso|iso-hybrid|iso-xorr|netboot|tar|hdd]\n\
+ \t    [--binary-filesystem fat16|fat32|ext2|ext3|ext4|ntfs]\n\
+ \t    [--bootappend-install PARAMETER|\"PARAMETERS\"]\n\
+ \t    [--bootappend-live PARAMETER|\"PARAMETERS\"]\n\

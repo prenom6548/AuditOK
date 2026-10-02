@@ -1,0 +1,170 @@
+From: guopengfei <guopengfei@kylinos.cn>
+Date: Wed, 17 Apr 2024 09:36:50 +0800
+Subject: =?utf-8?b?YnVpbGQoZGViaWFuKTog5L+u5pS5Y29udHJvbCBQYWNrYWdl?=
+
+---
+ include/kylin-ai/ai-base/speech.h     |  2 +-
+ src/services/speechprocessorproxy.cpp | 20 +++++++++++++++++++-
+ src/services/speechprocessorproxy.h   | 11 +++++++++--
+ src/speech.cpp                        |  2 +-
+ src/speechsession.cpp                 |  7 ++++---
+ src/speechsession.h                   |  2 +-
+ test/testSpeechApi.cpp                |  6 ++++--
+ 7 files changed, 39 insertions(+), 11 deletions(-)
+
+diff --git a/include/kylin-ai/ai-base/speech.h b/include/kylin-ai/ai-base/speech.h
+index 59fac3c..809c110 100644
+--- a/include/kylin-ai/ai-base/speech.h
++++ b/include/kylin-ai/ai-base/speech.h
+@@ -74,7 +74,7 @@ void speech_set_recognizing_callback(SpeechSession session,
+ /// @param callback 
+ /// @param user_data
+ void speech_set_recognized_callback(SpeechSession session,
+-                                    SpeechFinishedCallback callback, void* user_data);
++                                    SpeechRecognitionResultCallback callback, void* user_data);
+ 
+ /// @brief 设置语音识别的结果回调函数
+ /// @param session 传入 speech_create_session() 接口创建的 session
+diff --git a/src/services/speechprocessorproxy.cpp b/src/services/speechprocessorproxy.cpp
+index 5d86adf..beaeb51 100644
+--- a/src/services/speechprocessorproxy.cpp
++++ b/src/services/speechprocessorproxy.cpp
+@@ -79,6 +79,21 @@ void onRecognitionAudioResult(GDBusConnection *connection,
+     proxy->inputAudioDataCallback_(recognitionResult(parameters));
+ }
+ 
++void onStopRecognitionAudioResult(GDBusConnection *connection,
++                                  const gchar *sender_name,
++                                  const gchar *object_path,
++                                  const gchar *interface_name,
++                                  const gchar *signal_name,
++                                  GVariant *parameters,
++                                  gpointer user_data) {
++    auto *proxy = static_cast<SpeechProcessorProxy *>(user_data);
++    if (proxy->stopRecognizingAudioCallback_ == nullptr) {
++        std::cout << "StopRecognitionAudioResult callback is nullptr";
++        return;
++    }
++    proxy->stopRecognizingAudioCallback_(recognitionResult(parameters));
++}
++
+ void onRecognitionAudioOnceResult(GDBusConnection *connection,
+                                   const gchar *sender_name,
+                                   const gchar *object_path,
+@@ -244,6 +259,10 @@ void SpeechProcessorProxy::connectSignals() {
+         interfaceName_, "RecognitionAudioResult", objectPath_, NULL,
+         G_DBUS_SIGNAL_FLAGS_NONE, onRecognitionAudioResult, this, nullptr);
+ 
++    g_dbus_connection_signal_subscribe(connection, nullptr,
++        interfaceName_, "StopRecognitionAudioResult", objectPath_, NULL,
++        G_DBUS_SIGNAL_FLAGS_NONE, onStopRecognitionAudioResult, this, nullptr);
++
+     g_dbus_connection_signal_subscribe(connection, nullptr,
+         interfaceName_, "RecognitionAudioOnceResult", objectPath_, NULL,
+         G_DBUS_SIGNAL_FLAGS_NONE, onRecognitionAudioOnceResult, this, nullptr);
+@@ -323,7 +342,6 @@ void SpeechProcessorProxy::onStopRecognizingAudioCallback(AisdkSpeechProcessor *
+         printErrorMessage(error, "stop_recognizing_audio");
+         return;
+     }
+-    proxy->stopRecognizingAudioCallback_();
+ }
+ 
+ void SpeechProcessorProxy::onRecognizingCompleteAudioCallback(AisdkSpeechProcessor *delegate,
+diff --git a/src/services/speechprocessorproxy.h b/src/services/speechprocessorproxy.h
+index 94709ed..c91b8d4 100644
+--- a/src/services/speechprocessorproxy.h
++++ b/src/services/speechprocessorproxy.h
+@@ -37,7 +37,7 @@ public:
+         inputAudioDataCallback_ = callback;
+     }
+     void setStopRecognizingAudioCallback(
+-            SpeechProcessorProxy::SpeechFinishedCallback callback) {
++            SpeechProcessorProxy::SpeechRecognitionResultCallback callback) {
+         stopRecognizingAudioCallback_ = callback;
+     }
+     void setRecognizingCompleteAudioCallback(
+@@ -91,6 +91,13 @@ private:
+                                          const gchar *signal_name,
+                                          GVariant *parameters,
+                                          gpointer user_data);
++    friend void onStopRecognitionAudioResult(GDBusConnection *connection,
++                                             const gchar *sender_name,
++                                             const gchar *object_path,
++                                             const gchar *interface_name,
++                                             const gchar *signal_name,
++                                             GVariant *parameters,
++                                             gpointer user_data);
+     friend void onRecognitionAudioOnceResult(GDBusConnection *connection,
+                                              const gchar *sender_name,
+                                              const gchar *object_path,
+@@ -136,7 +143,7 @@ private:
+     AisdkSpeechProcessor *delegate_ = nullptr;
+ 
+     SpeechRecognitionResultCallback inputAudioDataCallback_ = nullptr;
+-    SpeechFinishedCallback stopRecognizingAudioCallback_ = nullptr;
++    SpeechRecognitionResultCallback stopRecognizingAudioCallback_ = nullptr;
+     SpeechRecognitionResultCallback recognizingCompleteAudioCallback_ = nullptr;
+ 
+     SpeechSynthesisResultCallback inputContinuousTextCallback_ = nullptr;
+diff --git a/src/speech.cpp b/src/speech.cpp
+index 674c32d..f6a81df 100644
+--- a/src/speech.cpp
++++ b/src/speech.cpp
+@@ -56,7 +56,7 @@ void speech_set_recognizing_callback(
+ }
+ 
+ void speech_set_recognized_callback(
+-    SpeechSession session, SpeechFinishedCallback callback, void* user_data) {
++    SpeechSession session, SpeechRecognitionResultCallback callback, void* user_data) {
+     speech::SpeechSession *speechSession = static_cast<speech::SpeechSession *>(session);
+     if (!speechSession) {
+         return;
+diff --git a/src/speechsession.cpp b/src/speechsession.cpp
+index 198b114..d42daad 100644
+--- a/src/speechsession.cpp
++++ b/src/speechsession.cpp
+@@ -43,10 +43,11 @@ void SpeechSession::setRecognizingCallback(
+ }
+ 
+ void SpeechSession::setRecognizedCallback(
+-    SpeechFinishedCallback callback, std::any userData) {
++    SpeechRecognitionResultCallback callback, std::any userData) {
+     callbacks_[SpeechSession::WorkStage::Recognized] = { callback, userData };
+-    speechProcessorProxy_.setStopRecognizingAudioCallback([callback, userData]() {
+-       callback(std::any_cast<void *>(userData));
++    speechProcessorProxy_.setStopRecognizingAudioCallback(
++                [callback, userData](RecognitionResult result) {
++       callback(result, std::any_cast<void *>(userData));
+     });
+ }
+ 
+diff --git a/src/speechsession.h b/src/speechsession.h
+index 7e3576d..f3f9132 100644
+--- a/src/speechsession.h
++++ b/src/speechsession.h
+@@ -34,7 +34,7 @@ public:
+         SpeechRecognitionResultCallback callback, std::any userData);
+ 
+     void setRecognizedCallback(
+-        SpeechFinishedCallback callback, std::any userData);
++        SpeechRecognitionResultCallback callback, std::any userData);
+ 
+     void setSynthesizingCallback(
+         SpeechSynthesisResultCallback callback, std::any userData);
+diff --git a/test/testSpeechApi.cpp b/test/testSpeechApi.cpp
+index 6ea5d9e..474b988 100644
+--- a/test/testSpeechApi.cpp
++++ b/test/testSpeechApi.cpp
+@@ -54,8 +54,10 @@ int main(int argc, char *argv[]) {
+ 
+     }, (void*)&a);
+     speech_set_recognized_callback(
+-                session, [](void* userData) {
+-        std::cout << "---testSpeechApi--Recognition finished---"
++                session,
++                [](RecognitionResult result, void* userData) {
++        std::cout << "---testSpeechApi-recognized finished--data---" << result.text_data
++                  << "---error---" << result.error_code
+                   << "---userData---" << *(int*)userData << std::endl;
+     }, (void*)&a);
+ 

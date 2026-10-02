@@ -1,0 +1,169 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Mon, 24 May 2021 15:21:25 +0800
+Subject: sw64 arch
+
+---
+ functions/defaults.sh             |  4 ++++
+ scripts/build/lb_binary_grub2-efi | 19 ++++++++++++++++---
+ scripts/build/lb_binary_iso       |  8 +++++++-
+ scripts/build/lb_chroot_hacks     | 26 +++++++++++++++++---------
+ 4 files changed, 44 insertions(+), 13 deletions(-)
+
+diff --git a/functions/defaults.sh b/functions/defaults.sh
+index 67ac841..fbe2c6d 100755
+--- a/functions/defaults.sh
++++ b/functions/defaults.sh
+@@ -827,6 +827,10 @@ Set_defaults ()
+ 		ppc64el)
+ 			LB_LINUX_FLAVOURS="${LB_LINUX_FLAVOURS:-generic}"
+ 			;;
++		sw64)
++			# Assume we'll have a generic kernel for arm64 some day:
++			LB_LINUX_FLAVOURS="${LB_LINUX_FLAVOURS:-generic}"
++			;;
+ 
+ 		s390x)
+ 			LB_LINUX_FLAVOURS="${LB_LINUX_FLAVOURS:-generic}"
+diff --git a/scripts/build/lb_binary_grub2-efi b/scripts/build/lb_binary_grub2-efi
+index d4da1f0..c786a91 100755
+--- a/scripts/build/lb_binary_grub2-efi
++++ b/scripts/build/lb_binary_grub2-efi
+@@ -41,18 +41,18 @@ Check_lockfile .lock
+ Create_lockfile .lock
+ 
+ # Check architecture
+-Check_architectures amd64 arm64 mips64el loongarch64
++Check_architectures amd64 arm64 mips64el loongarch64 sw64
+ Check_crossarchitectures
+ 
+ # Checking depends
+ case ${ARCHITECTURE} in
+-		'amd64'|'arm64'|'mips64el'|'loongarch64')
++		'amd64'|'arm64'|'mips64el'|'loongarch64'|'sw64')
+ 			Check_package chroot/usr/bin/grub-mkimage grub-efi-${ARCHITECTURE}
+ 			Check_package chroot/sbin/mkfs.fat dosfstools
+ 			Check_package chroot/sbin/MAKEDEV makedev
+ 			;;
+         *)
+-			Echo_message "not amd64 or arm64 or mips64el or loongarch64, grub2-efi exit"
++			Echo_message "not amd64 or arm64 or mips64el or loongarch64 or sw64, grub2-efi exit"
+ 			exit 0
+ 			;;
+ esac
+@@ -68,6 +68,7 @@ case ${LB_BINARY_IMAGES} in
+ 		if [ ! -d chroot/usr/lib/grub/x86_64-efi ] && \
+ 		[ ! -d chroot/usr/lib/grub/arm64-efi ] && \
+ 		[ ! -d chroot/usr/lib/grub/mips64el-efi ] && \
++		[ ! -d chroot/usr/lib/grub/sw64-efi ] && \
+ 		[ ! -d chroot/usr/lib/grub/loongarch64-efi ];then
+                         exit 0
+ 		fi
+@@ -204,6 +205,10 @@ case ${ARCHITECTURE} in
+ 		Grub_live_entry "Install ${ORIGIN}" "/casper/vmlinuz" "/casper/initrd.img" "console=tty1 boot=casper quiet splash loglevel=0 only-ubiquity audit=0"
+ 		;;
+ 	'loongarch64')
++		Grub_live_entry "Try ${ORIGIN} without installing" "/casper/vmlinuz" "/casper/initrd.img" "console=ttyS0,115200 boot=casper loglevel=0 audit=0"
++		Grub_live_entry "Install ${ORIGIN}" "/casper/vmlinuz" "/casper/initrd.img" "console=ttyS0,115200 boot=casper loglevel=0 only-ubiquity audit=0"
++		;;
++	'sw64')
+ 		Grub_live_entry "Try ${ORIGIN} without installing" "/casper/vmlinuz" "/casper/initrd.img" "boot=casper loglevel=0 audit=0"
+ 		Grub_live_entry "Install ${ORIGIN}" "/casper/vmlinuz" "/casper/initrd.img" "boot=casper loglevel=0 only-ubiquity audit=0"
+ 		;;
+@@ -286,6 +291,9 @@ case ${LB_BINARY_IMAGES} in
+ 			'loongarch64')
+ 				FILES="chroot/usr/lib/grub/${ARCHITECTURE}-efi"
+ 				;;
++			'sw64')
++				FILES="chroot/usr/lib/grub/${ARCHITECTURE}-efi"
++				;;
+ 			esac
+                 ;;
+ esac
+@@ -335,6 +343,11 @@ elif  [ -d chroot/usr/lib/grub/loongarch64-efi ];then
+     KY_EFI_NAME="loongarch64-efi"
+     KY_BOOT_EFI_NAME="BOOTLOONGARCH.EFI"
+     KY_GRUB_EFI_NAME="grubloongarch64.efi"
++elif  [ -d chroot/usr/lib/grub/sw64-efi ];then
++    KY_EFI="/usr/lib/grub/sw64-efi"
++    KY_EFI_NAME="sw64-efi"
++    KY_BOOT_EFI_NAME="BOOTLOONGARCH.EFI"
++    KY_GRUB_EFI_NAME="grubsw64.efi"
+ fi
+ 
+ mkdir -p binary/boot/grub
+diff --git a/scripts/build/lb_binary_iso b/scripts/build/lb_binary_iso
+index 35e2bd1..78ad895 100755
+--- a/scripts/build/lb_binary_iso
++++ b/scripts/build/lb_binary_iso
+@@ -9,6 +9,7 @@
+ 
+ 
+ set -e
++set -x
+ 
+ # Including common functions
+ ( . "${LIVE_BUILD}/scripts/build.sh" > /dev/null 2>&1 || true ) || . /usr/lib/live/build.sh
+@@ -17,13 +18,14 @@ set -e
+ DESCRIPTION="$(Echo 'build iso binary image')"
+ HELP=""
+ USAGE="${PROGRAM} [--force]"
+-ARCHITECTURE="$(echo ${LB_ARCHITECTURES} | sed -e 's| |/|g')"
+ 
+ Arguments "${@}"
+ 
+ # Reading configuration files
+ Read_conffiles config/all config/common config/bootstrap config/chroot config/binary config/source
+ Set_defaults
++ARCHITECTURE="$(echo ${LB_ARCHITECTURES} | sed -e 's| |/|g')"
++
+ 
+ case "${LB_BINARY_IMAGES}" in
+ 	iso)
+@@ -107,6 +109,10 @@ if [ -n "${LB_ISO_VOLUME}" ] && [ "${LB_ISO_VOLUME}" != "none" ]
+ then
+ 	GENISOIMAGE_OPTIONS="${GENISOIMAGE_OPTIONS} -V \"${LB_ISO_VOLUME}\""
+ fi
++if [ "${ARCHITECTURE}" = "sw64" ]
++then
++	GENISOIMAGE_OPTIONS="${GENISOIMAGE_OPTIONS} -b efibootimg -no-emul-boot -R -hide efibootimg"
++fi
+ 
+ # Handle genisoimage architecture specific options
+ case "${LB_BOOTLOADER}" in
+diff --git a/scripts/build/lb_chroot_hacks b/scripts/build/lb_chroot_hacks
+index 1b70dc3..edc71af 100755
+--- a/scripts/build/lb_chroot_hacks
++++ b/scripts/build/lb_chroot_hacks
+@@ -182,15 +182,23 @@ case "${SUBPROJECT}" in
+ 		;;
+ esac
+ 
+-if [ "${LB_INITRAMFS}" != "none" ]
+-then
+-	if [ -n "${LB_INITRAMFS_COMPRESSION}" ]; then
+-		echo "COMPRESS=${LB_INITRAMFS_COMPRESSION}" \
+-			> chroot/etc/initramfs-tools/conf.d/live-build.conf
+-	fi
+-	Chroot chroot "${UPDATE_INITRAMFS_OPTIONS} update-initramfs -k all -t -u"
+-	rm -f chroot//etc/initramfs-tools/conf.d/live-build.conf
+-fi
++ARCHITECTURE="$(echo ${LB_ARCHITECTURES} | sed -e 's| |/|g')"
++case $ARCHITECTURE in
++	'sw64'|'sw_64')
++		;;
++	*)
++		if [ "${LB_INITRAMFS}" != "none" ]	
++		then
++			if [ -n "${LB_INITRAMFS_COMPRESSION}" ]; then
++				echo "COMPRESS=${LB_INITRAMFS_COMPRESSION}" \
++				> chroot/etc/initramfs-tools/conf.d/live-build.conf
++			fi
++			Chroot chroot "${UPDATE_INITRAMFS_OPTIONS} update-initramfs -k all -t -u"
++			rm -f chroot//etc/initramfs-tools/conf.d/live-build.conf
++		fi
++		;;
++esac
++
+ 
+ # Ensure readable permissions on initramfs. loop-aes-utils sets umask to
+ # protect GPG keys, which live-build does not support.

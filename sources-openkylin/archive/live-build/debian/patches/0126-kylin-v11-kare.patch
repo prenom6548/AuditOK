@@ -1,0 +1,130 @@
+From: Xie Wei <xiewei@kylinos.cn>
+Date: Thu, 12 Jun 2025 11:11:31 +0800
+Subject: =?utf-8?b?5ZCM5q2la3lsaW4gdjEx55qEa2FyZeWKn+iDvQ==?=
+
+---
+ scripts/build/lb_chroot_live-packages | 52 +++++++++++++++++++++++++++++++++++
+ scripts/build/lb_ostree_commit        | 47 +++++++++++++++++++++++++++++++
+ 2 files changed, 99 insertions(+)
+ mode change 100755 => 100644 scripts/build/lb_ostree_commit
+
+diff --git a/scripts/build/lb_chroot_live-packages b/scripts/build/lb_chroot_live-packages
+index e8ba0a1..9227400 100755
+--- a/scripts/build/lb_chroot_live-packages
++++ b/scripts/build/lb_chroot_live-packages
+@@ -64,3 +64,55 @@ then
+ 	# Creating stage file
+ 	Create_stagefile .build/chroot_live-packages
+ fi
++
++#拉取kare 基础环境包
++if [ -f config/package-lists/kylin-kare-env-base.list.kare  ]; then
++
++       cp -a config/package-lists/kylin-kare-env-base.list.kare chroot/
++
++       # 进入 chroot 环境并读取 kare base 包列表配置文件并下载包
++        chroot chroot /bin/bash << 'EOF'
++
++       # 创建目录
++        mkdir -p kare-env-base/
++        cd kare-env-base/
++
++           # 读取 kare 包列表配置文件并下载包
++            while IFS= read -r package; do
++                # 忽略空行和注释行
++                if [ -n "$package" ] && [ "${package#\#}" = "$package" ]; then
++                    echo "Downloading $package..."
++                    apt-get download "$package"
++                fi
++            done < "../kylin-kare-env-base.list.kare"
++EOF
++       rm chroot/kylin-kare-env-base.list.kare
++       mv chroot/kare-env-base/ .
++fi
++
++#拉取kare需要预装的kare应用包
++if [ -f config/package-lists/kylin-kare.list.kare  ]; then
++
++	cp -a config/package-lists/kylin-kare.list.kare chroot/
++
++	# 进入 chroot 环境并读取 kare 包列表配置文件并下载包
++	chroot chroot /bin/bash << 'EOF'
++
++	# 创建目录
++	mkdir -p karePackage/
++	cd karePackage/
++
++	    # 读取 kare 包列表配置文件并下载包
++	    while IFS= read -r package; do
++	        # 忽略空行和注释行
++	        if [ -n "$package" ] && [ "${package#\#}" = "$package" ]; then
++	            echo "Downloading $package..."
++	            apt-get download "$package"
++	        fi
++	    done < "../kylin-kare.list.kare"
++EOF
++	rm chroot/kylin-kare.list.kare
++	mv chroot/karePackage/ .
++
++fi
++
+diff --git a/scripts/build/lb_ostree_commit b/scripts/build/lb_ostree_commit
+old mode 100755
+new mode 100644
+index 461ec20..a85c2c5
+--- a/scripts/build/lb_ostree_commit
++++ b/scripts/build/lb_ostree_commit
+@@ -326,6 +326,53 @@ rm -r chroot/chroot/etc
+ cp -a chroot/chroot/usr/etc chroot/chroot
+ mv chroot/sysroot chroot/chroot/sysroot
+ 
++#安装kare基础环境包
++if [ -d "kare-env-base/" ] && ls kare-env-base/*deb >/dev/null 2>&1; then
++        echo "检测到 kare-env-base 及 deb 文件，开始安装kare 基础环境包..."
++
++       # 构建目录并复制deb包
++        mv kare-env-base/ chroot/chroot/
++
++        # 在chroot中安装kare基础环境包
++        chroot chroot/chroot/ /bin/sh -c '
++           dpkg -i kare-env-base/*.deb
++	   rm -r kare-env-base/
++        '
++else
++        echo "跳过：未找到 kare-env-base 目录或目录内无deb文件"
++fi
++
++#构建kare影子环境
++echo "构建kare影子环境"
++chroot chroot/chroot/ /bin/sh -c '
++	kare -b shadow
++'
++
++#检查条件：karePackage/ 目录存在且内部有deb包
++if [ -d "karePackage/" ] && ls karePackage/*.deb >/dev/null 2>&1; then
++    echo "检测到 karePackage 及 deb 文件，开始安装kare应用..."
++
++    # 构建目录并复制deb包
++    mv karePackage/ chroot/chroot/tmp/karePackage/
++
++    # 挂载proc
++    chroot chroot/chroot/ mount -t proc /proc /proc
++
++    # 在chroot中安装kare应用包
++    chroot chroot/chroot/ /bin/sh -c '
++        for package in /tmp/karePackage/*.deb; do
++            echo "正在安装 $package..."
++            kare -e shadow -i "$package" --chroot True
++        done
++	rm -r /tmp/karePackage/
++    '
++
++    # 卸载proc
++    chroot chroot/chroot/ umount /proc
++else
++    echo "跳过：未找到 karePackage 目录或目录内无deb文件"
++fi
++
+ File_path="chroot/chroot/dev/null" # 将路径更改为要检查的文件路径
+ if [ -f "$File_path" ] ; then
+     Echo_message "null 存在"

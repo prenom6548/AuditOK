@@ -1,0 +1,365 @@
+From: =?utf-8?b?6LCi54Kc?= <xiewei@kylinos.cn>
+Date: Sat, 8 Feb 2025 18:13:55 +0800
+Subject: =?utf-8?b?5bCGYnVpbGTov4fnqIvkuK3kvb/nlKjnmoRhcHTova/ku7bmupDphY0=?=
+ =?utf-8?b?572u5paH5Lu26Lev5b6E6K6+572u5Li6ZXRjL2FwdC9saXZlLWJ1aWxkL3tzb3Vy?=
+ =?utf-8?b?Y2VzLmxpc3Qsc291cmNlcy5saXN0LmR9LCDku6XlhY3lj5fova/ku7bljIXoh6o=?=
+ =?utf-8?b?5bim6L2v5Lu25rqQ5bmy5omw?=
+
+---
+ scripts/build/lb_chroot_apt      |   7 +++
+ scripts/build/lb_chroot_archives | 100 ++++++++++++++++++---------------------
+ 2 files changed, 52 insertions(+), 55 deletions(-)
+
+diff --git a/scripts/build/lb_chroot_apt b/scripts/build/lb_chroot_apt
+index 20698df..8015e38 100755
+--- a/scripts/build/lb_chroot_apt
++++ b/scripts/build/lb_chroot_apt
+@@ -86,6 +86,10 @@ case "${1}" in
+ 				;;
+ 		esac
+ 
++		# Configuring sources.list path
++		echo "Dir::Etc::sourcelist "live-build/sources.list";" > chroot/etc/apt/apt.conf.d/99-live-build
++		echo "Dir::Etc::sourceparts "live-build/sources.list.d";" >> chroot/etc/apt/apt.conf.d/99-live-build
++
+ 		# Configuring apt config
+ 		if [ -f config/chroot_apt/apt.conf ]
+ 		then
+@@ -255,6 +259,9 @@ EOF
+ 			rm -f chroot/etc/apt/apt.conf.d/00secure
+ 		fi
+ 
++		# Deconfiguring sources.list path
++		rm -f chroot/etc/apt/apt.conf.d/99-live-build
++
+ 		# Configuring apt config
+ 		if [ -f config/chroot_apt/apt.conf ]
+ 		then
+diff --git a/scripts/build/lb_chroot_archives b/scripts/build/lb_chroot_archives
+index a6369c5..60ae093 100755
+--- a/scripts/build/lb_chroot_archives
++++ b/scripts/build/lb_chroot_archives
+@@ -14,7 +14,8 @@ set -e
+ ( . "${LIVE_BUILD}/scripts/build.sh" > /dev/null 2>&1 || true ) || . /usr/lib/live/build.sh
+ 
+ # Setting static variables
+-DESCRIPTION="$(Echo 'manage /etc/apt/sources.list')"
++LIVE_BUILD_APT_PATH="live-build"
++DESCRIPTION="$(Echo 'manage /etc/apt/${LIVE_BUILD_APT_PATH}/sources.list')"
+ HELP=""
+ USAGE="${PROGRAM} {install|remove} [--force]"
+ 
+@@ -42,17 +43,17 @@ fi
+ 
+ case "${LB_DERIVATIVE}" in
+ 	true)
+-		_PARENT_FILE="sources.list.d/debian.list"
++		_PARENT_FILE="${LIVE_BUILD_APT_PATH}/sources.list.d/debian.list"
+ 	;;
+ 
+ 	false)
+-		_PARENT_FILE="sources.list"
++		_PARENT_FILE="${LIVE_BUILD_APT_PATH}/sources.list"
+ 		;;
+ esac
+ 
+ case "${1}" in
+ 	install)
+-		Echo_message "Configuring file /etc/apt/sources.list"
++		Echo_message "Configuring file /etc/apt/live-build/sources.list"
+ 
+ 		# Checking stage file
+ 		Check_stagefile .build/chroot_archives
+@@ -67,7 +68,8 @@ case "${1}" in
+ 		Restore_cache cache/packages.chroot
+ 
+ 		# Configure custom sources.list
+-
++		# create live-build/sources.list.d
++		mkdir -p chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d
+ cat > chroot/etc/apt/${_PARENT_FILE} << EOF
+ deb ${LB_PARENT_MIRROR_CHROOT} ${LB_PARENT_DISTRIBUTION} ${LB_PARENT_ARCHIVE_AREAS}
+ EOF
+@@ -79,15 +81,15 @@ EOF
+ 
+ 		if [ "${LB_DERIVATIVE}" = "true" ]
+ 		then
+-			rm -f chroot/etc/apt/sources.list.d/${LB_MODE}.list
++			rm -f chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 			_DISTRIBUTION="$(echo ${LB_DISTRIBUTION} | sed -e 's|-backports||')"
+ 
+-			echo "deb ${LB_MIRROR_CHROOT} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++			echo "deb ${LB_MIRROR_CHROOT} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 			if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 			then
+-				echo "deb-src ${LB_MIRROR_CHROOT} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++				echo "deb-src ${LB_MIRROR_CHROOT} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 			fi
+ 		fi
+ 
+@@ -112,20 +114,20 @@ EOF
+ 
+ 					if [ "${LB_MODE}" = progress ]
+ 					then
+-						echo "deb ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++						echo "deb ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 						if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 						then
+-							echo "deb-src ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++							echo "deb-src ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 						fi
+ 					else
+ 						if [ "${LB_DERIVATIVE}" = "true" ]
+ 						then
+-							echo "deb ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++							echo "deb ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 							if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 							then
+-								echo "deb-src ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++								echo "deb-src ${LB_MIRROR_CHROOT_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 							fi
+ 						fi
+ 					fi
+@@ -153,11 +155,11 @@ EOF
+ 
+ 			if [ "${LB_DERIVATIVE}" = "true" ] && [ "${LB_MIRROR_CHROOT_VOLATILE}" != "none" ]
+ 			then
+-				echo "deb ${LB_MIRROR_CHROOT_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++				echo "deb ${LB_MIRROR_CHROOT_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 				if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 				then
+-					echo "deb-src ${LB_MIRROR_CHROOT_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++					echo "deb-src ${LB_MIRROR_CHROOT_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 				fi
+ 			fi
+ 		fi
+@@ -180,11 +182,11 @@ EOF
+ 
+ 			if [ "${LB_DERIVATIVE}" = "true" ] && [ "${LB_MIRROR_CHROOT_BACKPORTS}" != "none" ]
+ 			then
+-				echo "deb ${LB_MIRROR_CHROOT_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++				echo "deb ${LB_MIRROR_CHROOT_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 				if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 				then
+-					echo "deb-src ${LB_MIRROR_CHROOT_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++					echo "deb-src ${LB_MIRROR_CHROOT_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 				fi
+ 			fi
+ 		fi
+@@ -226,22 +228,22 @@ EOF
+ 					sed -e "s|@DISTRIBUTION@|${_DISTRIBUTION}|g" \
+ 					    -e "s|@ARCHIVE_AREAS@|${LB_PARENT_ARCHIVE_AREAS}|g" \
+ 					"${_BASE}/archives/${REPOSITORY}.chroot" > \
+-					"chroot/etc/apt/sources.list.d/${REPOSITORY}.list"
++					"chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${REPOSITORY}.list"
+ 				elif [ -e "${_BASE}/archives/${REPOSITORY}" ]
+ 				then
+ 					sed -e "s|@DISTRIBUTION@|${_DISTRIBUTION}|g" \
+ 					    -e "s|@ARCHIVE_AREAS@|${LB_PARENT_ARCHIVE_AREAS}|g" \
+ 					"${_BASE}/archives/${REPOSITORY}" > \
+-					"chroot/etc/apt/sources.list.d/${REPOSITORY}.list"
++					"chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${REPOSITORY}.list"
+ 				fi
+ 
+ 				# Adding pinning preferences (chroot)
+ 				if [ -e "${_BASE}/archives/${REPOSITORY}.pref" ]
+ 				then
+-					cp "${_BASE}/archives/${REPOSITORY}.pref" chroot/etc/apt/sources.list.d
++					cp "${_BASE}/archives/${REPOSITORY}.pref" chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d
+ 				elif [ -e "${_BASE}/archives/${REPOSITORY}.pref.chroot" ]
+ 				then
+-					cp "${_BASE}/archives/${REPOSITORY}.pref.chroot" "chroot/etc/apt/sources.list.d/${REPOSITORY}.pref"
++					cp "${_BASE}/archives/${REPOSITORY}.pref.chroot" "chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${REPOSITORY}.pref"
+ 				fi
+ 
+ 				if [ "${LB_APT_SECURE}" != false ]
+@@ -271,12 +273,12 @@ EOF
+ 					    -e "s|@ARCHIVE_AREAS@|${LB_ARCHIVE_AREAS}|g" \
+ 					    -e "s|@PARENT_DISTRIBUTION@|${LB_PARENT_DISTRIBUTION}|g" \
+ 					    -e "s|@PARENT_ARCHIVE_AREAS@|${LB_PARENT_ARCHIVE_AREAS}|g" \
+-					"${FILE}" > "chroot/etc/apt/sources.list.d/$(basename ${FILE} .chroot)"
++					"${FILE}" > "chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/$(basename ${FILE} .chroot)"
+ 
+ 					if [ "${_PASS}" != "source" ] && [ "${LB_APT_SOURCE_ARCHIVES}" = "false" ]
+ 					then
+ 						# Strip out source archives
+-						sed "/^deb-src /d" "chroot/etc/apt/sources.list.d/$(basename ${FILE} .chroot)"
++						sed "/^deb-src /d" "chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/$(basename ${FILE} .chroot)"
+ 					fi
+ 				fi
+ 			done
+@@ -442,13 +444,7 @@ EOF
+ 				fi
+ 
+ 				# Add to sources.list.d
+-				echo "deb file:/root/packages ./" > chroot/etc/apt/sources.list.d/packages.list
+-
+-				# Move top-level sources away, otherwise apt always preferes it (#644148)
+-				if [ -e chroot/etc/apt/sources.list ]
+-				then
+-					mv chroot/etc/apt/sources.list chroot/etc/apt/sources.list.d/zz-sources.list
+-				fi
++				echo "deb file:/root/packages ./" > chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/packages.list
+ 
+ 				# Removing depends
+ 				Remove_package
+@@ -602,7 +598,7 @@ EOF
+ 		;;
+ 
+ 	remove)
+-		Echo_message "Deconfiguring file /etc/apt/sources.list"
++		Echo_message "Deconfiguring file /etc/apt/${LIVE_BUILD_APT_PATH}/sources.list"
+ 
+ 		# Checking lock file
+ 		Check_lockfile .lock
+@@ -610,12 +606,6 @@ EOF
+ 		# Creating lock file
+ 		Create_lockfile .lock
+ 
+-		# Restore top-level sources
+-		if [ -e chroot/etc/apt/sources.list.d/zz-sources.list ]
+-		then
+-			mv chroot/etc/apt/sources.list.d/zz-sources.list chroot/etc/apt/sources.list
+-		fi
+-
+ 		# Configure generic indices
+ 		# Don't do anything if it's not required
+ 		if [ "${LB_PARENT_MIRROR_CHROOT}" = "${LB_PARENT_MIRROR_BINARY}" ] && \
+@@ -645,15 +635,15 @@ EOF
+ 
+ 		if [ "${LB_DERIVATIVE}" = "true" ]
+ 		then
+-			rm -f chroot/etc/apt/sources.list.d/${LB_MODE}.list
++			rm -f chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 			_DISTRIBUTION="$(echo ${LB_DISTRIBUTION} | sed -e 's|-backports||')"
+ 
+-			echo "deb ${LB_MIRROR_BINARY} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++			echo "deb ${LB_MIRROR_BINARY} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 			if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 			then
+-				echo "deb-src ${LB_MIRROR_BINARY} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++				echo "deb-src ${LB_MIRROR_BINARY} ${_DISTRIBUTION} ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 			fi
+ 		fi
+ 
+@@ -678,20 +668,20 @@ EOF
+ 
+ 					if [ "${LB_MODE}" = progress ]
+ 					then
+-						echo "deb ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++						echo "deb ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 						if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 						then
+-							echo "deb-src ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++							echo "deb-src ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}-security ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 						fi
+ 					else
+ 						if [ "${LB_DERIVATIVE}" = "true" ]
+ 						then
+-							echo "deb ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++							echo "deb ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 							if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 							then
+-								echo "deb-src ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++								echo "deb-src ${LB_MIRROR_BINARY_SECURITY} ${_DISTRIBUTION}/updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 							fi
+ 						fi
+ 					fi
+@@ -719,11 +709,11 @@ EOF
+ 
+ 			if [ "${LB_DERIVATIVE}" = "true" ] && [ "${LB_MIRROR_BINARY_VOLATILE}" != "none" ]
+ 			then
+-				echo "deb ${LB_MIRROR_BINARY_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++				echo "deb ${LB_MIRROR_BINARY_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 				if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 				then
+-					echo "deb-src ${LB_MIRROR_BINARY_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++					echo "deb-src ${LB_MIRROR_BINARY_VOLATILE} ${_DISTRIBUTION}-updates ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 				fi
+ 			fi
+ 		fi
+@@ -746,11 +736,11 @@ EOF
+ 
+ 			if [ "${LB_DERIVATIVE}" = "true" ] && [ "${LB_MIRROR_BINARY_BACKPORTS}" != "none" ]
+ 			then
+-				echo "deb ${LB_MIRROR_BINARY_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++				echo "deb ${LB_MIRROR_BINARY_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 
+ 				if [ "${_PASS}" = "source" ] || [ "${LB_APT_SOURCE_ARCHIVES}" = "true" ]
+ 				then
+-					echo "deb-src ${LB_MIRROR_BINARY_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/sources.list.d/${LB_MODE}.list
++					echo "deb-src ${LB_MIRROR_BINARY_BACKPORTS} ${_DISTRIBUTION}-backports ${LB_ARCHIVE_AREAS}" >> chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${LB_MODE}.list
+ 				fi
+ 			fi
+ 		fi
+@@ -764,7 +754,7 @@ EOF
+ 			for REPOSITORY in ${LB_ARCHIVES}
+ 			do
+ 				# Removing sources.list entries (chroot)
+-				rm -f "chroot/etc/apt/sources.list.d/${REPOSITORY}.list"
++				rm -f "chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${REPOSITORY}.list"
+ 
+ 				# Prefer archives from the config tree
+ 				# over the global ones.
+@@ -779,22 +769,22 @@ EOF
+ 					sed -e "s|@DISTRIBUTION@|${LB_PARENT_DISTRIBUTION}|g" \
+ 					    -e "s|@ARCHIVE_AREAS@|${LB_PARENT_ARCHIVE_AREAS}|g" \
+ 					"${_BASE}/archives/${REPOSITORY}.binary" > \
+-					"chroot/etc/apt/sources.list.d/${REPOSITORY}.list"
++					"chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${REPOSITORY}.list"
+ 				elif [ -e "${_BASE}/archives/${REPOSITORY}" ]
+ 				then
+ 					sed -e "s|@DISTRIBUTION@|${LB_PARENT_DISTRIBUTION}|g" \
+ 					    -e "s|@ARCHIVE_AREAS@|${LB_PARENT_ARCHIVE_AREAS}|g" \
+ 					"${_BASE}/archives/${REPOSITORY}" > \
+-					"chroot/etc/apt/sources.list.d/${REPOSITORY}.list"
++					"chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${REPOSITORY}.list"
+ 				fi
+ 
+ 				# Adding pinning preferences (binary)
+ 				if [ -e "${_BASE}/archives/${REPOSITORY}.pref" ]
+ 				then
+-					cp "${_BASE}/archives/${REPOSITORY}.pref" chroot/etc/apt/sources.list.d
++					cp "${_BASE}/archives/${REPOSITORY}.pref" chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d
+ 				elif [ -e "${_BASE}/archives/${REPOSITORY}.pref.binary" ]
+ 				then
+-					cp "${_BASE}/archives/${REPOSITORY}.pref.binary" "chroot/etc/apt/sources.list.d/${REPOSITORY}.pref"
++					cp "${_BASE}/archives/${REPOSITORY}.pref.binary" "chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/${REPOSITORY}.pref"
+ 				fi
+ 
+ 				if [ "${LB_APT_SECURE}" != false ]
+@@ -824,12 +814,12 @@ EOF
+ 					    -e "s|@ARCHIVE_AREAS@|${LB_ARCHIVE_AREAS}|g" \
+ 					    -e "s|@PARENT_DISTRIBUTION@|${LB_PARENT_DISTRIBUTION}|g" \
+ 					    -e "s|@PARENT_ARCHIVE_AREAS@|${LB_PARENT_ARCHIVE_AREAS}|g" \
+-					"${FILE}" > "chroot/etc/apt/sources.list.d/$(basename ${FILE} .binary)"
++					"${FILE}" > "chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/$(basename ${FILE} .binary)"
+ 
+ 					if [ "${_PASS}" != "source" ] && [ "${LB_APT_SOURCE_ARCHIVES}" = "false" ]
+ 					then
+ 						# Strip out source archives
+-						sed "/^deb-src /d" "chroot/etc/apt/sources.list.d/$(basename ${FILE} .binary)"
++						sed "/^deb-src /d" "chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/$(basename ${FILE} .binary)"
+ 					fi
+ 				fi
+ 			done
+@@ -889,7 +879,7 @@ EOF
+ 		esac
+ 
+ 		# Remove local package repository
+-		rm -f chroot/etc/apt/sources.list.d/packages.list
++		rm -f chroot/etc/apt/${LIVE_BUILD_APT_PATH}/sources.list.d/packages.list
+ 		rm -rf chroot/root/packages
+ 
+ 		# Remove local packages key if it exists

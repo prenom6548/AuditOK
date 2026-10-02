@@ -1,0 +1,443 @@
+From: guopengfei <guopengfei@kylinos.cn>
+Date: Fri, 10 May 2024 14:27:56 +0800
+Subject: =?utf-8?b?ZmVhdDog5re75Yqg6I635Y+W5paH55Sf5Zu+5Y+v55So5Y+C5pWw5o6l?=
+ =?utf-8?b?5Y+j?=
+
+---
+ include/kylin-ai/ai-base/vision.h     |   6 +-
+ src/services/visionprocessorglue.c    | 197 ++++++++++++++++++++++++++++++++++
+ src/services/visionprocessorglue.h    |  30 ++++++
+ src/services/visionprocessorproxy.cpp |  13 +++
+ src/services/visionprocessorproxy.h   |   1 +
+ src/vision.cpp                        |  15 ++-
+ src/visionsession.cpp                 |   5 +
+ src/visionsession.h                   |   2 +
+ 8 files changed, 266 insertions(+), 3 deletions(-)
+
+diff --git a/include/kylin-ai/ai-base/vision.h b/include/kylin-ai/ai-base/vision.h
+index cb788d4..3c38058 100644
+--- a/include/kylin-ai/ai-base/vision.h
++++ b/include/kylin-ai/ai-base/vision.h
+@@ -146,7 +146,11 @@ VisionResult vision_prompt2image(VisionSession session, const char* prompt);
+ // 根据文本描述生成图像,异步接口
+ VisionResult vision_prompt2image_async(VisionSession session, const char* prompt);
+ 
+-// 获取支持的图像分辨率和生成的图片数量，返回Json格式
++// 获取支持的图像分辨率和生成的图片数量，返回Json格式，比如：
++// {
++//    "resolution-ratio": ["512x512", "1024x1024", "1024x1536", "1536x1024"], // 支持的分辨率
++//    "image-number": 8 // 支持生成的图片数量
++// }
+ const char* vision_get_prompt2image_supported_params(VisionSession session);
+ 
+ /// @brief 获取最新的错误信息
+diff --git a/src/services/visionprocessorglue.c b/src/services/visionprocessorglue.c
+index 5640743..691a7e5 100644
+--- a/src/services/visionprocessorglue.c
++++ b/src/services/visionprocessorglue.c
+@@ -399,6 +399,53 @@ static const _ExtendedGDBusMethodInfo _aisdk_vision_processor_method_info_set_pr
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_get_prompt2_image_supported_params_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
++static const GDBusArgInfo * const _aisdk_vision_processor_method_info_get_prompt2_image_supported_params_IN_ARG_pointers[] =
++{
++  &_aisdk_vision_processor_method_info_get_prompt2_image_supported_params_IN_ARG_session_Id.parent_struct,
++  NULL
++};
++
++static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_get_prompt2_image_supported_params_OUT_ARG_params =
++{
++  {
++    -1,
++    (gchar *) "params",
++    (gchar *) "s",
++    NULL
++  },
++  FALSE
++};
++
++static const GDBusArgInfo * const _aisdk_vision_processor_method_info_get_prompt2_image_supported_params_OUT_ARG_pointers[] =
++{
++  &_aisdk_vision_processor_method_info_get_prompt2_image_supported_params_OUT_ARG_params.parent_struct,
++  NULL
++};
++
++static const _ExtendedGDBusMethodInfo _aisdk_vision_processor_method_info_get_prompt2_image_supported_params =
++{
++  {
++    -1,
++    (gchar *) "getPrompt2ImageSupportedParams",
++    (GDBusArgInfo **) &_aisdk_vision_processor_method_info_get_prompt2_image_supported_params_IN_ARG_pointers,
++    (GDBusArgInfo **) &_aisdk_vision_processor_method_info_get_prompt2_image_supported_params_OUT_ARG_pointers,
++    NULL
++  },
++  "handle-get-prompt2-image-supported-params",
++  FALSE
++};
++
+ static const _ExtendedGDBusArgInfo _aisdk_vision_processor_method_info_prompt_image_IN_ARG_prompt =
+ {
+   {
+@@ -548,6 +595,7 @@ static const GDBusMethodInfo * const _aisdk_vision_processor_method_info_pointer
+   &_aisdk_vision_processor_method_info_set_prompt_image_size.parent_struct,
+   &_aisdk_vision_processor_method_info_set_prompt_image_number.parent_struct,
+   &_aisdk_vision_processor_method_info_set_prompt_image_style.parent_struct,
++  &_aisdk_vision_processor_method_info_get_prompt2_image_supported_params.parent_struct,
+   &_aisdk_vision_processor_method_info_prompt_image.parent_struct,
+   NULL
+ };
+@@ -606,6 +654,7 @@ aisdk_vision_processor_override_properties (GObjectClass *klass, guint property_
+ /**
+  * AisdkVisionProcessorIface:
+  * @parent_iface: The parent interface.
++ * @handle_get_prompt2_image_supported_params: Handler for the #AisdkVisionProcessor::handle-get-prompt2-image-supported-params signal.
+  * @handle_init: Handler for the #AisdkVisionProcessor::handle-init signal.
+  * @handle_prompt_image: Handler for the #AisdkVisionProcessor::handle-prompt-image signal.
+  * @handle_set_prompt_image_number: Handler for the #AisdkVisionProcessor::handle-set-prompt-image-number signal.
+@@ -721,6 +770,29 @@ aisdk_vision_processor_default_init (AisdkVisionProcessorIface *iface)
+     3,
+     G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_INT, G_TYPE_INT);
+ 
++  /**
++   * AisdkVisionProcessor::handle-get-prompt2-image-supported-params:
++   * @object: A #AisdkVisionProcessor.
++   * @invocation: A #GDBusMethodInvocation.
++   * @arg_session_Id: Argument passed by remote caller.
++   *
++   * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-VisionProcessor.getPrompt2ImageSupportedParams">getPrompt2ImageSupportedParams()</link> D-Bus method.
++   *
++   * If a signal handler returns %TRUE, it means the signal handler will handle the invocation (e.g. take a reference to @invocation and eventually call aisdk_vision_processor_complete_get_prompt2_image_supported_params() or e.g. g_dbus_method_invocation_return_error() on it) and no order signal handlers will run. If no signal handler handles the invocation, the %G_DBUS_ERROR_UNKNOWN_METHOD error is returned.
++   *
++   * Returns: %TRUE if the invocation was handled, %FALSE to let other signal handlers run.
++   */
++  g_signal_new ("handle-get-prompt2-image-supported-params",
++    G_TYPE_FROM_INTERFACE (iface),
++    G_SIGNAL_RUN_LAST,
++    G_STRUCT_OFFSET (AisdkVisionProcessorIface, handle_get_prompt2_image_supported_params),
++    g_signal_accumulator_true_handled,
++    NULL,
++    g_cclosure_marshal_generic,
++    G_TYPE_BOOLEAN,
++    2,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_INT);
++
+   /**
+    * AisdkVisionProcessor::handle-prompt-image:
+    * @object: A #AisdkVisionProcessor.
+@@ -1193,6 +1265,110 @@ _out:
+   return _ret != NULL;
+ }
+ 
++/**
++ * aisdk_vision_processor_call_get_prompt2_image_supported_params:
++ * @proxy: A #AisdkVisionProcessorProxy.
++ * @arg_session_Id: Argument to pass with the method invocation.
++ * @cancellable: (nullable): A #GCancellable or %NULL.
++ * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
++ * @user_data: User data to pass to @callback.
++ *
++ * Asynchronously invokes the <link linkend="gdbus-method-org-openkylin-aisdk-VisionProcessor.getPrompt2ImageSupportedParams">getPrompt2ImageSupportedParams()</link> D-Bus method on @proxy.
++ * When the operation is finished, @callback will be invoked in the thread-default main loop of the thread you are calling this method from (see g_main_context_push_thread_default()).
++ * You can then call aisdk_vision_processor_call_get_prompt2_image_supported_params_finish() to get the result of the operation.
++ *
++ * See aisdk_vision_processor_call_get_prompt2_image_supported_params_sync() for the synchronous, blocking version of this method.
++ */
++void
++aisdk_vision_processor_call_get_prompt2_image_supported_params (
++    AisdkVisionProcessor *proxy,
++    gint arg_session_Id,
++    GCancellable *cancellable,
++    GAsyncReadyCallback callback,
++    gpointer user_data)
++{
++  g_dbus_proxy_call (G_DBUS_PROXY (proxy),
++    "getPrompt2ImageSupportedParams",
++    g_variant_new ("(i)",
++                   arg_session_Id),
++    G_DBUS_CALL_FLAGS_NONE,
++    -1,
++    cancellable,
++    callback,
++    user_data);
++}
++
++/**
++ * aisdk_vision_processor_call_get_prompt2_image_supported_params_finish:
++ * @proxy: A #AisdkVisionProcessorProxy.
++ * @out_params: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @res: The #GAsyncResult obtained from the #GAsyncReadyCallback passed to aisdk_vision_processor_call_get_prompt2_image_supported_params().
++ * @error: Return location for error or %NULL.
++ *
++ * Finishes an operation started with aisdk_vision_processor_call_get_prompt2_image_supported_params().
++ *
++ * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ */
++gboolean
++aisdk_vision_processor_call_get_prompt2_image_supported_params_finish (
++    AisdkVisionProcessor *proxy,
++    gchar **out_params,
++    GAsyncResult *res,
++    GError **error)
++{
++  GVariant *_ret;
++  _ret = g_dbus_proxy_call_finish (G_DBUS_PROXY (proxy), res, error);
++  if (_ret == NULL)
++    goto _out;
++  g_variant_get (_ret,
++                 "(s)",
++                 out_params);
++  g_variant_unref (_ret);
++_out:
++  return _ret != NULL;
++}
++
++/**
++ * aisdk_vision_processor_call_get_prompt2_image_supported_params_sync:
++ * @proxy: A #AisdkVisionProcessorProxy.
++ * @arg_session_Id: Argument to pass with the method invocation.
++ * @out_params: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @cancellable: (nullable): A #GCancellable or %NULL.
++ * @error: Return location for error or %NULL.
++ *
++ * Synchronously invokes the <link linkend="gdbus-method-org-openkylin-aisdk-VisionProcessor.getPrompt2ImageSupportedParams">getPrompt2ImageSupportedParams()</link> D-Bus method on @proxy. The calling thread is blocked until a reply is received.
++ *
++ * See aisdk_vision_processor_call_get_prompt2_image_supported_params() for the asynchronous version of this method.
++ *
++ * Returns: (skip): %TRUE if the call succeded, %FALSE if @error is set.
++ */
++gboolean
++aisdk_vision_processor_call_get_prompt2_image_supported_params_sync (
++    AisdkVisionProcessor *proxy,
++    gint arg_session_Id,
++    gchar **out_params,
++    GCancellable *cancellable,
++    GError **error)
++{
++  GVariant *_ret;
++  _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
++    "getPrompt2ImageSupportedParams",
++    g_variant_new ("(i)",
++                   arg_session_Id),
++    G_DBUS_CALL_FLAGS_NONE,
++    -1,
++    cancellable,
++    error);
++  if (_ret == NULL)
++    goto _out;
++  g_variant_get (_ret,
++                 "(s)",
++                 out_params);
++  g_variant_unref (_ret);
++_out:
++  return _ret != NULL;
++}
++
+ /**
+  * aisdk_vision_processor_call_prompt_image:
+  * @proxy: A #AisdkVisionProcessorProxy.
+@@ -1423,6 +1599,27 @@ aisdk_vision_processor_complete_set_prompt_image_style (
+     g_variant_new ("()"));
+ }
+ 
++/**
++ * aisdk_vision_processor_complete_get_prompt2_image_supported_params:
++ * @object: A #AisdkVisionProcessor.
++ * @invocation: (transfer full): A #GDBusMethodInvocation.
++ * @params: Parameter to return.
++ *
++ * Helper function used in service implementations to finish handling invocations of the <link linkend="gdbus-method-org-openkylin-aisdk-VisionProcessor.getPrompt2ImageSupportedParams">getPrompt2ImageSupportedParams()</link> D-Bus method. If you instead want to finish handling an invocation by returning an error, use g_dbus_method_invocation_return_error() or similar.
++ *
++ * This method will free @invocation, you cannot use it afterwards.
++ */
++void
++aisdk_vision_processor_complete_get_prompt2_image_supported_params (
++    AisdkVisionProcessor *object,
++    GDBusMethodInvocation *invocation,
++    const gchar *params)
++{
++  g_dbus_method_invocation_return_value (invocation,
++    g_variant_new ("(s)",
++                   params));
++}
++
+ /**
+  * aisdk_vision_processor_complete_prompt_image:
+  * @object: A #AisdkVisionProcessor.
+diff --git a/src/services/visionprocessorglue.h b/src/services/visionprocessorglue.h
+index d8b73a2..54f528f 100644
+--- a/src/services/visionprocessorglue.h
++++ b/src/services/visionprocessorglue.h
+@@ -30,6 +30,11 @@ struct _AisdkVisionProcessorIface
+ {
+   GTypeInterface parent_iface;
+ 
++  gboolean (*handle_get_prompt2_image_supported_params) (
++    AisdkVisionProcessor *object,
++    GDBusMethodInvocation *invocation,
++    gint arg_session_Id);
++
+   gboolean (*handle_init) (
+     AisdkVisionProcessor *object,
+     GDBusMethodInvocation *invocation,
+@@ -90,6 +95,11 @@ void aisdk_vision_processor_complete_set_prompt_image_style (
+     AisdkVisionProcessor *object,
+     GDBusMethodInvocation *invocation);
+ 
++void aisdk_vision_processor_complete_get_prompt2_image_supported_params (
++    AisdkVisionProcessor *object,
++    GDBusMethodInvocation *invocation,
++    const gchar *params);
++
+ void aisdk_vision_processor_complete_prompt_image (
+     AisdkVisionProcessor *object,
+     GDBusMethodInvocation *invocation,
+@@ -195,6 +205,26 @@ gboolean aisdk_vision_processor_call_set_prompt_image_style_sync (
+     GCancellable *cancellable,
+     GError **error);
+ 
++void aisdk_vision_processor_call_get_prompt2_image_supported_params (
++    AisdkVisionProcessor *proxy,
++    gint arg_session_Id,
++    GCancellable *cancellable,
++    GAsyncReadyCallback callback,
++    gpointer user_data);
++
++gboolean aisdk_vision_processor_call_get_prompt2_image_supported_params_finish (
++    AisdkVisionProcessor *proxy,
++    gchar **out_params,
++    GAsyncResult *res,
++    GError **error);
++
++gboolean aisdk_vision_processor_call_get_prompt2_image_supported_params_sync (
++    AisdkVisionProcessor *proxy,
++    gint arg_session_Id,
++    gchar **out_params,
++    GCancellable *cancellable,
++    GError **error);
++
+ void aisdk_vision_processor_call_prompt_image (
+     AisdkVisionProcessor *proxy,
+     const gchar *arg_prompt,
+diff --git a/src/services/visionprocessorproxy.cpp b/src/services/visionprocessorproxy.cpp
+index e5d1e91..fd7ee6f 100644
+--- a/src/services/visionprocessorproxy.cpp
++++ b/src/services/visionprocessorproxy.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "services/visionprocessorproxy.h"
+ 
++#include <cstdio>
+ #include <iostream>
+ 
+ #include "services/serverproxy.h"
+@@ -109,6 +110,18 @@ void VisionProcessorProxy::setPromptImageStyle(VisionImageStyle style) {
+         delegate_, style, sessionId_, nullptr, nullptr, this);
+ }
+ 
++std::string VisionProcessorProxy::getPrompt2imageSupportedParams() const {
++    gchar *params = nullptr;
++    GError *error = nullptr;
++    aisdk_vision_processor_call_get_prompt2_image_supported_params_sync(delegate_, sessionId_, &params, nullptr, &error);
++    if (error) {
++        fprintf(stderr, "Get prompt to image supported params error: %s\n", error->message);
++        return std::string();
++    }
++
++    return std::string(params);
++}
++
+ void VisionProcessorProxy::promptImage(const char* prompt) {
+     aisdk_vision_processor_call_prompt_image(
+         delegate_, prompt, sessionId_, nullptr, nullptr, this);
+diff --git a/src/services/visionprocessorproxy.h b/src/services/visionprocessorproxy.h
+index d0736c0..5c83593 100644
+--- a/src/services/visionprocessorproxy.h
++++ b/src/services/visionprocessorproxy.h
+@@ -39,6 +39,7 @@ public:
+     void setPromptImageSize(int width, int height);
+     void setPromptImageNumber(int number);
+     void setPromptImageStyle(VisionImageStyle style);
++    std::string getPrompt2imageSupportedParams() const;
+     void promptImage(const char* prompt);
+ 
+ private:
+diff --git a/src/vision.cpp b/src/vision.cpp
+index 2643692..03e2f46 100644
+--- a/src/vision.cpp
++++ b/src/vision.cpp
+@@ -16,6 +16,7 @@
+ 
+ #include "vision.h"
+ #include "visionsession.h"
++#include <cstdio>
+ #include <sys/socket.h>
+ #include "settings/globalsettings.h"
+ 
+@@ -100,8 +101,18 @@ VisionResult vision_prompt2image_async(VisionSession session, const char *prompt
+     return VISION_SUCCESS;
+ }
+ 
+-const char* vision_get_prompt2image_supported_params(VisionSession session) {
+-    return nullptr;
++const char *vision_get_prompt2image_supported_params(VisionSession session) {
++    vision::VisionSession *visionSession = static_cast<vision::VisionSession *>(session);
++    if (!visionSession) {
++        return nullptr;
++    }
++    
++    static std::string params;
++    if (params.empty()) {
++        params = visionSession->getPrompt2imageSupportedParams();
++    }
++
++    return params.c_str();
+ }
+ 
+ const char *vision_get_last_error_message() {
+diff --git a/src/visionsession.cpp b/src/visionsession.cpp
+index a1e8f13..b5a82e6 100644
+--- a/src/visionsession.cpp
++++ b/src/visionsession.cpp
+@@ -15,6 +15,7 @@
+  */
+ 
+ #include "visionsession.h"
++#include <cstdio>
+ 
+ namespace vision {
+ 
+@@ -47,6 +48,10 @@ void VisionSession::setPromptImageStyle(VisionImageStyle style) {
+     visionProcessorProxy_.setPromptImageStyle(style);
+ }
+ 
++std::string VisionSession::getPrompt2imageSupportedParams() const {
++    return visionProcessorProxy_.getPrompt2imageSupportedParams();
++}
++
+ VisionResult VisionSession::promptImage(const char* prompt) {
+     if (prompt == nullptr) {
+         return VisionResult::VISION_PARAM_ERROR;
+diff --git a/src/visionsession.h b/src/visionsession.h
+index 053eb95..1111a6b 100644
+--- a/src/visionsession.h
++++ b/src/visionsession.h
+@@ -40,6 +40,8 @@ public:
+ 
+     void setPromptImageStyle(VisionImageStyle style);
+ 
++    std::string getPrompt2imageSupportedParams() const;
++
+     VisionResult promptImage(const char* prompt);
+ 
+ private:

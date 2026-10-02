@@ -1,0 +1,231 @@
+From: =?utf-8?b?5p2o5pWP?= <yangmin@kylinos.cn>
+Date: Mon, 24 Aug 2026 08:50:20 +0000
+Subject: !24 update change log
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Merge pull request !24 from 杨敏/openkylin/huanghe
+---
+ src/dm-tool.c | 186 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 183 insertions(+), 3 deletions(-)
+
+diff --git a/src/dm-tool.c b/src/dm-tool.c
+index 365a7a8..01795b9 100644
+--- a/src/dm-tool.c
++++ b/src/dm-tool.c
+@@ -12,6 +12,8 @@
+ #include <config.h>
+ 
+ #include <stdlib.h>
++#include <unistd.h>
++#include <string.h>
+ #include <glib.h>
+ #include <glib/gi18n.h>
+ #include <gio/gio.h>
+@@ -22,6 +24,182 @@ static GDBusProxy *dm_proxy, *seat_proxy = NULL;
+ static gint xephyr_display_number;
+ static GPid xephyr_pid;
+ 
++/* Resolve current logind seat id (e.g. "seat0"). */
++static gchar *
++get_logind_seat_id (void)
++{
++    const gchar *xdg_seat = g_getenv ("XDG_SEAT");
++    if (xdg_seat && xdg_seat[0] != '\0')
++        return g_strdup (xdg_seat);
++
++    g_autoptr(GError) error = NULL;
++    g_autoptr(GDBusProxy) login_mgr = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM,
++                                                                     G_DBUS_PROXY_FLAGS_NONE,
++                                                                     NULL,
++                                                                     "org.freedesktop.login1",
++                                                                     "/org/freedesktop/login1",
++                                                                     "org.freedesktop.login1.Manager",
++                                                                     NULL,
++                                                                     &error);
++    if (!login_mgr)
++        return NULL;
++
++    /* Prefer caller's login session via magic id "auto". */
++    g_autoptr(GVariant) by_auto = g_dbus_proxy_call_sync (login_mgr,
++                                                          "GetSession",
++                                                          g_variant_new ("(s)", "auto"),
++                                                          G_DBUS_CALL_FLAGS_NONE,
++                                                          -1,
++                                                          NULL,
++                                                          NULL);
++    if (by_auto && g_variant_is_of_type (by_auto, G_VARIANT_TYPE ("(o)")))
++    {
++        const gchar *session_path = NULL;
++        g_variant_get (by_auto, "(&o)", &session_path);
++        g_autoptr(GDBusProxy) session = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM,
++                                                                       G_DBUS_PROXY_FLAGS_NONE,
++                                                                       NULL,
++                                                                       "org.freedesktop.login1",
++                                                                       session_path,
++                                                                       "org.freedesktop.DBus.Properties",
++                                                                       NULL,
++                                                                       NULL);
++        if (session)
++        {
++            g_autoptr(GVariant) seat_v = g_dbus_proxy_call_sync (session,
++                                                                 "Get",
++                                                                 g_variant_new ("(ss)",
++                                                                                "org.freedesktop.login1.Session",
++                                                                                "Seat"),
++                                                                 G_DBUS_CALL_FLAGS_NONE,
++                                                                 -1,
++                                                                 NULL,
++                                                                 NULL);
++            if (seat_v)
++            {
++                g_autoptr(GVariant) inner = NULL;
++                g_variant_get (seat_v, "(v)", &inner);
++                if (inner && g_variant_is_of_type (inner, G_VARIANT_TYPE ("(so)")))
++                {
++                    const gchar *seat_id = NULL;
++                    g_variant_get (inner, "(&so)", &seat_id, NULL);
++                    if (seat_id && seat_id[0] != '\0')
++                        return g_strdup (seat_id);
++                }
++            }
++        }
++    }
++
++    /* Fallback: ListSessions — match current uid and Active session. */
++    g_autoptr(GVariant) list = g_dbus_proxy_call_sync (login_mgr,
++                                                       "ListSessions",
++                                                       NULL,
++                                                       G_DBUS_CALL_FLAGS_NONE,
++                                                       -1,
++                                                       NULL,
++                                                       NULL);
++    if (!list || !g_variant_is_of_type (list, G_VARIANT_TYPE ("(a(susso))")))
++        return NULL;
++
++    g_autoptr(GVariantIter) iter = NULL;
++    g_variant_get (list, "(a(susso))", &iter);
++    const gchar *sid, *user, *seat;
++    guint32 uid;
++    const gchar *path;
++    uid_t self = getuid ();
++    while (g_variant_iter_next (iter, "(&su&s&s&o)", &sid, &uid, &user, &seat, &path))
++    {
++        if (uid != (guint32) self || !seat || seat[0] == '\0')
++            continue;
++
++        g_autoptr(GDBusProxy) session = g_dbus_proxy_new_for_bus_sync (G_BUS_TYPE_SYSTEM,
++                                                                       G_DBUS_PROXY_FLAGS_NONE,
++                                                                       NULL,
++                                                                       "org.freedesktop.login1",
++                                                                       path,
++                                                                       "org.freedesktop.DBus.Properties",
++                                                                       NULL,
++                                                                       NULL);
++        if (!session)
++            continue;
++
++        g_autoptr(GVariant) active_v = g_dbus_proxy_call_sync (session,
++                                                               "Get",
++                                                               g_variant_new ("(ss)",
++                                                                              "org.freedesktop.login1.Session",
++                                                                              "Active"),
++                                                               G_DBUS_CALL_FLAGS_NONE,
++                                                               -1,
++                                                               NULL,
++                                                               NULL);
++        if (!active_v)
++            continue;
++
++        g_autoptr(GVariant) active_inner = NULL;
++        g_variant_get (active_v, "(v)", &active_inner);
++        if (active_inner && g_variant_is_of_type (active_inner, G_VARIANT_TYPE_BOOLEAN)
++            && g_variant_get_boolean (active_inner))
++            return g_strdup (seat);
++    }
++
++    return NULL;
++}
++
++/* Match logind seat id against org.freedesktop.DisplayManager Seats. */
++static gchar *
++resolve_display_manager_seat_path (void)
++{
++    const gchar *env_path = g_getenv ("XDG_SEAT_PATH");
++    if (env_path && env_path[0] != '\0')
++        return g_strdup (env_path);
++
++    g_autofree gchar *seat_id = get_logind_seat_id ();
++    if (!seat_id)
++        return NULL;
++
++    g_autoptr(GError) error = NULL;
++    g_autoptr(GDBusProxy) dm = g_dbus_proxy_new_for_bus_sync (bus_type,
++                                                              G_DBUS_PROXY_FLAGS_NONE,
++                                                              NULL,
++                                                              "org.freedesktop.DisplayManager",
++                                                              "/org/freedesktop/DisplayManager",
++                                                              "org.freedesktop.DBus.Properties",
++                                                              NULL,
++                                                              &error);
++    if (!dm)
++        return NULL;
++
++    g_autoptr(GVariant) seats_v = g_dbus_proxy_call_sync (dm,
++                                                          "Get",
++                                                          g_variant_new ("(ss)",
++                                                                         "org.freedesktop.DisplayManager",
++                                                                         "Seats"),
++                                                          G_DBUS_CALL_FLAGS_NONE,
++                                                          -1,
++                                                          NULL,
++                                                          NULL);
++    if (!seats_v)
++        return NULL;
++
++    g_autoptr(GVariant) seats = NULL;
++    g_variant_get (seats_v, "(v)", &seats);
++    if (!seats || !g_variant_is_of_type (seats, G_VARIANT_TYPE ("ao")))
++        return NULL;
++
++    g_autoptr(GVariantIter) iter = NULL;
++    g_variant_get (seats, "ao", &iter);
++    const gchar *seat_path;
++    while (g_variant_iter_next (iter, "&o", &seat_path))
++    {
++        const gchar *leaf = strrchr (seat_path, '/');
++        leaf = leaf ? leaf + 1 : seat_path;
++        if (g_ascii_strcasecmp (leaf, seat_id) == 0)
++            return g_strdup (seat_path);
++    }
++
++    return NULL;
++}
++
+ static void
+ usage (void)
+ {
+@@ -73,9 +251,11 @@ get_seat_proxy (void)
+     if (seat_proxy)
+         return seat_proxy;
+ 
+-    if (!g_getenv ("XDG_SEAT_PATH"))
++    g_autofree gchar *seat_path = resolve_display_manager_seat_path ();
++    if (!seat_path)
+     {
+-        g_printerr ("Not running inside a display manager, XDG_SEAT_PATH not defined\n");
++        g_printerr ("Unable to resolve DisplayManager seat path "
++                    "(XDG_SEAT_PATH unset and logind/DM match failed)\n");
+         exit (EXIT_FAILURE);
+     }
+ 
+@@ -84,7 +264,7 @@ get_seat_proxy (void)
+                                                 G_DBUS_PROXY_FLAGS_NONE,
+                                                 NULL,
+                                                 "org.freedesktop.DisplayManager",
+-                                                g_getenv ("XDG_SEAT_PATH"),
++                                                seat_path,
+                                                 "org.freedesktop.DisplayManager.Seat",
+                                                 NULL,
+                                                 &error);

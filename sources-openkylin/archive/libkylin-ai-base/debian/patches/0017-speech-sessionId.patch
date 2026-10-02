@@ -1,0 +1,1579 @@
+From: zhaokexin <zhaokexin@kylinos.cn>
+Date: Wed, 24 Apr 2024 13:47:01 +0800
+Subject: =?utf-8?b?c3BlZWNo5qC55o2u5pyN5Yqh56uv5Lyg6L+H5p2l55qEc2Vzc2lvbklk?=
+ =?utf-8?b?6L+e5o6l5L+h5Y+377yM6LCD55So5pa55rOV?=
+
+---
+ src/services/speechprocessorglue.c    | 311 ++++++++++++++++++++++++++++------
+ src/services/speechprocessorglue.h    |  48 +++++-
+ src/services/speechprocessorproxy.cpp |  51 +++---
+ src/services/speechprocessorproxy.h   |   5 +-
+ src/speechsession.cpp                 |   7 +-
+ test/testSpeechApi.cpp                | 211 ++++++++++++++++++++++-
+ 6 files changed, 545 insertions(+), 88 deletions(-)
+
+diff --git a/src/services/speechprocessorglue.c b/src/services/speechprocessorglue.c
+index 0000cf9..eaf9105 100644
+--- a/src/services/speechprocessorglue.c
++++ b/src/services/speechprocessorglue.c
+@@ -219,13 +219,42 @@ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_init_IN_AR
+   NULL
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_OUT_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_init_OUT_ARG_initResult =
++{
++  {
++    -1,
++    (gchar *) "initResult",
++    (gchar *) "b",
++    NULL
++  },
++  FALSE
++};
++
++static const GDBusArgInfo * const _aisdk_speech_processor_method_info_init_OUT_ARG_pointers[] =
++{
++  &_aisdk_speech_processor_method_info_init_OUT_ARG_session_Id.parent_struct,
++  &_aisdk_speech_processor_method_info_init_OUT_ARG_initResult.parent_struct,
++  NULL
++};
++
+ static const _ExtendedGDBusMethodInfo _aisdk_speech_processor_method_info_init =
+ {
+   {
+     -1,
+     (gchar *) "init",
+     (GDBusArgInfo **) &_aisdk_speech_processor_method_info_init_IN_ARG_pointers,
+-    NULL,
++    (GDBusArgInfo **) &_aisdk_speech_processor_method_info_init_OUT_ARG_pointers,
+     NULL
+   },
+   "handle-init",
+@@ -243,9 +272,21 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_start_rec
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_start_recognizing_audio_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
+ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_start_recognizing_audio_IN_ARG_pointers[] =
+ {
+   &_aisdk_speech_processor_method_info_start_recognizing_audio_IN_ARG_audioProperties.parent_struct,
++  &_aisdk_speech_processor_method_info_start_recognizing_audio_IN_ARG_session_Id.parent_struct,
+   NULL
+ };
+ 
+@@ -284,10 +325,22 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_input_aud
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_input_audio_data_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
+ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_input_audio_data_IN_ARG_pointers[] =
+ {
+   &_aisdk_speech_processor_method_info_input_audio_data_IN_ARG_audioData.parent_struct,
+   &_aisdk_speech_processor_method_info_input_audio_data_IN_ARG_audioDataLength.parent_struct,
++  &_aisdk_speech_processor_method_info_input_audio_data_IN_ARG_session_Id.parent_struct,
+   NULL
+ };
+ 
+@@ -357,12 +410,29 @@ static const _ExtendedGDBusMethodInfo _aisdk_speech_processor_method_info_input_
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_stop_recognizing_audio_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
++static const GDBusArgInfo * const _aisdk_speech_processor_method_info_stop_recognizing_audio_IN_ARG_pointers[] =
++{
++  &_aisdk_speech_processor_method_info_stop_recognizing_audio_IN_ARG_session_Id.parent_struct,
++  NULL
++};
++
+ static const _ExtendedGDBusMethodInfo _aisdk_speech_processor_method_info_stop_recognizing_audio =
+ {
+   {
+     -1,
+     (gchar *) "stopRecognizingAudio",
+-    NULL,
++    (GDBusArgInfo **) &_aisdk_speech_processor_method_info_stop_recognizing_audio_IN_ARG_pointers,
+     NULL,
+     NULL
+   },
+@@ -403,11 +473,23 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_recognizi
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_recognizing_complete_audio_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
+ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_recognizing_complete_audio_IN_ARG_pointers[] =
+ {
+   &_aisdk_speech_processor_method_info_recognizing_complete_audio_IN_ARG_audioProperties.parent_struct,
+   &_aisdk_speech_processor_method_info_recognizing_complete_audio_IN_ARG_audioData.parent_struct,
+   &_aisdk_speech_processor_method_info_recognizing_complete_audio_IN_ARG_audioDataLength.parent_struct,
++  &_aisdk_speech_processor_method_info_recognizing_complete_audio_IN_ARG_session_Id.parent_struct,
+   NULL
+ };
+ 
+@@ -488,9 +570,21 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_start_syn
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_start_synthesizing_audio_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
+ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_start_synthesizing_audio_IN_ARG_pointers[] =
+ {
+   &_aisdk_speech_processor_method_info_start_synthesizing_audio_IN_ARG_voiceProperties.parent_struct,
++  &_aisdk_speech_processor_method_info_start_synthesizing_audio_IN_ARG_session_Id.parent_struct,
+   NULL
+ };
+ 
+@@ -518,9 +612,21 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_input_con
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_input_continuous_text_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
+ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_input_continuous_text_IN_ARG_pointers[] =
+ {
+   &_aisdk_speech_processor_method_info_input_continuous_text_IN_ARG_text.parent_struct,
++  &_aisdk_speech_processor_method_info_input_continuous_text_IN_ARG_session_Id.parent_struct,
+   NULL
+ };
+ 
+@@ -614,12 +720,29 @@ static const _ExtendedGDBusMethodInfo _aisdk_speech_processor_method_info_input_
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_stop_synthesizing_audio_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
++static const GDBusArgInfo * const _aisdk_speech_processor_method_info_stop_synthesizing_audio_IN_ARG_pointers[] =
++{
++  &_aisdk_speech_processor_method_info_stop_synthesizing_audio_IN_ARG_session_Id.parent_struct,
++  NULL
++};
++
+ static const _ExtendedGDBusMethodInfo _aisdk_speech_processor_method_info_stop_synthesizing_audio =
+ {
+   {
+     -1,
+     (gchar *) "stopSynthesizingAudio",
+-    NULL,
++    (GDBusArgInfo **) &_aisdk_speech_processor_method_info_stop_synthesizing_audio_IN_ARG_pointers,
+     NULL,
+     NULL
+   },
+@@ -649,10 +772,22 @@ static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_recognizi
+   FALSE
+ };
+ 
++static const _ExtendedGDBusArgInfo _aisdk_speech_processor_method_info_recognizing_complete_text_IN_ARG_session_Id =
++{
++  {
++    -1,
++    (gchar *) "session_Id",
++    (gchar *) "i",
++    NULL
++  },
++  FALSE
++};
++
+ static const GDBusArgInfo * const _aisdk_speech_processor_method_info_recognizing_complete_text_IN_ARG_pointers[] =
+ {
+   &_aisdk_speech_processor_method_info_recognizing_complete_text_IN_ARG_voiceProperties.parent_struct,
+   &_aisdk_speech_processor_method_info_recognizing_complete_text_IN_ARG_text.parent_struct,
++  &_aisdk_speech_processor_method_info_recognizing_complete_text_IN_ARG_session_Id.parent_struct,
+   NULL
+ };
+ 
+@@ -865,6 +1000,7 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+    * @object: A #AisdkSpeechProcessor.
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_audioProperties: Argument passed by remote caller.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.startRecognizingAudio">startRecognizingAudio()</link> D-Bus method.
+    *
+@@ -880,8 +1016,8 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    2,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING);
++    3,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-input-audio-data:
+@@ -889,6 +1025,7 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_audioData: Argument passed by remote caller.
+    * @arg_audioDataLength: Argument passed by remote caller.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.inputAudioData">inputAudioData()</link> D-Bus method.
+    *
+@@ -904,13 +1041,14 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    3,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
++    4,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-stop-recognizing-audio:
+    * @object: A #AisdkSpeechProcessor.
+    * @invocation: A #GDBusMethodInvocation.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.stopRecognizingAudio">stopRecognizingAudio()</link> D-Bus method.
+    *
+@@ -926,8 +1064,8 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    1,
+-    G_TYPE_DBUS_METHOD_INVOCATION);
++    2,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_INT);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-recognizing-complete-audio:
+@@ -936,6 +1074,7 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+    * @arg_audioProperties: Argument passed by remote caller.
+    * @arg_audioData: Argument passed by remote caller.
+    * @arg_audioDataLength: Argument passed by remote caller.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.recognizingCompleteAudio">recognizingCompleteAudio()</link> D-Bus method.
+    *
+@@ -951,14 +1090,15 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    4,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
++    5,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT, G_TYPE_INT);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-start-synthesizing-audio:
+    * @object: A #AisdkSpeechProcessor.
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_voiceProperties: Argument passed by remote caller.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.startSynthesizingAudio">startSynthesizingAudio()</link> D-Bus method.
+    *
+@@ -974,14 +1114,15 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    2,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING);
++    3,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-input-continuous-text:
+    * @object: A #AisdkSpeechProcessor.
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_text: Argument passed by remote caller.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.inputContinuousText">inputContinuousText()</link> D-Bus method.
+    *
+@@ -997,13 +1138,14 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    2,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING);
++    3,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_INT);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-stop-synthesizing-audio:
+    * @object: A #AisdkSpeechProcessor.
+    * @invocation: A #GDBusMethodInvocation.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.stopSynthesizingAudio">stopSynthesizingAudio()</link> D-Bus method.
+    *
+@@ -1019,8 +1161,8 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    1,
+-    G_TYPE_DBUS_METHOD_INVOCATION);
++    2,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_INT);
+ 
+   /**
+    * AisdkSpeechProcessor::handle-recognizing-complete-text:
+@@ -1028,6 +1170,7 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+    * @invocation: A #GDBusMethodInvocation.
+    * @arg_voiceProperties: Argument passed by remote caller.
+    * @arg_text: Argument passed by remote caller.
++   * @arg_session_Id: Argument passed by remote caller.
+    *
+    * Signal emitted when a remote caller is invoking the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.recognizingCompleteText">recognizingCompleteText()</link> D-Bus method.
+    *
+@@ -1043,8 +1186,8 @@ aisdk_speech_processor_default_init (AisdkSpeechProcessorIface *iface)
+     NULL,
+     g_cclosure_marshal_generic,
+     G_TYPE_BOOLEAN,
+-    3,
+-    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING);
++    4,
++    G_TYPE_DBUS_METHOD_INVOCATION, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_INT);
+ 
+ }
+ 
+@@ -1093,6 +1236,8 @@ aisdk_speech_processor_call_init (
+ /**
+  * aisdk_speech_processor_call_init_finish:
+  * @proxy: A #AisdkSpeechProcessorProxy.
++ * @out_session_Id: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @out_initResult: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @res: The #GAsyncResult obtained from the #GAsyncReadyCallback passed to aisdk_speech_processor_call_init().
+  * @error: Return location for error or %NULL.
+  *
+@@ -1103,6 +1248,8 @@ aisdk_speech_processor_call_init (
+ gboolean
+ aisdk_speech_processor_call_init_finish (
+     AisdkSpeechProcessor *proxy,
++    gint *out_session_Id,
++    gboolean *out_initResult,
+     GAsyncResult *res,
+     GError **error)
+ {
+@@ -1111,7 +1258,9 @@ aisdk_speech_processor_call_init_finish (
+   if (_ret == NULL)
+     goto _out;
+   g_variant_get (_ret,
+-                 "()");
++                 "(ib)",
++                 out_session_Id,
++                 out_initResult);
+   g_variant_unref (_ret);
+ _out:
+   return _ret != NULL;
+@@ -1124,6 +1273,8 @@ _out:
+  * @arg_app_id: Argument to pass with the method invocation.
+  * @arg_api_key: Argument to pass with the method invocation.
+  * @arg_secret_key: Argument to pass with the method invocation.
++ * @out_session_Id: (out) (optional): Return location for return parameter or %NULL to ignore.
++ * @out_initResult: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+  *
+@@ -1140,6 +1291,8 @@ aisdk_speech_processor_call_init_sync (
+     const gchar *arg_app_id,
+     const gchar *arg_api_key,
+     const gchar *arg_secret_key,
++    gint *out_session_Id,
++    gboolean *out_initResult,
+     GCancellable *cancellable,
+     GError **error)
+ {
+@@ -1158,7 +1311,9 @@ aisdk_speech_processor_call_init_sync (
+   if (_ret == NULL)
+     goto _out;
+   g_variant_get (_ret,
+-                 "()");
++                 "(ib)",
++                 out_session_Id,
++                 out_initResult);
+   g_variant_unref (_ret);
+ _out:
+   return _ret != NULL;
+@@ -1168,6 +1323,7 @@ _out:
+  * aisdk_speech_processor_call_start_recognizing_audio:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_audioProperties: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1182,14 +1338,16 @@ void
+ aisdk_speech_processor_call_start_recognizing_audio (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "startRecognizingAudio",
+-    g_variant_new ("(s)",
+-                   arg_audioProperties),
++    g_variant_new ("(si)",
++                   arg_audioProperties,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1228,6 +1386,7 @@ _out:
+  * aisdk_speech_processor_call_start_recognizing_audio_sync:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_audioProperties: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+  *
+@@ -1241,14 +1400,16 @@ gboolean
+ aisdk_speech_processor_call_start_recognizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error)
+ {
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "startRecognizingAudio",
+-    g_variant_new ("(s)",
+-                   arg_audioProperties),
++    g_variant_new ("(si)",
++                   arg_audioProperties,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1267,6 +1428,7 @@ _out:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_audioData: Argument to pass with the method invocation.
+  * @arg_audioDataLength: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1282,15 +1444,17 @@ aisdk_speech_processor_call_input_audio_data (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "inputAudioData",
+-    g_variant_new ("(^ayi)",
++    g_variant_new ("(^ayii)",
+                    arg_audioData,
+-                   arg_audioDataLength),
++                   arg_audioDataLength,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1342,6 +1506,7 @@ _out:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_audioData: Argument to pass with the method invocation.
+  * @arg_audioDataLength: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @out_textData: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_textDataLength: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_speakerId: (out) (optional): Return location for return parameter or %NULL to ignore.
+@@ -1360,6 +1525,7 @@ aisdk_speech_processor_call_input_audio_data_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     gchar **out_textData,
+     gint *out_textDataLength,
+     gint *out_speakerId,
+@@ -1370,9 +1536,10 @@ aisdk_speech_processor_call_input_audio_data_sync (
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "inputAudioData",
+-    g_variant_new ("(^ayi)",
++    g_variant_new ("(^ayii)",
+                    arg_audioData,
+-                   arg_audioDataLength),
++                   arg_audioDataLength,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1393,6 +1560,7 @@ _out:
+ /**
+  * aisdk_speech_processor_call_stop_recognizing_audio:
+  * @proxy: A #AisdkSpeechProcessorProxy.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1406,13 +1574,15 @@ _out:
+ void
+ aisdk_speech_processor_call_stop_recognizing_audio (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "stopRecognizingAudio",
+-    g_variant_new ("()"),
++    g_variant_new ("(i)",
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1450,6 +1620,7 @@ _out:
+ /**
+  * aisdk_speech_processor_call_stop_recognizing_audio_sync:
+  * @proxy: A #AisdkSpeechProcessorProxy.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+  *
+@@ -1462,13 +1633,15 @@ _out:
+ gboolean
+ aisdk_speech_processor_call_stop_recognizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error)
+ {
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "stopRecognizingAudio",
+-    g_variant_new ("()"),
++    g_variant_new ("(i)",
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1488,6 +1661,7 @@ _out:
+  * @arg_audioProperties: Argument to pass with the method invocation.
+  * @arg_audioData: Argument to pass with the method invocation.
+  * @arg_audioDataLength: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1504,16 +1678,18 @@ aisdk_speech_processor_call_recognizing_complete_audio (
+     const gchar *arg_audioProperties,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "recognizingCompleteAudio",
+-    g_variant_new ("(ssi)",
++    g_variant_new ("(ssii)",
+                    arg_audioProperties,
+                    arg_audioData,
+-                   arg_audioDataLength),
++                   arg_audioDataLength,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1566,6 +1742,7 @@ _out:
+  * @arg_audioProperties: Argument to pass with the method invocation.
+  * @arg_audioData: Argument to pass with the method invocation.
+  * @arg_audioDataLength: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @out_textData: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_textDataLength: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_speakerId: (out) (optional): Return location for return parameter or %NULL to ignore.
+@@ -1585,6 +1762,7 @@ aisdk_speech_processor_call_recognizing_complete_audio_sync (
+     const gchar *arg_audioProperties,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     gchar **out_textData,
+     gint *out_textDataLength,
+     gint *out_speakerId,
+@@ -1595,10 +1773,11 @@ aisdk_speech_processor_call_recognizing_complete_audio_sync (
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "recognizingCompleteAudio",
+-    g_variant_new ("(ssi)",
++    g_variant_new ("(ssii)",
+                    arg_audioProperties,
+                    arg_audioData,
+-                   arg_audioDataLength),
++                   arg_audioDataLength,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1620,6 +1799,7 @@ _out:
+  * aisdk_speech_processor_call_start_synthesizing_audio:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_voiceProperties: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1634,14 +1814,16 @@ void
+ aisdk_speech_processor_call_start_synthesizing_audio (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "startSynthesizingAudio",
+-    g_variant_new ("(s)",
+-                   arg_voiceProperties),
++    g_variant_new ("(si)",
++                   arg_voiceProperties,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1680,6 +1862,7 @@ _out:
+  * aisdk_speech_processor_call_start_synthesizing_audio_sync:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_voiceProperties: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+  *
+@@ -1693,14 +1876,16 @@ gboolean
+ aisdk_speech_processor_call_start_synthesizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error)
+ {
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "startSynthesizingAudio",
+-    g_variant_new ("(s)",
+-                   arg_voiceProperties),
++    g_variant_new ("(si)",
++                   arg_voiceProperties,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1718,6 +1903,7 @@ _out:
+  * aisdk_speech_processor_call_input_continuous_text:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_text: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1732,14 +1918,16 @@ void
+ aisdk_speech_processor_call_input_continuous_text (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "inputContinuousText",
+-    g_variant_new ("(s)",
+-                   arg_text),
++    g_variant_new ("(si)",
++                   arg_text,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1796,6 +1984,7 @@ _out:
+  * aisdk_speech_processor_call_input_continuous_text_sync:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_text: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @out_audioFormat: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_audioRate: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_audioChannel: (out) (optional): Return location for return parameter or %NULL to ignore.
+@@ -1815,6 +2004,7 @@ gboolean
+ aisdk_speech_processor_call_input_continuous_text_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     gchar **out_audioFormat,
+     gint *out_audioRate,
+     gint *out_audioChannel,
+@@ -1827,8 +2017,9 @@ aisdk_speech_processor_call_input_continuous_text_sync (
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "inputContinuousText",
+-    g_variant_new ("(s)",
+-                   arg_text),
++    g_variant_new ("(si)",
++                   arg_text,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1851,6 +2042,7 @@ _out:
+ /**
+  * aisdk_speech_processor_call_stop_synthesizing_audio:
+  * @proxy: A #AisdkSpeechProcessorProxy.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1864,13 +2056,15 @@ _out:
+ void
+ aisdk_speech_processor_call_stop_synthesizing_audio (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "stopSynthesizingAudio",
+-    g_variant_new ("()"),
++    g_variant_new ("(i)",
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1908,6 +2102,7 @@ _out:
+ /**
+  * aisdk_speech_processor_call_stop_synthesizing_audio_sync:
+  * @proxy: A #AisdkSpeechProcessorProxy.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @error: Return location for error or %NULL.
+  *
+@@ -1920,13 +2115,15 @@ _out:
+ gboolean
+ aisdk_speech_processor_call_stop_synthesizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error)
+ {
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "stopSynthesizingAudio",
+-    g_variant_new ("()"),
++    g_variant_new ("(i)",
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -1945,6 +2142,7 @@ _out:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_voiceProperties: Argument to pass with the method invocation.
+  * @arg_text: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @cancellable: (nullable): A #GCancellable or %NULL.
+  * @callback: A #GAsyncReadyCallback to call when the request is satisfied or %NULL.
+  * @user_data: User data to pass to @callback.
+@@ -1960,15 +2158,17 @@ aisdk_speech_processor_call_recognizing_complete_text (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data)
+ {
+   g_dbus_proxy_call (G_DBUS_PROXY (proxy),
+     "recognizingCompleteText",
+-    g_variant_new ("(ss)",
++    g_variant_new ("(ssi)",
+                    arg_voiceProperties,
+-                   arg_text),
++                   arg_text,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -2026,6 +2226,7 @@ _out:
+  * @proxy: A #AisdkSpeechProcessorProxy.
+  * @arg_voiceProperties: Argument to pass with the method invocation.
+  * @arg_text: Argument to pass with the method invocation.
++ * @arg_session_Id: Argument to pass with the method invocation.
+  * @out_audioFormat: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_audioRate: (out) (optional): Return location for return parameter or %NULL to ignore.
+  * @out_audioChannel: (out) (optional): Return location for return parameter or %NULL to ignore.
+@@ -2046,6 +2247,7 @@ aisdk_speech_processor_call_recognizing_complete_text_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     gchar **out_audioFormat,
+     gint *out_audioRate,
+     gint *out_audioChannel,
+@@ -2058,9 +2260,10 @@ aisdk_speech_processor_call_recognizing_complete_text_sync (
+   GVariant *_ret;
+   _ret = g_dbus_proxy_call_sync (G_DBUS_PROXY (proxy),
+     "recognizingCompleteText",
+-    g_variant_new ("(ss)",
++    g_variant_new ("(ssi)",
+                    arg_voiceProperties,
+-                   arg_text),
++                   arg_text,
++                   arg_session_Id),
+     G_DBUS_CALL_FLAGS_NONE,
+     -1,
+     cancellable,
+@@ -2084,6 +2287,8 @@ _out:
+  * aisdk_speech_processor_complete_init:
+  * @object: A #AisdkSpeechProcessor.
+  * @invocation: (transfer full): A #GDBusMethodInvocation.
++ * @session_Id: Parameter to return.
++ * @initResult: Parameter to return.
+  *
+  * Helper function used in service implementations to finish handling invocations of the <link linkend="gdbus-method-org-openkylin-aisdk-SpeechProcessor.init">init()</link> D-Bus method. If you instead want to finish handling an invocation by returning an error, use g_dbus_method_invocation_return_error() or similar.
+  *
+@@ -2092,10 +2297,14 @@ _out:
+ void
+ aisdk_speech_processor_complete_init (
+     AisdkSpeechProcessor *object,
+-    GDBusMethodInvocation *invocation)
++    GDBusMethodInvocation *invocation,
++    gint session_Id,
++    gboolean initResult)
+ {
+   g_dbus_method_invocation_return_value (invocation,
+-    g_variant_new ("()"));
++    g_variant_new ("(ib)",
++                   session_Id,
++                   initResult));
+ }
+ 
+ /**
+diff --git a/src/services/speechprocessorglue.h b/src/services/speechprocessorglue.h
+index bc6e20e..18c515b 100644
+--- a/src/services/speechprocessorglue.h
++++ b/src/services/speechprocessorglue.h
+@@ -42,43 +42,51 @@ struct _AisdkSpeechProcessorIface
+     AisdkSpeechProcessor *object,
+     GDBusMethodInvocation *invocation,
+     const gchar *arg_audioData,
+-    gint arg_audioDataLength);
++    gint arg_audioDataLength,
++    gint arg_session_Id);
+ 
+   gboolean (*handle_input_continuous_text) (
+     AisdkSpeechProcessor *object,
+     GDBusMethodInvocation *invocation,
+-    const gchar *arg_text);
++    const gchar *arg_text,
++    gint arg_session_Id);
+ 
+   gboolean (*handle_recognizing_complete_audio) (
+     AisdkSpeechProcessor *object,
+     GDBusMethodInvocation *invocation,
+     const gchar *arg_audioProperties,
+     const gchar *arg_audioData,
+-    gint arg_audioDataLength);
++    gint arg_audioDataLength,
++    gint arg_session_Id);
+ 
+   gboolean (*handle_recognizing_complete_text) (
+     AisdkSpeechProcessor *object,
+     GDBusMethodInvocation *invocation,
+     const gchar *arg_voiceProperties,
+-    const gchar *arg_text);
++    const gchar *arg_text,
++    gint arg_session_Id);
+ 
+   gboolean (*handle_start_recognizing_audio) (
+     AisdkSpeechProcessor *object,
+     GDBusMethodInvocation *invocation,
+-    const gchar *arg_audioProperties);
++    const gchar *arg_audioProperties,
++    gint arg_session_Id);
+ 
+   gboolean (*handle_start_synthesizing_audio) (
+     AisdkSpeechProcessor *object,
+     GDBusMethodInvocation *invocation,
+-    const gchar *arg_voiceProperties);
++    const gchar *arg_voiceProperties,
++    gint arg_session_Id);
+ 
+   gboolean (*handle_stop_recognizing_audio) (
+     AisdkSpeechProcessor *object,
+-    GDBusMethodInvocation *invocation);
++    GDBusMethodInvocation *invocation,
++    gint arg_session_Id);
+ 
+   gboolean (*handle_stop_synthesizing_audio) (
+     AisdkSpeechProcessor *object,
+-    GDBusMethodInvocation *invocation);
++    GDBusMethodInvocation *invocation,
++    gint arg_session_Id);
+ 
+ };
+ 
+@@ -91,7 +99,9 @@ guint aisdk_speech_processor_override_properties (GObjectClass *klass, guint pro
+ /* D-Bus method call completion functions: */
+ void aisdk_speech_processor_complete_init (
+     AisdkSpeechProcessor *object,
+-    GDBusMethodInvocation *invocation);
++    GDBusMethodInvocation *invocation,
++    gint session_Id,
++    gboolean initResult);
+ 
+ void aisdk_speech_processor_complete_start_recognizing_audio (
+     AisdkSpeechProcessor *object,
+@@ -160,6 +170,8 @@ void aisdk_speech_processor_call_init (
+ 
+ gboolean aisdk_speech_processor_call_init_finish (
+     AisdkSpeechProcessor *proxy,
++    gint *out_session_Id,
++    gboolean *out_initResult,
+     GAsyncResult *res,
+     GError **error);
+ 
+@@ -169,12 +181,15 @@ gboolean aisdk_speech_processor_call_init_sync (
+     const gchar *arg_app_id,
+     const gchar *arg_api_key,
+     const gchar *arg_secret_key,
++    gint *out_session_Id,
++    gboolean *out_initResult,
+     GCancellable *cancellable,
+     GError **error);
+ 
+ void aisdk_speech_processor_call_start_recognizing_audio (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -187,6 +202,7 @@ gboolean aisdk_speech_processor_call_start_recognizing_audio_finish (
+ gboolean aisdk_speech_processor_call_start_recognizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error);
+ 
+@@ -194,6 +210,7 @@ void aisdk_speech_processor_call_input_audio_data (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -211,6 +228,7 @@ gboolean aisdk_speech_processor_call_input_audio_data_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     gchar **out_textData,
+     gint *out_textDataLength,
+     gint *out_speakerId,
+@@ -220,6 +238,7 @@ gboolean aisdk_speech_processor_call_input_audio_data_sync (
+ 
+ void aisdk_speech_processor_call_stop_recognizing_audio (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -231,6 +250,7 @@ gboolean aisdk_speech_processor_call_stop_recognizing_audio_finish (
+ 
+ gboolean aisdk_speech_processor_call_stop_recognizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error);
+ 
+@@ -239,6 +259,7 @@ void aisdk_speech_processor_call_recognizing_complete_audio (
+     const gchar *arg_audioProperties,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -257,6 +278,7 @@ gboolean aisdk_speech_processor_call_recognizing_complete_audio_sync (
+     const gchar *arg_audioProperties,
+     const gchar *arg_audioData,
+     gint arg_audioDataLength,
++    gint arg_session_Id,
+     gchar **out_textData,
+     gint *out_textDataLength,
+     gint *out_speakerId,
+@@ -267,6 +289,7 @@ gboolean aisdk_speech_processor_call_recognizing_complete_audio_sync (
+ void aisdk_speech_processor_call_start_synthesizing_audio (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -279,12 +302,14 @@ gboolean aisdk_speech_processor_call_start_synthesizing_audio_finish (
+ gboolean aisdk_speech_processor_call_start_synthesizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error);
+ 
+ void aisdk_speech_processor_call_input_continuous_text (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -303,6 +328,7 @@ gboolean aisdk_speech_processor_call_input_continuous_text_finish (
+ gboolean aisdk_speech_processor_call_input_continuous_text_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     gchar **out_audioFormat,
+     gint *out_audioRate,
+     gint *out_audioChannel,
+@@ -314,6 +340,7 @@ gboolean aisdk_speech_processor_call_input_continuous_text_sync (
+ 
+ void aisdk_speech_processor_call_stop_synthesizing_audio (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -325,6 +352,7 @@ gboolean aisdk_speech_processor_call_stop_synthesizing_audio_finish (
+ 
+ gboolean aisdk_speech_processor_call_stop_synthesizing_audio_sync (
+     AisdkSpeechProcessor *proxy,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GError **error);
+ 
+@@ -332,6 +360,7 @@ void aisdk_speech_processor_call_recognizing_complete_text (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     GCancellable *cancellable,
+     GAsyncReadyCallback callback,
+     gpointer user_data);
+@@ -351,6 +380,7 @@ gboolean aisdk_speech_processor_call_recognizing_complete_text_sync (
+     AisdkSpeechProcessor *proxy,
+     const gchar *arg_voiceProperties,
+     const gchar *arg_text,
++    gint arg_session_Id,
+     gchar **out_audioFormat,
+     gint *out_audioRate,
+     gint *out_audioChannel,
+diff --git a/src/services/speechprocessorproxy.cpp b/src/services/speechprocessorproxy.cpp
+index a66065f..4883a79 100644
+--- a/src/services/speechprocessorproxy.cpp
++++ b/src/services/speechprocessorproxy.cpp
+@@ -131,19 +131,28 @@ SpeechProcessorProxy::SpeechProcessorProxy() { init(); }
+ 
+ SpeechProcessorProxy::~SpeechProcessorProxy() { destroy(); }
+ 
+-void SpeechProcessorProxy::initEngine(
++bool SpeechProcessorProxy::initEngine(
+         const std::string &engineName, const std::string &appId,
+         const std::string &apiKey, const std::string &secretKey,
+         gpointer userData) {
+-    aisdk_speech_processor_call_init(
+-        delegate_, engineName.c_str(), appId.c_str(),
+-        apiKey.c_str(), secretKey.c_str(), nullptr, nullptr, this);
++    GError *error = nullptr;
++    gboolean initResult;
++    aisdk_speech_processor_call_init_sync(
++        delegate_, engineName.c_str(), appId.c_str(), apiKey.c_str(),
++        secretKey.c_str(), &sessionId_, &initResult, nullptr, &error);
++    if (!initResult) {
++        return false;
++    }
++
++    std::cout << "proxy initEngine sessionId " << sessionId_ << std::endl;
++    connectSignals();
++    return true;
+ }
+ 
+ void SpeechProcessorProxy::startRecognizingAudio(const char *audioProperties) {
+     GError *error = nullptr;
+     aisdk_speech_processor_call_start_recognizing_audio_sync(
+-        delegate_, audioProperties, nullptr, &error);
++        delegate_, audioProperties, sessionId_, nullptr, &error);
+ }
+ 
+ void SpeechProcessorProxy::inputAudioData(const char *audioData,
+@@ -152,12 +161,12 @@ void SpeechProcessorProxy::inputAudioData(const char *audioData,
+     //data.data()是编码后的数据
+     //audioDataLength是原始数据的数据长度
+     aisdk_speech_processor_call_input_audio_data(
+-        delegate_, data.data(), audioDataLength, nullptr, nullptr, this);
++        delegate_, data.data(), audioDataLength, sessionId_, nullptr, nullptr, this);
+ }
+ 
+ void SpeechProcessorProxy::stopRecognizingAudio() {
+     aisdk_speech_processor_call_stop_recognizing_audio(
+-        delegate_, nullptr, nullptr, this);
++        delegate_, sessionId_, nullptr, nullptr, this);
+ }
+ 
+ void SpeechProcessorProxy::recognizingCompleteAudio(const char *audioProperties,
+@@ -167,32 +176,32 @@ void SpeechProcessorProxy::recognizingCompleteAudio(const char *audioProperties,
+     //data.data()是编码后的数据
+     //audioDataLength是原始数据的数据长度
+     aisdk_speech_processor_call_recognizing_complete_audio(
+-        delegate_, audioProperties, data.data(), audioDataLength,
++        delegate_, audioProperties, data.data(), audioDataLength, sessionId_,
+         nullptr, nullptr, this);
+ }
+ 
+ bool SpeechProcessorProxy::startSynthesizingAudio(const char *voiceProperties) {
+     GError *error = nullptr;
+     bool success = aisdk_speech_processor_call_start_synthesizing_audio_sync(
+-        delegate_, voiceProperties, nullptr, &error);
++        delegate_, voiceProperties, sessionId_, nullptr, &error);
+ 
+     return success;
+ }
+ 
+ void SpeechProcessorProxy::inputContinuousText(const char *text) {
+     aisdk_speech_processor_call_input_continuous_text(
+-        delegate_, text, nullptr, nullptr, this);
++        delegate_, text, sessionId_, nullptr, nullptr, this);
+ }
+ 
+ void SpeechProcessorProxy::stopSynthesizingAudio() {
+     aisdk_speech_processor_call_stop_synthesizing_audio(
+-        delegate_, nullptr, nullptr, this);
++        delegate_, sessionId_, nullptr, nullptr, this);
+ }
+ 
+ void SpeechProcessorProxy::recognizingCompleteText(const char *voiceProperties,
+                                                    const char *text) {
+     aisdk_speech_processor_call_recognizing_complete_text(
+-        delegate_, voiceProperties, text, nullptr, nullptr, this);
++        delegate_, voiceProperties, text, sessionId_, nullptr, nullptr, this);
+ }
+ 
+ 
+@@ -202,7 +211,7 @@ void SpeechProcessorProxy::init() {
+                    "connection is unavailable.\n");
+         return;
+     }
+-    connectSignals();
++    createDelegate();
+ }
+ 
+ void SpeechProcessorProxy::destroy() {
+@@ -211,7 +220,7 @@ void SpeechProcessorProxy::destroy() {
+     }
+ }
+ 
+-void SpeechProcessorProxy::connectSignals() {
++void SpeechProcessorProxy::createDelegate() {
+     GError *error = nullptr;
+     auto *connection = ServerProxy::getInstance().getConnection();
+     delegate_ = aisdk_speech_processor_proxy_new_sync(
+@@ -222,23 +231,27 @@ void SpeechProcessorProxy::connectSignals() {
+                    objectPath_, error->message);
+         g_error_free(error);
+     }
++}
+ 
++void SpeechProcessorProxy::connectSignals() {
++    auto *connection = ServerProxy::getInstance().getConnection();
++
++    std::string interfaceName = interfaceName_ + std::to_string(sessionId_);
+     g_dbus_connection_signal_subscribe(connection, nullptr,
+-        interfaceName_, "RecognizingAudioResult", objectPath_, NULL,
++        interfaceName.c_str(), "RecognizingAudioResult", objectPath_, NULL,
+         G_DBUS_SIGNAL_FLAGS_NONE, onRecognizingAudioResult, this, nullptr);
+ 
+     g_dbus_connection_signal_subscribe(connection, nullptr,
+-        interfaceName_, "StopRecognizingAudioResult", objectPath_, NULL,
++        interfaceName.c_str(), "StopRecognizingAudioResult", objectPath_, NULL,
+         G_DBUS_SIGNAL_FLAGS_NONE, onStopRecognizingAudioResult, this, nullptr);
+ 
+     g_dbus_connection_signal_subscribe(connection, nullptr,
+-        interfaceName_, "SynthesizingAudioResult", objectPath_, NULL,
++        interfaceName.c_str(), "SynthesizingAudioResult", objectPath_, NULL,
+         G_DBUS_SIGNAL_FLAGS_NONE, onSynthesizingAudioResult, this, nullptr);
+ 
+     g_dbus_connection_signal_subscribe(connection, nullptr,
+-        interfaceName_, "StopSynthesizingAudioResult", objectPath_, NULL,
++        interfaceName.c_str(), "StopSynthesizingAudioResult", objectPath_, NULL,
+         G_DBUS_SIGNAL_FLAGS_NONE, onStopSynthesizingAudioResult, this, nullptr);
+-
+ }
+ 
+ std::string SpeechProcessorProxy::base64Encode(const std::string &input) {
+diff --git a/src/services/speechprocessorproxy.h b/src/services/speechprocessorproxy.h
+index b6e46a2..10e8e59 100644
+--- a/src/services/speechprocessorproxy.h
++++ b/src/services/speechprocessorproxy.h
+@@ -50,7 +50,7 @@ public:
+         stopSynthesizingAudioCallback_ = callback;
+     }
+ 
+-    void initEngine(const std::string &engineName, const std::string &appId,
++    bool initEngine(const std::string &engineName, const std::string &appId,
+                     const std::string &apiKey, const std::string &secretKey,
+                     gpointer userData);
+     void startRecognizingAudio(const char *audioProperties);
+@@ -71,6 +71,7 @@ public:
+ private:
+     void init();
+     void destroy();
++    void createDelegate();
+     void connectSignals();
+     std::string base64Encode(const std::string &input);
+ 
+@@ -116,5 +117,7 @@ private:
+ 
+     const char *objectPath_ = "/org/openkylin/aisdk/speechprocessor";
+     const char *interfaceName_ = "org.openkylin.aisdk.speechprocessor";
++
++    int sessionId_;
+ };
+ #endif
+diff --git a/src/speechsession.cpp b/src/speechsession.cpp
+index 6423944..5330767 100644
+--- a/src/speechsession.cpp
++++ b/src/speechsession.cpp
+@@ -23,9 +23,12 @@ SpeechSession::SpeechSession() {}
+ SpeechResult SpeechSession::init(
+         const std::string &engineName, const std::string &apiKey,
+         const std::string &secretKey, const std::string &appId) {
+-    speechProcessorProxy_.initEngine(
++    bool initResult = speechProcessorProxy_.initEngine(
+                 engineName, appId, apiKey, secretKey, nullptr);
+-    return SPEECH_SUCCESS;
++    if (initResult) {
++        return SPEECH_SUCCESS;
++    }
++    return SPEECH_SESSION_ERROR;
+ }
+ 
+ void SpeechSession::setRecognizingCallback(
+diff --git a/test/testSpeechApi.cpp b/test/testSpeechApi.cpp
+index 56f5736..3f4b4e7 100644
+--- a/test/testSpeechApi.cpp
++++ b/test/testSpeechApi.cpp
+@@ -18,7 +18,7 @@
+ #include <stdio.h>
+ #include <vector>
+ #include <fstream>
+-
++#include <future>
+ #include <kylin-ai/ai-base/speech.h>
+ #include <gio/gio.h>
+ #include <gio/giotypes.h>
+@@ -39,8 +39,10 @@ std::vector<char> readAudioData(const std::string& filePath) {
+     return audioData;
+ }
+ 
+-int main(int argc, char *argv[]) {
++auto data = readAudioData("/home/zkx/16k.pcm");
++auto data1 = readAudioData("/home/zkx/16k_10.pcm");
+ 
++void testSpeech() {
+     SpeechSession session;
+     speech_create_session(&session);
+     speech_init_session(session);
+@@ -79,10 +81,7 @@ int main(int argc, char *argv[]) {
+     }, (void*)&a);
+ 
+ 
+-
+-
+-    auto data = readAudioData("/home/zkx/16k.pcm");
+-//    speech_start_continuous_recognition(session, "\{\"rate\": 1600}");
++//    speech_start_continuous_recognition(session, "\{\"rate\": 16000}");
+ //    speech_continuous_recognition_write_audio_data_async(session, data.data(), data.size());
+ 
+ //    int i = 0;
+@@ -113,6 +112,206 @@ int main(int argc, char *argv[]) {
+ 
+     auto *loop_ = g_main_loop_new(nullptr, false);
+     g_main_loop_run(loop_);
++}
++
++
++std::future<void> session1() {
++    std::future<void> fut = std::async([]() {
++        SpeechSession session;
++        speech_create_session(&session);
++        speech_init_session(session);
++
++        int a = 10;
++        speech_set_recognizing_callback(
++                    session,
++                    [](RecognitionResult result, void* userData) {
++            std::cout << "---testSpeechApi-RecognitionResult-session111-data---" << result.text_data
++                      << "---speaker---" << result.speaker_id
++                      << "---error---" << result.error_code
++                      << "---userData---" << *(int*)userData << std::endl;
++
++        }, (void*)&a);
++        speech_set_recognized_callback(
++                    session,
++                    [](RecognitionResult result, void* userData) {
++            std::cout << "---testSpeechApi-recognized finished-session111-data---" << result.text_data
++                      << "---speaker---" << result.speaker_id
++                      << "---error---" << result.error_code
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++        speech_set_synthesizing_callback(
++                    session,
++                    [](SynthesisResult result, void* userData){
++            std::cout << "---testSpeechApi-SynthesisResult-session111-size---" << result.audio_data_length
++                      << "---rate---" << result.audio_rate
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++        speech_set_synthesized_callback(
++                    session, [](void* userData) {
++            std::cout << "---testSpeechApi--synthesized finished-session111--"
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++
++        speech_start_continuous_recognition(session, "\{\"rate\": 16000}");
++        speech_continuous_recognition_write_audio_data_async(session, data.data(), data.size());
++
++//        speech_recognize_once_async(session, "\{\"rate\": 1600}", data.data(), data.size());
++
++//        speech_start_continuous_synthesis(session, "\{\"speed\": 5}");
++//        speech_continuous_synthesize_write_text_async(session, "你好");
++
++    //    sleep(3);
++    //    speech_stop_continuous_synthesis(session);
++
++//        speech_synthesize_once_async(session, "\{\"speed\": 5}", "你好");
++
++        auto *loop_ = g_main_loop_new(nullptr, false);
++        g_main_loop_run(loop_);
++    });
++    return fut;
++}
++
++std::future<void> session2() {
++    std::future<void> fut = std::async([]() {
++        SpeechSession session;
++        speech_create_session(&session);
++        speech_init_session(session);
++
++        int a = 20;
++        speech_set_recognizing_callback(
++                    session,
++                    [](RecognitionResult result, void* userData) {
++            std::cout << "---testSpeechApi-RecognitionResult-session222-data---" << result.text_data
++                      << "---speaker---" << result.speaker_id
++                      << "---error---" << result.error_code
++                      << "---userData---" << *(int*)userData << std::endl;
++
++        }, (void*)&a);
++        speech_set_recognized_callback(
++                    session,
++                    [](RecognitionResult result, void* userData) {
++            std::cout << "---testSpeechApi-recognized finished-session222-data---" << result.text_data
++                      << "---speaker---" << result.speaker_id
++                      << "---error---" << result.error_code
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++        speech_set_synthesizing_callback(
++                    session,
++                    [](SynthesisResult result, void* userData){
++            std::cout << "---testSpeechApi-SynthesisResult-session222-size---" << result.audio_data_length
++                      << "---rate---" << result.audio_rate
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++        speech_set_synthesized_callback(
++                    session, [](void* userData) {
++            std::cout << "---testSpeechApi--synthesized finished-session222--"
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++
++//        speech_start_continuous_recognition(session, "\{\"rate\": 16000}");
++//        speech_continuous_recognition_write_audio_data_async(session, data.data(), data.size());
++
++    //    sleep(5);
++    //    speech_stop_continuous_recognition(session);
++    //    speech_stop_continuous_recognition(session);
++
++        speech_recognize_once_async(session, "\{\"rate\": 16000}", data1.data(), data1.size());
++
++//        speech_start_continuous_synthesis(session, "\{\"speed\": 5}");
++//        speech_continuous_synthesize_write_text_async(session, "麒麟软件");
++
++    //    sleep(3);
++    //    speech_stop_continuous_synthesis(session);
++
++//        speech_synthesize_once_async(session, "\{\"speed\": 5}", "麒麟软件");
++
++        auto *loop_ = g_main_loop_new(nullptr, false);
++        g_main_loop_run(loop_);
++    });
++    return fut;
++}
++
++std::future<void> session3() {
++    std::future<void> fut = std::async([]() {
++        SpeechSession session;
++        speech_create_session(&session);
++        speech_init_session(session);
++
++        int a = 30;
++        speech_set_recognizing_callback(
++                    session,
++                    [](RecognitionResult result, void* userData) {
++            std::cout << "---testSpeechApi-RecognitionResult-session333-data---" << result.text_data
++                      << "---speaker---" << result.speaker_id
++                      << "---error---" << result.error_code
++                      << "---userData---" << *(int*)userData << std::endl;
++
++        }, (void*)&a);
++        speech_set_recognized_callback(
++                    session,
++                    [](RecognitionResult result, void* userData) {
++            std::cout << "---testSpeechApi-recognized finished-session333-data---" << result.text_data
++                      << "---speaker---" << result.speaker_id
++                      << "---error---" << result.error_code
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++        speech_set_synthesizing_callback(
++                    session,
++                    [](SynthesisResult result, void* userData){
++            std::cout << "---testSpeechApi-SynthesisResult-session333-size---" << result.audio_data_length
++                      << "---rate---" << result.audio_rate
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++        speech_set_synthesized_callback(
++                    session, [](void* userData) {
++            std::cout << "---testSpeechApi--synthesized finished-session333--"
++                      << "---userData---" << *(int*)userData << std::endl;
++        }, (void*)&a);
++
++
++//        speech_start_continuous_recognition(session, "\{\"rate\": 16000}");
++//        speech_continuous_recognition_write_audio_data_async(session, data.data(), data.size());
++
++    //    sleep(5);
++    //    speech_stop_continuous_recognition(session);
++    //    speech_stop_continuous_recognition(session);
++
++//        speech_recognize_once_async(session, "\{\"rate\": 1600}", data.data(), data.size());
++
++        speech_start_continuous_synthesis(session, "\{\"speed\": 5}");
++        speech_continuous_synthesize_write_text_async(session, "你吃饭了么");
++
++    //    sleep(3);
++    //    speech_stop_continuous_synthesis(session);
++
++//        speech_synthesize_once_async(session, "\{\"speed\": 5}", "你吃饭了么");
++
++        auto *loop_ = g_main_loop_new(nullptr, false);
++        g_main_loop_run(loop_);
++    });
++    return fut;
++}
++
++int main(int argc, char *argv[]) {
++
++    std::future<void> fut1 = session1();
++    std::future<void> fut2 = session2();
++    std::future<void> fut3 = session3();
++
++    fut1.get();
++    fut2.get();
++    fut3.get();
++
++    auto *loop_ = g_main_loop_new(nullptr, false);
++    g_main_loop_run(loop_);
+ 
+     return 0;
+ }

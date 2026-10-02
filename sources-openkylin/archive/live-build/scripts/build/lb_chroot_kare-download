@@ -1,0 +1,91 @@
+#!/bin/sh
+
+## live-build(7) - System Build Scripts
+## Copyright (C) 2006-2012 Daniel Baumann <daniel@debian.org>
+##
+## This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.
+## This is free software, and you are welcome to redistribute it
+## under certain conditions; see COPYING for details.
+
+
+set -e
+
+# Including common functions
+( . "${LIVE_BUILD}/scripts/build.sh" > /dev/null 2>&1 || true ) || . /usr/lib/live/build.sh
+
+# Setting static variables
+DESCRIPTION="$(Echo 'download packages for kare')"
+HELP=""
+USAGE="${PROGRAM} [--force]"
+
+Arguments "${@}"
+
+# Reading configuration files
+Read_conffiles config/all config/common config/bootstrap config/chroot config/binary config/source
+Set_defaults
+
+# Requiring stage file
+Require_stagefile .build/config .build/bootstrap .build/chroot_apt
+
+# Checking stage file
+Check_stagefile .build/chroot_kare-download
+
+# Checking lock file
+Check_lockfile .lock
+
+# Creating lock file
+Create_lockfile .lock
+
+
+#拉取kare 基础环境包
+if [ -f config/package-lists/kylin-kare-env-base.list.kare  ]; then
+
+       cp -a config/package-lists/kylin-kare-env-base.list.kare chroot/
+
+       # 进入 chroot 环境并读取 kare base 包列表配置文件并下载包
+        chroot chroot /bin/bash << 'EOF'
+
+       # 创建目录
+        mkdir -p kare-env-base/
+        cd kare-env-base/
+
+           # 读取 kare 包列表配置文件并下载包
+            while IFS= read -r package; do
+                # 忽略空行和注释行
+                if [ -n "$package" ] && [ "${package#\#}" = "$package" ]; then
+                    echo "Downloading $package..."
+                    apt-get download "$package"
+                fi
+            done < "../kylin-kare-env-base.list.kare"
+EOF
+       rm chroot/kylin-kare-env-base.list.kare
+       mv chroot/kare-env-base/ .
+fi
+
+#拉取kare需要预装的kare应用包
+if [ -f config/package-lists/kylin-kare.list.kare  ]; then
+
+	cp -a config/package-lists/kylin-kare.list.kare chroot/
+
+	# 进入 chroot 环境并读取 kare 包列表配置文件并下载包
+	chroot chroot /bin/bash << 'EOF'
+
+	# 创建目录
+	mkdir -p karePackage/
+	cd karePackage/
+
+	    # 读取 kare 包列表配置文件并下载包
+	    while IFS= read -r package; do
+	        # 忽略空行和注释行
+	        if [ -n "$package" ] && [ "${package#\#}" = "$package" ]; then
+	            echo "Downloading $package..."
+	            apt-get download "$package"
+	        fi
+	    done < "../kylin-kare.list.kare"
+EOF
+	rm chroot/kylin-kare.list.kare
+	mv chroot/karePackage/ .
+
+fi
+
+Create_stagefile .build/chroot_kare-download

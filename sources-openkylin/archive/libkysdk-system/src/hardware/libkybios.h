@@ -1,0 +1,98 @@
+/*
+ * libkysdk-system's Library
+ *
+ * Copyright (C) 2023-2025, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: ShaoShuai Tian <tianshaoshuai@kylinos.cn>
+ *
+ */
+
+#ifndef LIBKYBIOSINFO_H
+#define LIBKYBIOSINFO_H
+
+/**
+ * @file libkybios.h
+ * @author tianshaoshuai (tianshaoshuai@kylinos.cn)
+ * @brief bios信息
+ * @version 0.1
+ * @date 2023-2-17
+ * 
+ * @copyright Copyright (c) 2023
+ * @defgroup libkysdk-hardware
+ * @{
+ * @since 2.0.0.0
+ */
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+/**
+ * @brief 获取bios厂商
+ *
+ * @return const char* 厂商名，返回的字符串需要被 free 释放
+ */
+extern const char *kdk_bios_get_vendor();
+
+/**
+ * @brief 获取bios版本
+ * 
+ * @return const char* 版本号，返回的字符串需要被 free 释放
+ */
+extern const char *kdk_bios_get_version();
+
+/**
+ * @brief 释放内存
+ * 
+ * @param info 本模块接口返回的字符串
+ */
+extern void kdk_bios_free(char *info);
+
+/**
+ * @brief 获取smbios版本
+ * 
+ * @return char* smbios版本 
+ * @since 2.5.1.2
+ */
+extern char *kdk_bios_get_smbios_version();
+
+/**
+ * @brief 获取bios时间
+ * 
+ * @return const char* 时间
+ * @since 2.5.1.2
+ */
+extern char *kdk_bios_get_date();
+
+/**
+ * @brief 获取bios模式
+ * 
+ * @return char* bios模式
+ * @since 2.5.1.2
+ */
+extern char *kdk_bios_get_type();
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
+
+/**
+ * \example kysdk-system/src/hardware/test/kybios-test.c
+ * 
+ */

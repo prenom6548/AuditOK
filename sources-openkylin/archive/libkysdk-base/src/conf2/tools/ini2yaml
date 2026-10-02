@@ -1,0 +1,89 @@
+#!/usr/bin/python3
+# 
+#  libkysdk-system's Library
+#  
+#  Copyright (C) 2023, KylinSoft Co., Ltd.
+# 
+#  This library is free software; you can redistribute it and/or
+#  modify it under the terms of the GNU Lesser General Public
+#  License as published by the Free Software Foundation; either
+#  version 3 of the License, or (at your option) any later version.
+# 
+#  This library is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+#  Lesser General Public License for more details.
+# 
+#  You should have received a copy of the GNU General Public License
+#  along with this library.  If not, see <https://www.gnu.org/licenses/>.
+# 
+#  Authors: tianshaoshuai <tianshaoshuai@kylinos.cn>
+# 
+# 
+
+import configparser
+import yaml
+import sys, os
+import argparse
+
+file_help = "指定一个ini文件或一个文件夹。ini文件扩展名应为'.ini','.cf','.conf'"\
+"工具会将这个文件或文件夹内全部ini格式的文件转化为yaml文件,并生成到输出目录"
+app_help = "指定生成yaml文件的应用名, 不指定则为'app',需要手动修改文件"
+version_help = "指定生成yaml文件的配置版本,如果不指定版本则默认版本为1.0.0"
+path_help = "指定yaml文件的生成目录,如果不指定生成在${HOME}/yaml目录中"
+
+def convert_one_file(file, name, version, path):
+    # 读取.ini或.conf配置文件
+    config = configparser.ConfigParser(interpolation=None)
+    config.read(file)
+
+    # 将配置文件数据转换为字典
+    data = {name:{version:{}}}
+    version = data[name][version]
+    for section in config.sections():
+        version[section] = {}
+        for option in config.options(section):
+            value = config.get(section, option)
+            value = value.strip()
+            value = value.strip("'")
+            value = value.strip('"')
+            version[section][option] = {}
+            version[section][option]["_default"] = value
+            version[section][option]["_type"] = 's'
+
+    if not os.path.exists(path):
+        os.makedirs(path)
+    # 将字典转换为YAML格式并写入文件
+    with open(f'{path}/{name}.yaml', 'w') as yaml_file:
+        yaml.dump(data, yaml_file, allow_unicode = True)
+
+# 参数传入.conf或.ini结尾的ini格式配置文件或目录路径
+# 将传入的所有配置文件或目录下的所有配置文件转换为yaml格式，生成在~/yaml路径下
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description='这是一个将ini文件转化为yaml格式的程序, 例如: python3 gschema_xml2yaml.py -f /etc/dput.cf -n testconf -v 1.0.0 -p /home/kylin')
+    parser.add_argument('--file', '-f', type=str, help=file_help)
+    parser.add_argument('--name', '-n', type=str, help=app_help)
+    parser.add_argument('--version', '-v', type=str, help=version_help)
+    parser.add_argument('--path', '-p', type=str, help=path_help)
+
+    args = parser.parse_args()
+    src_file = args.file
+    if not src_file:
+        print("文件是必填项")
+
+    version = args.version if args.version else "1.0.0"
+    home = os.getenv('HOME')
+    path = args.path if args.path else f'{home}/yaml'
+
+    if os.path.isdir(src_file):
+        for root, dirs, files in os.walk(src_file):
+            for file in files:
+                if file.endswith('.conf') or file.endswith('.ini') or file.endswith('.cf'):
+                    name = file.rsplit('.', maxsplit=1)[0]
+                    convert_one_file(f'{root}/{file}', name, version, path)
+    else:
+        if src_file.endswith('.conf') or src_file.endswith('.ini') or src_file.endswith('.cf'):
+            name = args.name if args.name else os.path.basename(src_file).rsplit('.', maxsplit=1)[0]
+            convert_one_file(src_file, name, version, path)
+        else:
+            print(f'argument{src_file} is not a conf file')

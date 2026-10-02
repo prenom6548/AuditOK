@@ -1,0 +1,593 @@
+From: zhaokexin <zhaokexin@kylinos.cn>
+Date: Fri, 26 Apr 2024 09:43:06 +0800
+Subject: =?utf-8?b?5re75Yqg6K+G5Yir5Zu+54mH5Lit5paH5pys5Yqf6IO9?=
+
+---
+ CMakeLists.txt                     |   6 ++
+ include/kylin-ai/ai-base/ocr.h     |  19 ++++-
+ src/ocr.cpp                        |  62 ++++++++++++++++
+ src/ocrsession.cpp                 |  26 +++++++
+ src/ocrsession.h                   |  41 +++++++++++
+ src/services/ocrprocessorproxy.cpp | 143 +++++++++++++++++++++++++++++++++++++
+ src/services/ocrprocessorproxy.h   |  37 ++++++++++
+ test/CMakeLists.txt                |  17 +++++
+ test/testOcrApi.cpp                | 138 +++++++++++++++++++++++++++++++++++
+ 9 files changed, 487 insertions(+), 2 deletions(-)
+ create mode 100644 src/ocr.cpp
+ create mode 100644 src/ocrsession.cpp
+ create mode 100644 src/ocrsession.h
+ create mode 100644 src/services/ocrprocessorproxy.cpp
+ create mode 100644 src/services/ocrprocessorproxy.h
+ create mode 100644 test/testOcrApi.cpp
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index d0bb0f6..aa19076 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -45,6 +45,7 @@ set(SERVICE_SOURCES
+     src/services/datamanagementprocessorproxy.h
+     src/services/keywordrecognizerproxy.cpp
+     src/services/keywordrecognizerglue.c
++    src/services/ocrprocessorproxy.cpp
+ )
+ 
+ add_library(kylin-ai-base SHARED
+@@ -65,6 +66,9 @@ add_library(kylin-ai-base SHARED
+     src/nlpsession.cpp
+     src/speech.cpp
+     src/config.cpp
++    src/ocr.cpp
++    src/ocrsession.h
++    src/ocrsession.cpp
+     ${SERVICE_SOURCES}
+     src/speechsession.h src/speechsession.cpp
+     src/datamanagementsession.h src/datamanagementsession.cpp
+@@ -88,6 +92,8 @@ target_link_libraries(
+     jsoncpp
+     ${JSON_LIBRARIES}
+     ${OPENSSL_LIBRARIES}
++    tesseract
++    leptonica
+ )
+ 
+ include(CMakePackageConfigHelpers)
+diff --git a/include/kylin-ai/ai-base/ocr.h b/include/kylin-ai/ai-base/ocr.h
+index 8461fb1..01016ee 100644
+--- a/include/kylin-ai/ai-base/ocr.h
++++ b/include/kylin-ai/ai-base/ocr.h
+@@ -21,10 +21,25 @@
+ extern "C" {
+ #endif
+ 
++typedef enum {
++    OCR_SUCCESS=0,
++    OCR_SESSION_ERROR, // session 错误
++    OCR_PARAM_ERROR, // 参数错误
++} OcrResult;
++
++typedef void* OcrSession;
++
++OcrResult ocr_create_session(OcrSession* session);
++void ocr_destory_session(OcrSession session);
++
+ /// @brief 识别指定图片文件中的文字
+-/// @param image_file 
++/// @param image_file
+ /// @return
+-const char* ocr_get_text(const char* image_file);
++const char* ocr_get_text_from_image_file(OcrSession session, const char* image_file);
++
++const char* ocr_get_text_from_image_data(OcrSession session,
++                                         const char* image_data,
++                                         unsigned int image_data_length);
+ 
+ #ifdef __cplusplus
+ }
+diff --git a/src/ocr.cpp b/src/ocr.cpp
+new file mode 100644
+index 0000000..7b86394
+--- /dev/null
++++ b/src/ocr.cpp
+@@ -0,0 +1,62 @@
++/*
++ * Copyright 2024 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "ocr.h"
++#include "ocrsession.h"
++
++OcrResult ocr_create_session(OcrSession* session)
++{
++    if (!session) {
++        return OCR_SESSION_ERROR;
++    }
++    ocr::OcrSession *ocrSession = new ocr::OcrSession();
++    *session = ocrSession;
++    return OCR_SUCCESS;
++}
++
++void ocr_destory_session(OcrSession session)
++{
++    ocr::OcrSession *ocrSession = static_cast<ocr::OcrSession *>(session);
++    if (ocrSession) {
++        delete ocrSession;
++    }
++}
++
++const char* ocr_get_text_from_image_file(OcrSession session, const char* image_file) {
++    if (image_file == nullptr) {
++        fprintf(stderr, "get text from image file error: image file is nullptr!\n");
++        return nullptr;
++    }
++    ocr::OcrSession *ocrSession = static_cast<ocr::OcrSession *>(session);
++    if (!ocrSession) {
++        return nullptr;
++    }
++    return ocrSession->getTextFromImageFile(image_file);
++}
++
++const char* ocr_get_text_from_image_data(OcrSession session,
++                                         const char* image_data,
++                                         unsigned int image_data_length) {
++    if (image_data == nullptr || image_data_length == 0) {
++        fprintf(stderr, "get text from image data error: image data is nullptr!\n");
++        return nullptr;
++    }
++    ocr::OcrSession *ocrSession = static_cast<ocr::OcrSession *>(session);
++    if (!ocrSession) {
++        return nullptr;
++    }
++    return ocrSession->getTextFromImageData(image_data, image_data_length);
++}
+diff --git a/src/ocrsession.cpp b/src/ocrsession.cpp
+new file mode 100644
+index 0000000..8a71a41
+--- /dev/null
++++ b/src/ocrsession.cpp
+@@ -0,0 +1,26 @@
++/*
++ * Copyright 2024 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "ocrsession.h"
++
++const char* ocr::OcrSession::getTextFromImageFile(const char* image_file) {
++    return ocrProcessor_.getTextFromImageFile(image_file);
++}
++
++const char* ocr::OcrSession::getTextFromImageData(const char* image_data,
++                                                  unsigned int image_data_length) {
++    return ocrProcessor_.getTextFromImageData(image_data, image_data_length);
++}
+diff --git a/src/ocrsession.h b/src/ocrsession.h
+new file mode 100644
+index 0000000..954ebdc
+--- /dev/null
++++ b/src/ocrsession.h
+@@ -0,0 +1,41 @@
++/*
++ * Copyright 2024 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#ifndef NLPSESSION_H
++#define NLPSESSION_H
++
++#include <jsoncpp/json/json.h>
++#include <any>
++#include "ocr.h"
++#include "services/ocrprocessorproxy.h"
++
++namespace ocr {
++
++class OcrSession
++{
++public:
++    const char* getTextFromImageFile(const char* image_file);
++
++    const char* getTextFromImageData(const char* image_data, unsigned int image_data_length);
++
++
++private:
++    OcrProcessorProxy ocrProcessor_;
++};
++
++}
++
++#endif
+diff --git a/src/services/ocrprocessorproxy.cpp b/src/services/ocrprocessorproxy.cpp
+new file mode 100644
+index 0000000..c91dd2e
+--- /dev/null
++++ b/src/services/ocrprocessorproxy.cpp
+@@ -0,0 +1,143 @@
++/*
++ * Copyright 2024 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include "services/ocrprocessorproxy.h"
++#include "services/serverproxy.h"
++#include <iostream>
++#include <vector>
++#include <leptonica/allheaders.h>
++#include <iostream>
++#include <fstream>
++#include <stdio.h>
++
++OcrProcessorProxy::OcrProcessorProxy() {}
++
++OcrProcessorProxy::~OcrProcessorProxy() {}
++
++std::vector<std::string> OcrProcessorProxy::getText(tesseract::TessBaseAPI *api) {
++    std::vector<std::string> textResult;
++    if (!api) {
++        fprintf(stderr, "ocr get text error: api is nullptr !\n");
++        return textResult;
++    }
++    Boxa *boxes = api->GetComponentImages(tesseract::RIL_TEXTLINE, true, NULL, NULL);
++    if (!boxes) {
++        fprintf(stderr, "ocr get text error: boxes is nullptr !\n");
++        return textResult;
++    }
++    for (int i = 0; i < boxes->n; ++i) {
++        BOX *box = boxaGetBox(boxes, i, L_CLONE);
++        if (!box) {
++            fprintf(stderr, "ocr get text error: box is nullptr !\n");
++            return textResult;
++        }
++
++        // 文字识别
++        api->SetRectangle(box->x, box->y-1, box->w, box->h+1);
++        char* ocrResult = api->GetUTF8Text();
++
++        textResult.push_back(std::string(ocrResult));
++        delete [] ocrResult;
++
++        boxDestroy(&box);
++    }
++
++    boxDestroy(boxes->box);
++    delete boxes;
++    return textResult;
++}
++
++std::vector<std::string> OcrProcessorProxy::getImageText(const char *imageData, int size) {
++    if (imageData == nullptr) {
++        fprintf(stderr, "ocr get image text error: imageData is nullptr !\n");
++        return std::vector<std::string>();
++    }
++    tesseract::TessBaseAPI *api = new tesseract::TessBaseAPI();
++
++    //返回表示0初始化成功，非0值表示不同类型的错误
++    if (api->Init(NULL, "eng")) {
++        fprintf(stderr, "ocr get image text error: TessBaseAPI init failed !\n");
++    }
++    if (api->Init(NULL, "chi_sim")) {
++        fprintf(stderr, "ocr get image text error: TessBaseAPI init failed !\n");
++    }
++
++    Pix *image = pixReadMem(reinterpret_cast<const l_uint8*>(imageData), size);
++    if (!image) {
++        fprintf(stderr, "ocr get image text error: image data is nullptr !\n");
++        pixDestroy(&image);
++        api->End();
++        delete api;
++        return std::vector<std::string>();
++    }
++    api->SetImage(image);
++
++    std::vector<std::string> text = getText(api);
++
++    pixDestroy(&image);
++    api->End();
++    delete api;
++    return text;
++}
++
++const char* OcrProcessorProxy::getTextFromImageFile(const char* image_file) {
++    std::fstream file(image_file);
++    if (!file.is_open()) {
++        fprintf(stderr, "ocr get text from image file error: image file not exists!\n");
++        return nullptr;
++    }
++
++    std::string resultString;
++
++    std::ifstream is(image_file, std::ifstream::in | std::ios::binary);
++    is.seekg(0, is.end);
++    int length = is.tellg();
++    is.seekg(0, is.beg);
++    char *buffer = new char[length];
++    is.read(buffer, length);
++
++    std::vector<std::string> result = getImageText(buffer, length);
++    is.clear();
++    for(int i = 0; i < result.size(); i++){
++        resultString += result.at(i);
++    }
++
++    char * strc = new char[strlen(resultString.c_str())+1];
++    strcpy(strc, resultString.c_str());
++
++    return strc;
++}
++
++const char* OcrProcessorProxy::getTextFromImageData(const char* image_data,
++                                                    unsigned int image_data_length) {
++    std::string resultString;
++    if (image_data == nullptr || image_data_length == 0) {
++        fprintf(stderr, "ocr get text from image data error: image data is nullptr!\n");
++        return nullptr;
++    }
++
++    std::vector<std::string> result = getImageText(image_data, image_data_length);
++    for(int i = 0; i < result.size(); i++){
++        resultString += result.at(i);
++    }
++
++    char * strc = new char[strlen(resultString.c_str())+1];
++    strcpy(strc, resultString.c_str());
++
++    return strc;
++}
++
++
+diff --git a/src/services/ocrprocessorproxy.h b/src/services/ocrprocessorproxy.h
+new file mode 100644
+index 0000000..734e060
+--- /dev/null
++++ b/src/services/ocrprocessorproxy.h
+@@ -0,0 +1,37 @@
++/*
++ * Copyright 2024 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#ifndef SERVICES_TEXTPROCESSORPROXY_H
++#define SERVICES_TEXTPROCESSORPROXY_H
++
++#include <functional>
++#include <string>
++#include <tesseract/baseapi.h>
++
++class OcrProcessorProxy {
++
++public:
++    OcrProcessorProxy();
++    ~OcrProcessorProxy();
++
++    const char* getTextFromImageFile(const char* image_file);
++    const char* getTextFromImageData(const char* image_data, unsigned int image_data_length);
++
++private:
++    std::vector<std::string> getText(tesseract::TessBaseAPI *api);
++    std::vector<std::string> getImageText(const char *imageData, int size);
++};
++#endif
+diff --git a/test/CMakeLists.txt b/test/CMakeLists.txt
+index 441e015..e138b9d 100644
+--- a/test/CMakeLists.txt
++++ b/test/CMakeLists.txt
+@@ -112,3 +112,20 @@ target_link_libraries(testVisionApi
+     json-glib-1.0
+     ${OPENSSL_LIBRARIES}
+ )
++
++add_executable(testOcrApi testOcrApi.cpp
++    ../src/ocr.cpp
++    ../src/ocrsession.h
++    ../src/ocrsession.cpp
++    ../src/services/ocrprocessorproxy.cpp
++    ${EXEC_SOURCES}
++)
++target_link_libraries(testOcrApi
++    ${GIO_LIBRARIES}
++    pthread
++    jsoncpp
++    json-glib-1.0
++    ${OPENSSL_LIBRARIES}
++    tesseract
++    leptonica
++)
+diff --git a/test/testOcrApi.cpp b/test/testOcrApi.cpp
+new file mode 100644
+index 0000000..2032da8
+--- /dev/null
++++ b/test/testOcrApi.cpp
+@@ -0,0 +1,138 @@
++/*
++ * Copyright 2024 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify it under
++ * the terms of the GNU General Public License as published by the Free Software
++ * Foundation, either version 3 of the License, or (at your option) any later
++ * version.
++ *
++ * This program is distributed in the hope that it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
++ * FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program. If not, see <https://www.gnu.org/licenses/>.
++ */
++
++#include <iostream>
++#include <thread>
++#include <gio/gio.h>
++#include <gio/giotypes.h>
++#include <fstream>
++#include "../include/kylin-ai/ai-base/ocr.h"
++#include <future>
++
++std::future<void> session1() {
++    std::future<void> fut = std::async([]() {
++        OcrSession session;
++        ocr_create_session(&session);
++
++        std::string path = "/home/zkx/AI/testocr/kdkocr/2.png";
++
++        const char* textFromImageFile = ocr_get_text_from_image_file(session, path.c_str());
++        if (!textFromImageFile) {
++            return;
++        }
++        std::string resultStr { textFromImageFile };
++        std::cout << "test1: get result from image file\n" << resultStr << std::endl;
++        delete textFromImageFile;
++
++        //读取图片文件数据
++        std::ifstream is(path, std::ifstream::in | std::ios::binary);
++        is.seekg(0, is.end);
++        int length = is.tellg();
++        is.seekg(0, is.beg);
++        char *buffer = new char[length];
++        is.read(buffer, length);
++
++        const char* textFromImageData = ocr_get_text_from_image_data(session, buffer, length);
++        if (textFromImageData) {
++            std::string resultStr2 { textFromImageData };
++            std::cout << "test1: get result from image data\n" << resultStr2 << std::endl;
++            delete textFromImageData;
++        }
++    });
++    return fut;
++}
++
++std::future<void> session2() {
++    std::future<void> fut = std::async([]() {
++        OcrSession session;
++        ocr_create_session(&session);
++
++        std::string path = "/home/zkx/AI/testocr/kdkocr/2.png";
++
++        const char* textFromImageFile = ocr_get_text_from_image_file(session, path.c_str());
++        if (!textFromImageFile) {
++            return;
++        }
++        std::string resultStr { textFromImageFile };
++        std::cout << "test2: get result from image file\n" << resultStr << std::endl;
++        delete textFromImageFile;
++
++        //读取图片文件数据
++        std::ifstream is(path, std::ifstream::in | std::ios::binary);
++        is.seekg(0, is.end);
++        int length = is.tellg();
++        is.seekg(0, is.beg);
++        char *buffer = new char[length];
++        is.read(buffer, length);
++
++        const char* textFromImageData = ocr_get_text_from_image_data(session, buffer, length);
++        if (textFromImageData) {
++            std::string resultStr2 { textFromImageData };
++            std::cout << "test2: get result from image data\n" << resultStr2 << std::endl;
++            delete textFromImageData;
++        }
++    });
++    return fut;
++}
++
++std::future<void> session3() {
++    std::future<void> fut = std::async([]() {
++        OcrSession session;
++        ocr_create_session(&session);
++
++        std::string path = "/home/zkx/AI/testocr/kdkocr/222.png";
++
++        const char* textFromImageFile = ocr_get_text_from_image_file(session, path.c_str());
++        if (!textFromImageFile) {
++            return;
++        }
++        std::string resultStr { textFromImageFile };
++        std::cout << "test3: get result from image file\n" << resultStr << std::endl;
++        delete textFromImageFile;
++
++        //读取图片文件数据
++        std::ifstream is(path, std::ifstream::in | std::ios::binary);
++        is.seekg(0, is.end);
++        int length = is.tellg();
++        is.seekg(0, is.beg);
++        char *buffer = new char[length];
++        is.read(buffer, length);
++
++        const char* textFromImageData = ocr_get_text_from_image_data(session, buffer, length);
++        if (textFromImageData) {
++            std::string resultStr2 { textFromImageData };
++            std::cout << "test3: get result from image data\n" << resultStr2 << std::endl;
++            delete textFromImageData;
++        }
++    });
++    return fut;
++}
++
++int main(int argc, char *argv[]) {
++    std::future<void> fut1 = session1();
++    std::future<void> fut2 = session2();
++    std::future<void> fut3 = session3();
++
++    fut1.get();
++    fut2.get();
++    fut3.get();
++
++    auto *loop_ = g_main_loop_new(nullptr, false);
++    g_main_loop_run(loop_);
++
++    return 0;
++}
++

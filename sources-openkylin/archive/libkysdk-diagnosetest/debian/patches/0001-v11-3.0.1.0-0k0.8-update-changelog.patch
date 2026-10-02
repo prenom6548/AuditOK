@@ -1,0 +1,1300 @@
+From: wangzhenyu <wangzhenyu@kylinos.cn>
+Date: Wed, 10 Jun 2026 15:40:01 +0800
+Subject: =?utf-8?b?5ZCM5q2ldjExIDMuMC4xLjAtMGswLjjniYjmnKwgJiB1cGRhdGUgY2hh?=
+ =?utf-8?b?bmdlbG9n?=
+
+---
+ kysdk-datacollect/src/CMakeLists.txt     |   6 +-
+ kysdk-datacollect/src/libkydatacollect.c | 866 +++++++++++++++++++++----------
+ kysdk-datacollect/src/libkydatacollect.h |   1 +
+ 3 files changed, 581 insertions(+), 292 deletions(-)
+
+diff --git a/kysdk-datacollect/src/CMakeLists.txt b/kysdk-datacollect/src/CMakeLists.txt
+index 3071f85..c6391c5 100644
+--- a/kysdk-datacollect/src/CMakeLists.txt
++++ b/kysdk-datacollect/src/CMakeLists.txt
+@@ -1,11 +1,7 @@
+-option(DEBUG "debug" ON)
+ project(kysdk-datacollect)
+-if (DEBUG)
+-	add_definitions(-DDEBUG)  
+-endif()
+ 
+ add_library(kysdk-datacollect  SHARED libkydatacollect.c)
+-set_target_properties(kysdk-datacollect PROPERTIES VERSION 2.3.0 SOVERSION 1)
++set_target_properties(kysdk-datacollect PROPERTIES VERSION 3.0.0 SOVERSION 1)
+ 
+ find_package(PkgConfig REQUIRED)
+ 
+diff --git a/kysdk-datacollect/src/libkydatacollect.c b/kysdk-datacollect/src/libkydatacollect.c
+index 73d55ca..c59b031 100644
+--- a/kysdk-datacollect/src/libkydatacollect.c
++++ b/kysdk-datacollect/src/libkydatacollect.c
+@@ -1,24 +1,24 @@
+ /*
+-* libkysdk-diagnosetest's Library
+-*
+-* Copyright (C) 2023, KylinSoft Co., Ltd.
+-*
+-* This library is free software; you can redistribute it and/or
+-* modify it under the terms of the GNU Lesser General Public
+-* License as published by the Free Software Foundation; either
+-* version 3 of the License, or (at your option) any later version.
+-*
+-* This library is distributed in the hope that it will be useful,
+-* but WITHOUT ANY WARRANTY; without even the implied warranty of
+-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+-* Lesser General Public License for more details.
+-*
+-* You should have received a copy of the GNU General Public License
+-* along with this library.  If not, see <https://www.gnu.org/licenses/>.
+-*
+-* Authors: Zhen Sun <sunzhen1@kylinos.cn>
+-*
+-*/
++ * libkysdk-diagnosetest's Library
++ *
++ * Copyright (C) 2023, KylinSoft Co., Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: Zhen Sun <sunzhen1@kylinos.cn>
++ *
++ */
+ #include <stdlib.h>
+ #include <string.h>
+ #include <stdio.h>
+@@ -41,6 +41,8 @@
+ #include "libkydatacollect.h"
+ #include <libkylog.h>
+ #include <unistd.h>
++#include <kysdk/kysdk-base/cstring-extension.h>
++#include <pthread.h>
+ 
+ #define MACHINE_ID_FILE "/etc/machine-id"
+ 
+@@ -49,56 +51,101 @@
+ #define DBUS_INTERFACE "com.kylin.daq.interface"
+ #define DBUS_METHOD "UploadEventMessage"
+ 
++#define ACTIVATION_SERVICE "org.freedesktop.activation"
++#define ACTIVATION_PATH "/org/freedesktop/activation"
++#define ACTIVATION_INTERFACE "org.freedesktop.activation.interface"
++#define ACTIVATION_METHOD "register_number"
++
+ #ifndef STRNLEN_MAX
+ #define STRNLEN_MAX 1024 * 1024 * 1024
+ #endif
+ 
+-
+ static long g_startup_timestamp = 0;
+-static char* g_machine_id = NULL;
+-static char* g_app_version = NULL;
+-static char* g_service_key = NULL;
+-static char* g_source_ip = NULL;
+-static char* g_source_mac = NULL;
+-
++static char *g_machine_id = NULL;
++static char *g_app_version = NULL;
++static char *g_service_key = NULL;
++static char *g_source_ip = NULL;
++static char *g_source_mac = NULL;
++static char *g_register_number = NULL;
++static pthread_mutex_t g_mutex = PTHREAD_MUTEX_INITIALIZER;
+ 
+-
+-KTrackData* kdk_dia_data_init(KEventSourceType sourceType, KEventType evnetType);
+-void kdk_dia_data_free(KTrackData* node);
++KTrackData *kdk_dia_data_init(KEventSourceType sourceType, KEventType evnetType);
++void kdk_dia_data_free(KTrackData *node);
+ 
+ void kdk_dia_upload_program_startup();
+ void kdk_dia_upload_program_exit();
+-void kdk_dia_upload_search_content(KTrackData*node,char* eventCode, char* pageName, char*content);
+-void kdk_dia_upload_default(KTrackData*node,char* eventCode, char* pageName);
+-
+-void kdk_dia_append_page_info(KTrackData* node, char* pageUrl, char* pagePath);
+-void kdk_dia_append_page_flag(KTrackData*node, bool is_entrancePage, bool is_exitPageFlag);
+-void kdk_dia_append_custom_property(KTrackData*node,KCustomProperty*property, int property_length);
++void kdk_dia_upload_search_content(KTrackData *node, char *eventCode, char *pageName, char *content);
++void kdk_dia_upload_default(KTrackData *node, char *eventCode, char *pageName);
++
++void kdk_dia_append_page_info(KTrackData *node, char *pageUrl, char *pagePath);
++void kdk_dia_append_page_flag(KTrackData *node, bool is_entrancePage, bool is_exitPageFlag);
++void kdk_dia_append_custom_property(KTrackData *node, KCustomProperty *property, int property_length);
++
++// typedef struct {
++//     struct timespec start;
++//     struct timespec end;
++// } Timer;
++// Timer t;
++
++// void timer_start(Timer *t) {
++//     clock_gettime(CLOCK_MONOTONIC, &t->start);
++// }
++
++// void timer_end(Timer *t, const char *func) {
++//     clock_gettime(CLOCK_MONOTONIC, &t->end);
++//     long sec = t->end.tv_sec - t->start.tv_sec;
++//     long nsec = t->end.tv_nsec - t->start.tv_nsec;
++//     klog_info("\t\t%s 耗时: %0.3f ms\n", func, (double)(sec * 1000000000L + nsec) / 1000000.0);
++//     t->start = t->end;
++// }
++
++// void timer_end1(Timer *t, const char *func) {
++//     clock_gettime(CLOCK_MONOTONIC, &t->end);
++//     long sec = t->end.tv_sec - t->start.tv_sec;
++//     long nsec = t->end.tv_nsec - t->start.tv_nsec;
++//     klog_info("%s 耗时: %0.3f ms\n", func, (double)(sec * 1000000000L + nsec) / 1000000.0);
++//     t->start = t->end;
++// }
++
++static inline char *lookup(char *buffer, const char *key)
++{
++    if (strstartswith(buffer, key) == 0)
++    {
++        buffer += strnlen(key, STRNLEN_MAX) + 1;
++        strstripspace(buffer);
++        return buffer;
++    }
++    return NULL;
++}
+ 
+-char* exec_cmd(char* cmd) {
++char *exec_cmd(char *cmd)
++{
+     int pipefd[2];
+     pid_t pid;
+     char buffer[1024];
+     ssize_t count;
+-    char* output = NULL;
++    char *output = NULL;
+     size_t output_size = 0;
+ 
+     // 创建管道
+-    if (pipe(pipefd) == -1) {
++    if (pipe(pipefd) == -1)
++    {
+         perror("pipe");
+         return NULL;
+     }
+ 
+     // 创建子进程
+     pid = fork();
+-    if (pid == -1) {
++    if (pid == -1)
++    {
+         perror("fork");
+         close(pipefd[0]);
+         close(pipefd[1]);
+         return NULL;
+     }
+ 
+-    if (pid == 0) { // 子进程
++    if (pid == 0)
++    { // 子进程
+         // 关闭管道的读端
+         close(pipefd[0]);
+ 
+@@ -107,7 +154,7 @@ char* exec_cmd(char* cmd) {
+         close(pipefd[1]);
+ 
+         // 解析命令
+-        char* argv[] = {"/bin/sh", "-c", cmd, NULL};
++        char *argv[] = {"/bin/sh", "-c", cmd, NULL};
+ 
+         // 执行命令
+         execvp(argv[0], argv);
+@@ -115,15 +162,19 @@ char* exec_cmd(char* cmd) {
+         // 如果 execvp 失败
+         perror("execvp");
+         exit(EXIT_FAILURE);
+-    } else { // 父进程
++    }
++    else
++    { // 父进程
+         // 关闭管道的写端
+         close(pipefd[1]);
+ 
+         // 读取命令输出
+-        while ((count = read(pipefd[0], buffer, 1024 - 1)) > 0) {
++        while ((count = read(pipefd[0], buffer, 1024 - 1)) > 0)
++        {
+             buffer[count] = '\0'; // 确保字符串以 null 结尾
+             output = realloc(output, output_size + count + 1);
+-            if (!output) {
++            if (!output)
++            {
+                 perror("realloc");
+                 close(pipefd[0]);
+                 return NULL;
+@@ -142,17 +193,20 @@ char* exec_cmd(char* cmd) {
+     return output;
+ }
+ 
+-
+-void replace_char(char *str, char old_char, char new_char) {
++void replace_char(char *str, char old_char, char new_char)
++{
+     // 检查字符串是否为空
+-    if (str == NULL) {
++    if (str == NULL)
++    {
+         return;
+     }
+ 
+     // 遍历字符串中的每个字符
+-    while (*str != '\0') {
++    while (*str != '\0')
++    {
+         // 如果当前字符与要替换的字符匹配
+-        if (*str == old_char) {
++        if (*str == old_char)
++        {
+             // 替换字符
+             *str = new_char;
+         }
+@@ -161,26 +215,25 @@ void replace_char(char *str, char old_char, char new_char) {
+     }
+ }
+ 
+-
+ bool isNewUser()
+ {
+     return true;
+ }
+ 
+-char* base64Encode(const char*src ,int length)
++char *base64Encode(const char *src, int length)
+ {
+     BUF_MEM *bptr;
+ 
+     BIO *b64 = BIO_new(BIO_f_base64());
+-    BIO_set_flags(b64 , BIO_FLAGS_BASE64_NO_NL);
++    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
+     BIO *bmem = BIO_new(BIO_s_mem());
+-    b64 = BIO_push(b64 , bmem);
+-    BIO_write(b64 , src , length);
++    b64 = BIO_push(b64, bmem);
++    BIO_write(b64, src, length);
+     BIO_flush(b64);
+-    BIO_get_mem_ptr(b64 , &bptr);
++    BIO_get_mem_ptr(b64, &bptr);
+ 
+     char *buff = (char *)malloc(bptr->length + 1);
+-    memcpy(buff , bptr->data , bptr->length);
++    memcpy(buff, bptr->data, bptr->length);
+     buff[bptr->length] = 0;
+ 
+     BIO_free_all(b64);
+@@ -188,157 +241,181 @@ char* base64Encode(const char*src ,int length)
+     return buff;
+ }
+ 
+-char* base64Decode(const char* src , int length)
++char *base64Decode(const char *src, int length)
+ {
+     char *buf = (char *)malloc(length);
+-    memset(buf , 0 , length);
++    memset(buf, 0, length);
+ 
+     BIO *b64 = BIO_new(BIO_f_base64());
+-    BIO_set_flags(b64 , BIO_FLAGS_BASE64_NO_NL);
+-    BIO_set_close(b64 , BIO_CLOSE);
++    BIO_set_flags(b64, BIO_FLAGS_BASE64_NO_NL);
++    BIO_set_close(b64, BIO_CLOSE);
+ 
+     BIO *bmem = BIO_new_mem_buf(src, length);
+ 
+-    bmem = BIO_push(b64 , bmem);
++    bmem = BIO_push(b64, bmem);
+ 
+-    BIO_read(bmem , buf , length);
++    BIO_read(bmem, buf, length);
+ 
+     BIO_free_all(bmem);
+     return buf;
+ }
+ 
+-bool data_node_is_initial(KTrackData* dataNode)
++bool data_node_is_initial(KTrackData *dataNode)
+ {
+-    if(!dataNode)
++    if (!dataNode)
+         return false;
+ 
+     return true;
+ }
+ 
+-void call_dbus(const char*uploadedEventMessage, const char* messageSha256)
++void handle_reply(DBusPendingCall *pending, void *user_data)
+ {
+-    if(!uploadedEventMessage || !messageSha256)
++    DBusMessage *reply = dbus_pending_call_steal_reply(pending);
++    if (!reply)
++    {
++        // 处理无回复的情况
++        goto cleanup;
++    }
++
++    // 检查回复类型（成功或错误）
++    if (dbus_message_get_type(reply) == DBUS_MESSAGE_TYPE_ERROR)
++    {
++        klog_err("d-bus get reply message fail !");
++    }
++
++    // 清理资源
++    dbus_message_unref(reply);
++
++cleanup:
++    dbus_pending_call_unref(pending); // 释放 pending call
++}
++
++void call_dbus(const char *uploadedEventMessage, const char *messageSha256)
++{
++    if (!uploadedEventMessage || !messageSha256)
+     {
+         klog_err("dbus parameter is null\n");
+         return;
+     }
++
+     DBusConnection *conn;
+     DBusError error;
+ 
+     dbus_error_init(&error);
+ 
+-    conn = dbus_bus_get(DBUS_BUS_SYSTEM , &error);
+-    if (dbus_error_is_set(&error)) {
++    conn = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
++    if (dbus_error_is_set(&error))
++    {
+         klog_err("d-bus connect fail !\n");
+-        return ;
++        return;
+     }
+ 
+-    if (conn == NULL) {
++    if (conn == NULL)
++    {
+         klog_err("d-bus connect fail !\n");
+-        return ;
++        return;
+     }
+ 
+     DBusMessage *sendMsg = NULL;
+     DBusPendingCall *sendMsgPending = NULL;
+     DBusMessage *replyMsg = NULL;
+ 
+-    sendMsg = dbus_message_new_method_call(DBUS_SERVICE , DBUS_PATH , DBUS_INTERFACE , DBUS_METHOD);
+-    if (!sendMsg){
+-        klog_err("call method:%s failed!\n",DBUS_METHOD);
+-        return ;
++    sendMsg = dbus_message_new_method_call(DBUS_SERVICE, DBUS_PATH, DBUS_INTERFACE, DBUS_METHOD);
++    if (!sendMsg)
++    {
++        klog_err("call method:%s failed!\n", DBUS_METHOD);
++        return;
+     }
+ 
+-    if (!dbus_message_append_args(sendMsg, DBUS_TYPE_STRING , &uploadedEventMessage , DBUS_TYPE_STRING , &messageSha256 , DBUS_TYPE_INVALID)) {
++    if (!dbus_message_append_args(sendMsg, DBUS_TYPE_STRING, &uploadedEventMessage, DBUS_TYPE_STRING, &messageSha256, DBUS_TYPE_INVALID))
++    {
+         klog_err("kdk : d-bus append args fail !\n");
+         return;
+     }
+ 
+-    if (!dbus_connection_send_with_reply(conn , sendMsg , &sendMsgPending , -1)) {
++    if (!dbus_connection_send_with_reply(conn, sendMsg, &sendMsgPending, -1))
++    {
+         klog_err("kdk : d-bus send message fail ! \n");
+-        return ;
++        return;
+     }
+ 
+-    if (sendMsgPending == NULL) {
++    if (sendMsgPending == NULL)
++    {
+         klog_err("kdk : d-bus pending message is NULL !\n");
+-        return ;
++        return;
+     }
+ 
+     dbus_connection_flush(conn);
+ 
+-    if (sendMsg) {
++    if (sendMsg)
++    {
+         dbus_message_unref(sendMsg);
+     }
+ 
+-    dbus_pending_call_block(sendMsgPending);
+-    replyMsg = dbus_pending_call_steal_reply(sendMsgPending);
+-    if (replyMsg == NULL) {
+-        klog_err("d-bus get reply message fail !");
+-        return;
+-    }
++    dbus_pending_call_set_notify(sendMsgPending, handle_reply, NULL, NULL);
+ 
+-    if (sendMsgPending) {
+-        dbus_pending_call_unref(sendMsgPending);
+-    }
++    free(uploadedEventMessage);
++    free(messageSha256);
+ }
+ 
+-char* json_serialize(KTrackData* data_node)
++char *json_serialize(KTrackData *data_node)
+ {
+-    cJSON* root =  cJSON_CreateObject();
+-    if(!data_node || !root)
++    cJSON *root = cJSON_CreateObject();
++    if (!data_node || !root)
+         return NULL;
+-    if(data_node->eventCode)
+-        cJSON_AddStringToObject(root,"eventCode",data_node->eventCode);
+-    cJSON_AddNumberToObject(root,"eventType",data_node->eventType);
+-    cJSON_AddNumberToObject(root,"eventSourceType",data_node->eventSourceType);
+-    cJSON_AddStringToObject(root,"ts",data_node->timeStamp);
+-    if(data_node->pageName)
+-        cJSON_AddStringToObject(root,"pageName",data_node->pageName);
+-    if(data_node->pageUrl)
+-        cJSON_AddStringToObject(root,"pageUrl",data_node->pageUrl);
+-    if(data_node->pagePath)
+-        cJSON_AddStringToObject(root,"pagePath",data_node->pagePath);
+-    cJSON_AddNumberToObject(root,"duration",data_node->duration);
+-    if(data_node->appName)
+-        cJSON_AddStringToObject(root,"appName",data_node->appName);
+-    if(data_node->appVersion)
+-        cJSON_AddStringToObject(root,"appVersion",data_node->appVersion);
+-    if(data_node->searchWord)
+-        cJSON_AddStringToObject(root,"searchWord",data_node->searchWord);
+-    if(data_node->entrancePageFlag)
+-        cJSON_AddStringToObject(root,"entrancePageFlag",data_node->entrancePageFlag);
+-    if(data_node->exitPageFlag)
+-        cJSON_AddStringToObject(root,"exitPageFlag",data_node->exitPageFlag);
+-
+-
+-    cJSON*globalProperty = cJSON_CreateObject();
+-    if(!globalProperty)
++    if (data_node->eventCode)
++        cJSON_AddStringToObject(root, "eventCode", data_node->eventCode);
++    cJSON_AddNumberToObject(root, "eventType", data_node->eventType);
++    cJSON_AddNumberToObject(root, "eventSourceType", data_node->eventSourceType);
++    cJSON_AddStringToObject(root, "ts", data_node->timeStamp);
++    if (data_node->pageName)
++        cJSON_AddStringToObject(root, "pageName", data_node->pageName);
++    if (data_node->pageUrl)
++        cJSON_AddStringToObject(root, "pageUrl", data_node->pageUrl);
++    if (data_node->pagePath)
++        cJSON_AddStringToObject(root, "pagePath", data_node->pagePath);
++    cJSON_AddNumberToObject(root, "duration", data_node->duration);
++    if (data_node->appName)
++        cJSON_AddStringToObject(root, "appName", data_node->appName);
++    if (data_node->appVersion)
++        cJSON_AddStringToObject(root, "appVersion", data_node->appVersion);
++    if (data_node->searchWord)
++        cJSON_AddStringToObject(root, "searchWord", data_node->searchWord);
++    if (data_node->entrancePageFlag)
++        cJSON_AddStringToObject(root, "entrancePageFlag", data_node->entrancePageFlag);
++    if (data_node->exitPageFlag)
++        cJSON_AddStringToObject(root, "exitPageFlag", data_node->exitPageFlag);
++
++    cJSON *globalProperty = cJSON_CreateObject();
++    if (!globalProperty)
+         return NULL;
+-    if(data_node->globalProperty->umid)
+-        cJSON_AddStringToObject(globalProperty,"umid",data_node->globalProperty->umid);
+-    if(data_node->globalProperty->sourceIp)
+-        cJSON_AddStringToObject(globalProperty,"sourceIp",data_node->globalProperty->sourceIp);
+-    if(data_node->globalProperty->sourceMac)
+-        cJSON_AddStringToObject(globalProperty,"sourceMac",data_node->globalProperty->sourceMac);
+-    if(data_node->globalProperty->serviceKey)
+-        cJSON_AddStringToObject(globalProperty,"serviceSerialNo",data_node->globalProperty->serviceKey);
+-    cJSON_AddItemToObject(root,"globalProperties",globalProperty);
+-    if(data_node->customPropertyLength > 0 && data_node->customProperty)
+-    {
+-        cJSON*customProperty = cJSON_CreateObject();
+-        KCustomProperty* p = data_node->customProperty;
++    if (data_node->globalProperty->umid)
++        cJSON_AddStringToObject(globalProperty, "umid", data_node->globalProperty->umid);
++    if (data_node->globalProperty->sourceIp)
++        cJSON_AddStringToObject(globalProperty, "sourceIp", data_node->globalProperty->sourceIp);
++    if (data_node->globalProperty->sourceMac)
++        cJSON_AddStringToObject(globalProperty, "sourceMac", data_node->globalProperty->sourceMac);
++    if (data_node->globalProperty->serviceKey)
++        cJSON_AddStringToObject(globalProperty, "serviceSerialNo", data_node->globalProperty->serviceKey);
++    if (data_node->globalProperty->registerNumber)
++        cJSON_AddStringToObject(globalProperty, "registerNumber", data_node->globalProperty->registerNumber);
++    cJSON_AddItemToObject(root, "globalProperties", globalProperty);
++    if (data_node->customPropertyLength > 0 && data_node->customProperty)
++    {
++        cJSON *customProperty = cJSON_CreateObject();
++        KCustomProperty *p = data_node->customProperty;
+         for (int i = 0; i < data_node->customPropertyLength; i++)
+         {
+-            char*tmpky = (p+i)->key;
+-            char*tmpva = (p+i)->value;
+-            cJSON_AddStringToObject(customProperty,tmpky,tmpva);
++            char *tmpky = (p + i)->key;
++            char *tmpva = (p + i)->value;
++            cJSON_AddStringToObject(customProperty, tmpky, tmpva);
+         }
+-        cJSON_AddItemToObject(root,"customProperties",customProperty);
++        cJSON_AddItemToObject(root, "customProperties", customProperty);
+     }
+-    char * json = cJSON_Print(root);
++    char *json = cJSON_Print(root);
+     cJSON_Delete(root);
+     return json;
+-
+-} 
++}
+ 
+ long getTimeStamp()
+ {
+@@ -348,61 +425,80 @@ long getTimeStamp()
+     return timeStamp;
+ }
+ 
+-char* getAppName()
++char *getAppName()
+ {
+     extern char *__progname;
+     return strdup(__progname);
+ }
+ 
+-char* getAppVersion()
++char *getAppVersion()
+ {
+-    char* app_version = NULL;
+-    if(g_app_version)
++    char *app_version = NULL;
++    if (g_app_version)
+     {
+         app_version = strdup(g_app_version);
+         return app_version;
+     }
+ 
+-    //先尝试根据进程名碰撞包名来获取包版本
++    // 先尝试根据进程名碰撞包名来获取包版本
+     extern char *__progname;
+-    char cmd[256];
+-    memset(cmd,0,256);
+-    snprintf(cmd,256,"dpkg -l |grep -iw %s |awk '{print $3}'",__progname);
+-    char*cmdResult =  exec_cmd(cmd);
+-    if(cmdResult)
++    char *cmdResult = NULL;
++
++    FILE *fp = fopen("/var/lib/dpkg/status", "rt");
++    if (NULL != fp)
+     {
+-        replace_char(cmdResult, '\n', '\0');
+-        g_app_version = strdup(cmdResult);
+-        app_version = strdup(g_app_version);
+-        free(cmdResult);
+-        return app_version;
++        char buffer[4097];
++        char *val = NULL;
++        int flag = 0;
++        while (fgets(buffer, 4096, fp))
++        {
++            if ((val = lookup(buffer, "Package")))
++            {
++                if (strcmp(val, __progname) == 0)
++                    flag = 1;
++            }
++            else if (flag && (val = lookup(buffer, "Version")))
++                break;
++        }
++        fclose(fp);
++
++        if (val)
++        {
++            cmdResult = strdup(val);
++            replace_char(cmdResult, '\n', '\0');
++            g_app_version = strdup(cmdResult);
++            app_version = strdup(g_app_version);
++            free(cmdResult);
++            return app_version;
++        }
+     }
+-    //通过二进制反查软件包版本
++
++    // 通过二进制反查软件包版本
+     int pid = getpid();
+-    char exe[128];
+-    memset(exe,0,128);
+-    snprintf(exe,128,"/proc/%d/exe",pid);
++    char exe[128], cmd[256];
++    memset(exe, 0, 128);
++    snprintf(exe, 128, "/proc/%d/exe", pid);
+     char binPath[128];
+-    memset(binPath,0,128);
+-    readlink(exe,binPath,128);
+-    memset(cmd,0,256);
+-    snprintf(cmd,256,"dpkg -S %s 2>&1",binPath);
+-    cmdResult  =  exec_cmd(cmd);
+-    char*pName = NULL;
+-    if(cmdResult)
++    memset(binPath, 0, 128);
++    readlink(exe, binPath, 128);
++    memset(cmd, 0, 256);
++    snprintf(cmd, 256, "dpkg -S %s 2>&1", binPath);
++    cmdResult = exec_cmd(cmd);
++    char *pName = NULL;
++    if (cmdResult)
+     {
+-        pName =  strtok(cmdResult,":");
++        pName = strtok(cmdResult, ":");
+     }
+-    if(!pName)
++    if (!pName)
+     {
+         g_app_version = strdup("0.0.0.0");
+         app_version = strdup(g_app_version);
+         return app_version;
+     }
+-    memset(cmd,0,256);
+-    snprintf(cmd,256,"dpkg -l |grep -iw %s |awk '{print $3}'",pName);
+-    cmdResult  =  exec_cmd(cmd);
+-    if(cmdResult)
++    memset(cmd, 0, 256);
++    snprintf(cmd, 256, "dpkg -l |grep -iw %s |awk '{print $3}'", pName);
++    cmdResult = exec_cmd(cmd);
++    if (cmdResult)
+     {
+         replace_char(cmdResult, '\n', '\0');
+         g_app_version = strdup(cmdResult);
+@@ -415,19 +511,19 @@ char* getAppVersion()
+     return app_version;
+ }
+ 
+-bool isPhysicalInterface(char*interfaceName)
++bool isPhysicalInterface(char *interfaceName)
+ {
+-    if(!interfaceName)
++    if (!interfaceName)
+         return false;
+     char cmdLine[128] = "ls -l /sys/class/net/ | grep -v virtual  | awk '{print $9}'";
+-    FILE* fp = popen(cmdLine,"r");
++    FILE *fp = popen(cmdLine, "r");
+     char strLine[128];
+-    memset(strLine,0,128);
+-    while (fgets(strLine,128,fp))
++    memset(strLine, 0, 128);
++    while (fgets(strLine, 128, fp))
+     {
+-        if(!strncmp(strLine," ",1))
++        if (!strncmp(strLine, " ", 1))
+             continue;
+-        if(!strncmp(strLine,interfaceName,strnlen(interfaceName,STRNLEN_MAX)))
++        if (!strncmp(strLine, interfaceName, strnlen(interfaceName, STRNLEN_MAX)))
+         {
+             pclose(fp);
+             return true;
+@@ -436,89 +532,91 @@ bool isPhysicalInterface(char*interfaceName)
+     pclose(fp);
+     return false;
+ }
+-void getSourceMacAndIp(char* ip, char*mac)
++void getSourceMacAndIp(char *ip, char *mac)
+ {
+     struct ifreq buf[16];
+     struct ifconf ifc;
+     int ret = 0;
+     int if_num = 0;
+- 
++
+     ifc.ifc_len = sizeof(buf);
+     ifc.ifc_buf = (caddr_t)buf;
+- 
++
+     int fd = 0;
+- 
++
+     fd = socket(AF_INET, SOCK_DGRAM, 0);
+ 
+     ret = ioctl(fd, SIOCGIFCONF, (char *)&ifc);
+-    if (ret) {
++    if (ret)
++    {
+         klog_err("get if config info failed");
+         close(fd);
+         return;
+     }
+ 
+     if_num = ifc.ifc_len / sizeof(struct ifreq);
+-    while (if_num-- > 0) {
+-
+-        //需要判断物理网卡还是虚拟网卡
+-        bool flag = isPhysicalInterface(buf[if_num].ifr_name);
+-        if(flag)
++    while (if_num-- > 0)
++    {
++        // 需要判断物理网卡还是虚拟网卡
++        char devpath[512];
++        snprintf(devpath, 512, "/sys/class/net/%s/device", buf[if_num].ifr_name);
++        bool flag = (access(devpath, F_OK) == 0);
++        if (flag)
+         {
+             /* 获取第n个网口信息 */
+             ret = ioctl(fd, SIOCGIFFLAGS, (char *)&buf[if_num]);
+-            
++
+             if (ret)
+                 continue;
+             /* 获取网口状态 */
+-            if(buf[if_num].ifr_flags & (IFF_UP))
++            if (buf[if_num].ifr_flags & (IFF_UP))
+             {
+                 /* 获取当前网卡的ip地址 */
+                 ret = ioctl(fd, SIOCGIFADDR, (char *)&buf[if_num]);
+                 if (ret)
+                     continue;
+                 struct in_addr addr = ((struct sockaddr_in *)(&buf[if_num].ifr_addr))->sin_addr;
+-                char* ipStr = inet_ntoa(addr);
+-                snprintf(ip,64,"%s",ipStr);
++                char *ipStr = inet_ntoa(addr);
++                snprintf(ip, 64, "%s", ipStr);
+ 
+                 /* 获取当前网卡的mac */
+                 ret = ioctl(fd, SIOCGIFHWADDR, (char *)&buf[if_num]);
+                 if (ret)
+                     continue;
+-    
+-                snprintf(mac,64,"%02x:%02x:%02x:%02x:%02x:%02x",
+-                    (unsigned char)buf[if_num].ifr_hwaddr.sa_data[0],
+-                    (unsigned char)buf[if_num].ifr_hwaddr.sa_data[1],
+-                    (unsigned char)buf[if_num].ifr_hwaddr.sa_data[2],
+-                    (unsigned char)buf[if_num].ifr_hwaddr.sa_data[3],
+-                    (unsigned char)buf[if_num].ifr_hwaddr.sa_data[4],
+-                    (unsigned char)buf[if_num].ifr_hwaddr.sa_data[5]);
++
++                snprintf(mac, 64, "%02x:%02x:%02x:%02x:%02x:%02x",
++                         (unsigned char)buf[if_num].ifr_hwaddr.sa_data[0],
++                         (unsigned char)buf[if_num].ifr_hwaddr.sa_data[1],
++                         (unsigned char)buf[if_num].ifr_hwaddr.sa_data[2],
++                         (unsigned char)buf[if_num].ifr_hwaddr.sa_data[3],
++                         (unsigned char)buf[if_num].ifr_hwaddr.sa_data[4],
++                         (unsigned char)buf[if_num].ifr_hwaddr.sa_data[5]);
+             }
+         }
+-
+     }
+     close(fd);
+ }
+ 
+-char* getServiceKey()
++char *getServiceKey()
+ {
+-    char* serviceKey = NULL;
+-    if(g_service_key)
++    char *serviceKey = NULL;
++    if (g_service_key)
+     {
+         serviceKey = strdup(g_service_key);
+         return serviceKey;
+     }
+-        
++
+     FILE *fp = fopen("/etc/.kyinfo", "r");
+     if (!fp)
+         return NULL;
+-    char key[3]="key";
++    char key[3] = "key";
+     char buf[1024];
+-    memset(buf,0,1024);
++    memset(buf, 0, 1024);
+     while (fgets(buf, 1024, fp))
+     {
+-        if (strncmp(buf, key, strnlen(key,STRNLEN_MAX)) == 0)
++        if (strncmp(buf, key, strnlen(key, STRNLEN_MAX)) == 0)
+         {
+-            g_service_key = strdup((char*)buf + strnlen(key,STRNLEN_MAX) +1);
++            g_service_key = strdup((char *)buf + strnlen(key, STRNLEN_MAX) + 1);
+             break;
+         }
+     }
+@@ -530,33 +628,208 @@ char* getServiceKey()
+     return serviceKey;
+ }
+ 
+-char* getMachineId()
++char *getMachineId()
+ {
+-    char* machine_id = NULL;
+-    if(g_machine_id)
++    char *machine_id = NULL;
++    if (g_machine_id)
+     {
+         machine_id = strdup(g_machine_id);
+         return machine_id;
+     }
+-    g_machine_id = (char*)malloc(sizeof(char)*256);
+-    memset(g_machine_id,0,256);
++
+     FILE *fp = fopen(MACHINE_ID_FILE, "rt");
+-    if (fp <= 0)
++    if (fp == NULL)
+     {
+-        machine_id =strdup(g_machine_id);
+-        return machine_id;
++        return NULL;
+     }
+-    fgets(g_machine_id,256,fp);
++
++    g_machine_id = (char *)malloc(sizeof(char) * 256);
++    if (g_machine_id == NULL)
++    {
++        fclose(fp);
++        return NULL;
++    }
++
++    memset(g_machine_id, 0, 256);
++    if (fgets(g_machine_id, 256, fp) == NULL)
++    {
++        free(g_machine_id);
++        g_machine_id = NULL;
++        fclose(fp);
++        return NULL;
++    }
++
+     fclose(fp);
+-    replace_char(g_machine_id,'\n','\0');
++    replace_char(g_machine_id, '\n', '\0');
+     machine_id = strdup(g_machine_id);
+     return machine_id;
+ }
+ 
++char *getRegisterNumber()
++{
++    char *register_number = NULL;
++    if (g_register_number)
++    {
++        register_number = strdup(g_register_number);
++        return register_number;
++    }
++
++    pthread_mutex_lock(&g_mutex);
++
++    // 再检查一次，这时其他线程已经获取完了
++    if (g_register_number)
++    {
++        register_number = strdup(g_register_number);
++        pthread_mutex_unlock(&g_mutex);
++        return register_number;
++    }
++
++    DBusConnection *conn;
++    DBusError error;
++
++    dbus_error_init(&error);
++
++    conn = dbus_bus_get(DBUS_BUS_SYSTEM, &error);
++    if (dbus_error_is_set(&error))
++    {
++        klog_err("d-bus connect fail !\n");
++        pthread_mutex_unlock(&g_mutex);
++        return NULL;
++    }
++
++    if (conn == NULL)
++    {
++        klog_err("d-bus connect fail !\n");
++        pthread_mutex_unlock(&g_mutex);
++        return NULL;
++    }
++
++    DBusMessage *sendMsg = NULL;
++    DBusPendingCall *sendMsgPending = NULL;
++    DBusMessage *replyMsg = NULL;
++
++    sendMsg = dbus_message_new_method_call(ACTIVATION_SERVICE, ACTIVATION_PATH, ACTIVATION_INTERFACE, ACTIVATION_METHOD);
++    if (!sendMsg)
++    {
++        klog_err("call method:%s failed!\n", ACTIVATION_METHOD);
++        pthread_mutex_unlock(&g_mutex);
++        return NULL;
++    }
++
++    if (!dbus_connection_send_with_reply(conn, sendMsg, &sendMsgPending, -1))
++    {
++        klog_err("kdk : d-bus send message fail ! \n");
++        dbus_message_unref(sendMsg);
++        pthread_mutex_unlock(&g_mutex);
++        return NULL;
++    }
++
++    if (sendMsgPending == NULL)
++    {
++        klog_err("kdk : d-bus pending message is NULL !\n");
++        dbus_message_unref(sendMsg);
++        pthread_mutex_unlock(&g_mutex);
++        return NULL;
++    }
++
++    dbus_connection_flush(conn);
++    dbus_message_unref(sendMsg); // 可以立即释放发送消息
++
++    dbus_pending_call_block(sendMsgPending);
++    replyMsg = dbus_pending_call_steal_reply(sendMsgPending);
++    dbus_pending_call_unref(sendMsgPending); // 立即释放pending call
++
++    if (replyMsg == NULL)
++    {
++        klog_err("d-bus get reply message fail !");
++        pthread_mutex_unlock(&g_mutex);
++        return NULL;
++    }
++
++    DBusMessageIter args;
++    char *num = NULL;
++    int ret = -1;
++
++    // 检查回复类型是否正确
++    if (dbus_message_get_type(replyMsg) == DBUS_MESSAGE_TYPE_METHOD_RETURN)
++    {
++        if (dbus_message_iter_init(replyMsg, &args))
++        {
++            // 获取第一个参数（字符串）
++            if (dbus_message_iter_get_arg_type(&args) == DBUS_TYPE_STRING)
++            {
++                dbus_message_iter_get_basic(&args, &num);
++
++            }
++            else
++            {
++                klog_err("First argument is not a string!\n");
++                dbus_message_unref(replyMsg);
++                pthread_mutex_unlock(&g_mutex);
++                return NULL;
++            }
++
++            // 移动到下一个参数
++            dbus_message_iter_next(&args);
++
++            // 获取第二个参数（整数）
++            if (dbus_message_iter_get_arg_type(&args) == DBUS_TYPE_INT32)
++            {
++                dbus_message_iter_get_basic(&args, &ret);
++            }
++            else
++            {
++                klog_err("Second argument is not an integer!\n");
++                dbus_message_unref(replyMsg);
++                pthread_mutex_unlock(&g_mutex);
++                return NULL;
++            }
++        }
++        else
++        {
++            klog_err("Reply has no arguments!\n");
++            dbus_message_unref(replyMsg);
++            pthread_mutex_unlock(&g_mutex);
++            return NULL;
++        }
++    }
++    else
++    {
++        klog_err("Method call failed!\n");
++        dbus_message_unref(replyMsg);
++        pthread_mutex_unlock(&g_mutex);
++        return NULL;
++    }
++
++    if (0 == ret)
++    {
++        if (g_register_number)
++        {
++            free(g_register_number);
++            g_register_number = NULL;
++        }
++        if (num)
++        {
++            char *debug = getenv("KYSDK_DEBUG");
++            if (debug && (0 == strncmp(debug, "1", 1)))
++                klog_debug("num: %s\n", num);
++            g_register_number = strdup(num);
++            register_number = strdup(g_register_number);
++        }
++    }
++
++    dbus_message_unref(replyMsg);
++
++    pthread_mutex_unlock(&g_mutex);
++
++    return register_number;
++}
++
+ KTrackData *kdk_dia_data_init(KEventSourceType sourceType, KEventType evnetType)
+ {
+-    KTrackData* node = malloc(sizeof(KTrackData));
+-    if(!node)
++    // timer_start(&t);
++    KTrackData *node = calloc(1, sizeof(KTrackData));
++    if (!node)
+     {
+         klog_err("node 内存分配失败\n");
+         return NULL;
+@@ -564,32 +837,42 @@ KTrackData *kdk_dia_data_init(KEventSourceType sourceType, KEventType evnetType)
+ 
+     node->eventType = evnetType;
+     node->eventSourceType = sourceType;
+-    node->globalProperty = (KGlobalProperty*)malloc(sizeof(KGlobalProperty));
+-    if(!node->globalProperty)
++    node->globalProperty = (KGlobalProperty *)calloc(1, sizeof(KGlobalProperty));
++    if (!node->globalProperty)
+     {
+         klog_err("node->globalProperty内存分配失败\n");
++        free(node);
+         return NULL;
+     }
++    // timer_end(&t, "malloc");
+     node->globalProperty->umid = getMachineId();
++    // timer_end(&t, "getMachineId");
+     node->globalProperty->serviceKey = getServiceKey();
+-    node->globalProperty->sourceIp = (char*)malloc(sizeof(char)*64);
+-    memset(node->globalProperty->sourceIp,0,64);
+-    node->globalProperty->sourceMac = (char*)malloc(sizeof(char)*64);
+-    memset(node->globalProperty->sourceMac,0,64);
+-    if(!g_source_ip || !g_source_mac)
+-    {
+-        g_source_ip = (char*)malloc(sizeof(char)*64);
+-        memset(g_source_ip,0,64);
+-        g_source_mac = (char*)malloc(sizeof(char)*64);
+-        memset(g_source_mac,0,64);
+-        getSourceMacAndIp(g_source_ip,g_source_mac);
+-    }
+-    strncpy(node->globalProperty->sourceIp,g_source_ip,64);
+-    strncpy(node->globalProperty->sourceMac,g_source_mac,64);
++    // timer_end(&t, "getServiceKey");
++    node->globalProperty->registerNumber = getRegisterNumber();
++    // timer_end(&t, "getRegisterNumber");
++    node->globalProperty->sourceIp = (char *)malloc(sizeof(char) * 64);
++    memset(node->globalProperty->sourceIp, 0, 64);
++    node->globalProperty->sourceMac = (char *)malloc(sizeof(char) * 64);
++    memset(node->globalProperty->sourceMac, 0, 64);
++    if (!g_source_ip || !g_source_mac)
++    {
++        g_source_ip = (char *)malloc(sizeof(char) * 64);
++        memset(g_source_ip, 0, 64);
++        g_source_mac = (char *)malloc(sizeof(char) * 64);
++        memset(g_source_mac, 0, 64);
++        getSourceMacAndIp(g_source_ip, g_source_mac);
++    }
++    // timer_end(&t, "getSourceMacAndIp");
++    strncpy(node->globalProperty->sourceIp, g_source_ip, 64);
++    strncpy(node->globalProperty->sourceMac, g_source_mac, 64);
+     long ltStamp = getTimeStamp();
+-    snprintf(node->timeStamp,14,"%ld",ltStamp);
++    // timer_end(&t, "getTimeStamp");
++    snprintf(node->timeStamp, 13, "%ld", ltStamp);
+     node->appName = getAppName();
++    // timer_end(&t, "getAppName");
+     node->appVersion = getAppVersion();
++    // timer_end(&t, "getAppVersion");
+     node->customPropertyLength = 0;
+     node->exitPageFlag = NULL;
+     node->entrancePageFlag = NULL;
+@@ -603,120 +886,129 @@ KTrackData *kdk_dia_data_init(KEventSourceType sourceType, KEventType evnetType)
+ 
+ void kdk_dia_data_free(KTrackData *node)
+ {
+-    if(!node)
++    if (!node)
+         return;
+-    if(node->eventCode)
++    if (node->eventCode)
+         free(node->eventCode);
+-    if(node->pageName)
++    if (node->pageName)
+         free(node->pageName);
+-    if(node->pageUrl)
++    if (node->pageUrl)
+         free(node->pageUrl);
+-    if(node->pagePath)
++    if (node->pagePath)
+         free(node->pagePath);
+-    if(node->appName)
++    if (node->appName)
+         free(node->appName);
+-    if(node->appVersion)
++    if (node->appVersion)
+         free(node->appVersion);
+-    if(node->searchWord)
++    if (node->searchWord)
+         free(node->searchWord);
+-    if(node->entrancePageFlag)
++    if (node->entrancePageFlag)
+         free(node->entrancePageFlag);
+-    if(node->exitPageFlag)
++    if (node->exitPageFlag)
+         free(node->exitPageFlag);
+-    if(node->globalProperty)
++    if (node->globalProperty)
+     {
+-        if(node->globalProperty->sourceIp)
++        if (node->globalProperty->sourceIp)
+             free(node->globalProperty->sourceIp);
+-        if(node->globalProperty->sourceMac)
++        if (node->globalProperty->sourceMac)
+             free(node->globalProperty->sourceMac);
+-        if(node->globalProperty->serviceKey)
++        if (node->globalProperty->serviceKey)
+             free(node->globalProperty->serviceKey);
+-        if(node->globalProperty->umid)
++        if (node->globalProperty->umid)
+             free(node->globalProperty->umid);
++        if (node->globalProperty->registerNumber)
++            free(node->globalProperty->registerNumber);
+         free(node->globalProperty);
+     }
+     free(node);
+ }
+ 
+-void kdk_dia_append_custom_property(KTrackData *node, KCustomProperty* property, int property_length)
++void kdk_dia_append_custom_property(KTrackData *node, KCustomProperty *property, int property_length)
+ {
+     node->customProperty = property;
+     node->customPropertyLength = property_length;
+ }
+ 
+-void kdk_dia_upload_default(KTrackData*node, char* eventCode, char* pageName)
++void kdk_dia_upload_default(KTrackData *node, char *eventCode, char *pageName)
+ {
+-    if(!data_node_is_initial(node))
++    // timer_start(&t);
++    if (!data_node_is_initial(node))
+         return;
+-    if(eventCode)
++    if (eventCode)
+     {
+         node->eventCode = strdup(eventCode);
+-    }   
+-    if(pageName)
++    }
++    if (pageName)
+     {
+         node->pageName = strdup(pageName);
+     }
+-        
+-    char* eventMessage = json_serialize(node);
+-    char*eventMessageSha256 = base64Encode(eventMessage,strnlen(eventMessage,STRNLEN_MAX));
+-    #ifdef DEBUG
+-        klog_info("%s\n",eventMessage);
+-    #endif
+ 
+-    call_dbus(eventMessage,eventMessageSha256);
+-    free(eventMessage);
+-    free(eventMessageSha256);
++    char *eventMessage = json_serialize(node);
++    // timer_end(&t, "json_serialize");
++    char *eventMessageSha256 = base64Encode(eventMessage, strnlen(eventMessage, STRNLEN_MAX));
++    // timer_end(&t, "base64Encode");
++
++    char *debug = getenv("KYSDK_DEBUG");
++    if (debug && (0 == strncmp(debug, "1", 1)))
++        klog_debug("%s\n", eventMessage);
++
++    call_dbus(eventMessage, eventMessageSha256);
++    // timer_end(&t, "call_dbus");
+ }
+ 
+ void kdk_dia_upload_program_startup()
+ {
++    // Timer t1;
++    // timer_start(&t1);
+     KTrackData *dataNode = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_STARTUP);
+-    kdk_dia_upload_default(dataNode,"$$_app_startup","process_start_page");
++    // timer_end1(&t1, "kdk_dia_data_init");
++    kdk_dia_upload_default(dataNode, "$$_app_startup", "process_start_page");
++    // timer_end1(&t1, "kdk_dia_upload_default");
+     g_startup_timestamp = getTimeStamp();
+     kdk_dia_data_free(dataNode);
++    // timer_end1(&t1, "kdk_dia_data_free");
+ }
+ 
+ void kdk_dia_upload_program_exit()
+ {
+     KTrackData *dataNode = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_EXIT);
+     long exitTimestamp = getTimeStamp();
+-    dataNode->duration = (exitTimestamp - g_startup_timestamp) /1000;
+-    kdk_dia_upload_default(dataNode,"$$_app_exit","process_exit_page");
++    dataNode->duration = (exitTimestamp - g_startup_timestamp) / 1000;
++    kdk_dia_upload_default(dataNode, "$$_app_exit", "process_exit_page");
+     kdk_dia_data_free(dataNode);
+ }
+-void kdk_dia_upload_search_content(KTrackData*node,char* eventCode, char* pageName, char*content)
++void kdk_dia_upload_search_content(KTrackData *node, char *eventCode, char *pageName, char *content)
+ {
+-    if(!data_node_is_initial(node))
++    if (!data_node_is_initial(node))
+         return;
+     node->eventType = KEVENT_SEARCH;
+-    if(content)
++    if (content)
+         node->searchWord = strdup(content);
+-    kdk_dia_upload_default(node,"$$_search",pageName);
++    kdk_dia_upload_default(node, "$$_search", pageName);
+ }
+ 
+-void kdk_dia_append_page_info(KTrackData* node, char* pageUrl, char* pagePath)
++void kdk_dia_append_page_info(KTrackData *node, char *pageUrl, char *pagePath)
+ {
+-    if(!data_node_is_initial(node))
++    if (!data_node_is_initial(node))
+         return;
+ 
+-    if(pageUrl)
++    if (pageUrl)
+         node->pageUrl = strdup(pageUrl);
+-    if(pagePath)
++    if (pagePath)
+         node->pagePath = strdup(pagePath);
+ }
+ 
+-void kdk_dia_append_page_flag(KTrackData*node, bool is_entrancePage, bool is_exitPageFlag)
++void kdk_dia_append_page_flag(KTrackData *node, bool is_entrancePage, bool is_exitPageFlag)
+ {
+-    if(!data_node_is_initial(node))
++    if (!data_node_is_initial(node))
+         return;
+-    
+-    if(is_entrancePage)
++
++    if (is_entrancePage)
+         node->entrancePageFlag = strdup("Y");
+     else
+         node->entrancePageFlag = strdup("N");
+-    if(is_exitPageFlag)
++    if (is_exitPageFlag)
+         node->exitPageFlag = strdup("Y");
+     else
+         node->exitPageFlag = strdup("N");
+-    
+-}
+\ No newline at end of file
++}
+diff --git a/kysdk-datacollect/src/libkydatacollect.h b/kysdk-datacollect/src/libkydatacollect.h
+index 1dab744..61248ca 100644
+--- a/kysdk-datacollect/src/libkydatacollect.h
++++ b/kysdk-datacollect/src/libkydatacollect.h
+@@ -75,6 +75,7 @@ typedef struct
+     char* sourceIp; //ip地址
+     char* sourceMac; //mac地址
+     char* serviceKey; //服务序列号
++    char* registerNumber; //激活码
+ }KGlobalProperty;
+ 
+ typedef struct {

@@ -1,0 +1,241 @@
+/*
+ * libkysdk-system's Library
+ *
+ * Copyright (C) 2023-2025, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: ZhiMin Shao <shaozhimin@kylinos.cn>
+ *
+ */
+
+#ifndef LIBKYPROCESS_H
+#define LIBKYPROCESS_H
+
+#endif
+
+/**
+ * @file libkyprocess.h
+ * @author shaozhimin (shaozhimin@kylinos.cn)
+ * @brief 某一进程的瞬时详细信息
+ * @version 0.1
+ * @date 2022-09-13
+ *
+ * @copyright Copyright (c) 2022
+ * @defgroup 某一进程的瞬时详细信息
+ * @{
+ * @since 2.0.0.0
+ */
+
+#ifdef __cplusplus
+extern "C"
+{
+#endif
+
+    typedef enum _KdkRuntimeEnv
+    {
+        KDK_ENV_UNKNOWN = -1, // 未知
+        KDK_ENV_HOST,         // 核心系统/宿主机
+        KDK_ENV_KAIMING,      // kaiming环境
+        KDK_ENV_KARE_V10SP1,  // kare v10sp1环境
+        KDK_ENV_KARE_SHADOW   // kare shadow环境
+    } KdkRuntimeEnv;
+
+    /**
+     * @brief 获取某一进程的名称
+     *
+     * @param proc_num 进程号
+     * @return char* 成功返回进程的名称，失败返回NULL。返回的字符串需要被 free 释放。
+     * @since 2.2.3.5
+     */
+    extern char *kdk_get_process_name(int proc_num);
+
+    /**
+     * @brief 获取某一进程的id
+     *
+     * @param proc_name 进程的名称
+     * @return int 成功返回进程号（id），失败返回0.
+     * @since 2.2.3.5
+     */
+    extern int kdk_get_process_id(char *proc_name);
+
+    /**
+     * @brief 获取某一进程的id
+     *
+     * @param proc_name 进程的名称
+     * @return int* 成功返回进程号（id），失败返回0.
+     * @since 2.5.1.2
+     */
+    extern int *kdk_get_process_id_nums(char *proc_name);
+
+    /**
+     * @brief 获取某一进程的CPU使用率
+     *
+     * @param proc_num 进程号
+     * @return float 成功返回CPU使用率，失败返回0.0
+     */
+    extern float kdk_get_process_cpu_usage_percent(int proc_num);
+
+    /**
+     * @brief 获取某一进程的内存占用率
+     *
+     * @param proc_num 进程号
+     * @return float 成功返回内存占用率，失败返回0.00
+     */
+    extern float kdk_get_process_mem_usage_percent(int proc_num);
+
+    /**
+     * @brief 获取某一进程的进程状态
+     *
+     * @param proc_num 进程号
+     * @return char* 成功返回进程状态，失败返回NULL。返回的字符串需要被 free 释放。
+     */
+    extern char *kdk_get_process_status(int proc_num);
+
+    /**
+     * @brief 获取某一进程的端口号占用
+     *
+     * @param proc_num 进程号
+     * @return int 成功返回使用的端口号，失败返回0。
+     */
+    extern int kdk_get_process_port(int proc_num);
+
+    /**
+     * @brief 获取某一进程的端口号占用
+     *
+     * @param proc_num 进程号
+     * @return int* 成功返回使用的端口号，失败返回0。
+     * @since 2.4.1.0
+     */
+    extern int *kdk_get_process_port_nums(int proc_num);
+
+    /**
+     * @brief 获取某一进程的启动时间
+     *
+     * @param proc_num 进程号
+     * @return char* 成功返回启动时间，失败返回NULL。返回的字符串需要被 free 释放。
+     */
+    extern char *kdk_get_process_start_time(int proc_num);
+
+    /**
+     * @brief 获取某一进程的运行时间
+     *
+     * @param proc_num 进程号
+     * @return char* 成功返回运行时间，失败返回NULL。返回的字符串需要被 free 释放。
+     */
+    extern char *kdk_get_process_running_time(int proc_num);
+
+    /**
+     * @brief 获取某一进程的cpu时间
+     *
+     * @param proc_num 进程号
+     * @return char* 成功返回cpu时间，失败返回NULL。返回的字符串需要被 free 释放。
+     */
+    extern char *kdk_get_process_cpu_time(int proc_num);
+
+    /**
+     * @brief 获取某一进程的Command
+     *
+     * @param proc_num 进程号
+     * @return char* 成功返回Command，失败返回NULL。返回的字符串需要被 free 释放。
+     */
+    extern char *kdk_get_process_command(int proc_num);
+
+    /**
+     * @brief 获取某一进程的属主
+     *
+     * @param proc_num 进程号
+     * @return char* 成功返回属主，失败返回NULL。返回的字符串需要被 free 释放。
+     */
+    extern char *kdk_get_process_user(int proc_num);
+
+    /**
+     * @brief 获取某一进程的信息
+     *
+     * @param proc_name 进程名
+     * @return char** 成功返回某一进程的信息，以NULL表示结尾，由alloc生成，需要被kdk_proc_freeall回收；若获取出错，返回NULL；
+     */
+    extern char **kdk_procname_get_process_infomation(char *proc_name);
+
+    /**
+     * @brief 获取系统中所有进程的信息
+     *
+     * @return char** 成功返回进程所有信息，以NULL表示结尾，由alloc生成，需要被kdk_proc_freeall回收；若获取出错，返回NULL；
+     */
+    extern char **kdk_get_process_all_information();
+
+    /**
+     * @brief 用于回收字符串列表
+     *
+     * @param ptr 字符串列表
+     */
+    extern inline void kdk_proc_freeall(char **ptr);
+
+    /**
+     * @brief 用于回收进程id资源
+     *
+     * @param list 进程id列表
+     * @since 2.2.3.5
+     */
+    extern inline void kdk_proc_freeid(int *list);
+
+    /**
+     * @brief 获取指定进程在 cpu 执行内核态的时间比例
+     *
+     * @param pid 进程id
+     * @return float 指定进程cpu执行内核态的时间比例
+     * @since 3.0.1.0
+     */
+    extern float kdk_get_process_kernel_modes_per(int pid);
+
+    /**
+     * @brief 获取指定进程在 cpu 执行用户态的时间比例
+     *
+     * @param pid 进程id
+     * @return float 指定进程cpu执行用户态的时间比例
+     * @since 3.0.1.0
+     */
+    extern float kdk_get_process_user_modes_per(int pid);
+
+    /**
+     * @brief 获取指定进程的运行环境
+     *
+     * @param pid 进程id
+     * @return KdkRuntimeEnv 指定进程的运行环境枚举值
+     * @since 3.0.1.0
+     */
+    extern KdkRuntimeEnv kdk_get_process_runtime_env(int pid);
+
+    /**
+     * @brief 打开指定进程的调试终端
+     *
+     * @param pid 进程id
+     * @return int 成功返回0，失败返回-1
+     * @since 3.0.1.0
+     */
+    extern int kdk_open_process_debug_terminal(int pid);
+
+#ifdef __cplusplus
+}
+
+#endif
+
+/**
+ * \example kysdk-system/src/proc/test/kyprocess-test.c
+ *
+ */
+
+/**
+ * @}
+ */

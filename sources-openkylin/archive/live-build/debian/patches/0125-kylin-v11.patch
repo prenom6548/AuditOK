@@ -1,0 +1,317 @@
+From: Xie Wei <xiewei@kylinos.cn>
+Date: Thu, 12 Jun 2025 11:10:34 +0800
+Subject: =?utf-8?b?5ZCM5q2la3lsaW4gdjEx5Lit55qE5LiN5Y+v5Y+Y57O757uf5Yqf6IO9?=
+
+---
+ scripts/build/lb_binary_iso    |   7 ++
+ scripts/build/lb_ostree_commit | 205 ++++++++++++++++++++++++++++++++++++-----
+ 2 files changed, 187 insertions(+), 25 deletions(-)
+
+diff --git a/scripts/build/lb_binary_iso b/scripts/build/lb_binary_iso
+index 0c3fba1..b8cf5d9 100755
+--- a/scripts/build/lb_binary_iso
++++ b/scripts/build/lb_binary_iso
+@@ -189,6 +189,13 @@ then
+ 	XORRISO_OPTIONS="${XORRISO_OPTIONS} -append_partition 2 0xef binary/boot/grub/efi.img -partition_cyl_align all"
+ fi
+ 
++# kylin ostree commit, 存在chroot/base.commit则拷贝到binary/.disk目录下
++if [ -f base.commit ]
++then
++	mkdir -p binary/.disk
++	cp -a base.commit binary/.disk/
++fi
++
+ # check if has file which large than 4GB.
+ if [ $(find binary -size +4096M | wc -l) -gt 0 ]
+ then
+diff --git a/scripts/build/lb_ostree_commit b/scripts/build/lb_ostree_commit
+index baa8c1d..461ec20 100755
+--- a/scripts/build/lb_ostree_commit
++++ b/scripts/build/lb_ostree_commit
+@@ -49,23 +49,36 @@ if [ "${LB_MODE}" = "openkylin" ]; then
+ 	exit 0
+ fi
+ 
+-ostree_file_path="/usr/bin/ostree" # 将路径更改为要检查的文件路径
+-if [ -f "$ostree_file_path" ] && [ -x "$ostree_file_path" ]; then
+-    Echo_message "ostree 命令存在"
+-else
+-    Echo_message "ostree 命令不存在，退出执行"
+-    exit 1
+-fi
+-
+ export info_version_string=
+ export mate_data_add_string=
+ export os_version_name=
+ export sign_position=
+ 
+ # 根据ostree 要求，将根分区下的etc目录拷贝至usr目录下
+-rm chroot/chroot/dev/console chroot/chroot/dev/full chroot/chroot/dev/null chroot/chroot/dev/ptmx chroot/chroot/dev/random chroot/chroot/dev/tty chroot/chroot/dev/urandom chroot/chroot/dev/zero
++#rm chroot/chroot/dev/console chroot/chroot/dev/full chroot/chroot/dev/null chroot/chroot/dev/ptmx chroot/chroot/dev/random chroot/chroot/dev/tty chroot/chroot/dev/urandom chroot/chroot/dev/zero
++find chroot/chroot/dev -type b -delete -o -type c -delete
++# 删除链接
++#if [ -L chroot/chroot/etc/.kyinfo ]; then
++#    echo "chroot/chroot/etc/.kyinfo is link"
++#    rm -f chroot/chroot/etc/.kyinfo
++#fi
++#
++#if [ -L chroot/chroot/etc/LICENSE ]; then
++#    echo "chroot/chroot/etc/LICENSE is link"
++#    rm -f chroot/chroot/etc/LICENSE
++#fi
+ cp -a chroot/chroot/etc chroot/chroot/usr/
+ 
++#创建skip-file.txt文件存储需要跳过的文件路径
++touch chroot/skip-files.txt
++if [ -L chroot/chroot/usr/etc/.kyinfo ]; then
++    echo "/usr/etc/.kyinfo" >>chroot/skip-files.txt
++fi
++
++if [ -L chroot/chroot/usr/etc/LICENSE ]; then
++    echo "/usr/etc/LICENSE" >>chroot/skip-files.txt
++fi
++
+ while read os_release_file_line
+ do
+ 	if [ "$os_release_file_line" = "[info]" ]; then
+@@ -84,23 +97,58 @@ do
+ 	fi
+ 
+ 	if [ "$os_release_file_line" != "[metadata]" ]; then
+-		mate_data_add_string="$mate_data_add_string --add-metadata-string='$os_release_file_line'"
++		mate_data_add_string="$mate_data_add_string --add-metadata-string=$os_release_file_line"
+ 	fi
+ 
+ done < "chroot/chroot/etc/ostree-release"
+ 
+ info_version_string=${info_version_string#*version=}
+ os_version_name=$(echo "$info_version_string" | awk -F ":" '{print $1}')
+-ostree_branch_name=$(echo "$info_version_string" | awk -F ":" '{print $2}')
++ostree_branch_name=$info_version_string
++ostree_push_branch_name=$(echo "$info_version_string" | awk -F ":" '{print $2}')
+ Echo_message "os_version_name: $os_version_name"
+ Echo_message "info_version_string: $info_version_string"
+ Echo_message "mate_data_add_string: $mate_data_add_string"
+ Echo_message "ostree_branch_name: $ostree_branch_name"
+ 
+-
++check_dir() {
++    WHITELIST_FILE="chroot/chroot/usr/ost-ex.d/root-whitelist.txt"
++    TARGET_DIR="chroot/chroot/"
++	if [ -e $WHITELIST_FILE ]; then
++    	whitelist=$(cat "$WHITELIST_FILE")
++        for file in "$TARGET_DIR"*; do
++        	# 获取文件名（不包括路径）
++            filename=$(basename "$file")
++            #echo "$filename"
++            # 检查文件是否在白名单中
++            found=false
++            for item in $whitelist; do
++                #echo "==$item=="
++                if [ "$item" = "$filename" ]; then
++                    found=true
++                    break
++                fi
++            done
++            # 如果文件不在白名单中，确认其是由哪个包带入的，提示并终止
++            if [ "$found" = false ]; then
++                if [ -e "chroot/chroot/usr/ost-ex.d/detect-pkgs.sh" ]; then
++                    # 如果不在白名单中，则返回该文件并执行chroot检测
++                    chroot "$TARGET_DIR" ./usr/ost-ex.d/detect-pkgs.sh "$filename"
++                    if [ $? -ne 0 ]; then
++                        echo "Error: Package creation detected for $file"
++                        exit 1
++                    fi
++                fi
++            else
++                echo "exist in whitelist"
++            fi
++        done
++	fi
++}
++#服务端根目录下控制
++check_dir
+ # 删除etc目录
+ rm -r chroot/chroot/etc
+-
+ # 复制内核文件
+ #kernel_vesion=`chroot ./chroot/chroot uname -r`
+ kernel_name=`readlink -f ./chroot/chroot/boot/vmlinuz`
+@@ -129,22 +177,49 @@ mv chroot/chroot/srv chroot/chroot/var/
+ ln -s var/srv chroot/chroot/srv
+ 
+ [ -d sysroot ] || mkdir sysroot
++[ -d chroot/sysroot ] || mkdir chroot/sysroot
++[ -d chroot/chroot/data ] || mkdir chroot/chroot/data
++[ -d chroot/chroot/backup ] || mkdir chroot/chroot/backup
++[ -d chroot/chroot/sysroot ] || mkdir chroot/chroot/sysroot
++
++Check_package chroot/usr/bin/ostree ostree
++Install_package
++
++cat > binary.sh << EOF
++#!/bin/sh
++export LANG=C.UTF-8
++
++os_version_name=$1
++ostree_branch_name=$2
++mate_data_add_string=$3
++info_version_string=$4
+ 
+ #echo "---------->>>>>>>>>000000 4"
+ ostree admin init-fs sysroot
+ 
+ #echo "---------->>>>>>>>>000000 5"
+-ln -s /sysroot/ostree chroot/chroot/ostree
++ln -s /sysroot/ostree chroot/ostree
+ 
+ #echo "---------->>>>>>>>>000000 6"
+ ostree admin os-init "$os_version_name" --sysroot=sysroot
++echo "---------->>>>>>>>>000000 7"
++ostree commit --repo=sysroot/ostree/repo -b "$ostree_branch_name" -s "$info_version_string" $mate_data_add_string --skip-list=./skip-files.txt chroot/
++EOF
++
++mv binary.sh chroot/
++
++chroot_exec() {
++    script_path="binary.sh"  # 脚本文件的路径
+ 
+-#echo "---------->>>>>>>>>000000 7"
++    # 将参数传递给脚本（这里假设最多传递4个参数）
++    chroot chroot /bin/sh "$script_path" "$@"
++}
++
++chroot_exec "$os_version_name" "$ostree_branch_name" "$mate_data_add_string" "$info_version_string"
+ 
+-#重新初始化仓库，使用--mode=archive-z2模式生成ostree repo仓库
+ mkdir usr_etc_file
+ 
+-for etcfile in fstab passwd shadow sudoers group locale.gen adjtime localtime hostname hosts timezone subuid subgid
++for etcfile in fstab passwd shadow group locale.gen localtime hostname hosts timezone subuid subgid
+ do
+ 	chroot_etc_file="chroot/chroot/usr/etc/${etcfile}"
+ 	if [ -e "$chroot_etc_file" ] || [ -L "$chroot_etc_file" ]; then
+@@ -152,34 +227,114 @@ do
+ 	fi
+ done
+ 
+-[ -d chroot/chroot/data ] || mkdir chroot/chroot/data
+-[ -d chroot/chroot/backup ] || mkdir chroot/chroot/backup
+-[ -d chroot/chroot/sysroot ] || mkdir chroot/chroot/sysroot
++cp -r chroot/chroot/usr/etc chroot/chroot/
++
++#创建overlay目录
++mkdir -p chroot/overlay_dir
++mkdir -p chroot/overlay_dir/upper
++mkdir -p chroot/overlay_dir/work
++mkdir -p chroot/overlay_dir/merged
++
++#挂载overlayfs
++mount -t overlay overlay \
++-o lowerdir=chroot/chroot,upperdir=chroot/overlay_dir/upper,workdir=chroot/overlay_dir/work \
++chroot/overlay_dir/merged
++
++#将后续操作转移到overlay 层,先改下chroot名，避免误操作
++mv chroot/chroot chroot/chroot.orig
++
++#在overlay的merged层进行删包操作
++chroot_exec(){
++    chroot chroot/overlay_dir/merged /bin/sh -c "$1"
++}
++
++ chroot_exec '
++ if (dpkg -l | grep -q kylin-os-installer) || (dpkg -l | grep -q casper); then
++     dpkg -P kylin-os-installer casper ubiquity ukui-installer-wayland
++     exit 0
++ else
++     exit 0
++ fi
++ '
++
++# remove etc
++rm -r chroot/overlay_dir/merged/etc
++
++#将overlay的merged层作为提交点
++cat > binary1.sh << EOF
++#!/bin/sh
++export LANG=C.UTF-8
+ 
++ostree_push_branch_name=$1
++info_version_string=$2
++mate_data_add_string=$3
++
++echo "---------->>>>>>>>>000000 4"
+ ostree init --repo=./repo --mode=archive-z2
+ 
+-ostree commit --repo=./repo -b "$ostree_branch_name" -s "$info_version_string" $mate_data_add_string chroot/chroot/
++echo "---------->>>>>>>>>000000 7"
++ostree commit --repo=./repo -b "$ostree_push_branch_name" -s "$info_version_string" $mate_data_add_string --skip-list=./skip-files.txt overlay_dir/merged
+ 
+ ostree summary --repo=./repo -u
+ 
+-#echo "---------->>>>>>>>>000000 8"
++# 输出commit信息到base.commit, 之后要拷贝到binary/.disk/里
++ostree log --repo=./repo "$ostree_push_branch_name" > base.commit
++
++EOF
++
++mv binary1.sh chroot/
++
++chroot_exec() {
++    script_path="binary1.sh"  # 脚本文件的路径
++
++    # 将参数传递给脚本（这里假设最多传递4个参数）
++    chroot chroot /bin/sh "$script_path" "$@"
++}
++
++chroot_exec "$ostree_push_branch_name" "$info_version_string" "$mate_data_add_string"
++# base.commit转移出来，因为chroot可能会在lb binary_rootfs中被删除
++mv chroot/base.commit .
+ 
+ if [ -f config/ostree ]; then
++    # 先尝试连接，规避概率出现的No route to host问题
++    ssh $LB_OSTREE_USER_NAME@$LB_OSTREE_IP true || true
++    # 等待（可能是交换机）建立路由
++    sleep 0.5
+ 	ostree-push --repo=./chroot/repo $LB_OSTREE_USER_NAME@$LB_OSTREE_IP:$LB_OSTREE_WARE_ADDRESS/$os_version_name $ostree_push_branch_name
++    # 推送成功后删除本地仓库，减少磁盘占用
++    rm -rf ./chroot/repo
++    # 如果推送到远程已经存在的分支，远程的commit id会变，本地的base.commit文件内容就不一致了，不过content checksum会保持
+ else
+ 	Echo_message "config/ostree文件不存在，跳过ostree-push"	
+ fi
+ 
++#恢复原始 chroot
++mv chroot/chroot.orig chroot/chroot
++
++#卸载overlay
++umount chroot/overlay_dir/merged
++rm -rf chroot/overlay_dir
++
++rm -rf chroot/skip-files.txt
++
+ mv ./usr_etc_file/* chroot/chroot/usr/etc/
+ rm -r usr_etc_file
+ rm -r chroot/chroot/data chroot/chroot/backup chroot/chroot/sysroot
+ 
+ #提交完成后，将etc目录拷贝出来，外面则是一个完成的根文件系统
++rm -r chroot/chroot/etc
+ cp -a chroot/chroot/usr/etc chroot/chroot
++mv chroot/sysroot chroot/chroot/sysroot
++
++File_path="chroot/chroot/dev/null" # 将路径更改为要检查的文件路径
++if [ -f "$File_path" ] ; then
++    Echo_message "null 存在"
+ 
+-cp -a sysroot chroot/chroot/sysroot
+-mknod chroot/chroot/dev/null c 1 3
+-chmod 666 chroot/chroot/dev/null
++else
++    Echo_message "null 不存在"
++    mknod chroot/chroot/dev/null c 1 3
++    chmod 666 chroot/chroot/dev/null
++fi
+ 
+ unset info_version_string
+ unset mate_data_add_string

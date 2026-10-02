@@ -1,0 +1,255 @@
+From: =?utf-8?b?5YWs5a2Q5paH5b2s?= <xiewei@kylinos.cn>
+Date: Wed, 16 Apr 2025 10:04:16 +0000
+Subject: =?utf-8?b?ITEg5re75Yqg6ZWc5YOP5rqQ562+5ZCN77yMb3Blbmt5bGlu5pyN5Yqh?=
+ =?utf-8?b?5Zmo54mI5pys5L2/55So55qEc3ViaXF1aXR55a6J6KOF5Zmo6ZyA6KaB6ZWc5YOP?=
+ =?utf-8?b?5rqQ562+5ZCNIE1lcmdlIHB1bGwgcmVxdWVzdCAhMSBmcm9tIOadjuS8n+WNly9v?=
+ =?utf-8?b?cGVua3lsaW4vbmlsZQ==?=
+
+---
+ functions/sign_apt_source.sh | 119 +++++++++++++++++++++++++++++++++++++++++++
+ scripts/build/lb_binary      |   5 ++
+ scripts/build/lb_chroot      |   5 ++
+ scripts/build/lb_source-sign |  72 ++++++++++++++++++++++++++
+ 4 files changed, 201 insertions(+)
+ create mode 100755 functions/sign_apt_source.sh
+ create mode 100755 scripts/build/lb_source-sign
+
+diff --git a/functions/sign_apt_source.sh b/functions/sign_apt_source.sh
+new file mode 100755
+index 0000000..3be23e5
+--- /dev/null
++++ b/functions/sign_apt_source.sh
+@@ -0,0 +1,119 @@
++#!/bin/sh
++
++## live-build(7) - System Build Scripts
++## Copyright (C) 2006-2012 Daniel Baumann <daniel@debian.org>
++##
++## This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.
++## This is free software, and you are welcome to redistribute it
++## under certain conditions; see COPYING for details.
++# 定义密钥参数
++
++KEY_TYPE="RSA"
++KEY_LENGTH="4096"
++KEY_EXPIRE="0"
++REAL_NAME="openkylin"
++EMAIL_ADDRESS="live-build@openkylin.top"
++COMMENT="Automatically generated GPG key"
++
++# 生成GPG密钥函数
++generate_gpg_key() {
++    for fingerprint_key in $(get_fingerprint);do
++        delete_gpg_key ${fingerprint_key}
++    done
++    local temp_config=$(mktemp -p .)
++    cat << EOF > "$temp_config"
++%echo Generating a basic OpenPGP key
++Key-Type: $KEY_TYPE
++Key-Length: $KEY_LENGTH
++Subkey-Type: $KEY_TYPE
++Subkey-Length: $KEY_LENGTH
++Name-Real: $REAL_NAME
++Name-Comment: $COMMENT
++Name-Email: $EMAIL_ADDRESS
++Expire-Date: $KEY_EXPIRE
++%no-protection
++%commit
++%echo done
++EOF
++    gpg --batch --generate-key "$temp_config"
++    rm "$temp_config"
++}
++
++# 获取密钥ID函数
++get_key_id() {
++    local key_id=$(gpg --list-secret-keys --keyid-format LONG "$EMAIL_ADDRESS" | awk '/sec/{print $2}' | cut -d '/' -f 2)
++    echo "$key_id"
++}
++
++# 获取密钥指纹函数
++get_fingerprint() {
++    local fingerprint=$(gpg --list-secret-keys --with-colons "$EMAIL_ADDRESS" | awk -F: '$1 == "fpr" && $12 == "" {print $10; exit}')
++    echo "$fingerprint"
++}
++
++# 对APT源进行签名函数
++sign_apt_source() {
++    local key_id="$1"
++    local apt_dir="$2"
++    if [ -d "$apt_dir" ]; then
++        current_dir=$(pwd)
++        cd "$apt_dir"
++        rm -f InRelease Release.gpg
++        apt-ftparchive release . > Release
++        gpg --default-key "$key_id" --clearsign -o InRelease Release
++        gpg --default-key "$key_id" -ab -o Release.gpg Release
++        cd "$current_dir"
++    fi
++}
++
++# 导出公钥函数
++export_public_key() {
++    local key_id="$1"
++    local public_key_file="$2"
++    gpg --armor --export "$key_id" > "$public_key_file"
++    echo "公钥已导出到 $public_key_file"
++}
++
++# 导出私钥函数
++export_private_key() {
++    local key_id="$1"
++    local private_key_file="$2"
++    gpg --armor --export-secret-keys "$key_id" > "$private_key_file"
++    echo "私钥已导出到 $private_key_file"
++}
++
++# 删除GPG密钥函数
++delete_gpg_key() {
++    local fingerprint="$1"
++    gpg --batch --yes --delete-secret-keys "$fingerprint"
++    gpg --batch --yes --delete-keys "$fingerprint"
++    echo "GPG密钥已成功删除"
++}
++
++# 导入私钥函数
++import_private_key() {
++    local private_key_file="$1"
++    if [ -f "$private_key_file" ]; then
++        apt-key add "$private_key_file"
++        echo "私钥已成功导入"
++    else
++        echo "私钥文件不存在"
++    fi
++}
++
++# 生成GPG密钥
++#generate_gpg_key
++#KEY_ID=$(get_key_id)
++#FINGERPRINT=$(get_fingerprint)
++
++# 对APT源进行签名
++#sign_apt_source "$KEY_ID"
++
++# 导出私钥
++#export_private_key "$KEY_ID"
++
++# 删除GPG密钥
++#delete_gpg_key "$FINGERPRINT"
++
++# 导入私钥
++#import_private_key
+diff --git a/scripts/build/lb_binary b/scripts/build/lb_binary
+index 17b0f84..0c114f4 100755
+--- a/scripts/build/lb_binary
++++ b/scripts/build/lb_binary
+@@ -76,6 +76,9 @@ lb binary_includes ${*}
+ lb binary_hooks ${*}
+ lb binary_checksums ${*}
+ 
++# Sign apt source
++lb source-sign sign ${*}
++
+ if [ "${LB_BUILD_WITH_CHROOT}" != "true" ]
+ then
+ 	lb chroot_devpts install ${*}
+@@ -111,3 +114,5 @@ lb chroot_sysfs remove ${*}
+ lb chroot_selinuxfs remove ${*}
+ lb chroot_proc remove ${*}
+ lb chroot_devpts remove ${*}
++
++lb source-sign delete ${*}
+diff --git a/scripts/build/lb_chroot b/scripts/build/lb_chroot
+index daf129f..0aa3bc5 100755
+--- a/scripts/build/lb_chroot
++++ b/scripts/build/lb_chroot
+@@ -73,6 +73,11 @@ do
+ 	fi
+ done
+ 
++#Sign apt source
++lb source-sign generate ${*}
++lb source-sign export ${*}
++lb source-sign import ${*}
++
+ lb chroot_live-packages ${*}
+ lb chroot_snap ${*}
+ lb chroot_includes ${*}
+diff --git a/scripts/build/lb_source-sign b/scripts/build/lb_source-sign
+new file mode 100755
+index 0000000..1cd6cca
+--- /dev/null
++++ b/scripts/build/lb_source-sign
+@@ -0,0 +1,72 @@
++#!/bin/sh
++
++## live-build(7) - System Build Scripts
++## Copyright (C) 2006-2012 Daniel Baumann <daniel@debian.org>
++##
++## This program comes with ABSOLUTELY NO WARRANTY; for details see COPYING.
++## This is free software, and you are welcome to redistribute it
++## under certain conditions; see COPYING for details.
++
++set -e
++
++# Including common functions
++( . "${LIVE_BUILD}/scripts/build.sh" > /dev/null 2>&1 || true ) || . /usr/lib/live/build.sh
++
++# Setting static variables
++DESCRIPTION="$(Echo 'Signature of APT mirror source')"
++HELP=""
++USAGE="${PROGRAM} {generate export sign delete import}"
++
++
++Arguments "${@}"
++
++# Reading configuration files
++Read_conffiles config/all config/common config/bootstrap config/chroot config/binary config/source
++Set_defaults
++
++# 在当前目录创建子目录作为 GNUPGHOME
++GNUPGHOME="$PWD/gnupg_home"
++mkdir -p "$GNUPGHOME"
++chmod 700 "$GNUPGHOME"
++export GNUPGHOME
++
++PUBLIC_KEY_FILE="live-build_public-key.asc"
++EXPORT_PUBLIC_FILE="chroot/root/${PUBLIC_KEY_FILE}"
++APT_SOURCE_FILE="binary/dists/nile"
++
++case "${1}" in
++
++        generate)
++                generate_gpg_key
++                KEY_ID=$(get_key_id)
++                FINGERPRINT=$(get_fingerprint)
++                ;;
++        export)
++                if [ -z "$KEY_ID" ]; then
++                        KEY_ID=$(get_key_id)
++                fi
++                export_public_key "$KEY_ID" "${EXPORT_PUBLIC_FILE}"
++                ;;
++        sign)
++                if [ -z "$KEY_ID" ]; then
++                        KEY_ID=$(get_key_id)
++                fi
++                sign_apt_source "$KEY_ID" "${APT_SOURCE_FILE}"
++                ;;
++        delete)
++                if [ -z "$FINGERPRINT" ]; then
++                        FINGERPRINT=$(get_fingerprint)
++                fi
++                delete_gpg_key "$FINGERPRINT"
++                ;;
++        import)
++                #IMPORT_PUBLIC_FILE=$(ls /root/*_private_key.asc)
++                #import_private_key "${IMPORT_PUBLIC_FILE}"
++                apt_key_cmd="apt-key add /root/${PUBLIC_KEY_FILE}"
++                Chroot chroot "${apt_key_cmd}"
++                Chroot chroot "rm -f /root/${PUBLIC_KEY_FILE}"
++                ;;
++        *)
++                echo "无效的参数：$arg。可用参数：generate, export, sign, delete, import"
++                ;;
++esac

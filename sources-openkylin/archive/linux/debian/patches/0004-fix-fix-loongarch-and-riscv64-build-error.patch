@@ -1,0 +1,222 @@
+From: root <root@localhost>
+Date: Fri, 21 Aug 2026 15:45:02 +0800
+Subject: fix: fix loongarch and riscv64 build error
+
+---
+ Makefile                             |  2 +-
+ arch/loongarch/kernel/Makefile       |  1 +
+ arch/loongarch/kernel/extern.c       | 30 +++++++++++++++++++++++++++++
+ arch/loongarch/kernel/ptrace.c       | 37 +++++++++++++++++++++++++-----------
+ arch/loongarch/kernel/signal.c       |  7 +++++--
+ debian.master/control.stub.in        |  8 ++++----
+ tools/perf/Makefile.config           |  1 +
+ tools/perf/arch/loongarch/util/Build |  1 -
+ 8 files changed, 68 insertions(+), 19 deletions(-)
+ create mode 100644 arch/loongarch/kernel/extern.c
+
+diff --git a/Makefile b/Makefile
+index 36d0a32..d565260 100644
+--- a/Makefile
++++ b/Makefile
+@@ -1659,7 +1659,7 @@ CLEAN_FILES += vmlinux.symvers modules-only.symvers \
+ # Directories & files removed with 'make mrproper'
+ MRPROPER_FILES += include/config include/generated          \
+ 		  arch/$(SRCARCH)/include/generated .objdiff \
+-		  debian snap tar-install PKGBUILD pacman \
++		  snap tar-install PKGBUILD pacman \
+ 		  .config .config.old .version \
+ 		  Module.symvers \
+ 		  certs/signing_key.pem \
+diff --git a/arch/loongarch/kernel/Makefile b/arch/loongarch/kernel/Makefile
+index 0019248..76aefc1 100644
+--- a/arch/loongarch/kernel/Makefile
++++ b/arch/loongarch/kernel/Makefile
+@@ -7,6 +7,7 @@ OBJECT_FILES_NON_STANDARD_head.o := y
+ 
+ always-$(KBUILD_BUILTIN)	:= vmlinux.lds
+ 
++obj-y		+= extern.o
+ obj-y		+= head.o cpu-probe.o cacheinfo.o env.o setup.o entry.o genex.o \
+ 		   traps.o irq.o idle.o process.o dma.o mem.o reset.o switch.o \
+ 		   elf.o syscall.o signal.o time.o topology.o inst.o ptrace.o vdso.o \
+diff --git a/arch/loongarch/kernel/extern.c b/arch/loongarch/kernel/extern.c
+new file mode 100644
+index 0000000..73e86dd
+--- /dev/null
++++ b/arch/loongarch/kernel/extern.c
+@@ -0,0 +1,30 @@
++#include <linux/signal.h>
++
++void loongarch_set_current_blocked(sigset_t *newset);
++int loongarch_copy_siginfo_to_user(siginfo_t __user *to, const kernel_siginfo_t *from);
++int loongarch___save_altstack(stack_t __user *uss, unsigned long sp);
++int loongarch_restore_altstack(const stack_t __user *uss);
++
++void loongarch_set_current_blocked(sigset_t *newset)
++{
++	return set_current_blocked(newset);
++}
++EXPORT_SYMBOL_GPL(loongarch_set_current_blocked);
++
++int loongarch_copy_siginfo_to_user(siginfo_t __user *to, const kernel_siginfo_t *from)
++{
++	return copy_siginfo_to_user(to, from);
++}
++EXPORT_SYMBOL_GPL(loongarch_copy_siginfo_to_user);
++
++int loongarch___save_altstack(stack_t __user *uss, unsigned long sp)
++{
++	return __save_altstack(uss, sp);
++}
++EXPORT_SYMBOL_GPL(loongarch___save_altstack);
++
++int loongarch_restore_altstack(const stack_t __user *uss)
++{
++	return restore_altstack(uss);
++}
++EXPORT_SYMBOL_GPL(loongarch_restore_altstack);
+diff --git a/arch/loongarch/kernel/ptrace.c b/arch/loongarch/kernel/ptrace.c
+index be38430..cae5442 100644
+--- a/arch/loongarch/kernel/ptrace.c
++++ b/arch/loongarch/kernel/ptrace.c
+@@ -72,9 +72,13 @@ void ptrace_disable(struct task_struct *child)
+ 
+ /* regset get/set implementations */
+ 
+-static int gpr_get(struct task_struct *target,
+-		   const struct user_regset *regset,
+-		   struct membuf to)
++int gpr_get(struct task_struct *target,
++	    const struct user_regset *regset,
++	    struct membuf to);
++
++int gpr_get(struct task_struct *target,
++	    const struct user_regset *regset,
++	    struct membuf to)
+ {
+ 	int r;
+ 	struct pt_regs *regs = task_pt_regs(target);
+@@ -87,10 +91,15 @@ static int gpr_get(struct task_struct *target,
+ 	return r;
+ }
+ 
+-static int gpr_set(struct task_struct *target,
+-		   const struct user_regset *regset,
+-		   unsigned int pos, unsigned int count,
+-		   const void *kbuf, const void __user *ubuf)
++int gpr_set(struct task_struct *target,
++	    const struct user_regset *regset,
++	    unsigned int pos, unsigned int count,
++	    const void *kbuf, const void __user *ubuf);
++
++int gpr_set(struct task_struct *target,
++	    const struct user_regset *regset,
++	    unsigned int pos, unsigned int count,
++	    const void *kbuf, const void __user *ubuf)
+ {
+ 	int err;
+ 	int a0_start = sizeof(u64) * GPR_NUM;
+@@ -955,8 +964,11 @@ const struct user_regset_view *task_user_regset_view(struct task_struct *task)
+ 	return &user_loongarch64_view;
+ }
+ 
+-static inline int read_user(struct task_struct *target, unsigned long addr,
+-			    unsigned long __user *data)
++int read_user(struct task_struct *target, unsigned long addr,
++	      unsigned long __user *data);
++
++int read_user(struct task_struct *target, unsigned long addr,
++	      unsigned long __user *data)
+ {
+ 	unsigned long tmp = 0;
+ 
+@@ -980,8 +992,11 @@ static inline int read_user(struct task_struct *target, unsigned long addr,
+ 	return put_user(tmp, data);
+ }
+ 
+-static inline int write_user(struct task_struct *target, unsigned long addr,
+-			    unsigned long data)
++int write_user(struct task_struct *target, unsigned long addr,
++	       unsigned long data);
++
++int write_user(struct task_struct *target, unsigned long addr,
++	       unsigned long data)
+ {
+ 	switch (addr) {
+ 	case 0 ... 31:
+diff --git a/arch/loongarch/kernel/signal.c b/arch/loongarch/kernel/signal.c
+index d4151d2..7be926b 100644
+--- a/arch/loongarch/kernel/signal.c
++++ b/arch/loongarch/kernel/signal.c
+@@ -932,8 +932,11 @@ SYSCALL_DEFINE0(rt_sigreturn)
+ 	return 0;
+ }
+ 
+-static int setup_rt_frame(void *sig_return, struct ksignal *ksig,
+-			  struct pt_regs *regs, sigset_t *set)
++int setup_rt_frame(void *sig_return, struct ksignal *ksig,
++		   struct pt_regs *regs, sigset_t *set);
++
++int setup_rt_frame(void *sig_return, struct ksignal *ksig,
++		   struct pt_regs *regs, sigset_t *set)
+ {
+ 	int err = 0;
+ 	struct extctx_layout extctx;
+diff --git a/debian.master/control.stub.in b/debian.master/control.stub.in
+index 8c3d259..2a91514 100644
+--- a/debian.master/control.stub.in
++++ b/debian.master/control.stub.in
+@@ -10,7 +10,7 @@ Build-Depends:
+  bc <!stage1>,
+  bindgen:native [amd64 arm64 armhf ppc64el riscv64 s390x],
+  bison <!stage1>,
+- clang-21:native [amd64 arm64 armhf ppc64el riscv64 s390x] | clang-22:native [amd64 arm64 armhf ppc64el riscv64 s390x],
++ clang-21:native [amd64 arm64 armhf ppc64el riscv64 s390x loong64] | clang-22:native [amd64 arm64 armhf ppc64el riscv64 s390x loong64],
+  cpio,
+  curl <!stage1>,
+  debhelper-compat (= 10),
+@@ -23,7 +23,7 @@ Build-Depends:
+  libaudit-dev <!stage1>,
+  libbpf-dev <!stage1>,
+  libcap-dev <!stage1>,
+- libdebuginfod-dev [amd64 arm64 armhf ppc64el s390x riscv64] <!stage1>,
++ libdebuginfod-dev [amd64 arm64 armhf ppc64el s390x riscv64 loong64] <!stage1>,
+  libdw-dev <!stage1>,
+  libelf-dev <!stage1>,
+  libiberty-dev <!stage1>,
+@@ -31,12 +31,12 @@ Build-Depends:
+  libnewt-dev <!stage1>,
+  libnl-3-dev,
+  libnl-genl-3-dev,
+- libnuma-dev [amd64 arm64 ppc64el s390x] <!stage1>,
++ libnuma-dev [amd64 arm64 ppc64el s390x loong64] <!stage1>,
+  libpci-dev <!stage1>,
+  libssl-dev <!stage1>,
+  libstdc++-dev,
+  libtool <!stage1>,
+- libtraceevent-dev [amd64 arm64 armhf ppc64el s390x riscv64] <!stage1>,
++ libtraceevent-dev [amd64 arm64 armhf ppc64el s390x riscv64 loong64] <!stage1>,
+  libtracefs-dev [amd64 arm64 armhf ppc64el s390x riscv64] <!stage1>,
+  libudev-dev <!stage1>,
+  libunwind8-dev [amd64 arm64 armhf ppc64el] <!stage1>,
+diff --git a/tools/perf/Makefile.config b/tools/perf/Makefile.config
+index 15fbba9..b95d3da 100644
+--- a/tools/perf/Makefile.config
++++ b/tools/perf/Makefile.config
+@@ -1174,6 +1174,7 @@ ifndef NO_RUST
+     RUST_TARGET_FLAGS_s390	:= s390x-unknown-linux-gnu
+     RUST_TARGET_FLAGS_x86	:= x86_64-unknown-linux-gnu
+     RUST_TARGET_FLAGS_x86_64	:= x86_64-unknown-linux-gnu
++    RUST_TARGET_FLAGS_loongarch := loongarch64-unknown-linux-gnu
+ 
+     ifeq ($(RUST_TARGET_FLAGS_$(ARCH)),)
+       $(error Unknown rust cross compilation architecture $(ARCH))
+diff --git a/tools/perf/arch/loongarch/util/Build b/tools/perf/arch/loongarch/util/Build
+index 3ad73d0..8d91e78 100644
+--- a/tools/perf/arch/loongarch/util/Build
++++ b/tools/perf/arch/loongarch/util/Build
+@@ -1,4 +1,3 @@
+ perf-util-y += header.o
+ 
+ perf-util-$(CONFIG_LOCAL_LIBUNWIND) += unwind-libunwind.o
+-perf-util-$(CONFIG_LIBDW_DWARF_UNWIND) += unwind-libdw.o

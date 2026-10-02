@@ -1,0 +1,2222 @@
+/*
+ * libkysdk-system's Library
+ *
+ * Copyright (C) 2023-2025, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: ZhiMin Shao <shaozhimin@kylinos.cn>
+ *
+ */
+
+#include "kysdkdbus.h"
+#include <QDBusReply>
+#include <dlfcn.h>
+
+#define KYSDK_SYSINFO_LIB                               "libkysysinfo.so"
+#define KDK_GET_HOST_SERIAL_HANDLE                      "_kdk_get_host_serial"
+#define KDK_GET_SYSTEM_BASIC_FORM_HANDLE                      "_kdk_system_get_basic_form"
+#define KDK_GET_SYSTEM_GRUB_MENU_HANDLE                       "_kdk_system_get_grub_menu"
+
+typedef char *(*handle_kdk_get_host_serial)();
+typedef int (*handle_kdk_system_get_basic_form)();
+typedef char* (*handle_kdk_system_get_grub_menu)();
+
+#define KYSDK_DISK_LIB                                  "libkydiskinfo.so"
+#define KDK_GET_DISKINFO_HANDLE                         "_kdk_get_diskinfo"
+#define KDK_GET_HARD_DISK_SIZE_HANDLE                   "_kdk_get_hard_disk_size"
+#define KDK_GET_HARD_FWREV_HANDLE                       "_kdk_get_hard_fwrev"
+#define KDK_GET_HARD_TYPE_HANDLE                        "_kdk_get_hard_type"
+#define KDK_GET_HARD_MODEL_HANDLE                       "_kdk_get_hard_model"
+#define KDK_GET_HARD_SERIAL_HANDLE                      "_kdk_get_hard_serial"
+#define KDK_GET_UNMOUNT_PARTITION_SPACE_HANDLE          "_kdk_get_unmounted_partition_space"
+#define KDK_DISK_GET_PARTITION_START_SECTOR_HANDLE      "_kdk_disk_get_partition_start_sector"
+#define KDK_DISK_GET_PARTITION_END_SECTOR_HANDLE        "_kdk_disk_get_partition_end_sector"
+#define KDK_DISK_GET_PARTITION_TABLE_TYPE_HANDLE        "_kdk_disk_get_partition_table_type"
+#define KDK_DISK_GET_TOTAL_TRACKS_HANDLE                "_kdk_disk_get_total_tracks"
+#define KDK_DISK_IS_DISK_WRITABLE_HANDLE                "_kdk_disk_is_disk_writable"
+#define KDK_DISK_GET_DISK_GEOMETRY_HANDLE               "_kdk_disk_get_disk_geometry"
+
+typedef kdk_diskinfo *(*handle_kdk_get_diskinfo)(const char *diskname);
+typedef char *(*handle_kdk_get_hard_disk_size)(const char *diskname);
+typedef char *(*handle_kdk_get_hard_fwrev)(const char *diskname);
+typedef char *(*handle_kdk_get_hard_type)(const char *diskname);
+typedef char *(*handle_kdk_get_hard_model)(const char *diskname);
+typedef char *(*handle_kdk_get_hard_serial)(const char *diskname);
+typedef double (*handle_kdk_get_unmounted_partition_space)(const char *diskname);
+typedef long long (*handle_kdk_disk_get_partition_start_sector)(const char *partition);
+typedef long long (*handle_kdk_disk_get_partition_end_sector)(const char *partition);
+typedef char *(*handle_kdk_disk_get_partition_table_type)(const char *device_path);
+typedef int (*handle_kdk_disk_get_total_tracks)(const char *device_path);
+typedef int (*handle_kdk_disk_is_disk_writable)(const char *device_path);
+typedef DiskGeometry*(*handle_kdk_disk_get_disk_geometry)(const char *device);
+
+#define KYSDK_HW_LIB                                    "libkyhw.so"
+#define KDK_DISPLAY_GET_VENDOR_HANDLE                   "_kdk_display_get_vendor"
+#define KDK_DISPLAY_GET_PRODUCT_HANDLE                  "_kdk_display_get_product"
+#define KDK_DISPLAY_GET_DESCRIPTION_HANDLE              "_kdk_display_get_description"
+#define KDK_DISPLAY_GET_PHYSICAL_ID_HANDLE              "_kdk_display_get_physical_id"
+#define KDK_DISPLAY_GET_BUS_INFO_HANDLE                 "_kdk_display_get_bus_info"
+#define KDK_DISPLAY_GET_VERSION_HANDLE                  "_kdk_display_get_version"
+#define KDK_DISPLAY_GET_WIDTH_HANDLE                    "_kdk_display_get_width"
+#define KDK_DISPLAY_GET_CLOCK_HANDLE                    "_kdk_display_get_clock"
+#define KDK_DISPLAY_GET_CAPABILITIES_HANDLE             "_kdk_display_get_capabilities"
+#define KDK_DISPLAY_GET_CONFIGURATION_HANDLE            "_kdk_display_get_configuration"
+#define KDK_DISPLAY_GET_RESOURCES_HANDLE                "_kdk_display_get_resources"
+
+typedef char *(*handle_kdk_display_get_vendor)();
+typedef char *(*handle_kdk_display_get_product)();
+typedef char *(*handle_kdk_display_get_description)();
+typedef char *(*handle_kdk_display_get_physical_id)();
+typedef char *(*handle_kdk_display_get_bus_info)();
+typedef char *(*handle_kdk_display_get_version)();
+typedef char *(*handle_kdk_display_get_width)();
+typedef char *(*handle_kdk_display_get_clock)();
+typedef char *(*handle_kdk_display_get_capabilities)();
+typedef char *(*handle_kdk_display_get_configuration)();
+typedef char *(*handle_kdk_display_get_resources)();
+
+#define KDK_BOARD_GET_SERIAL_HANDLE                     "_kdk_board_get_serial"
+
+typedef char *(*handle_kdk_board_get_serial)();
+
+#define KDK_USB_GET_PRODUCTNAME_HANDLE                  "_kdk_usb_get_productName"
+#define KDK_USB_GET_MANUFACTURERNAME_HANDLE             "_kdk_usb_get_manufacturerName"
+
+typedef char *(*handle_kdk_usb_get_productName)(int busNum, int devAddress);
+typedef char *(*handle_kdk_usb_get_manufacturerName)(int busNum, int devAddress);
+
+#define KYSDK_NETINFO_LIB                               "libkynetinfo.so"
+#define KDK_NET_GET_IPTABLE_RULES_HANDLE                "_kdk_net_get_iptable_rules"
+#define KDK_NET_GET_PROC_PORT_HANDLE                    "_kdk_net_get_proc_port"
+
+typedef pChain (*handle_kdk_net_get_iptable_rules)();
+typedef char **(*handle_kdk_net_get_proc_port)();
+
+#define KYSDK_REALTIME_LIB                              "libkyrealtime.so"
+#define KDK_REAL_GET_DISK_TEMPERATURE_HANDLE            "_kdk_real_get_disk_temperature"
+#define KDK_REAL_GET_DISK_RATE_HANDLE                   "_kdk_real_get_disk_rate"
+#define KDK_REAL_GET_CPU_INSTRUCTIONS_HANDLE            "_kdk_real_get_cpu_instructions"
+#define KDK_REAL_GET_CPU_CACHE_MISSES_HANDLE            "_kdk_real_get_cpu_cache_misses"
+#define KDK_REAL_GET_CPU_BRANCH_MISSES_HANDLE           "_kdk_real_get_cpu_branch_misses"
+#define KDK_REAL_GET_CPU_BUS_CYCLES_HANDLE              "_kdk_real_get_cpu_bus_cycles"
+#define KDK_REAL_GET_CPU_CYCLES_HANDLE                  "_kdk_real_get_cpu_cycles"
+#define KDK_REAL_GET_CPU_QUEUE_LENGTH_HANDLE            "_kdk_real_get_cpu_queue_length"
+
+typedef int (*handle_kdk_real_get_disk_temperature)(const char *diskname);
+typedef int (*handle_kdk_real_get_disk_rate)(const char *diskname);
+typedef int (*handle_kdk_real_get_cpu_instructions)(int pid, int sleepTime);
+typedef int (*handle_kdk_real_get_cpu_cache_misses)(int pid, int sleepTime);
+typedef int (*handle_kdk_real_get_cpu_branch_misses)(int pid, int sleepTime);
+typedef int (*handle_kdk_real_get_cpu_bus_cycles)(int pid, int sleepTime);
+typedef int (*handle_kdk_real_get_cpu_cycles)(int pid, int sleepTime);
+typedef int (*handle_kdk_real_get_cpu_queue_length)();
+
+#define KYSDK_RTI_LIB                                   "libkyrtinfo.so"
+#define KDK_RTI_GET_MEM_RES_TOTAL_KIB_HANDLE            "_kdk_rti_get_mem_res_total_KiB"
+
+typedef unsigned long (*handle_kdk_rti_get_mem_res_total_KiB)();
+
+
+KySdkDisk::KySdkDisk(){}
+
+KySdkDisk::~KySdkDisk(){}
+
+QStringList KySdkDisk::getDiskList() const
+{
+    QStringList res = {};
+    char** disk = kdk_get_disklist();
+    for (int i = 0; disk[i]; i++)
+    {
+        res << QString::fromLocal8Bit(disk[i]);
+    }
+
+    return res;
+}
+
+unsigned int KySdkDisk::getDiskSectorSize(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    // if(p != NULL)
+    // {
+    //     return p->sector_size;
+    // }else{
+    //     return NULL;
+    // }
+
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+    dlclose(libHandle);
+    
+    return diskinfo->sector_size;
+}
+
+double KySdkDisk::getDiskTotalSizeMiB(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    // if(p != NULL)
+    // {
+    //     return static_cast<double>(p->total_size_MiB);
+    // }else{
+    //     return NULL;
+    // }
+
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0.00;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return 0.00;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return 0.00;
+    }
+    dlclose(libHandle);
+    
+    return static_cast<double>(diskinfo->total_size_MiB);
+}
+
+QString KySdkDisk::getDiskModel(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    // if(p != NULL)
+    // {
+    //     return p->model;
+    // }else{
+    //     return NULL;
+    // }
+
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return diskinfo->model;
+}
+
+QString KySdkDisk::getDiskSerial(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+//     kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+//     if(p != NULL)
+//     {
+//         return p->serial;
+//     }else{
+//         return NULL;
+//     }
+
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return diskinfo->serial;
+}
+
+double KySdkDisk::getUnmountedPartitionSpace(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return -1;
+    }
+    
+    handle_kdk_get_unmounted_partition_space p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_UNMOUNT_PARTITION_SPACE_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return -1;
+    }
+    double space = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(space == -1)
+    {
+        dlclose(libHandle);
+        return -1;
+    }
+    dlclose(libHandle);
+    
+    return space;
+}
+
+unsigned int KySdkDisk::getDiskPartitionNums(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    // if(p != NULL)
+    // {
+    //     return p->partition_nums;
+    // }else{
+    //     return NULL;
+    // }
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+    dlclose(libHandle);
+    
+    return diskinfo->partition_nums;
+}
+
+QString KySdkDisk::getDiskType(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    if(diskinfo != NULL)
+    {
+        if(diskinfo->disk_type == DISK_TYPE_HDD) {
+            return "DISK_TYPE_HDD";
+        }
+        else if(diskinfo->disk_type == DISK_TYPE_SSD) {
+            return "DISK_TYPE_SSD";
+        }
+        else if (diskinfo->disk_type == DISK_TYPE_NONE)
+        {
+            return "DISK_TYPE_NONE";
+        }
+        else return "DISK_TYPE_OTHER";
+    }else{
+        return NULL;
+    }
+}
+
+QString KySdkDisk::getDiskVersion(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    // if(p != NULL)
+    // {
+    //     return QString::fromLocal8Bit((p->fwrev)).remove("\n");
+    // }else{
+    //     return NULL;
+    // }
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    return QString::fromLocal8Bit((diskinfo->fwrev)).remove("\n");
+}
+
+unsigned long long KySdkDisk::getDiskSectorNum(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    // if(p != NULL)
+    // {
+    //     return p->sectors_num;
+    // }else{
+    //     return NULL;
+    // }
+
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0.00;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return 0.00;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return 0.00;
+    }
+    dlclose(libHandle);
+    return diskinfo->sectors_num;
+}
+
+QString KySdkDisk::getHardDiskSize(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // return QString::fromLocal8Bit(kdk_get_hard_disk_size(dn.c_str()));
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_get_hard_disk_size p_kdk_get_hard_disk_size_handle = NULL;
+    *(void **) (&p_kdk_get_hard_disk_size_handle) = dlsym(libHandle, KDK_GET_HARD_DISK_SIZE_HANDLE);
+
+    if(!p_kdk_get_hard_disk_size_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char *size = p_kdk_get_hard_disk_size_handle(dn.c_str());
+    
+    if(!size)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(size);
+}
+
+QString KySdkDisk::getHardFwrev(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if (!libHandle)
+    {
+        return QString();
+    }
+    
+    handle_kdk_get_hard_fwrev p_kdk_get_hard_fwrev_handle = nullptr;
+    *(void**)(&p_kdk_get_hard_fwrev_handle) = dlsym(libHandle, KDK_GET_HARD_FWREV_HANDLE);
+    
+    if (!p_kdk_get_hard_fwrev_handle)
+    {
+        dlclose(libHandle);
+        return QString();
+    }
+    
+    char* fwrev = p_kdk_get_hard_fwrev_handle(dn.c_str());
+    
+    QString result;
+    if (fwrev && strlen(fwrev) > 0)
+    {
+        result = QString::fromLocal8Bit(fwrev);
+        free(fwrev);
+    }
+    
+    dlclose(libHandle);
+    return result;
+}
+
+QString KySdkDisk::getHardType(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if (!libHandle)
+    {
+        return QString();
+    }
+    
+    handle_kdk_get_hard_type p_kdk_get_hard_type_handle = nullptr;
+    *(void**)(&p_kdk_get_hard_type_handle) = dlsym(libHandle, KDK_GET_HARD_TYPE_HANDLE);
+    
+    if (!p_kdk_get_hard_type_handle)
+    {
+        dlclose(libHandle);
+        return QString();
+    }
+    
+    char* type = p_kdk_get_hard_type_handle(dn.c_str());
+    
+    QString result;
+    if (type && strlen(type) > 0)
+    {
+        result = QString::fromLocal8Bit(type);
+        free(type);
+    }
+    
+    dlclose(libHandle);
+    return result;
+}
+
+QString KySdkDisk::getHardModel(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if (!libHandle)
+    {
+        return QString();
+    }
+    
+    handle_kdk_get_hard_model p_kdk_get_hard_model_handle = nullptr;
+    *(void**)(&p_kdk_get_hard_model_handle) = dlsym(libHandle, KDK_GET_HARD_MODEL_HANDLE);
+    
+    if (!p_kdk_get_hard_model_handle)
+    {
+        dlclose(libHandle);
+        return QString();
+    }
+    
+    char* model = p_kdk_get_hard_model_handle(dn.c_str());
+    
+    QString result;
+    if (model && strlen(model) > 0)
+    {
+        result = QString::fromLocal8Bit(model);
+        free(model);
+    }
+    
+    dlclose(libHandle);
+    return result;
+}
+
+QString KySdkDisk::getHardSerial(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if (!libHandle)
+    {
+        return QString();
+    }
+    
+    handle_kdk_get_hard_serial p_kdk_get_hard_serial_handle = nullptr;
+    *(void**)(&p_kdk_get_hard_serial_handle) = dlsym(libHandle, KDK_GET_HARD_SERIAL_HANDLE);
+    
+    if (!p_kdk_get_hard_serial_handle)
+    {
+        dlclose(libHandle);
+        return QString();
+    }
+    
+    char* serial = p_kdk_get_hard_serial_handle(dn.c_str());
+    
+    QString result;
+    if (serial && strlen(serial) > 0)
+    {
+        result = QString::fromLocal8Bit(serial);
+        free(serial);
+    }
+    
+    dlclose(libHandle);
+    return result;
+}
+
+int KySdkDisk::getDiskFormat(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+    dlclose(libHandle);
+    
+    return diskinfo->format;
+}
+
+QString KySdkDisk::getVolumeLabel(const QString partition) const
+{
+    QString diskLabel;
+    std::string dn = partition.toStdString();
+    char *label = kdk_disk_get_volume_label(dn.c_str());
+    diskLabel =  QString::fromLocal8Bit(label);
+    free(label);
+    return diskLabel;
+}
+
+long long KySdkDisk::getPartitionStartSector(const QString partition) const
+{
+    std::string dn = partition.toStdString();
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_disk_get_partition_start_sector p_kdk_disk_get_partition_start_sector_handle = NULL;
+    *(void **) (&p_kdk_disk_get_partition_start_sector_handle) = dlsym(libHandle, KDK_DISK_GET_PARTITION_START_SECTOR_HANDLE);
+
+    if(!p_kdk_disk_get_partition_start_sector_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    long long start_sector = p_kdk_disk_get_partition_start_sector_handle(dn.c_str());
+    
+    dlclose(libHandle);
+    return start_sector;
+}
+
+long long KySdkDisk::getPartitionEndSector(const QString partition) const
+{
+    std::string dn = partition.toStdString();
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_disk_get_partition_end_sector p_kdk_kdk_disk_get_partition_end_sector_handle = NULL;
+    *(void **) (&p_kdk_kdk_disk_get_partition_end_sector_handle) = dlsym(libHandle, KDK_DISK_GET_PARTITION_END_SECTOR_HANDLE);
+
+    if(!p_kdk_kdk_disk_get_partition_end_sector_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    long long end_sector = p_kdk_kdk_disk_get_partition_end_sector_handle(dn.c_str());
+    
+    dlclose(libHandle);
+    return end_sector;
+}
+
+QString KySdkDisk::getPartitionTableType(const QString device_path) const
+{
+    std::string dn = device_path.toStdString();
+    // return QString::fromLocal8Bit(kdk_get_hard_serial(dn.c_str()));
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_disk_get_partition_table_type p_kdk_disk_get_partition_table_type_handle = NULL;
+    *(void **) (&p_kdk_disk_get_partition_table_type_handle) = dlsym(libHandle, KDK_DISK_GET_PARTITION_TABLE_TYPE_HANDLE);
+
+    if(!p_kdk_disk_get_partition_table_type_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char *partition_type = p_kdk_disk_get_partition_table_type_handle(dn.c_str());
+    
+    if(!partition_type)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(partition_type);
+}
+
+int KySdkDisk::getDiskHeads(const QString device_path) const
+{
+    std::string dn = device_path.toStdString();
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_disk_get_total_tracks p_kdk_disk_get_total_tracks_handle = NULL;
+    *(void **) (&p_kdk_disk_get_total_tracks_handle) = dlsym(libHandle, KDK_DISK_GET_TOTAL_TRACKS_HANDLE);
+
+    if(!p_kdk_disk_get_total_tracks_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int total_tracks = p_kdk_disk_get_total_tracks_handle(dn.c_str());
+    
+    dlclose(libHandle);
+    return total_tracks;
+}
+
+int KySdkDisk::isDiskWritable(const QString device_path) const
+{
+    std::string dn = device_path.toStdString();
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_disk_is_disk_writable p_kdk_disk_is_disk_writable_handle = NULL;
+    *(void **) (&p_kdk_disk_is_disk_writable_handle) = dlsym(libHandle, KDK_DISK_IS_DISK_WRITABLE_HANDLE);
+
+    if(!p_kdk_disk_is_disk_writable_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int result = p_kdk_disk_is_disk_writable_handle(dn.c_str());
+    
+    dlclose(libHandle);
+    return result;
+}
+
+QString KySdkDisk::getDiskGeometry(const QString device_path) const
+{
+    std::string dn = device_path.toStdString();
+    QString res = nullptr;
+    // return QString::fromLocal8Bit(kdk_get_hard_serial(dn.c_str()));
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_disk_get_disk_geometry p_kdk_disk_get_disk_geometry_handle = NULL;
+    *(void **) (&p_kdk_disk_get_disk_geometry_handle) = dlsym(libHandle, KDK_DISK_GET_DISK_GEOMETRY_HANDLE);
+
+    if(!p_kdk_disk_get_disk_geometry_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    DiskGeometry *geometry = p_kdk_disk_get_disk_geometry_handle(dn.c_str());
+
+    res =  + "{\"cylinders\":" + QString::number(geometry->cylinders) + "," + "\"tracks_per_cylinder\":" + QString::number(geometry->tracks_per_cylinder) + "," +
+           "\"sectors_per_track\":" + QString::number(geometry->sectors_per_track) + "," + "\"bytes_per_sector\":" + QString::number(geometry->bytes_per_sector) + "}";
+    
+    if(res == nullptr)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return res;
+}
+
+QString KySdkDisk::getDiskInfo(const QString diskname) const
+{
+    std::string dn = diskname.toStdString();
+    // kdk_diskinfo* p = kdk_get_diskinfo(dn.c_str());
+    void* libHandle = dlopen(KYSDK_DISK_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    
+    handle_kdk_get_diskinfo p_kdk_get_diskinfo_handle = NULL;
+    *(void **) (&p_kdk_get_diskinfo_handle) = dlsym(libHandle, KDK_GET_DISKINFO_HANDLE);
+
+    if(!p_kdk_get_diskinfo_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    kdk_diskinfo *diskinfo = p_kdk_get_diskinfo_handle(dn.c_str());
+    
+    if(!diskinfo)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    if(diskinfo != NULL)
+    {
+        QString result = QString("{\"SectorSize\":%1,\"TotalSizeMiB\":%2,\"Model\":\"%3\",\"Serial\":\"%4\",\"PartitionNums\":%5,\"Type\":%6,\"Version\":\"%7\",\"SectorNum\":%8,\"Format\":%9}")
+                .arg(diskinfo->sector_size)
+                .arg(static_cast<double>(diskinfo->total_size_MiB))
+                .arg(diskinfo->model)
+                .arg(diskinfo->serial)
+                .arg(diskinfo->partition_nums)
+                .arg(diskinfo->disk_type)
+                .arg(QString::fromLocal8Bit(diskinfo->fwrev).remove("\n"))
+                .arg(diskinfo->sectors_num)
+                .arg(diskinfo->format);
+        kdk_free_diskinfo(diskinfo);
+        return result;
+    }else{
+        return NULL;
+    }
+}
+
+KySdkCpuInfo::KySdkCpuInfo(){}
+
+KySdkCpuInfo::~KySdkCpuInfo(){}
+
+QString KySdkCpuInfo::getCpuArch() const
+{
+    return QString::fromLocal8Bit(kdk_cpu_get_arch());
+}
+
+QString KySdkCpuInfo::getCpuVendor() const
+{
+    return QString::fromLocal8Bit(kdk_cpu_get_vendor());
+}
+
+QString KySdkCpuInfo::getCpuModel() const
+{
+    return QString::fromLocal8Bit(kdk_cpu_get_model());
+}
+
+QString KySdkCpuInfo::getCpuFreqMHz() const
+{
+    return QString::fromLocal8Bit(kdk_cpu_get_freq_MHz());
+}
+
+unsigned int KySdkCpuInfo::getCpuCorenums() const
+{
+    return kdk_cpu_get_corenums();
+}
+
+QString KySdkCpuInfo::getCpuVirt() const
+{
+    return QString::fromLocal8Bit(kdk_cpu_get_virt());
+}
+
+unsigned int KySdkCpuInfo::getCpuProcess() const
+{
+    return kdk_cpu_get_process();
+}
+
+KySdkNetCard::KySdkNetCard(){}
+
+KySdkNetCard::~KySdkNetCard(){}
+
+QStringList KySdkNetCard::getNetCardName() const
+{
+    QStringList res = {};
+    char** net = kdk_nc_get_cardlist();
+    for (int i = 0; net[i]; i++)
+    {
+        res << QString::fromLocal8Bit(net[i]);
+    }
+    return res;
+}
+
+int KySdkNetCard::getNetCardUp(const QString netCardName) const
+{
+    std::string stdStr = netCardName.toStdString();
+    return kdk_nc_is_up(stdStr.c_str());
+}
+
+QStringList KySdkNetCard::getNetCardUpcards() const
+{
+    QStringList res = {};
+    char** upcards = kdk_nc_get_upcards();
+    for (int i = 0; upcards[i]; i++)
+    {
+        res << QString::fromLocal8Bit(upcards[i]);
+    }
+    return res;
+}
+
+QString KySdkNetCard::getNetCardPhymac(const QString netCardName) const
+{
+    std::string stdStr = netCardName.toStdString();
+    return QString::fromLocal8Bit(kdk_nc_get_phymac(stdStr.c_str()));
+}
+
+QString KySdkNetCard::getNetCardPrivateIPv4(const QString netCardName) const
+{
+    std::string stdStr = netCardName.toStdString();
+    return QString::fromLocal8Bit(kdk_nc_get_private_ipv4(stdStr.c_str()));
+}
+
+QStringList KySdkNetCard::getNetCardIPv4(const QString netCardName) const
+{
+    QStringList res;
+    char ** list = kdk_nc_get_ipv4(netCardName.toStdString().c_str());
+    int i = 0;
+    while(list && list[i])
+    {
+        res << list[i++];
+    }
+    return res;
+}
+
+QString KySdkNetCard::getNetCardPrivateIPv6(const QString netCardName) const
+{
+    std::string stdStr = netCardName.toStdString();
+    return QString::fromLocal8Bit(kdk_nc_get_private_ipv6(stdStr.c_str()));
+}
+
+int KySdkNetCard::getNetCardType(const QString netCardName) const
+{
+    std::string stdStr = netCardName.toStdString();
+    return kdk_nc_is_wireless(stdStr.c_str());
+}
+
+QStringList KySdkNetCard::getNetCardProduct(const QString netCardName) const
+{
+    std::string ncn = netCardName.toStdString();
+    QStringList res = {};
+    char vend[256] = "", prod[256] = "";
+    if(kdk_nc_get_vendor_and_product(ncn.c_str(), vend, prod) == 0) {
+        res << QString::fromLocal8Bit(vend).remove("\n");
+        res << QString::fromLocal8Bit(prod).remove("\n");
+    }
+//    qFatal("kdk_nc_get_vendor_and_product 调用失败");
+    return res;
+}
+
+QStringList KySdkNetCard::getNetCardIPv6(const QString netCardName) const
+{
+    QStringList res;
+    char **list = kdk_nc_get_ipv6(netCardName.toStdString().c_str());
+    int i = 0;
+    while (list && list[i])
+    {
+        res << list[i++];
+    }
+    return res;
+}
+
+KySdkBios::KySdkBios(){}
+
+KySdkBios::~KySdkBios(){}
+
+QString KySdkBios::getBiosVendor() const
+{
+    return QString::fromLocal8Bit(kdk_bios_get_vendor()).remove("\n");
+}
+
+QString KySdkBios::getBiosVersion() const
+{
+    return QString::fromLocal8Bit(kdk_bios_get_version()).remove("\n");
+}
+
+KySdkMainBoard::KySdkMainBoard(){}
+
+KySdkMainBoard::~KySdkMainBoard(){}
+
+QString KySdkMainBoard::getMainboardName() const
+{
+   return QString::fromLocal8Bit(kdk_board_get_name()).remove("\n");
+}
+
+QString KySdkMainBoard::getMainboardDate() const
+{
+   return QString::fromLocal8Bit(kdk_board_get_date()).remove("\n");
+}
+
+QString KySdkMainBoard::getMainboardSerial() const
+{
+//    return QString::fromLocal8Bit(kdk_board_get_serial()).remove("\n");
+
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_board_get_serial p_kdk_board_get_serial_handle = NULL;
+    *(void **) (&p_kdk_board_get_serial_handle) = dlsym(libHandle, KDK_BOARD_GET_SERIAL_HANDLE);
+
+    if(!p_kdk_board_get_serial_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* serial = p_kdk_board_get_serial_handle();
+    
+    if(!serial)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(serial).remove("\n");
+}
+
+QString KySdkMainBoard::getMainboardVendor() const
+{
+   return QString::fromLocal8Bit(kdk_board_get_vendor()).remove("\n");
+}
+
+KySdkPeripheralsEnum::KySdkPeripheralsEnum(){}
+
+QStringList KySdkPeripheralsEnum::getAllUsbInfo() const
+{
+    QStringList res = {};
+    pDriverInfoList usb = kdk_usb_get_list();
+    if(usb)
+    {
+        pDriverInfoList usb_list = usb;
+        while(usb_list)
+        {
+            res << "name:" + QString::fromLocal8Bit(usb_list->data->name) + "," +
+                   "type:" + QString::fromLocal8Bit(usb_list->data->type) + "," +
+                   "pid:" + QString::fromLocal8Bit(usb_list->data->pid) + "," +
+                   "vid:" + QString::fromLocal8Bit(usb_list->data->vid) + "," +
+                   "serialNo:" + QString::fromLocal8Bit(usb_list->data->serialNo) + "," +
+                   "devNode:" + QString::fromLocal8Bit(usb_list->data->devNode);
+            usb_list = usb_list->next;
+        }
+    }
+    return res;
+}
+
+QString KySdkPeripheralsEnum::getUsbProductName(int busNum, int devAddress) const
+{
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    
+    handle_kdk_usb_get_productName p_kdk_usb_get_productName_handle = NULL;
+    *(void **) (&p_kdk_usb_get_productName_handle) = dlsym(libHandle, KDK_USB_GET_PRODUCTNAME_HANDLE);
+
+    if(!p_kdk_usb_get_productName_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    char* productName = p_kdk_usb_get_productName_handle(busNum, devAddress);     
+    if(!productName)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(productName);
+}
+
+QString KySdkPeripheralsEnum::getUsbManufacturerName(int busNum, int devAddress) const
+{
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    
+    handle_kdk_usb_get_manufacturerName p_kdk_usb_get_manufacturerName_handle = NULL;
+    *(void **) (&p_kdk_usb_get_manufacturerName_handle) = dlsym(libHandle, KDK_USB_GET_MANUFACTURERNAME_HANDLE);
+
+    if(!p_kdk_usb_get_manufacturerName_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    char* manufacturerName = p_kdk_usb_get_manufacturerName_handle(busNum, devAddress);     
+    if(!manufacturerName)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(manufacturerName);
+}
+
+KySdkDisplay::KySdkDisplay(){}
+
+KySdkDisplay::~KySdkDisplay(){}
+
+QString KySdkDisplay::getDisplayVendor() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_vendor());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_vendor p_kdk_display_get_vendor_handle = NULL;
+    *(void **) (&p_kdk_display_get_vendor_handle) = dlsym(libHandle, KDK_DISPLAY_GET_VENDOR_HANDLE);
+
+    if(!p_kdk_display_get_vendor_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* vendor = p_kdk_display_get_vendor_handle();
+    
+    if(!vendor)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(vendor);
+}
+
+QString KySdkDisplay::getDisplayProduct() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_product());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_product p_kdk_display_get_product_handle = NULL;
+    *(void **) (&p_kdk_display_get_product_handle) = dlsym(libHandle, KDK_DISPLAY_GET_PRODUCT_HANDLE);
+
+    if(!p_kdk_display_get_product_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* product = p_kdk_display_get_product_handle();
+    
+    if(!product)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(product);
+}
+
+QString KySdkDisplay::getDisplayDescription() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_description());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_description p_kdk_display_get_description_handle = NULL;
+    *(void **) (&p_kdk_display_get_description_handle) = dlsym(libHandle, KDK_DISPLAY_GET_DESCRIPTION_HANDLE);
+
+    if(!p_kdk_display_get_description_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* description = p_kdk_display_get_description_handle();
+    
+    if(!description)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(description);
+}
+
+QString KySdkDisplay::getDisplayPhysicalId() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_physical_id());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_physical_id p_kdk_display_get_physical_id_handle = NULL;
+    *(void **) (&p_kdk_display_get_physical_id_handle) = dlsym(libHandle, KDK_DISPLAY_GET_PHYSICAL_ID_HANDLE);
+
+    if(!p_kdk_display_get_physical_id_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* id = p_kdk_display_get_physical_id_handle();
+    
+    if(!id)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(id);
+}
+
+QString KySdkDisplay::getDisplayBusInfo() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_bus_info());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_bus_info p_kdk_display_get_bus_info_handle = NULL;
+    *(void **) (&p_kdk_display_get_bus_info_handle) = dlsym(libHandle, KDK_DISPLAY_GET_BUS_INFO_HANDLE);
+
+    if(!p_kdk_display_get_bus_info_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* info = p_kdk_display_get_bus_info_handle();
+    
+    if(!info)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(info);
+}
+
+QString KySdkDisplay::getDisplayVersion() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_version());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_version p_kdk_display_get_version_handle = NULL;
+    *(void **) (&p_kdk_display_get_version_handle) = dlsym(libHandle, KDK_DISPLAY_GET_VERSION_HANDLE);
+
+    if(!p_kdk_display_get_version_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* version = p_kdk_display_get_version_handle();
+    
+    if(!version)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(version);
+}
+
+QString KySdkDisplay::getDisplayWidth() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_width());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_width p_kdk_display_get_width_handle = NULL;
+    *(void **) (&p_kdk_display_get_width_handle) = dlsym(libHandle, KDK_DISPLAY_GET_WIDTH_HANDLE);
+
+    if(!p_kdk_display_get_width_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* width = p_kdk_display_get_width_handle();
+    
+    if(!width)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(width);
+}
+
+QString KySdkDisplay::getDisplayClock() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_clock());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_clock p_kdk_display_get_clock_handle = NULL;
+    *(void **) (&p_kdk_display_get_clock_handle) = dlsym(libHandle, KDK_DISPLAY_GET_CLOCK_HANDLE);
+
+    if(!p_kdk_display_get_clock_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* clock = p_kdk_display_get_clock_handle();
+    
+    if(!clock)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(clock);
+}
+
+QString KySdkDisplay::getDisplayCapabilities() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_capabilities());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_capabilities p_kdk_display_get_capabilities_handle = NULL;
+    *(void **) (&p_kdk_display_get_capabilities_handle) = dlsym(libHandle, KDK_DISPLAY_GET_CAPABILITIES_HANDLE);
+
+    if(!p_kdk_display_get_capabilities_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* capabilities = p_kdk_display_get_capabilities_handle();
+    
+    if(!capabilities)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(capabilities);
+}
+
+QString KySdkDisplay::getDisplayConfiguration() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_configuration());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_configuration p_kdk_display_get_configuration_handle = NULL;
+    *(void **) (&p_kdk_display_get_configuration_handle) = dlsym(libHandle, KDK_DISPLAY_GET_CONFIGURATION_HANDLE);
+
+    if(!p_kdk_display_get_configuration_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* configuration = p_kdk_display_get_configuration_handle();
+    
+    if(!configuration)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(configuration);
+}
+
+QString KySdkDisplay::getDisplayResources() const
+{
+    // return QString::fromLocal8Bit(kdk_display_get_resources());
+    void* libHandle = dlopen(KYSDK_HW_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_display_get_resources p_kdk_display_get_resources_handle = NULL;
+    *(void **) (&p_kdk_display_get_resources_handle) = dlsym(libHandle, KDK_DISPLAY_GET_RESOURCES_HANDLE);
+
+    if(!p_kdk_display_get_resources_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* resources = p_kdk_display_get_resources_handle();
+    
+    if(!resources)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(resources);
+}
+
+
+KySdkPackageInfo::KySdkPackageInfo(){}
+
+QStringList KySdkPackageInfo::getPackageList() const
+{
+    QStringList res = {};
+    kdk_package_list *pack = kdk_package_get_packagelist();
+    qDebug() << pack->nums;
+    for (size_t i = 0; i < pack->nums; i ++)
+    {
+        res << "包名：" + QString::fromLocal8Bit(pack->list[i]->name) + "," +
+               "版本号：" + QString::fromLocal8Bit(pack->list[i]->version) + "," +
+               "包类型：" + QString::fromLocal8Bit(pack->list[i]->section) + "," +
+               "包状态：" + QString::fromLocal8Bit(pack->list[i]->status) + "," +
+               "包大小：" + QString::number(pack->list[i]->size_kb);
+    }
+    return res;
+}
+
+QString KySdkPackageInfo::getPackageVersion(const QString packageName) const
+{
+    std::string package = packageName.toStdString();
+    return QString::fromLocal8Bit(kdk_package_get_version(package.c_str()));
+}
+
+int KySdkPackageInfo::getPackageInstalled(const QString packageName, const QString version) const
+{
+    std::string package = packageName.toStdString();
+    std::string ver = version.toStdString();
+    return kdk_package_is_installed(package.c_str(), ver.c_str());
+}
+
+KySdkResource::KySdkResource(){}
+
+double KySdkResource::getMemTotalKiB() const
+{
+    void* libHandle = dlopen(KYSDK_RTI_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    
+    handle_kdk_rti_get_mem_res_total_KiB p_kdk_rti_get_mem_res_total_KiB_handle = NULL;
+    *(void **) (&p_kdk_rti_get_mem_res_total_KiB_handle) = dlsym(libHandle, KDK_RTI_GET_MEM_RES_TOTAL_KIB_HANDLE);
+
+    if(!p_kdk_rti_get_mem_res_total_KiB_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+    unsigned long total = p_kdk_rti_get_mem_res_total_KiB_handle();
+    
+    dlclose(libHandle);
+    
+    return static_cast<double>(total);
+}
+
+double KySdkResource::getMemUsagePercent() const
+{
+    return static_cast<double>(kdk_rti_get_mem_res_usage_percent());
+}
+
+double KySdkResource::getMemUsageKiB() const
+{
+    return static_cast<double>(kdk_rti_get_mem_res_usage_KiB());
+}
+
+double KySdkResource::getMemAvailableKiB() const
+{
+    return static_cast<double>(kdk_rti_get_mem_res_available_KiB());
+}
+
+double KySdkResource::getMemFreeKiB() const
+{
+    return static_cast<double>(kdk_rti_get_mem_res_free_KiB());
+}
+
+double KySdkResource::getMemVirtAllocKiB() const
+{
+    return kdk_rti_get_mem_virt_alloc_KiB();
+}
+
+double KySdkResource::getMemSwapTotalKiB() const
+{
+    return static_cast<double>(kdk_rti_get_mem_swap_total_KiB());
+}
+
+double KySdkResource::getMemSwapUsagePercent() const
+{
+    return static_cast<double>(kdk_rti_get_mem_swap_usage_percent());
+}
+
+double KySdkResource::getMemSwapUsageKiB() const
+{
+    return static_cast<double>(kdk_rti_get_mem_swap_usage_KiB());
+}
+
+double KySdkResource::getMemSwapFreeKiB() const
+{
+    return static_cast<double>(kdk_rti_get_mem_swap_free_KiB());
+}
+
+double KySdkResource::getCpuCurrentUsage() const
+{
+    return static_cast<double>(kdk_rti_get_cpu_current_usage());
+}
+
+QString KySdkResource::getUpTime() const
+{
+    unsigned int day, hour, min, sec;
+    if(kdk_rti_get_uptime(&day, &hour, &min, &sec) == 0)
+    {
+         return QString::number(day) + "天" + QString::number(hour) + "小时" + QString::number(min) + "分" + QString::number(sec) + "秒";
+    }
+
+}
+
+KySdkProcess::KySdkProcess(){}
+
+double KySdkProcess::getProcInfoCpuUsage(int pid) const
+{
+    return static_cast<double>(kdk_get_process_cpu_usage_percent(pid));
+}
+
+double KySdkProcess::getProcInfoMemUsage(int pid) const
+{
+    return static_cast<double>(kdk_get_process_mem_usage_percent(pid));
+}
+
+QString KySdkProcess::getProcInfoStatus(int pid) const
+{
+    return QString::fromLocal8Bit(kdk_get_process_status(pid));
+}
+
+int KySdkProcess::getProcInfoPort(int pid) const
+{
+    return kdk_get_process_port(pid);
+}
+
+QString KySdkProcess::getProcInfoStartTime(int pid) const
+{
+    return QString::fromLocal8Bit(kdk_get_process_start_time(pid)).remove("\n");
+}
+
+QString KySdkProcess::getProcInfoRunningTime(int pid) const
+{
+    return QString::fromLocal8Bit(kdk_get_process_running_time(pid));
+}
+
+QString KySdkProcess::getProcInfoCpuTime(int pid) const
+{
+    return QString::fromLocal8Bit(kdk_get_process_cpu_time(pid));
+}
+
+QString KySdkProcess::getProcInfoCmd(int pid) const
+{
+    return QString::fromLocal8Bit(kdk_get_process_command(pid));
+}
+
+QString KySdkProcess::getProcInfoUser(int pid) const
+{
+    return QString::fromLocal8Bit(kdk_get_process_user(pid));
+}
+
+QStringList KySdkProcess::getProcInfo(const QString procName) const
+{
+    std::string pN = procName.toStdString();
+    QStringList res = {};
+    char **proc = kdk_procname_get_process_infomation(const_cast<char*>(pN.c_str()));
+    if(!proc)
+    {
+        return res;
+    }
+    size_t count = 0;
+    while (proc[count])
+    {
+        res << QString::fromLocal8Bit(proc[count]).remove("\n");
+        count++;
+    }
+    kdk_proc_freeall(proc);
+    return res;
+}
+
+QStringList KySdkProcess::getAllProcInfo() const
+{
+    QStringList res = {};
+    char** proc_info = kdk_get_process_all_information();
+    size_t count = 0;
+    while (proc_info[count])
+    {
+        res << QString::fromLocal8Bit(proc_info[count]).remove("\n");
+        count++;
+    }
+    kdk_proc_freeall(proc_info);
+    return res;
+}
+
+int KySdkProcess::getProcRuntimeEnv(int pid) const
+{
+    return static_cast<int>(kdk_get_process_runtime_env(pid));
+}
+
+KySdkResolution::KySdkResolution(){}
+
+QString KySdkResolution::getSystemArchitecture() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_architecture());
+}
+
+QString KySdkResolution::getSystemName() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_systemName());
+}
+
+QString KySdkResolution::getSystemVersion(bool verbose) const
+{
+    return QString::fromLocal8Bit(kdk_system_get_version(verbose));
+}
+
+int KySdkResolution::getSystemActivationStatus() const
+{
+    int p,d;
+    int ret = -1;
+    ret = kdk_system_get_activationStatus(&p, &d);
+    return ret;
+}
+
+QString KySdkResolution::getSystemSerialNumber() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_serialNumber()).remove("\n");;
+}
+
+QString KySdkResolution::getSystemKernelVersion() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_kernelVersion()).remove("\n");
+}
+
+QString KySdkResolution::getSystemEffectUser() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_eUser());
+}
+
+QString KySdkResolution::getSystemEffectUserLoginTime() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_eUser_login_time());
+}
+
+QString KySdkResolution::getSystemProjectName() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_projectName());
+}
+
+QString KySdkResolution::getSystemProjectSubName() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_projectSubName());
+}
+
+unsigned int KySdkResolution::getSystemProductFeatures() const
+{
+    return kdk_system_get_productFeatures();
+}
+
+QString KySdkResolution::getSystemHostVirtType() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_hostVirtType());
+}
+
+QString KySdkResolution::getSystemHostCloudPlatform() const
+{
+    return QString::fromLocal8Bit(kdk_system_get_hostCloudPlatform());
+}
+
+QString KySdkResolution::getSystemOSVersion() const
+{
+    version_t ver = kdk_system_get_version_detaile();
+    return QString::fromLocal8Bit(ver.os_version);
+}
+
+QString KySdkResolution::getSystemUpdateVersion() const
+{
+    version_t ver = kdk_system_get_version_detaile();
+    return QString::fromLocal8Bit(ver.update_version);
+}
+
+bool KySdkResolution::getSystemIsZYJ() const
+{
+    return kdk_system_is_zyj();
+}
+
+QString KySdkResolution::getHostSerial() const
+{
+    // return QString::fromLocal8Bit(_kdk_get_host_serial());
+    void* libHandle = dlopen(KYSDK_SYSINFO_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_get_host_serial p_kdk_get_host_serial_handle = NULL;
+    *(void **) (&p_kdk_get_host_serial_handle) = dlsym(libHandle, KDK_GET_HOST_SERIAL_HANDLE);
+
+    if(!p_kdk_get_host_serial_handle)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* serial = p_kdk_get_host_serial_handle();
+    
+    if(!serial)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    dlclose(libHandle);
+    
+    return QString::fromLocal8Bit(serial);
+}
+
+int KySdkResolution::getSystemForm() const
+{
+    void* libHandle = dlopen(KYSDK_SYSINFO_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_system_get_basic_form p_kdk_system_get_basic_form = NULL;
+    *(void **) (&p_kdk_system_get_basic_form) = dlsym(libHandle, KDK_GET_SYSTEM_BASIC_FORM_HANDLE);
+
+    if(!p_kdk_system_get_basic_form)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    int type = -1;
+    type = p_kdk_system_get_basic_form();
+    
+    dlclose(libHandle);
+    
+    return static_cast<int>(type);
+}
+QString KySdkResolution::getSystemGrubMenu() const
+{
+    void* libHandle = dlopen(KYSDK_SYSINFO_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return NULL;
+    }
+    handle_kdk_system_get_grub_menu p_kdk_system_get_grub_menu = NULL;
+    *(void **) (&p_kdk_system_get_grub_menu) = dlsym(libHandle, KDK_GET_SYSTEM_GRUB_MENU_HANDLE);
+
+    if(!p_kdk_system_get_grub_menu)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+
+    char* menu = p_kdk_system_get_grub_menu();
+    
+    if(!menu)
+    {
+        dlclose(libHandle);
+        return NULL;
+    }
+    
+    QString result = QString::fromLocal8Bit(menu);
+    free(menu);
+    dlclose(libHandle);
+    
+    return result;
+}
+
+KySdkNet::KySdkNet()
+{
+}
+
+int KySdkNet::getPortState(int port) const
+{
+    return kdk_net_get_port_stat(port);
+}
+
+QStringList KySdkNet::getMultiplePortStat(int start, int end) const
+{
+    QStringList res = {};
+    if(end < start)
+        return res;
+    int result[end - start + 1];
+    if(0 == kdk_net_get_multiple_port_stat(start, end, result))
+    {
+        size_t count = 0;
+        size_t num = end - start + 1;
+        for(;count < num; count++)
+        {
+            res << QString::number(result[count]);
+        }
+    }
+    return res;
+}
+
+QStringList KySdkNet::getGatewayInfo() const
+{
+    prouteMapList p = kdk_net_get_route();
+    QStringList res = {};
+    if(p == NULL)
+    {
+         return res;
+    }
+    while(p) {
+        res << QString(QLatin1String(p->name)) << QString(QLatin1String(p->addr));
+        p = p->next;
+    }
+    return res;
+}
+
+QStringList KySdkNet::getFirewallState() const
+{
+    QStringList res = {};
+    // pChain chain = kdk_net_get_iptable_rules();
+    // pChain tmpchain = chain;
+    // while(tmpchain)
+    // {
+    //     pChainData tmpData = tmpchain->data;
+    //     res << "total:" + QString::fromLocal8Bit(tmpchain->total) + "," +
+    //            "policy:" + QString::fromLocal8Bit(tmpchain->policy);
+    //     if(tmpData)
+    //     {
+    //         res << "target:" + QString::fromLocal8Bit(tmpData->target) + "," +
+    //                "prot:" + QString::fromLocal8Bit(tmpData->prot) + "," +
+    //                "opt:" + QString::fromLocal8Bit(tmpData->opt) + "," +
+    //                "source:" + QString::fromLocal8Bit(tmpData->source)+ "," +
+    //                "destination:" + QString::fromLocal8Bit(tmpData->destination) + "," +
+    //                "option:" + QString::fromLocal8Bit(tmpData->option);
+    //     }
+    //     tmpchain = tmpchain->next;
+    // }
+    // return res;
+
+    void* libHandle = dlopen(KYSDK_NETINFO_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return res;
+    }
+    handle_kdk_net_get_iptable_rules p_kdk_net_get_iptable_rules_handle = NULL;
+    *(void **) (&p_kdk_net_get_iptable_rules_handle) = dlsym(libHandle, KDK_NET_GET_IPTABLE_RULES_HANDLE);
+
+    if(!p_kdk_net_get_iptable_rules_handle)
+    {
+        dlclose(libHandle);
+        return res;
+    }
+
+    pChain chain = p_kdk_net_get_iptable_rules_handle();
+    
+    if(!chain)
+    {
+        dlclose(libHandle);
+        return res;
+    }
+    dlclose(libHandle);
+
+    pChain tmpchain = chain;
+    while(tmpchain)
+    {
+        pChainData tmpData = tmpchain->data;
+        res << "total:" + QString::fromLocal8Bit(tmpchain->total) + "," +
+               "policy:" + QString::fromLocal8Bit(tmpchain->policy);
+        while (tmpData)
+        {
+            res << "target:" + QString::fromLocal8Bit(tmpData->target) + "," +
+                   "prot:" + QString::fromLocal8Bit(tmpData->prot) + "," +
+                   "opt:" + QString::fromLocal8Bit(tmpData->opt) + "," +
+                   "source:" + QString::fromLocal8Bit(tmpData->source)+ "," +
+                   "destination:" + QString::fromLocal8Bit(tmpData->destination) + "," +
+                   "option:" + QString::fromLocal8Bit(tmpData->option);
+            tmpData = tmpData->next;
+        }
+        tmpchain = tmpchain->next;
+    }
+    return res;
+}
+
+QStringList KySdkNet::getProcPort() const
+{
+    QStringList res = {};
+    // char ** list = kdk_net_get_proc_port();
+    // int i = 0;
+    // while(list && list[i])
+    // {
+    //     res << list[i++];
+    // }
+    // return res;
+
+    void* libHandle = dlopen(KYSDK_NETINFO_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return res;
+    }
+    handle_kdk_net_get_proc_port p_kdk_net_get_proc_port_handle = NULL;
+    *(void **) (&p_kdk_net_get_proc_port_handle) = dlsym(libHandle, KDK_NET_GET_PROC_PORT_HANDLE);
+
+    if(!p_kdk_net_get_proc_port_handle)
+    {
+        dlclose(libHandle);
+        return res;
+    }
+
+    char **list = p_kdk_net_get_proc_port_handle();
+    
+    if(!list)
+    {
+        dlclose(libHandle);
+        return res;
+    }
+    dlclose(libHandle);
+
+    int i = 0;
+    while(list && list[i])
+    {
+        res << list[i++];
+    }
+    return res;
+}
+
+KySdkRunInfo::KySdkRunInfo(){}
+
+double KySdkRunInfo::getNetSpeed(const QString nc) const
+{
+    std::string dp = nc.toStdString();
+    return static_cast<double>(kdk_real_get_net_speed(dp.c_str()));
+}
+
+int KySdkRunInfo::getDiskRate(const QString diskpath) const
+{
+    std::string dp = diskpath.toStdString();
+    // return kdk_real_get_disk_rate(dp.c_str());
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_disk_rate p_kdk_real_get_disk_rate_handle = NULL;
+    *(void **) (&p_kdk_real_get_disk_rate_handle) = dlsym(libHandle, KDK_REAL_GET_DISK_RATE_HANDLE);
+
+    if(!p_kdk_real_get_disk_rate_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int rate = p_kdk_real_get_disk_rate_handle(dp.c_str());
+    
+    dlclose(libHandle);
+    return static_cast<double>(rate);
+}
+
+double KySdkRunInfo::getCpuTemperature() const
+{
+    return static_cast<double>(kdk_real_get_cpu_temperature());
+}
+double KySdkRunInfo::getDiskTemperature(const QString diskpath) const
+{
+    std::string dp = diskpath.toStdString();
+    // return static_cast<double>(kdk_real_get_disk_temperature(dp.c_str()));
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_disk_temperature p_kdk_real_get_disk_temperature_handle = NULL;
+    *(void **) (&p_kdk_real_get_disk_temperature_handle) = dlsym(libHandle, KDK_REAL_GET_DISK_TEMPERATURE_HANDLE);
+
+    if(!p_kdk_real_get_disk_temperature_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int temperature = p_kdk_real_get_disk_temperature_handle(dp.c_str());
+    
+    dlclose(libHandle);
+    return static_cast<double>(temperature);
+}
+
+int KySdkRunInfo::getCpuInstructions(int pid, int sleepTime) const
+{
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_cpu_instructions p_kdk_real_get_cpu_instructions_handle = NULL;
+    *(void **) (&p_kdk_real_get_cpu_instructions_handle) = dlsym(libHandle, KDK_REAL_GET_CPU_INSTRUCTIONS_HANDLE);
+
+    if(!p_kdk_real_get_cpu_instructions_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int cpu_instructions_count = p_kdk_real_get_cpu_instructions_handle(pid, sleepTime);
+    
+    dlclose(libHandle);
+    return cpu_instructions_count;
+}
+
+int KySdkRunInfo::getCpuCacheMisses(int pid, int sleepTime) const
+{
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_cpu_cache_misses p_kdk_real_get_cpu_cache_misses_handle = NULL;
+    *(void **) (&p_kdk_real_get_cpu_cache_misses_handle) = dlsym(libHandle, KDK_REAL_GET_CPU_CACHE_MISSES_HANDLE);
+
+    if(!p_kdk_real_get_cpu_cache_misses_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int cpu_cache_misses_count = p_kdk_real_get_cpu_cache_misses_handle(pid, sleepTime);
+    
+    dlclose(libHandle);
+    return cpu_cache_misses_count;
+}
+
+int KySdkRunInfo::getCpuBranchMisses(int pid, int sleepTime) const
+{
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_cpu_branch_misses p_kdk_real_get_cpu_branch_misses_handle = NULL;
+    *(void **) (&p_kdk_real_get_cpu_branch_misses_handle) = dlsym(libHandle, KDK_REAL_GET_CPU_BRANCH_MISSES_HANDLE);
+
+    if(!p_kdk_real_get_cpu_branch_misses_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int cpu_branch_miss_count = p_kdk_real_get_cpu_branch_misses_handle(pid, sleepTime);
+    
+    dlclose(libHandle);
+    return cpu_branch_miss_count;
+}
+
+int KySdkRunInfo::getCpuBusCycles(int pid, int sleepTime) const
+{
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_cpu_bus_cycles p_kdk_real_get_cpu_bus_cycles_handle = NULL;
+    *(void **) (&p_kdk_real_get_cpu_bus_cycles_handle) = dlsym(libHandle, KDK_REAL_GET_CPU_BUS_CYCLES_HANDLE);
+
+    if(!p_kdk_real_get_cpu_bus_cycles_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int cpu_bus_cycles_count = p_kdk_real_get_cpu_bus_cycles_handle(pid, sleepTime);
+    
+    dlclose(libHandle);
+    return cpu_bus_cycles_count;
+}
+
+int KySdkRunInfo::getCpuCycles(int pid, int sleepTime) const
+{
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_cpu_cycles p_kdk_real_get_cpu_cycles_handle = NULL;
+    *(void **) (&p_kdk_real_get_cpu_cycles_handle) = dlsym(libHandle, KDK_REAL_GET_CPU_CYCLES_HANDLE);
+
+    if(!p_kdk_real_get_cpu_cycles_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int cpu_cycles_count = p_kdk_real_get_cpu_cycles_handle(pid, sleepTime);
+    
+    dlclose(libHandle);
+    return cpu_cycles_count;
+}
+
+int KySdkRunInfo::getCpuQueueLength() const
+{
+    void* libHandle = dlopen(KYSDK_REALTIME_LIB, RTLD_LAZY);
+    if(!libHandle)
+    {
+        return 0;
+    }
+    handle_kdk_real_get_cpu_queue_length p_kdk_real_get_cpu_queue_length_handle = NULL;
+    *(void **) (&p_kdk_real_get_cpu_queue_length_handle) = dlsym(libHandle, KDK_REAL_GET_CPU_QUEUE_LENGTH_HANDLE);
+
+    if(!p_kdk_real_get_cpu_queue_length_handle)
+    {
+        dlclose(libHandle);
+        return 0;
+    }
+
+    int thread = p_kdk_real_get_cpu_queue_length_handle();
+    
+    dlclose(libHandle);
+    return thread;
+}
+
+KySdkGps::KySdkGps(){}
+QString KySdkGps::getGPSInfo() const
+{
+    return QString::fromLocal8Bit(kdk_loaction_get());
+}
+
+// KySdkRest::KySdkRest(){}
+
+// KySdkRest::~KySdkRest(){}
+
+// QStringList KySdkRest::getSysLegalResolution() const
+// {
+//     QStringList res = {};
+//     char **power = kdk_system_get_resolving_power();
+//     size_t count = 0;
+//     while(power[count])
+//     {
+//         res << QString::fromLocal8Bit(power[count]);
+//         count ++;
+//     }
+//     kdk_resolving_freeall(power);
+//     return res;
+// }

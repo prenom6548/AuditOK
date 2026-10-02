@@ -1,0 +1,371 @@
+From: tianshaoshuai <tianshaoshuai@kylinos.cn>
+Date: Fri, 8 Aug 2025 14:26:30 +0800
+Subject: =?utf-8?b?5ZCM5q2lVjEx5Luj56CB?=
+
+---
+ src/conf2/conf2-compile/yamlhelper.cpp   |  24 ++++---
+ src/conf2/service/conf2Utils.py          |  10 ++-
+ src/conf2/sync-config/sync-dbus-server.c |  70 +++++++++----------
+ src/conf2/tools/kconf2-tool.c            | 115 +++++++++++++++++++++----------
+ 4 files changed, 135 insertions(+), 84 deletions(-)
+
+diff --git a/src/conf2/conf2-compile/yamlhelper.cpp b/src/conf2/conf2-compile/yamlhelper.cpp
+index c2a1f83..640c345 100644
+--- a/src/conf2/conf2-compile/yamlhelper.cpp
++++ b/src/conf2/conf2-compile/yamlhelper.cpp
+@@ -105,7 +105,6 @@ namespace
+         return (mergeType == 1 && permission == "final") || (mergeType == 2 && (permission == "final" || permission == "stable"));
+     }
+ }
+-
+ YamlHelper::YamlHelper() {}
+ 
+ QMap<QString, QVariant> YamlHelper::loadYamlDirs(const QStringList &dirs)
+@@ -130,13 +129,15 @@ QMap<QString, QVariant> YamlHelper::loadYamlDirs(const QStringList &dirs)
+         if (dir == "basic")
+             continue;
+ 
+-        QDir dire(QString("/etc/kylin-config/%1").arg(dir));
+-        QStringList files = dire.entryList(QStringList() << "*.yaml" << "*.yml");
+-        std::sort(files.begin(), files.end(), sortString);
++        QDir dire(QString("/etc/kylin-config/%1").arg(dir)), opt_dire(QString("/opt/system/conf/kylin/kylin-config/%1").arg(dir));
+ 
++        QStringList files = dire.entryList(QStringList() << "*.yaml" << "*.yml") + opt_dire.entryList(QStringList() << "*.yaml" << "*.yml");
++        std::sort(files.begin(), files.end(), sortString);
++        
+         for (QString &file : files)
+         {
+-            QMap<QString, QVariant> map = loadYamlFile(dire.filePath(file));
++            QString real_path = QFile::exists(dire.filePath(file)) ? dire.filePath(file) : opt_dire.filePath(file);
++            QMap<QString, QVariant> map = loadYamlFile(real_path);
+             if (map.isEmpty())
+                 continue;
+ 
+@@ -147,16 +148,21 @@ QMap<QString, QVariant> YamlHelper::loadYamlDirs(const QStringList &dirs)
+ 
+     return result;
+ }
+-
+ QMap<QString, QVariant> YamlHelper::loadYamlDir(const QString &dir)
+ {
+     QMap<QString, QVariant> result;
+-    QDir dire(dir);
+-    QStringList files = dire.entryList(QStringList() << "*.yaml" << "*.yml");
++
++    QString opt_dir = dir;
++    opt_dir.replace("/etc/kylin-config", "/opt/system/conf/kylin/kylin-config");
++
++    QDir dire(dir), opt_dire(opt_dir);
++    QStringList files = dire.entryList(QStringList() << "*.yaml" << "*.yml") + opt_dire.entryList(QStringList() << "*.yaml" << "*.yml");
+     std::sort(files.begin(), files.end(), sortString);
++
+     for (QString &file : files)
+     {
+-        QMap<QString, QVariant> map = loadYamlFile(dire.filePath(file));
++        QString real_path = QFile::exists(dire.filePath(file)) ? dire.filePath(file) : opt_dire.filePath(file);
++        QMap<QString, QVariant> map = loadYamlFile(real_path);
+         if (map.isEmpty())
+             continue;
+         mergeMap(result, map, 1, true);
+diff --git a/src/conf2/service/conf2Utils.py b/src/conf2/service/conf2Utils.py
+index 6d6d023..3106fc5 100755
+--- a/src/conf2/service/conf2Utils.py
++++ b/src/conf2/service/conf2Utils.py
+@@ -660,7 +660,9 @@ class yamlHelper:
+ 
+         files = self._sort_diretory(path)
+         for file in files:
+-            data = self.read_yaml_file(f'{path}/{file}')
++            opt_path = path.replace('/etc/kylin-config', '/opt/system/conf/kylin/kylin-config')
++            real_path = f'{path}/{file}' if os.path.exists(f'{path}/{file}') else f'{opt_path}/{file}'
++            data = self.read_yaml_file(real_path)
+ 
+             if not data or not isinstance(data, dict):
+                 continue
+@@ -697,7 +699,11 @@ class yamlHelper:
+             return []
+ 
+         # 获取目录内所有文件名
++        # file_list = os.listdir(yaml_dir)
++        opt_dir = yaml_dir.replace("/etc/kylin-config", "/opt/system/conf/kylin/kylin-config")
+         file_list = os.listdir(yaml_dir)
++        if os.path.exists(opt_dir):
++            file_list = file_list + os.listdir(opt_dir)
+ 
+         # 定义排序函数
+         def custom_sort(file_name):
+@@ -1214,4 +1220,4 @@ class sqlHelper:
+                     result = self._recursive_search(value, key)
+                     if result is not None:
+                         return result
+-        return None
+\ No newline at end of file
++        return None
+diff --git a/src/conf2/sync-config/sync-dbus-server.c b/src/conf2/sync-config/sync-dbus-server.c
+index 371331f..2e6a0d9 100644
+--- a/src/conf2/sync-config/sync-dbus-server.c
++++ b/src/conf2/sync-config/sync-dbus-server.c
+@@ -250,51 +250,49 @@ static gboolean _connect_signal_sync_config(const char *conf2_id, const char *gs
+ 
+ static void _read_id_tables()
+ {
+-    if (0 == access(G_SCHEMAS, F_OK))
++    FILE *fp = fopen(G_SCHEMAS, "r");
++    if (NULL == fp)
+     {
+-        FILE *fp = fopen(G_SCHEMAS, "r");
+-        if (NULL == fp)
+-        {
+-            klog_err("open %s fial: %s\n", G_SCHEMAS, strerror(errno));
+-        }
+-        else
++        klog_err("open %s fial: %s\n", G_SCHEMAS, strerror(errno));
++        return;
++    }
++    else
++    {
++        gboolean read = FALSE;
++        char line[1024];
++        while (fgets(line, 1024, fp))
+         {
+-            gboolean read = FALSE;
+-            char line[1024];
+-            while (fgets(line, 1024, fp))
++            g_strstrip(line);
++            if (!read && g_str_has_prefix(line, "sync-applications"))
+             {
+-                g_strstrip(line);
+-                if (!read && g_str_has_prefix(line, "sync-applications"))
+-                {
+-                    read = TRUE;
+-                    continue;
+-                }
+-                if (read)
+-                {
+-                    if (!g_str_has_prefix(line, "-"))
+-                        break;
++                read = TRUE;
++                continue;
++            }
++            if (read)
++            {
++                if (!g_str_has_prefix(line, "-"))
++                    break;
+ 
+-                    if (!id_tables)
+-                        id_tables = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
++                if (!id_tables)
++                    id_tables = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+ 
+-                    char **id_map = g_strsplit(line + 2, ": ", -1);
+-                    g_hash_table_insert(id_tables, id_map[0], id_map[1]);
++                char **id_map = g_strsplit(line + 2, ": ", -1);
++                g_hash_table_insert(id_tables, id_map[0], id_map[1]);
+ 
+-                    char target_file[1024];
+-                    sprintf(target_file, "/etc/kylin-config/basec/%s.yaml", id_map[0]);
+-                    gboolean exists = !access(target_file, F_OK);
+-                    gboolean is_root = g_strcmp0(g_get_user_name(), "root");
+-                    if (!exists && !is_root)
+-                    {
+-                        char cmd[1024];
+-                        sprintf(cmd, "/usr/bin/gschema_xml2yaml --id %s --version 1.0.0.0 --path /etc/kylin-config/basic", id_map[0]);
+-                        system(cmd);
+-                    }
+-                    g_free(id_map);
++                char target_file[1024];
++                snprintf(target_file, sizeof(target_file), "/etc/kylin-config/basec/%s.yaml", id_map[0]);
++                gboolean exists = !access(target_file, F_OK);
++                gboolean is_root = g_strcmp0(g_get_user_name(), "root");
++                if (!exists && !is_root)
++                {
++                    char cmd[1024];
++                    snprintf(cmd, sizeof(cmd), "/usr/bin/gschema_xml2yaml --id %s --version 1.0.0.0 --path /etc/kylin-config/basic", id_map[0]);
++                    system(cmd);
+                 }
++                g_free(id_map);
+             }
+-            fclose(fp);
+         }
++        fclose(fp);
+     }
+ }
+ 
+diff --git a/src/conf2/tools/kconf2-tool.c b/src/conf2/tools/kconf2-tool.c
+index 18e0a1c..8da600e 100644
+--- a/src/conf2/tools/kconf2-tool.c
++++ b/src/conf2/tools/kconf2-tool.c
+@@ -56,6 +56,9 @@ static void print_help()
+            "    kconf2 COMMAND [ARGS...]\n"
+            "COMMAND:\n"
+            "    help                  Show this information\n"
++           "    list-apps             List all applications\n"
++           "    list-versions         List all version numbers of an application \n"
++           "    list-schemas          List schemas in system\n"
+            "    list-keys             List keys in a schema\n"
+            "    list-children         List children of a schema\n"
+            "    list-recursively      List keys and values, recursively\n"
+@@ -67,7 +70,6 @@ static void print_help()
+            //    "   reset-recursively     Reset all values in a given schema\n"
+            "    writable              Check if a key is writable\n"
+            "    monitor               Watch for changes\n"
+-           //    "    monitor-reload        Watch for realod\n"
+            "    reload                Reload configuration file, retain user configuration"
+            "    save                  Save User config in target folder"
+            "\n"
+@@ -86,6 +88,36 @@ static void print_command(char *command)
+                "Args\n"
+                "    COMMAND     Commands to be explained\n");
+     }
++    else if (0 == strcmp(command, "list-apps"))
++    {
++        printf("Usage:\n"
++               "    kconf2 list-apps\n"
++               "\n"
++               "List all applications\n"
++               "\n");
++    }
++    else if (0 == strcmp(command, "list-versions"))
++    {
++        printf("Usage:\n"
++               "    kconf2 list-versions APP\n"
++               "\n"
++               "List all version numbers of an application\n"
++               "\n"
++               "Args\n"
++               "    APP      The name of the application\n");
++    }
++    else if (0 == strcmp(command, "list-schemas"))
++    {
++        printf("Usage:\n"
++               "    kconf2 list-scemas [APP] [VERSION]\n"
++               "\n"
++               "If you don't specify an app and version, list all installed schemas.\n"
++               "otherwise list schemas items that specify the app and version.\n"
++               "\n"
++               "Args\n"
++               "    APP      The name of the application\n"
++               "    VERSION  Specify the version of the schemas\n");
++    }
+     else if (0 == strcmp(command, "list-keys"))
+     {
+         printf("Usage:\n"
+@@ -218,29 +250,6 @@ static void print_command(char *command)
+                "    VERSION     Specify the version of the schema\n"
+                "    KEY         Key in the schema\n");
+     }
+-    // else if (0 == strcmp(command, "monitor-reload"))
+-    // {
+-    //     printf("Usage:\n"
+-    //            "    kconf2 monitor-reload\n"
+-    //            "\n"
+-    //            "Monitor reload to the view.\n"
+-    //            "Use ^C to stop monitoring.\n"
+-    //            "\n"
+-    //            "Args\n"
+-    //            "    SCHEMA      The name of the schema\n");
+-    // }
+-    else if (0 == strcmp(command, "list-schemas"))
+-    {
+-        printf("Usage:\n"
+-               "    kconf2 list-scemas APP [VERSION]\n"
+-               "\n"
+-               "If you don't specify an app and version, list all installed schemas.\n"
+-               "otherwise list schemas items that specify the app and version.\n"
+-               "\n"
+-               "Args\n"
+-               "    APP      The name of the application\n"
+-               "    VERSION  Specify the version of the schemas\n");
+-    }
+     else if (0 == strcmp(command, "save"))
+     {
+         printf("Usage:\n"
+@@ -275,23 +284,45 @@ int main(int argc, char *argv[])
+         KSettings *ks = kdk_conf2_new(argv[2], NULL);
+         if (NULL == ks)
+         {
+-            p = argv[2];
+-            while (*p != ':' && *p != '\0')
+-                p++;
+-            version = *p ? p + 1 : NULL;
++            p = argv[2] + strlen(argv[2]);
++            while (*p != ':' && *p != argv + 2)
++                p--;
++            version = (p != argv + 2) ? p + 1 : NULL;
+             if (':' == *p)
+                 *p = '\0';
+         }
+         id = argv[2];
+     }
+ 
+-    if (0 == strcmp(argv[1], "list-schemas"))
++    if (0 == strcmp(argv[1], "list-apps"))
++    {
++        char **apps = kdk_conf2_list_applications();
++        if (NULL == apps)
++        {
++            printf("Get applications list failed\n");
++            exit(0);
++        }
++        for(int i = 0; apps[i]; i++)
++            printf("%s\n", apps[i]);
++    }
++    else if (0 == strcmp(argv[1], "list-versions"))
++    {
++        if (argc < 3)
++        {
++            print_command(argv[1]);
++            exit(0);
++        }
++        char **versions = kdk_conf2_list_versions(id);
++        if (NULL == versions)
++        {
++            printf("Get versions list failed\n");
++            exit(0);
++        }
++        for(int i = 0; versions[i]; i++)
++            printf("%s\n", versions[i]);
++    }
++    else if (0 == strcmp(argv[1], "list-schemas"))
+     {
+-        // if (argc < 3)
+-        // {
+-        //     print_command("list-schemas");
+-        //     exit(0);
+-        // }
+         gboolean limit_app = FALSE, limit_version = FALSE;
+         if (argc > 2)
+             limit_app = TRUE;
+@@ -314,7 +345,8 @@ int main(int argc, char *argv[])
+         {
+             if (limit_app && 0 != strcmp(argv[2], app->name))
+                 continue;
+-            printf("%s:\n", app->name);
++            if (!limit_app)
++                printf("%s:\n", app->name);
+ 
+             VersionData *version = NULL;
+             GHashTableIter ver_iter;
+@@ -324,11 +356,20 @@ int main(int argc, char *argv[])
+             {
+                 if (limit_version && 0 != strcmp(argv[3], version->name))
+                     continue;
+-                printf("\t%s:\n", version->name);
++                if (!limit_app && !limit_version)
++                    printf("\t%s:\n", version->name);
++                if (limit_app && !limit_version)
++                    printf("%s:\n", version->name);
++
+                 GList *schemas = g_hash_table_get_keys(version_hash);
+                 for (GList *tmp = schemas; tmp; tmp = tmp->next)
+                 {
+-                    printf("\t\t%s\n", (char *)tmp->data);
++                    if (!limit_app && !limit_version)
++                        printf("\t\t%s\n", (char *)tmp->data);
++                    else if (limit_app && !limit_version)
++                        printf("\t%s\n", (char *)tmp->data);
++                    else
++                        printf("%s\n", (char *)tmp->data);
+                 }
+                 g_list_free(schemas);
+             }

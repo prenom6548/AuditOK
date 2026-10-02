@@ -1,0 +1,430 @@
+From: Jie Liu <liujie01@kylinos.cn>
+Date: Mon, 26 May 2025 16:13:30 +0800
+Subject: Use private class to hide Wayland interface implementation details
+
+Change-Id: Ic612caf941f14c2b81490621d243c5b2d5742d1e
+---
+ .../src/kysdk-ukuiwindowhelper/ukuistartup.cpp     |  44 ++++-
+ .../src/kysdk-ukuiwindowhelper/ukuistartup.h       |   4 +-
+ .../kysdk-ukuiwindowhelper/ukuiwindowhelper.cpp    | 181 ++++++++++++++++-----
+ .../src/kysdk-ukuiwindowhelper/ukuiwindowhelper.h  |   9 +-
+ 4 files changed, 188 insertions(+), 50 deletions(-)
+
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.cpp b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.cpp
+index 2ef7994..65c05db 100644
+--- a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.cpp
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.cpp
+@@ -3,6 +3,8 @@
+ 
+ #include "wayland-ukui-startup-v1-client-protocol.h"
+ 
++#include <QDebug>
++
+ UkuiStartupManager *ukuiStartupManager()
+ {
+     static UkuiStartupManager *instance = nullptr;
+@@ -12,28 +14,58 @@ UkuiStartupManager *ukuiStartupManager()
+     return instance;
+ }
+ 
+-UkuiStartupManager::UkuiStartupManager()
++class UkuiStartupManagerPrivate
++{
++public:
++    UkuiStartupManagerPrivate();
++    ~UkuiStartupManagerPrivate();
++
++    void setStartupGeometryByPid(uint32_t pid, int x, int y, uint32_t width, uint32_t height);
++
++private:
++    ukui_startup_management_v1 *m_ukuiStartupManager = nullptr;
++};
++
++UkuiStartupManagerPrivate::UkuiStartupManagerPrivate()
+ {
+     m_ukuiStartupManager = static_cast<ukui_startup_management_v1 *>(ukuiDisplay()->bind(ukui_startup_management_v1_interface.name, &ukui_startup_management_v1_interface, ukui_startup_management_v1_interface.version));
+ }
+ 
+-UkuiStartupManager::~UkuiStartupManager()
++UkuiStartupManagerPrivate::~UkuiStartupManagerPrivate()
+ {
+-    if (m_ukuiStartupManager)
++    if (m_ukuiStartupManager) {
+         ukui_startup_management_v1_destroy(m_ukuiStartupManager);
+-
+-    m_ukuiStartupManager = nullptr;
++        m_ukuiStartupManager = nullptr;
++    }
+ }
+ 
+-void UkuiStartupManager::setStartupGeometryByPid(uint32_t pid, int x, int y, uint32_t width, uint32_t height)
++void UkuiStartupManagerPrivate::setStartupGeometryByPid(uint32_t pid, int x, int y, uint32_t width, uint32_t height)
+ {
+     if (!m_ukuiStartupManager) {
++        qWarning() << "UkuiStartupManager is not initialized";
+         return;
+     }
+ 
+     if (width <= 0 || height <= 0) {
++        qWarning() << "Invalid width or height for startup geometry";
+         return;
+     }
+ 
+     ukui_startup_management_v1_set_startup_geometry(m_ukuiStartupManager, pid, x, y, width, height);
+ }
++
++UkuiStartupManager::UkuiStartupManager()
++    : p(new UkuiStartupManagerPrivate())
++{
++}
++
++UkuiStartupManager::~UkuiStartupManager()
++{
++    delete p;
++    p = nullptr;
++}
++
++void UkuiStartupManager::setStartupGeometryByPid(uint32_t pid, int x, int y, uint32_t width, uint32_t height)
++{
++    p->setStartupGeometryByPid(pid, x, y, width, height);
++}
+\ No newline at end of file
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.h b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.h
+index ad5b4b9..b659174 100644
+--- a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.h
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuistartup.h
+@@ -3,7 +3,7 @@
+ #include <QObject>
+ 
+ class UkuiStartupManager;
+-struct ukui_startup_management_v1;
++class UkuiStartupManagerPrivate;
+ 
+ UkuiStartupManager *ukuiStartupManager();
+ 
+@@ -14,7 +14,7 @@ public:
+     void setStartupGeometryByPid(uint32_t pid, int x, int y, uint32_t width, uint32_t height);
+ 
+ private:
+-    ukui_startup_management_v1 *m_ukuiStartupManager = nullptr;
++    UkuiStartupManagerPrivate *p = nullptr;
+ 
+     explicit UkuiStartupManager();
+     friend UkuiStartupManager *ukuiStartupManager();
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.cpp b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.cpp
+index 6f25275..08ace65 100644
+--- a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.cpp
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.cpp
+@@ -31,29 +31,51 @@ ukui_surface_v1 *getUkuiSurfaceV1Object(QWindow *window)
+     return (ukui_surface_v1 *)fun(native, QByteArrayLiteral("ukui_surface_v1"), window);
+ }
+ 
+-UkuiWindowHelper::UkuiWindowHelper(QWidget *widget)
++class UkuiWindowHelperPrivate
++{
++public:
++    explicit UkuiWindowHelperPrivate(QWidget *widget);
++    explicit UkuiWindowHelperPrivate(QWindow *window);
++
++    void removeTitleBar();
++    void setWindowRole(UkuiWindowHelper::WindowRole role);
++    void setWindowState(UkuiWindowHelper::States state);
++    void setWindowIcon(const QString &iconName);
++    void setSkipTaskBar(bool skip);
++    void setSkipSwitcher(bool skip);
++    void setPanelAutoHide(bool autoHide);
++    void grabKeyboard();
++    void openUnderCursor(QPoint pos);
++    void setBlurEffect(QRegion region, int level = 0, bool enable = true);
++    void setSlideEffect(UkuiWindowHelper::Position position, int offset = 0, bool enable = true);
++    void showTileFlyout(QRect rect);
++    void setDecorationCompoents(UkuiWindowHelper::DecorationComponents components);
++
++private:
++    QWidget *m_widget = nullptr;
++    QWindow *m_window = nullptr;
++    ukui_surface_v1 *m_ukuiSurfacev1 = nullptr;
++
++    friend class UkuiWindowHelper;
++};
++
++UkuiWindowHelperPrivate::UkuiWindowHelperPrivate(QWidget *widget)
+     : m_widget(widget)
+ {
+     if (!m_widget) {
+-        qWarning() << "Creating a UkuiWindowHelper for a null QWidget(nullptr)!";
++        qWarning() << "Creating a UkuiWindowHelperPrivate for a null QWidget(nullptr)!";
+     }
+-    connect(m_widget, &QObject::destroyed, this, &QObject::deleteLater);
+ }
+ 
+-UkuiWindowHelper::UkuiWindowHelper(QWindow *window)
++UkuiWindowHelperPrivate::UkuiWindowHelperPrivate(QWindow *window)
+     : m_window(window)
+ {
+     if (!m_window) {
+-        qWarning() << "Creating a UkuiWindowHelper for a QWindow(nullptr)!";
++        qWarning() << "Creating a UkuiWindowHelperPrivate for a QWindow(nullptr)!";
+     }
+-    connect(m_window, &QObject::destroyed, this, &QObject::deleteLater);
+ }
+ 
+-UkuiWindowHelper::~UkuiWindowHelper()
+-{
+-}
+-
+-void UkuiWindowHelper::removeTitleBar()
++void UkuiWindowHelperPrivate::removeTitleBar()
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_no_titlebar", true);
+@@ -62,7 +84,7 @@ void UkuiWindowHelper::removeTitleBar()
+     }
+ }
+ 
+-void UkuiWindowHelper::setWindowRole(WindowRole role)
++void UkuiWindowHelperPrivate::setWindowRole(UkuiWindowHelper::WindowRole role)
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_role_v1", (int)role);
+@@ -71,7 +93,7 @@ void UkuiWindowHelper::setWindowRole(WindowRole role)
+     }
+ }
+ 
+-void UkuiWindowHelper::setWindowState(States states)
++void UkuiWindowHelperPrivate::setWindowState(UkuiWindowHelper::States states)
+ {
+     QPair<uint32_t, uint32_t> pair(0x3ff, states);
+     if (m_widget) {
+@@ -81,7 +103,7 @@ void UkuiWindowHelper::setWindowState(States states)
+     }
+ }
+ 
+-void UkuiWindowHelper::setWindowIcon(const QString &iconName)
++void UkuiWindowHelperPrivate::setWindowIcon(const QString &iconName)
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_icon", iconName);
+@@ -90,7 +112,7 @@ void UkuiWindowHelper::setWindowIcon(const QString &iconName)
+     }
+ }
+ 
+-void UkuiWindowHelper::setSkipTaskBar(bool skip)
++void UkuiWindowHelperPrivate::setSkipTaskBar(bool skip)
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_skip_taskbar", skip);
+@@ -99,7 +121,7 @@ void UkuiWindowHelper::setSkipTaskBar(bool skip)
+     }
+ }
+ 
+-void UkuiWindowHelper::setSkipSwitcher(bool skip)
++void UkuiWindowHelperPrivate::setSkipSwitcher(bool skip)
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_skip_switcher", skip);
+@@ -108,7 +130,7 @@ void UkuiWindowHelper::setSkipSwitcher(bool skip)
+     }
+ }
+ 
+-void UkuiWindowHelper::setPanelAutoHide(bool autoHide)
++void UkuiWindowHelperPrivate::setPanelAutoHide(bool autoHide)
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_panel_auto_hide", autoHide);
+@@ -117,7 +139,7 @@ void UkuiWindowHelper::setPanelAutoHide(bool autoHide)
+     }
+ }
+ 
+-void UkuiWindowHelper::grabKeyboard()
++void UkuiWindowHelperPrivate::grabKeyboard()
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_grab_keyboard", true);
+@@ -126,7 +148,7 @@ void UkuiWindowHelper::grabKeyboard()
+     }
+ }
+ 
+-void UkuiWindowHelper::openUnderCursor(QPoint pos)
++void UkuiWindowHelperPrivate::openUnderCursor(QPoint pos)
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_open_under_cursor", pos);
+@@ -135,7 +157,7 @@ void UkuiWindowHelper::openUnderCursor(QPoint pos)
+     }
+ }
+ 
+-void UkuiWindowHelper::setBlurEffect(QRegion region, int level, bool enable)
++void UkuiWindowHelperPrivate::setBlurEffect(QRegion region, int level, bool enable)
+ {
+     QPair<QRegion, int> pair(region, level);
+     if (!enable)
+@@ -148,7 +170,7 @@ void UkuiWindowHelper::setBlurEffect(QRegion region, int level, bool enable)
+     }
+ }
+ 
+-void UkuiWindowHelper::setSlideEffect(Position position, int offset, bool enable)
++void UkuiWindowHelperPrivate::setSlideEffect(UkuiWindowHelper::Position position, int offset, bool enable)
+ {
+     QPair<int, int> pair((int)position, offset);
+ 
+@@ -162,17 +184,7 @@ void UkuiWindowHelper::setSlideEffect(Position position, int offset, bool enable
+     }
+ }
+ 
+-UkuiWindowHelper::States UkuiWindowHelper::defaultState() const
+-{
+-    return UkuiWindowHelper::States(0xff);
+-}
+-
+-void UkuiWindowHelper::showTileFlyout()
+-{
+-    showTileFlyout(QRect());
+-}
+-
+-void UkuiWindowHelper::showTileFlyout(QRect rect)
++void UkuiWindowHelperPrivate::showTileFlyout(QRect rect)
+ {
+     if (qApp->platformName() != "wayland") {
+         qWarning() << "showTileFlyout() is only available on Wayland!";
+@@ -190,12 +202,7 @@ void UkuiWindowHelper::showTileFlyout(QRect rect)
+     ukui_surface_v1_show_tile_flyout(m_ukuiSurfacev1, nullptr, rect.x(), rect.y(), rect.width(), rect.height());
+ }
+ 
+-void UkuiWindowHelper::setDecorationState(DecorationStates state)
+-{
+-    setDecorationCompoents((DecorationComponents)(int)state);
+-}
+-
+-void UkuiWindowHelper::setDecorationCompoents(DecorationComponents components)
++void UkuiWindowHelperPrivate::setDecorationCompoents(UkuiWindowHelper::DecorationComponents components)
+ {
+     if (m_widget) {
+         m_widget->setProperty("ukui_surface_decoration_components", (uint32_t)components);
+@@ -203,3 +210,101 @@ void UkuiWindowHelper::setDecorationCompoents(DecorationComponents components)
+         m_window->setProperty("ukui_surface_decoration_components", (uint32_t)components);
+     }
+ }
++
++UkuiWindowHelper::UkuiWindowHelper(QWidget *widget)
++    : p(new UkuiWindowHelperPrivate(widget))
++{
++    connect(widget, &QObject::destroyed, this, &QObject::deleteLater);
++}
++
++UkuiWindowHelper::UkuiWindowHelper(QWindow *window)
++    : p(new UkuiWindowHelperPrivate(window))
++{
++    connect(window, &QObject::destroyed, this, &QObject::deleteLater);
++}
++
++UkuiWindowHelper::~UkuiWindowHelper()
++{
++    delete p;
++    p = nullptr;
++}
++
++void UkuiWindowHelper::removeTitleBar()
++{
++    p->removeTitleBar();
++}
++
++void UkuiWindowHelper::setWindowRole(WindowRole role)
++{
++    p->setWindowRole(role);
++}
++
++void UkuiWindowHelper::setWindowState(States states)
++{
++    p->setWindowState(states);
++}
++
++void UkuiWindowHelper::setWindowIcon(const QString &iconName)
++{
++    p->setWindowIcon(iconName);
++}
++
++void UkuiWindowHelper::setSkipTaskBar(bool skip)
++{
++    p->setSkipTaskBar(skip);
++}
++
++void UkuiWindowHelper::setSkipSwitcher(bool skip)
++{
++    p->setSkipSwitcher(skip);
++}
++
++void UkuiWindowHelper::setPanelAutoHide(bool autoHide)
++{
++    p->setPanelAutoHide(autoHide);
++}
++
++void UkuiWindowHelper::grabKeyboard()
++{
++    p->grabKeyboard();
++}
++
++void UkuiWindowHelper::openUnderCursor(QPoint pos)
++{
++    p->openUnderCursor(pos);
++}
++
++void UkuiWindowHelper::setBlurEffect(QRegion region, int level, bool enable)
++{
++    p->setBlurEffect(region, level, enable);
++}
++
++void UkuiWindowHelper::setSlideEffect(Position position, int offset, bool enable)
++{
++    p->setSlideEffect(position, offset, enable);
++}
++
++UkuiWindowHelper::States UkuiWindowHelper::defaultState() const
++{
++    return UkuiWindowHelper::States(0xff);
++}
++
++void UkuiWindowHelper::showTileFlyout()
++{
++    p->showTileFlyout(QRect());
++}
++
++void UkuiWindowHelper::showTileFlyout(QRect rect)
++{
++    p->showTileFlyout(rect);
++}
++
++void UkuiWindowHelper::setDecorationState(DecorationStates state)
++{
++    p->setDecorationCompoents((DecorationComponents)(int)state);
++}
++
++void UkuiWindowHelper::setDecorationCompoents(DecorationComponents components)
++{
++    p->setDecorationCompoents(components);
++}
+diff --git a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.h b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.h
+index 0fc9a90..a06b926 100644
+--- a/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.h
++++ b/kysdk-waylandhelper/src/kysdk-ukuiwindowhelper/ukuiwindowhelper.h
+@@ -5,7 +5,7 @@
+ class QWidget;
+ class QWindow;
+ 
+-struct ukui_surface_v1;
++struct UkuiWindowHelperPrivate;
+ 
+ class UkuiWindowHelper : public QObject
+ {
+@@ -109,7 +109,8 @@ public:
+     void setDecorationCompoents(DecorationComponents components);
+ 
+ private:
+-    QWidget *m_widget = nullptr;
+-    QWindow *m_window = nullptr;
+-    struct ukui_surface_v1 *m_ukuiSurfacev1 = nullptr;
++    UkuiWindowHelperPrivate *p = nullptr;
+ };
++
++Q_DECLARE_OPERATORS_FOR_FLAGS(UkuiWindowHelper::States)
++Q_DECLARE_OPERATORS_FOR_FLAGS(UkuiWindowHelper::DecorationComponents)
