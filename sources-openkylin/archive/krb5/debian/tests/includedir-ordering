@@ -1,0 +1,43 @@
+#!/bin/sh
+# This test is identical to the d/tests/kinit, but tests
+# that the includedir configuration ordering is correct.
+
+set -ex
+
+. debian/tests/util
+
+trap __cleanup EXIT
+
+TEST_REALM="EXAMPLE.INTERNAL"
+MYHOSTNAME="krb5-dep8.internal"
+adjust_hostname "${MYHOSTNAME}"
+
+# krb5 should only consider the first includedir file that sets default_realm
+cat > /etc/krb5.conf.d/00-good-realm.conf <<EOF
+[libdefaults]
+    default_realm = ${TEST_REALM}
+EOF
+for i in $(seq 1 9); do
+    cat > /etc/krb5.conf.d/${i}0-bad-realm.conf <<EOF
+[libdefaults]
+    default_realm = BAD-${i}.INTERNAL
+EOF
+done
+
+create_realm "${TEST_REALM}" "${MYHOSTNAME}"
+
+# create a random-enough principal
+principal="testuser$$"
+kadmin.local -q "addprinc -pw secret ${principal}"
+
+# get a ticket
+echo secret | kinit ${principal}
+
+# did we really get a ticket?
+klist | grep krbtgt/${TEST_REALM}@${TEST_REALM}
+
+# destroy it
+kdestroy
+
+# delete the principal
+kadmin.local -q "delprinc -force ${principal}"

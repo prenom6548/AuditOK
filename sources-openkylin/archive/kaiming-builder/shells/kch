@@ -1,0 +1,153 @@
+#!/bin/bash
+
+set -e
+
+# 变量初始化
+help_flag=0
+create_flag=0
+increment_flag=0
+show_lastversion_flag=0
+changes=()
+changelog=""
+
+error() {
+    echo -e "\e[31mError:\e[0m  $* "
+    exit 1
+}
+
+waring() {
+    echo -e "\e[33mWarning:\e[0m $* "
+}
+
+log() {
+    echo "Info: $*"
+}
+
+usage() {
+    echo -e "usage:\n    $0 [options] "
+    echo -e "Options:"
+    echo -e "  -c, --create"
+    echo -e "       Create a new changelog"
+    echo -e "  -i, --increment"
+    echo -e "       Add a new changelog record"
+    echo -e "  -a, --append"
+    echo -e "       Append a new entry to the current changelog"
+    echo -e "  --last-version"
+    echo -e "       Show the last version of changelog"
+    echo -e "  --changelog-file"
+    echo -e "       Must be used with --last-version to specify the changelog file"
+}
+
+create() {
+    local args=""
+    for arg in "${changes[@]}"; do
+        args+=" -a ${arg} "
+    done
+
+    kaiming-builder kch --create ${args}
+    [[ $? -eq 0 ]] && sync && openChangelog
+}
+
+increment() {
+    local args=""
+    for arg in "${changes[@]}"; do
+        args+=" -a ${arg} "
+    done
+
+    kaiming-builder kch --increment ${args}
+    [[ $? -eq 0 ]] && sync && openChangelog
+}
+
+append() {
+    local args=""
+    for arg in "${changes[@]}"; do
+        args+=" -a ${arg} "
+    done
+
+    kaiming-builder kch ${args}
+    [[ $? -eq 0 ]] && sync && openChangelog
+}
+
+showVersion() {
+    local args=""
+    [[ -n "${changelog}" ]] && args="--changelog-file ${changelog}"
+
+    kaiming-builder kch --last-version ${args}
+}
+
+openChangelog() {
+    local changelog_file=""
+
+    if [ -d "kaiming" ]; then
+        changelog_file=`find kaiming -maxdepth 1 -type f -name "changelog" -print -quit 2>/dev/null`
+    else
+        changelog_file=`find . -maxdepth 1 -type f -name "changelog" -print -quit 2>/dev/null`
+    fi
+
+    test -z "$changelog_file" && error "Not found 'changelog' in subdir : kaiming"
+    vi +3 ${changelog_file}
+}
+
+main() {
+
+    # 定义选项
+    options=$(getopt -o hcia: -l help,create,increment,append:,last-version,changelog-file: -- "$@") || error "Parse command line error."
+    eval set -- "$options"
+
+    while true; do
+        case "$1" in
+            -h | --help)
+                help_flag=1
+                shift 
+                ;;
+            -c | --create)
+                create_flag=1
+                shift 
+                ;;
+            -i | --increment)
+                increment_flag=1
+                shift 
+                ;;
+            -a | --append)
+                shift
+                changes+=("$1")
+                shift
+                ;;
+            --last-version)
+                show_lastversion_flag=1
+                shift
+                ;;
+            --changelog-file)
+                shift
+                changelog="$1"
+                shift
+                ;;
+            --)
+                shift
+                break 
+                ;;
+            *)
+                shift 
+                ;;
+        esac
+    done
+
+    if [[ ${help_flag} == 1 ]]; then
+        usage
+        exit 0
+    elif [[ ${create_flag} == 1 ]]; then
+        create
+        exit 0
+    elif [[ ${increment_flag} == 1 ]]; then
+        increment
+        exit 0
+    elif [[ ${#changes[@]} > 0 ]]; then
+        append
+        exit 0
+    elif [[ ${show_lastversion_flag} == 1 ]]; then
+        showVersion
+        exit 0
+    fi
+}
+
+main "$@"

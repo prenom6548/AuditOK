@@ -1,0 +1,16 @@
+#include "doubleclickwidget.h"
+
+DoubleClickWidget::DoubleClickWidget(QWidget *parent) :
+    QWidget(parent)
+{
+
+}
+
+void DoubleClickWidget::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    Q_UNUSED(event)
+    if (event->button() == Qt::LeftButton){  // 左键双击事件才发射双击信号
+        emit this->doubleClicked();
+    }
+}
+

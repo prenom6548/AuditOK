@@ -1,0 +1,73 @@
+#!/usr/bin/make -f
+# See debhelper(7) (uncomment to enable)
+# output every command that modifies files on the build system.
+#export DH_VERBOSE = 1
+
+# see FEATURE AREAS in dpkg-buildflags(1)
+#export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# see ENVIRONMENT in dpkg-buildflags(1)
+# package maintainers to append CFLAGS
+#export DEB_CFLAGS_MAINT_APPEND  = -Wall -pedantic
+# package maintainers to append LDFLAGS
+#export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+
+DEB_HOST_ARCH := $(shell dpkg-architecture -qDEB_HOST_ARCH)
+ifeq ($(DEB_HOST_ARCH),amd64)
+	BACKEND_DL = ON
+	BACKEND_NATIVE = OFF
+	CXXFLAGS = ""
+	CFLAGS = ""
+else
+	BACKEND_DL = OFF
+	BACKEND_NATIVE = ON
+	CXXFLAGS = "-mtune=native"
+	CFLAGS = "-mtune=native"
+endif
+
+%:
+	dh $@
+
+
+# dh_make generated override targets
+# This is example for Cmake (See https://bugs.debian.org/641051 )
+#override_dh_auto_configure:
+#	dh_auto_configure -- #	-DCMAKE_LIBRARY_PATH=$(DEB_HOST_MULTIARCH)
+override_dh_auto_configure:
+	rm -rf build
+	mkdir -p build
+	cd build && cmake .. \
+	-DCMAKE_CXX_FLAGS=$(CXXFLAGS) \
+	-DCMAKE_C_FLAGS=$(CFLAGS) \
+	-DCMAKE_INSTALL_PREFIX=/usr \
+        -DCMAKE_INSTALL_LIBDIR=/usr/lib \
+        -DCMAKE_BUILD_TYPE=Release \
+	-DGGML_BACKEND_DL=$(BACKEND_DL) \
+	-DLLAMA_CURL=OFF \
+	-DGGML_NATIVE=$(BACKEND_NATIVE) \
+	-DGGML_CPU_ALL_VARIANTS=$(BACKEND_DL) \
+        -DGGML_CUDA=OFF \
+
+override_dh_auto_build:
+	cd build && make -j$(nproc)
+
+override_dh_auto_test:
+	true    
+
+override_dh_auto_install:
+	rm -rf $(CURDIR)/debian/tmp
+	cd build && make install DESTDIR=$(CURDIR)/debian/tmp
+
+override_dh_strip:
+	dh_strip 
+
+override_dh_install:
+	dh_install
+
+override_dh_shlibdeps:
+	dh_shlibdeps --dpkg-shlibdeps-params=--ignore-missing-info
+
+clean:
+	rm -rf build
+	dh_clean
+

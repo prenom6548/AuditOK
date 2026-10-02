@@ -1,0 +1,130 @@
+#!/bin/sh
+
+set -e
+
+adduser \
+	--force-badname \
+	--gecos "Kaiming system-wide installation helper" \
+	--group \
+	--home /nonexistent \
+	--no-create-home \
+	--quiet \
+	--system \
+	_kaiming
+
+kaimingdesktopdir="/opt/kaiming/share/applications"
+kaimingexportdir="/opt/kaiming/exports/share/applications"
+kaimingexporticons="/opt/kaiming/exports/share/icons/hicolor/scalable/apps"
+kaimingicondir="/opt/kaiming/share/icons/hicolor/scalable/apps"
+kaimingexportimime="/opt/kaiming/exports/share/icons/hicolor/scalable/mimetypes"
+kaimingmimedir="/opt/kaiming/share/icons/hicolor/scalable/mimetypes"
+kaimingdir="/opt/kaiming"
+kaimingrepo="/opt/kaiming/repo"
+kaimingreposummaries="/opt/kaiming/repo/tmp/cache/summaries"
+kaimingurl="https://archive2.kylinos.cn/KM/repo-v11"
+
+etc_path="/etc"
+lib_path="/opt/system/lib"
+
+if [ ! -d "${kaimingdir}" ]; then
+	mkdir -p "${kaimingdir}"
+fi
+
+if [ ! -d "${kaimingdesktopdir}" ]; then
+	mkdir -p "${kaimingdesktopdir}"
+fi
+
+if [ ! -d "${kaimingexportdir}" ]; then
+	mkdir -p "${kaimingexportdir}"
+fi
+
+if [ ! -d "${kaimingexporticons}" ]; then
+	mkdir -p "${kaimingexporticons}"
+fi
+
+if [ ! -d "${kaimingmimedir}" ]; then
+	mkdir -p "${kaimingmimedir}"
+fi
+
+if [ ! -d "${kaimingexportimime}" ]; then
+	mkdir -p "${kaimingexportimime}"
+fi
+
+if [ ! -d "${kaimingicondir}" ]; then
+	mkdir -p "${kaimingicondir}"
+fi
+
+if [ -e ${etc_path}/bash_completion.d/kaiming_completion.sh ]; then
+	chmod +x ${etc_path}/bash_completion.d/kaiming_completion.sh
+fi
+
+# if [ ! -d "${kaimingrepo}" ]; then
+# 	ostree init --mode=bare-user --repo "${kaimingrepo}"
+# 	ostree remote add kaiming-repo --no-gpg-verify "${kaimingurl}"  --repo "${kaimingrepo}"
+# fi
+
+# if [ ! -d "${kaimingreposummaries}" ]; then
+# 	mkdir -p "${kaimingreposummaries}"
+# fi
+
+if [ -e /opt/kaiming-tools/bin/kaiming_version.sh ]; then
+	chmod +x /opt/kaiming-tools/bin/kaiming_version.sh
+	/opt/kaiming-tools/bin/kaiming_version.sh
+fi
+
+if [ -e /opt/kaiming-tools/bin/start.sh ]; then
+	chmod +x /opt/kaiming-tools/bin/start.sh
+fi
+
+if [ -e /opt/kaiming-tools/bin/dbus-cli.sh ]; then
+	chmod +x /opt/kaiming-tools/bin/dbus-cli.sh
+fi
+
+if [ -e /opt/kaiming-tools/bin/x11-ext.sh ]; then
+	chmod +x /opt/kaiming-tools/bin/x11-ext.sh
+fi
+
+if pgrep -f "kaiming-system-dbus" >/dev/null; then
+	killall kaiming-system-dbus >/dev/null 2>&1
+fi
+
+if pgrep -f "kaiming-systemproxy-dbus" >/dev/null; then
+	killall kaiming-systemproxy-dbus >/dev/null 2>&1
+fi
+
+if pgrep -f "kaiming-sessionproxy-dbus" >/dev/null; then
+	killall kaiming-sessionproxy-dbus >/dev/null 2>&1
+fi
+
+if pgrep -f "km-ses-dbusproxy" >/dev/null; then
+	killall km-ses-dbusproxy >/dev/null 2>&1
+fi
+
+if [ -e /opt/kaiming-tools/bin/kaiming ]; then
+	chmod +x /opt/kaiming-tools/bin/kaiming
+fi
+
+# 适配V11不可变
+chmod +x /opt/kaiming-tools/bin/install_files.sh
+/opt/kaiming-tools/bin/install_files.sh
+
+find "/opt/kaiming-tools/lib" -type f -name "ld-linux*.so*" -exec chmod +x {} \;
+
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	deb-systemd-helper unmask 'org.kylin.kaiming.service' >/dev/null || true
+	systemctl enable 'org.kylin.kaiming.service' >/dev/null || true
+
+	if [ -e "/lib/systemd/user/km-ses-dbusproxy.service" ] && [ ! -e "/etc/systemd/user/default.target.wants/km-ses-dbusproxy.service" ]; then
+		if [ ! -d "/etc/systemd/user/default.target.wants" ]; then
+            mkdir -p "/etc/systemd/user/default.target.wants"
+        fi
+		ln -s "/lib/systemd/user/km-ses-dbusproxy.service" "/etc/systemd/user/default.target.wants/km-ses-dbusproxy.service"
+    fi
+
+	if [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+		deb-systemd-invoke start 'org.kylin.kaiming.service' >/dev/null || true
+	fi
+fi
+
+exit 0

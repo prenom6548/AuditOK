@@ -1,0 +1,172 @@
+From: Athos Ribeiro <athos@ubuntu.com>
+Date: Thu, 23 Apr 2026 16:51:13 +0800
+Subject: Do not default to weak encryption algorithms
+
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/krb5/+bug/2144909
+Last-Update: 2026-03-19
+
+As described in [1], arcfour-hmac-md5 and des3-cbc-sha1 are weak, deprecated
+algorithms. However, krb5 still includes them in its default algorithm lists
+when users do not specify a list with algorithms to be used. This patch drops
+these two deprecated algorithms from that default list.
+
+[1] https://web.mit.edu/kerberos/krb5-1.20/doc/admin/enctypes.html#enctype-compatibility
+Last-Update: 2026-03-19
+---
+ doc/conf.py                 | 2 +-
+ src/lib/krb5/krb/init_ctx.c | 2 --
+ src/tests/t_authdata.py     | 6 ++++--
+ src/tests/t_etype_info.py   | 7 ++++---
+ src/tests/t_keyrollover.py  | 2 +-
+ src/tests/t_sesskeynego.py  | 9 +++++----
+ src/util/k5test.py          | 7 ++++++-
+ 7 files changed, 21 insertions(+), 14 deletions(-)
+
+diff --git a/doc/conf.py b/doc/conf.py
+index 60835e9..add6744 100644
+--- a/doc/conf.py
++++ b/doc/conf.py
+@@ -281,7 +281,7 @@ else:
+     rst_epilog += '''
+ .. |krb5conf| replace:: ``/etc/krb5.conf``
+ .. |defkeysalts| replace:: ``aes256-cts-hmac-sha1-96:normal aes128-cts-hmac-sha1-96:normal``
+-.. |defetypes| replace:: ``aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96 aes256-cts-hmac-sha384-192 aes128-cts-hmac-sha256-128 des3-cbc-sha1 arcfour-hmac-md5 camellia256-cts-cmac camellia128-cts-cmac``
++.. |defetypes| replace:: ``aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96 aes256-cts-hmac-sha384-192 aes128-cts-hmac-sha256-128 camellia256-cts-cmac camellia128-cts-cmac``
+ .. |defmkey| replace:: ``aes256-cts-hmac-sha1-96``
+ .. |copy| unicode:: U+000A9
+ '''
+diff --git a/src/lib/krb5/krb/init_ctx.c b/src/lib/krb5/krb/init_ctx.c
+index 1d63f32..bb22d16 100644
+--- a/src/lib/krb5/krb/init_ctx.c
++++ b/src/lib/krb5/krb/init_ctx.c
+@@ -59,8 +59,6 @@
+ static krb5_enctype default_enctype_list[] = {
+     ENCTYPE_AES256_CTS_HMAC_SHA1_96, ENCTYPE_AES128_CTS_HMAC_SHA1_96,
+     ENCTYPE_AES256_CTS_HMAC_SHA384_192, ENCTYPE_AES128_CTS_HMAC_SHA256_128,
+-    ENCTYPE_DES3_CBC_SHA1,
+-    ENCTYPE_ARCFOUR_HMAC,
+     ENCTYPE_CAMELLIA128_CTS_CMAC, ENCTYPE_CAMELLIA256_CTS_CMAC,
+     0
+ };
+diff --git a/src/tests/t_authdata.py b/src/tests/t_authdata.py
+index bde1c36..c9fcf78 100644
+--- a/src/tests/t_authdata.py
++++ b/src/tests/t_authdata.py
+@@ -4,7 +4,8 @@ from k5test import *
+ greet_path = os.path.join(buildtop, 'plugins', 'authdata', 'greet_server',
+                           'greet_server.so')
+ conf = {'realms': {'$realm': {'max_life': '20h', 'max_renewable_life': '20h'}},
+-        'plugins': {'kdcauthdata': {'module': 'greet:' + greet_path}}}
++        'plugins': {'kdcauthdata': {'module': 'greet:' + greet_path}},
++        'libdefaults': {'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}
+ realm = K5Realm(krb5_conf=conf)
+ 
+ # With no requested authdata, we expect to see PAC (128) in an
+@@ -89,7 +90,8 @@ realm.stop()
+ # can control the indicators asserted.
+ testpreauth = os.path.join(buildtop, 'plugins', 'preauth', 'test', 'test.so')
+ krb5conf = {'plugins': {'kdcpreauth': {'module': 'test:' + testpreauth},
+-                        'clpreauth': {'module': 'test:' + testpreauth}}}
++                        'clpreauth': {'module': 'test:' + testpreauth}},
++            'libdefaults': {'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}
+ realm, realm2 = cross_realms(2, args=({'realm': 'LOCAL'},
+                                       {'realm': 'FOREIGN'}),
+                              krb5_conf=krb5conf, get_creds=False)
+diff --git a/src/tests/t_etype_info.py b/src/tests/t_etype_info.py
+index 38cf96c..d856692 100644
+--- a/src/tests/t_etype_info.py
++++ b/src/tests/t_etype_info.py
+@@ -1,7 +1,7 @@
+ from k5test import *
+ 
+ supported_enctypes = 'aes128-cts des3-cbc-sha1 rc4-hmac'
+-conf = {'libdefaults': {'allow_des3': 'true', 'allow_rc4': 'true'},
++conf = {'libdefaults': {'allow_des3': 'true', 'allow_rc4': 'true', 'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES},
+         'realms': {'$realm': {'supported_enctypes': supported_enctypes}}}
+ realm = K5Realm(create_host=False, get_creds=False, krb5_conf=conf)
+ 
+@@ -16,7 +16,7 @@ realm.run([kadminl, 'addprinc', '-nokey', '+requires_preauth', 'nokeyuser'])
+ # list.  Compare the output to the expected lines, ignoring order.
+ def test_etinfo(princ, enctypes, expected_lines):
+     mark('etinfo test: %s %s' % (princ.partition('@')[0], enctypes))
+-    conf = {'libdefaults': {'default_tkt_enctypes': enctypes}}
++    conf = {'libdefaults': {'default_tkt_enctypes': enctypes, 'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}
+     etypes_env = realm.special_env('etypes', False, krb5_conf=conf)
+     lines = realm.run(['./etinfo', princ], env=etypes_env).splitlines()
+     if sorted(lines) != sorted(expected_lines):
+@@ -58,7 +58,8 @@ test_etinfo('nokeyuser', 'des3', [])
+ mark('MORE_PREAUTH_DATA_REQUIRED test')
+ realm.stop()
+ testpreauth = os.path.join(buildtop, 'plugins', 'preauth', 'test', 'test.so')
+-conf = {'plugins': {'kdcpreauth': {'module': 'test:' + testpreauth},
++conf = {'libdefaults': {'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES},
++        'plugins': {'kdcpreauth': {'module': 'test:' + testpreauth},
+                     'clpreauth': {'module': 'test:' + testpreauth}}}
+ realm = K5Realm(create_host=False, get_creds=False, krb5_conf=conf)
+ realm.run([kadminl, 'setstr', realm.user_princ, '2rt', '2rtval'])
+diff --git a/src/tests/t_keyrollover.py b/src/tests/t_keyrollover.py
+index 036c0c3..be11658 100755
+--- a/src/tests/t_keyrollover.py
++++ b/src/tests/t_keyrollover.py
+@@ -1,7 +1,7 @@
+ from k5test import *
+ import re
+ 
+-rollover_krb5_conf = {'libdefaults': {'allow_weak_crypto': 'true'}}
++rollover_krb5_conf = {'libdefaults': {'allow_weak_crypto': 'true', 'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}
+ 
+ realm = K5Realm(krbtgt_keysalt='aes128-cts-hmac-sha256-128:normal',
+                 krb5_conf=rollover_krb5_conf)
+diff --git a/src/tests/t_sesskeynego.py b/src/tests/t_sesskeynego.py
+index 5a21361..6475230 100755
+--- a/src/tests/t_sesskeynego.py
++++ b/src/tests/t_sesskeynego.py
+@@ -23,10 +23,11 @@ conf2 = {'libdefaults': {'default_tgs_enctypes': 'aes256-cts,aes128-cts'}}
+ conf3 = {'libdefaults': {
+         'allow_weak_crypto': 'true',
+         'default_tkt_enctypes': 'aes128-cts',
+-        'default_tgs_enctypes': 'rc4-hmac,aes128-cts'}}
++        'default_tgs_enctypes': 'rc4-hmac,aes128-cts',
++        'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}
+ conf4 = {'libdefaults': {'permitted_enctypes': 'aes256-cts'}}
+-conf5 = {'libdefaults': {'allow_rc4': 'true'}}
+-conf6 = {'libdefaults': {'allow_des3': 'true'}}
++conf5 = {'libdefaults': {'allow_rc4': 'true', 'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}
++conf6 = {'libdefaults': {'allow_des3': 'true', 'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}
+ # Test with client request and session_enctypes preferring aes128, but
+ # aes256 long-term key.
+ realm = K5Realm(krb5_conf=conf1, create_host=False, get_creds=False)
+@@ -86,7 +87,7 @@ test_kvno(realm, 'DEPRECATED:des3-cbc-sha1', 'aes256-cts-hmac-sha1-96')
+ realm.stop()
+ 
+ # 7: default config negotiates aes256-sha1 session key for RC4-only service.
+-realm = K5Realm(create_host=False, get_creds=False)
++realm = K5Realm(krb5_conf={'libdefaults': {'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}}, create_host=False, get_creds=False)
+ realm.run([kadminl, 'addprinc', '-randkey', '-e', 'rc4-hmac', 'server'])
+ test_kvno(realm, 'aes256-cts-hmac-sha1-96', 'DEPRECATED:arcfour-hmac')
+ realm.stop()
+diff --git a/src/util/k5test.py b/src/util/k5test.py
+index bea28e3..12f8abc 100644
+--- a/src/util/k5test.py
++++ b/src/util/k5test.py
+@@ -403,6 +403,11 @@ import string
+ import subprocess
+ import sys
+ 
++# This is the upstream default value for the permitted_enctypes configuration.
++# since we are dropping some insecure algorithms from it, we re-set it here to
++# reduce the testing impact of our changes in the upstream defauts.
++UPSTREAM_DEFAULT_ENCTYPES = 'aes256-cts-hmac-sha1-96 aes128-cts-hmac-sha1-96 aes256-cts-hmac-sha384-192 aes128-cts-hmac-sha256-128 des3-cbc-sha1 arcfour-hmac-md5 camellia256-cts-cmac camellia128-cts-cmac'
++
+ # Used when most things go wrong (other than programming errors) so
+ # that the user sees an error message rather than a Python traceback,
+ # without help from the test script.  The on-exit handler will display
+@@ -1450,7 +1455,7 @@ _passes = [
+ 
+     # Test a setup with modern principal keys but an old TGT key.
+     ('aes256.destgt', 'arcfour-hmac:normal',
+-     {'libdefaults': {'allow_weak_crypto': 'true'}},
++     {'libdefaults': {'allow_weak_crypto': 'true', 'permitted_enctypes': UPSTREAM_DEFAULT_ENCTYPES}},
+      None)
+ ]
+ 

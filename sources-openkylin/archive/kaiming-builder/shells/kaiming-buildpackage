@@ -1,0 +1,88 @@
+#!/bin/bash
+
+set -e
+
+manifest=""
+changelog=""
+
+error() {
+    echo -e "\e[31mError:\e[0m  $* "
+    exit 1
+}
+
+waring() {
+    echo -e "\e[33mWarning:\e[0m $* "
+}
+
+log() {
+    echo "Info: $*"
+}
+
+usage() {
+    echo -e "usage:\n    $0 "
+}
+
+getManifest() {
+    if [ -d "kaiming" ]; then
+        manifest=`find kaiming -maxdepth 1 -type f -name "*.km.yaml" -o -name "*.km.yml" -quit 2>/dev/null`
+    else
+        manifest=`find . -maxdepth 1 -type f -name "*.km.yaml" -o -name "*.km.yml" -quit 2>/dev/null`
+    fi
+
+    test -z "$manifest" && error "Not found manifest: xxx.km.yaml or xxx.km.yml in subdir: kaiming"
+    echo "manifest: ${manifest}"
+}
+
+checkChangelog() {
+    if [ -d "kaiming" ]; then
+        changelog=`find kaiming -maxdepth 1 -type f -name "changelog" -print -quit 2>/dev/null`
+    else
+        changelog=`find . -maxdepth 1 -type f -name "changelog" -print -quit 2>/dev/null`
+    fi
+
+    test -z "$changelog" && waring "Not found 'changelog' in subdir : kaiming"
+    echo "changelog: ${changelog}"
+}
+
+build() {
+    kaiming-builder build -f -k $manifest && mv *.ok ../
+}
+
+hostmode_build() {
+    kaiming-builder hostmode-build -f -o .. .
+}
+
+main() {
+    # 定义选项，当前仅支持-h、--help，其它参数预留
+    options=$(getopt -o h -l help -- "$@") || error "Parse command line error."
+    eval set -- "$options"
+
+    # 变量初始化
+    help_flag=0
+
+    while true; do
+        case "$1" in
+            -h |--help) help_flag=1; shift ;;
+            --) shift; break ;;
+            *) shift ;;
+        esac
+    done
+
+    if [[ $help_flag == 1 ]]; then
+        usage
+        exit 0
+    fi
+
+    hostmode=0
+    [ -e kaiming/manifest.yaml ] && ! grep -w '^components' kaiming/manifest.yaml > /dev/null 2>&1 && hostmode=1
+
+    if [[ $hostmode == 1 ]]; then
+        hostmode_build
+    else
+        getManifest
+        checkChangelog
+        build
+    fi
+}
+
+main "$@"

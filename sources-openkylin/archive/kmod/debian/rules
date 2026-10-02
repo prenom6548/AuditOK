@@ -1,0 +1,120 @@
+#!/usr/bin/make -f
+
+export KDIR = $(shell find /usr/lib/modules/ -maxdepth 2 -mindepth 2 -type l -name build | sort | tail -1)
+
+# Disable the test suite if the kernel headers are not available
+ifeq (,$(KDIR))
+  DEB_BUILD_OPTIONS+=nocheck
+endif
+
+ifeq ($(filter noudeb,$(DEB_BUILD_PROFILES)),)
+BUILD_UDEB := 1
+endif
+
+KMOD_ENABLE_DOCS=$(if $(filter nodoc,$(DEB_BUILD_PROFILES)),false,true)
+KMOD_ENABLE_TESTS=$(if $(filter nocheck,$(DEB_BUILD_PROFILES)),false,true)
+
+D   := $(CURDIR)/debian/kmod
+DK  := $(CURDIR)/debian/libkmod2
+DD  := $(CURDIR)/debian/libkmod-dev
+DU  := $(CURDIR)/debian/kmod-udeb
+DKU := $(CURDIR)/debian/libkmod2-udeb
+TU  := $(CURDIR)/debian/tmp-udeb
+
+CONFFLAGS =
+CONFFLAGS_deb  = $(CONFFLAGS) \
+  -D build-tests=$(KMOD_ENABLE_TESTS) \
+  -D docs=$(KMOD_ENABLE_DOCS) \
+  -D openssl=enabled \
+  -D dlopen=all \
+  -D zlib=disabled \
+  -D xz=enabled \
+  -D zstd=enabled
+CONFFLAGS_udeb = $(CONFFLAGS) \
+  -D docs=false \
+  -D openssl=disabled \
+  -D zlib=disabled \
+  -D xz=enabled \
+  -D zstd=disabled
+
+##############################################################################
+ifdef BUILD_UDEB
+  BUILD_UDEB_TARGET := build-udeb/.stamp-build
+endif
+
+##############################################################################
+%:
+	dh $@ --buildsystem=meson
+
+execute_before_dh_clean:
+	rm -rf build-*deb $(TU)
+
+# ignore dh_autoreconf until the autoconf-based build system will be removed
+override_dh_autoreconf:
+
+build-deb/build.ninja:
+	$(shell DEB_BUILD_MAINT_OPTIONS="hardening=+bindnow" \
+		dpkg-buildflags --export=configure || true) \
+	dh_auto_configure --builddir=build-deb -- $(CONFFLAGS_deb)
+
+build-udeb/build.ninja:
+	$(subst -O2,-Os -fomit-frame-pointer,$(shell DEB_BUILD_MAINT_OPTIONS="hardening=-all" \
+		dpkg-buildflags --export=configure || true)) \
+	dh_auto_configure --builddir=build-udeb -- $(CONFFLAGS_udeb)
+
+override_dh_auto_configure:
+
+build-deb/.stamp-build: build-deb/build.ninja
+	dh_auto_build --builddir=build-deb
+	touch $@
+
+build-udeb/.stamp-build: build-udeb/build.ninja
+	# ignore the blhc false positives (see CONFFLAGS_udeb)
+	@echo 'blhc: ignore-line-regexp: .* [^ ]*cc .+ -Os -fomit-frame-pointer .+'
+	@echo 'blhc: ignore-line-regexp:  *(LD|CC) .+/build-deb/testsuite/.+'
+	dh_auto_build --builddir=build-udeb
+	touch $@
+
+override_dh_auto_build: build-deb/.stamp-build $(BUILD_UDEB_TARGET)
+
+override_dh_auto_test:
+	dh_auto_test --builddir=build-deb
+
+override_dh_auto_install:
+	dh_auto_install --builddir=build-deb
+ifdef BUILD_UDEB
+	cd build-udeb && DESTDIR=$(TU) meson install --tags runtime
+endif
+
+override_dh_install:
+ifneq (,$(filter nodoc, $(DEB_BUILD_OPTIONS)))
+	# create an empty directory which will be installed by dh_install
+	mkdir debian/tmp/usr/share/gtk-doc/
+endif
+	dh_install -Nkmod-udeb -Nlibkmod2-udeb
+	sed -i -re '/^Requires.private:/d' \
+		$(DD)/usr/lib/*/pkgconfig/libkmod.pc
+
+	install --mode=755 -d $D/etc/modprobe.d
+	install --mode=644 -t $D/etc/modprobe.d debian/modprobe.d/*
+	install --mode=755 -d $D/etc/depmod.d
+	install --mode=644 -t $D/etc/depmod.d debian/depmod.d/*
+
+ifdef BUILD_UDEB
+	dh_install --sourcedir=$(TU) -pkmod-udeb -plibkmod2-udeb
+	egrep -i '^[a-z]' debian/extra/aliases.conf > $(DU)/usr/lib/modprobe.d/aliases.conf
+endif
+
+override_dh_installdocs:
+	dh_installdocs -pkmod -plibkmod-dev --link-doc=libkmod2
+	dh_installdocs -plibkmod2
+	cp libkmod/README $(DD)/usr/share/doc/libkmod2/README.libkmod
+
+override_dh_installchangelogs:
+	dh_installchangelogs NEWS
+
+override_dh_makeshlibs:
+	dh_makeshlibs -V'libkmod2 (>= $(shell perl debian/highest_symbol_version debian/libkmod2.symbols))' -- -c4
+
+override_dh_shlibdeps:
+	dh_shlibdeps -- --warnings=7
