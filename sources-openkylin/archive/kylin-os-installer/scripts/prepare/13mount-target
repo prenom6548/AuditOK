@@ -1,0 +1,357 @@
+#!/bin/bash
+
+set -e
+
+automatic=$(get_value automatic-installation)
+if [[ "$automatic" == "0" ]]; then
+  return 0
+fi
+
+disk_custom=$(get_value disk-custom)
+#兼容老版本配置文件
+root_size=$(get_value disk-root)
+if [[ "${disk_custom}" == "true" ]] && [[ -z "${root_size}" ]]; then
+  return 0
+fi
+
+
+disk=$(get_value devpath)
+data_device=$(get_value data-device)
+
+data_unformat=$(get_value data-unformat)
+if [[ "${data_unformat}" == "true" ]]; then
+  return 0
+fi
+
+
+partprobe "${disk}" && sync
+if echo "${disk}" | grep -q nvme; then
+  disk=${disk}p
+fi
+
+
+sleep 1
+
+has_backup=0
+
+do_mkfs_efi(){
+  #if egrep -qi 'kirin.?990' /proc/cpuinfo; then
+  if [[ "${is_990_9a0}" == "true" ]]; then
+    sudo mkfs.vfat -s1 -n ESP "${disk}1"
+  else
+    sudo mkfs.vfat -n ESP "${disk}1" || sudo mkfs.vfat -F16 -n ESP "${disk}1"
+  fi
+}
+
+do_prepare_sw() {
+  umount -l /media/*/* || true
+  dmsetup remove_all -f
+  #gsettings set org.ukui.flash-disk.autoload ifautoload false
+}
+
+do_mkfs_boot() {
+  boot_part=$1
+  if [[ "$(archdetect)" == "sw64/generic" ]]; then
+  #  do_prepare_sw
+    mkfs.ext3 -Fq -L SYSBOOT "${boot_part}"
+  else
+    mkfs.ext4 -Fq -L SYSBOOT "${boot_part}"
+  fi
+}
+
+
+
+# 保留data
+save_history_data() {
+	mount "$1" /mnt 
+	mkdir -p /tmp/etc
+	if [[ -f /mnt/etc/shadow ]]; then
+     		cp -a /mnt/etc/shadow* /tmp/etc
+	fi
+	if [[ -f /mnt/etc/passwd ]]; then
+     		cp -a /mnt/etc/passwd* /tmp/etc
+	fi
+	if [[ -f /mnt/etc/gshadow ]]; then
+     		cp -a /mnt/etc/gshadow* /tmp/etc
+	fi
+	if [[ -f /mnt/etc/group ]]; then
+     		cp -a /mnt/etc/group* /tmp/etc
+	fi
+	if [[ -f /mnt/etc/hostname ]]; then
+     		cp -a /mnt/etc/hostname /tmp/etc
+	fi
+	if [[ -f /mnt/etc/hosts ]]; then
+     		cp -a /mnt/etc/hosts /tmp/etc
+	fi
+	
+	if [[ -f /mnt/etc/uid_list ]]; then
+                cp -a /mnt/etc/uid_list /tmp/etc
+        fi
+
+	if [[ -f /mnt/etc/subgid ]]; then
+                cp -a /mnt/etc/subgid* /tmp/etc
+        fi
+	if [[ -f /mnt/etc/subuid ]]; then
+                cp -a /mnt/etc/subuid* /tmp/etc
+        fi 
+
+	if [[ -f /mnt/etc/lightdm/lightdm.conf ]]; then
+		mkdir -p /tmp/etc/lightdm
+		cp -a /mnt/etc/lightdm/lightdm.conf /tmp/etc/lightdm
+	fi
+
+	# 保留激活文件
+	if [[ -f /mnt/etc/.kyhwid ]]; then
+                cp -a /mnt/etc/.kyhwid /tmp/etc/
+        fi
+        if [[ -f /mnt/etc/.kyactivation ]]; then
+                cp -a /mnt/etc/.kyactivation /tmp/etc/
+        fi
+
+
+	if [[ -f /mnt/etc/passwd ]]; then
+
+		if [[ -f /usr/share/kylin-os-installer/user-groups.txt ]]; then
+			rm -rf /usr/share/kylin-os-installer/user-groups.txt
+		fi
+               
+		user_name=
+                user_names=
+                user_names=`cat "/mnt/etc/passwd" | grep home | grep "/bin/bash"`
+                for i in ${user_names}; do
+                        user_name=${i%%:*}
+                        echo "${user_name}"
+
+                        chroot /mnt /bin/sh -c "groups ${user_name}" >/usr/share/kylin-os-installer/123.txt
+                        user_groups=`cat /usr/share/kylin-os-installer/123.txt`
+                        rm -rf /usr/share/kylin-os-installer/123.txt
+
+                        echo "${user_groups}"
+                        user_groups=${user_groups##*${user_name} }
+                        user_groups=`echo ${user_groups} | grep -v ":"` || user_groups=
+                        if [[ -n ${user_groups} ]]; then
+                                echo "${user_name}=${user_groups}" >> /usr/share/kylin-os-installer/user-groups.txt
+                        fi
+                done
+
+        fi
+	
+	umount "$1"
+}
+
+if [[ "${is_efi}" == "true" ]]; then
+  do_mkfs_efi
+
+  do_mkfs_boot "${disk}2"
+
+  part_root="${disk}3"
+  if [[ "${virtual_machine}" == "true" ]]; then
+    echo "this is virtual machine"
+    if [[ -n ${data_device} ]]; then
+        if echo "${data_device}" | grep -q nvme; then
+               data_device=${data_device}p
+        fi
+        part_data="${data_device}1"
+        part_swap="${disk}4"
+    else
+        part_data="${disk}4"
+        part_swap="${disk}5"
+    fi
+  else
+    part_backup="${disk}4"
+    if [[ -n ${data_device} ]]; then
+	if echo "${data_device}" | grep -q nvme; then
+ 	       data_device=${data_device}p
+	fi
+        part_data="${data_device}1"
+        part_swap="${disk}5"
+    else 
+  	part_data="${disk}5"
+  	part_swap="${disk}6"
+    fi
+  fi 
+  
+  if [[ "${lvm}" == "true" ]]; then
+    part_root="/dev/kylin-vg/root"
+    if [[ "${virtual_machine}" == "true" ]]; then
+    	    echo "this is virtual machine"
+    else
+    	    part_backup="/dev/kylin-vg/backup"
+    fi
+    if [[ -n ${data_device} ]]; then
+            part_data="/dev/kylin-vg1/data"
+    else
+            part_data="/dev/kylin-vg/data"
+    fi
+    part_swap="/dev/kylin-vg/swap"
+  fi
+ 
+  if [[ "${isluks_lvm}" == "true" ]] || [[ "${tpm}" == "true" ]]; then 
+    part_root="/dev/mapper/kylin--vg-root"
+    if [[ "${virtual_machine}" == "true" ]]; then
+    	    echo "this is virtual machine"
+    else
+    	part_backup="/dev/mapper/kylin--vg-backup"
+    fi
+    if [[ -n ${data_device} ]]; then
+            part_data="/dev/mapper/kylin--vg1-data"
+    else
+            part_data="/dev/mapper/kylin--vg-data"
+    fi
+    part_swap="/dev/mapper/kylin--vg-swap"
+  fi
+
+# 保留data
+  if [[ "${data_unformat}" == "true" ]]; then
+	save_history_data ${part_root}
+  fi
+
+
+  mkfs.ext4 -Fq -L SYSROOT "${part_root}"
+  if [[ "${virtual_machine}" == "true" ]]; then
+    echo "this is virtual machine"
+  else
+    mkfs.ext4 -Fq -L KYLIN-BACKUP "${part_backup}"
+  fi
+
+  if [[ "${data_unformat}" == "true" ]]; then
+	echo "unformat data partition"
+  else
+  	mkfs.ext4 -Fq -L DATA "${part_data}"
+  fi
+
+  if [[ "${is_swapfile}" == "false" ]]; then
+    mkswap -L SWAP "${part_swap}"
+    swapon "${part_swap}"
+  fi
+
+  mkdir -p /target
+  mount "${part_root}" /target
+#  mkdir -p /target/boot
+#  mount "${disk}2" /target/boot
+#  mkdir -p /target/boot/efi
+# mount "${disk}1" /target/boot/efi
+#  mkdir -p /target/data
+#  mount "${part_data}" /target/data
+#  chmod 1777 /target/data
+
+  if [[ "${virtual_machine}" == "true" ]]; then
+    echo "this is virtual machine"
+  else
+    #mkdir -p /target/backup
+    #mount "${part_backup}" /target/backup
+    echo "part-backup=${part_backup}" >> /tmp/ky-installer.cfg
+    #set_backup "${part_backup}"
+  fi
+
+  echo "part-data=${part_data}" >>/tmp/ky-installer.cfg
+  echo "part-root=${part_root}" >>/tmp/ky-installer.cfg
+  echo "part-efi=${disk}1" >>/tmp/ky-installer.cfg
+  echo "part-boot=${disk}2" >>/tmp/ky-installer.cfg
+
+  #do_bind_data
+
+else
+  do_mkfs_boot "${disk}1"
+
+  part_root="${disk}5"
+  if [[ "${virtual_machine}" == "true" ]]; then
+    echo "this is virtual machine"
+    if [[ -n ${data_device} ]]; then
+        if echo "${data_device}" | grep -q nvme; then
+               data_device=${data_device}p
+        fi
+        part_data="${data_device}1"
+        part_swap="${disk}6"
+    else
+        part_data="${disk}6"
+        part_swap="${disk}7"
+    fi
+  else
+    part_backup="${disk}6"
+    if [[ -n ${data_device} ]]; then
+        if echo "${data_device}" | grep -q nvme; then
+               data_device=${data_device}p
+        fi
+        part_data="${data_device}1"
+        part_swap="${disk}7"
+    else
+        part_data="${disk}7"
+  	part_swap="${disk}8"
+    fi
+  fi
+
+  if [[ "${lvm}" == "true" ]]; then
+    part_root="/dev/kylin-vg/root"
+    if [[ "${virtual_machine}" == "true" ]]; then
+    	    echo "this is virtual machine"
+    else
+    	    part_backup="/dev/kylin-vg/backup"
+    fi
+    if [[ -n ${data_device} ]]; then
+            part_data="/dev/kylin-vg1/data"
+    else
+            part_data="/dev/kylin-vg/data"
+    fi
+    part_swap="/dev/kylin-vg/swap"
+  fi
+  if [[ "${isluks_lvm}" == "true" ]] || [[ "${tpm}" == "true" ]]; then
+    part_root="/dev/mapper/kylin--vg-root"
+    if [[ "${virtual_machine}" == "true" ]]; then
+    	    echo "this is virtual machine"
+    else
+    	    part_backup="/dev/mapper/kylin--vg-backup"
+    fi
+    if [[ -n ${data_device} ]]; then
+            part_data="/dev/mapper/kylin--vg1-data"
+    else
+            part_data="/dev/mapper/kylin--vg-data"
+    fi
+    part_swap="/dev/mapper/kylin--vg-swap"
+  fi
+
+# 保留data
+  if [[ "${data_unformat}" == "true" ]]; then
+	save_history_data ${part_root}
+  fi
+
+  mkfs.ext4 -Fq -L SYSROOT "${part_root}"
+  if [[ "${virtual_machine}" == "true" ]]; then
+    echo "this is virtual machine"
+  else
+    mkfs.ext4 -Fq -L KYLIN-BACKUP "${part_backup}"
+  fi
+
+  if [[ "${data_unformat}" == "true" ]]; then
+        echo "unformat data partition"
+  else
+  	mkfs.ext4 -Fq -L DATA "${part_data}"
+  fi
+
+  if [[ "${is_swapfile}" == "false" ]]; then
+    mkswap -L SWAP "${part_swap}"
+    swapon "${part_swap}"
+  fi
+
+  mkdir -p /target
+  mount "${part_root}" /target
+#  mkdir -p /target/boot
+#  mount "${disk}1" /target/boot
+#  mkdir -p /target/data
+#  mount "${part_data}" /target/data
+#  chmod 1777 /target/data
+  if [[ "${virtual_machine}" == "true" ]]; then
+    echo "this is virtual machine"
+  else
+   # mkdir -p /target/backup
+   # mount "${part_backup}" /target/backup
+    echo "part-backup=${part_backup}" >>/tmp/ky-installer.cfg
+    #set_backup "${part_backup}"
+  fi
+
+  echo "part-data=${part_data}" >>/tmp/ky-installer.cfg
+  echo "part-root=${part_root}" >>/tmp/ky-installer.cfg
+  echo "part-boot=${disk}1" >>/tmp/ky-installer.cfg
+
+#  do_bind_data
+fi

@@ -1,0 +1,45 @@
+#!/bin/bash
+
+set -e
+
+is_automatic=$(get_value automatic-installation)
+if [ x${is_swapfile} = x"false" ] || [ x${is_990_9a0} = x"false" ]; then
+    return 0
+fi
+
+ram=$(cat < /proc/meminfo  | grep ^MemTotal: | awk '{print $2}')
+
+
+### swapfile size
+#swapfile=$(( ram * 12 / 1024 / 10 ))
+#if [ $swapfile -gt 64000 ]; then
+#    swapfile=64000
+#fi
+swapfile=8192
+new_sysroot_path=${get_value new-root}
+do_setup_swapfile() {
+    dd if=/dev/zero of=$new_sysroot_path/${swap_file} bs=1M count=${swapfile:-1}
+    chmod 0600 $new_sysroot_path/${swap_file}
+    mkswap $new_sysroot_path/${swap_file}
+    swapon $new_sysroot_path/${swap_file}
+
+    offset=$(filefrag -v $new_sysroot_path/${swap_file} | awk '{if($1=="0:"){print $4}}')
+    root=$(findmnt -rno SOURCE $new_sysroot_path)
+    if egrep -qi 'kirin.?900' /proc/cpuinfo; then
+      root="PARTUUID=$(lsblk -rno partuuid $(findmnt -rno SOURCE $new_sysroot_path))"
+      if [[ "${isluks_lvm}" == "true" ]] || [[ "${tpm}" == "true" ]]; then
+	      root=$(findmnt -rno SOURCE $new_sysroot_path)
+      fi
+    else
+      root=$(findmnt -rno SOURCE $new_sysroot_path)
+    fi
+
+    if [[ -f $new_sysroot_path/etc/default/grub ]]; then
+        sed -ri "s@quiet splash@resume=${root} systemd.kylin_force_hibernate=true resume_offset=${offset:0:-2} quiet splash@" $new_sysroot_path/etc/default/grub
+    fi
+}
+
+do_setup_swapfile
+
+
+

@@ -1,0 +1,3122 @@
+From: Morose <chenlinxiang@kylinos.cn>
+Date: Tue, 4 Mar 2025 09:03:38 +0800
+Subject: update to 1.3.1-ok5
+
+---
+ examples/gui/meson.build     |   8 +-
+ include/painter.h            |  22 +--
+ include/server.h             |   2 +
+ include/theme.h              |  78 ++++----
+ include/util/sysfs.h         |  18 ++
+ include/widget/widget.h      |   2 +-
+ meson.build                  |   3 +-
+ po/bo_CN.po                  |   6 +-
+ src/backend/fbdev/fbdev.c    |  67 +++----
+ src/config/config.c          |   2 +-
+ src/config/ukui_gsettings.c  |   4 +-
+ src/effect/capture.c         |   7 +-
+ src/effect/locate_pointer.c  |   2 +-
+ src/effect/scale.c           |   2 +-
+ src/effect/slide.c           |   6 +-
+ src/effect/watermark.c       |  21 +--
+ src/input/input.c            |  12 +-
+ src/input/touch.c            |   4 +-
+ src/output/output.c          |   4 +
+ src/painter/cairo_buffer.c   |  36 +---
+ src/painter/image.c          | 331 +++++++++++++++++++++++++++------
+ src/painter/painter.c        |  29 +--
+ src/painter/painter_p.h      |  17 +-
+ src/scene/thumbnail.c        |   4 +-
+ src/server.c                 |  14 ++
+ src/theme/config.c           | 157 ++++++++--------
+ src/theme/icon.c             |  30 +--
+ src/theme/theme.c            | 423 ++++++++++++++++++++-----------------------
+ src/theme/theme_p.h          |  74 +++++---
+ src/util/logger.c            |   6 +-
+ src/util/meson.build         |   1 +
+ src/util/spawn.c             |   6 +-
+ src/util/sysfs.c             |  24 ++-
+ src/view/maximize_switcher.c |  12 +-
+ src/view/modal.c             |   2 +-
+ src/view/ssd.c               |  36 ++--
+ src/view/stack_mode.c        |   4 -
+ src/view/view.c              |  10 +-
+ src/view/window_menu.c       |   6 +-
+ src/widget/menu.c            |  20 +-
+ src/widget/widget.c          |  21 ++-
+ src/widget/widget_p.h        |   1 +
+ src/xwayland/unmanaged.c     |   1 -
+ src/xwayland/view.c          |   8 +-
+ 44 files changed, 892 insertions(+), 651 deletions(-)
+ create mode 100644 include/util/sysfs.h
+ mode change 100644 => 100755 src/view/view.c
+
+diff --git a/examples/gui/meson.build b/examples/gui/meson.build
+index a35590f..e703a18 100644
+--- a/examples/gui/meson.build
++++ b/examples/gui/meson.build
+@@ -1,4 +1,4 @@
+-if not add_languages('cpp', required: false)
++if not add_languages('cpp', native: false, required: false)
+   subdir_done()
+ endif
+ 
+@@ -11,7 +11,7 @@ endif
+ 
+ egl = dependency('egl')
+ glesv2 = dependency('glesv2')
+-libdrm_dep = dependency('libdrm')
++libdrm = dependency('libdrm')
+ 
+ # Preprocess the .qrc file using the rcc command and generate a C++ source file
+ rcc_command = ['rcc', '-name', 'resources', '-o', 'resources.cpp', 'qml.qrc']
+@@ -25,7 +25,7 @@ generated_files = qt5.preprocess(
+ executable(
+   'kywc-gui',
+   ['main.cpp', 'context.cpp', 'ui.cpp', 'workspace.cpp', 'output.cpp', 'toplevel.cpp', 'thumbnail.cpp', 'ThumbnailItem.cpp', 'ThumInfo.cpp', 'resources.cpp', generated_files],
+-  dependencies: [qt5dep, libkywc, egl, glesv2, libdrm_dep],
++  dependencies: [qt5dep, libkywc, egl, glesv2, libdrm],
+   cpp_args: ['-Wno-unused-parameter'],
+   install: false
+ )
+@@ -39,7 +39,7 @@ thu_files = qt5.preprocess(
+ executable(
+   'thumbnail',
+   ['ThumMain.cpp', 'context.cpp', 'workspace.cpp', 'output.cpp', 'toplevel.cpp', 'thumbnail.cpp', 'ThumbnailItem.cpp', 'ThumInfo.cpp', 'resources.cpp', thu_files],
+-  dependencies: [qt5dep, libkywc, egl, glesv2, libdrm_dep],
++  dependencies: [qt5dep, libkywc, egl, glesv2, libdrm],
+   cpp_args: ['-Wno-unused-parameter'],
+   install: false
+ )
+diff --git a/include/painter.h b/include/painter.h
+index 07301b9..6985500 100644
+--- a/include/painter.h
++++ b/include/painter.h
+@@ -64,6 +64,7 @@ struct draw_info {
+     /* rounded rect */
+     uint32_t corner_mask;
+     float corner_radius;
++    float hover_radius;
+ 
+     const char *text;
+     const char *shortcut;
+@@ -78,28 +79,27 @@ struct draw_info {
+     /* blur support */
+     int blur_margin;
+ 
+-    /* image: svg, png and jpeg */
++    /* svg data */
+     const char *svg, *hover_svg;
+-    const char *png_path;
+-    const char *jpeg_path;
++    /* image file */
++    const char *image;
+     struct {
+         uint32_t width, height;
+         void *data; // pixel data  can be null
+     } pixel;
+ };
+ 
+-struct wlr_buffer *painter_draw_buffer(struct draw_info *info);
+-
+-bool painter_redraw_buffer(struct wlr_buffer *buffer, struct draw_info *info);
++struct wlr_buffer *painter_create_buffer(int width, int height, float scale);
+ 
+-void painter_buffer_dest_size(struct wlr_buffer *buffer, int *width, int *height);
++struct wlr_buffer *painter_draw_buffer(struct draw_info *info);
+ 
+-void painter_buffer_size(struct wlr_buffer *buffer, int *width, int *height);
++bool painter_buffer_redraw(struct wlr_buffer *buffer, struct draw_info *info);
+ 
+-void painter_buffer_to_file(struct wlr_buffer *buffer, const char *name);
++void painter_buffer_get_dest_size(struct wlr_buffer *buffer, int *width, int *height);
+ 
+-struct wlr_buffer *painter_create_buffer(int width, int height, float scale);
++void painter_buffer_write_to_file(struct wlr_buffer *buffer, const char *name);
+ 
+-void painter_text_size(const char *text, const char *font, int font_size, int *width, int *height);
++void painter_get_text_size(const char *text, const char *font, int font_size, int *width,
++                           int *height);
+ 
+ #endif /* _PAINTER_H_ */
+diff --git a/include/server.h b/include/server.h
+index c37d75b..ed07809 100644
+--- a/include/server.h
++++ b/include/server.h
+@@ -58,6 +58,8 @@ struct server {
+ 
+     const char *session_process;
+     pid_t session_pid;
++
++    unsigned vtnr;
+ };
+ 
+ bool server_init(struct server *server);
+diff --git a/include/theme.h b/include/theme.h
+index 9f5e584..dd4e2da 100644
+--- a/include/theme.h
++++ b/include/theme.h
+@@ -21,26 +21,26 @@ enum justification {
+ };
+ 
+ enum theme_buffer_type {
+-    BUTTON_MINIMIZE = 0,
+-    BUTTON_MAXIMIZE,
+-    BUTTON_RESTORE,
+-    BUTTON_CLOSE,
+-    BUTTON_MINIMIZE_HOVER,
+-    BUTTON_MAXIMIZE_HOVER,
+-    BUTTON_RESTORE_HOVER,
+-    BUTTON_CLOSE_HOVER,
+-    BUTTON_MINIMIZE_CLICKED,
+-    BUTTON_MAXIMIZE_CLICKED,
+-    BUTTON_RESTORE_CLICKED,
+-    BUTTON_CLOSE_CLICKED,
++    THEME_BUFFER_TYPE_BUTTON_MINIMIZE = 0,
++    THEME_BUFFER_TYPE_BUTTON_MAXIMIZE,
++    THEME_BUFFER_TYPE_BUTTON_RESTORE,
++    THEME_BUFFER_TYPE_BUTTON_CLOSE,
++    THEME_BUFFER_TYPE_BUTTON_MINIMIZE_HOVER,
++    THEME_BUFFER_TYPE_BUTTON_MAXIMIZE_HOVER,
++    THEME_BUFFER_TYPE_BUTTON_RESTORE_HOVER,
++    THEME_BUFFER_TYPE_BUTTON_CLOSE_HOVER,
++    THEME_BUFFER_TYPE_BUTTON_MINIMIZE_CLICKED,
++    THEME_BUFFER_TYPE_BUTTON_MAXIMIZE_CLICKED,
++    THEME_BUFFER_TYPE_BUTTON_RESTORE_CLICKED,
++    THEME_BUFFER_TYPE_BUTTON_CLOSE_CLICKED,
+ };
+ 
+ enum theme_update_mask {
+     THEME_UPDATE_MASK_NONE = 0,
++    /* theme type changed */
++    THEME_UPDATE_MASK_TYPE = 1 << 0,
+     /* font_name, font_size or text color changed */
+-    THEME_UPDATE_MASK_FONT = 1 << 0,
+-    /* text_justify changed */
+-    THEME_UPDATE_MASK_TEXT_ALIGN = 1 << 1,
++    THEME_UPDATE_MASK_FONT = 1 << 1,
+     /* border_color changed */
+     THEME_UPDATE_MASK_BORDER_COLOR = 1 << 2,
+     /* background_color changed */
+@@ -49,12 +49,10 @@ enum theme_update_mask {
+     THEME_UPDATE_MASK_ACCENT_COLOR = 1 << 4,
+     /* corner_radius changed */
+     THEME_UPDATE_MASK_CORNER_RADIUS = 1 << 5,
+-    /* icon_size, button_width changed */
+-    THEME_UPDATE_MASK_ICON_SIZE = 1 << 6,
+     /* opacity changed */
+-    THEME_UPDATE_MASK_OPACITY = 1 << 7,
+-    /* theme_type changed */
+-    THEME_UPDATE_MASK_ALL = (1 << 8) - 1,
++    THEME_UPDATE_MASK_OPACITY = 1 << 6,
++    /* modal_mask_color changed */
++    THEME_UPDATE_MASK_MODAL_MASK_COLOR = 1 << 7,
+ };
+ 
+ struct server;
+@@ -68,18 +66,10 @@ struct theme_update_event {
+ };
+ 
+ struct theme {
+-    struct wl_list link;
+-
+-    const char *theme_name;
+-    enum theme_type theme_type;
++    const char *name;
++    enum theme_type type;
+     bool builtin;
+ 
+-    int corner_radius;
+-    int opacity;
+-    /* font */
+-    const char *font_name;
+-    int font_size;
+-
+     /* border color */
+     float active_border_color[4];
+     float inactive_border_color[4];
+@@ -91,45 +81,47 @@ struct theme {
+     /* text color */
+     float active_text_color[4];
+     float inactive_text_color[4];
++
++    /* modal mask color */
++    float modal_mask_color[4];
++
++    /* font */
++    const char *font_name;
++    int font_size;
++
++    float accent_color[4];
++    int corner_radius;
++    int opacity; // 0 - 100
++
+     enum justification text_justify;
+     bool layout_is_right_to_left;
+     bool text_is_right_align;
+-
+     bool ssd_need_maximize_button;
+ 
+-    float accent_color[4];
+-
+     /* icon size */
+     int button_width;
+     int icon_size;
+ 
+-    /* not changed or ignored parameter */
+     int border_width;
+     int title_height;
+     int subtitle_height;
+     int shadow_border;
++    int normal_radius;
+ 
+     /* button svg string */
+     const char *button_svg;
+-
+     struct wl_list scaled_buffers;
+ };
+ 
+-struct theme_interface {
+-    struct theme *(*get_theme)(enum theme_type theme_type);
+-};
+-
+ struct theme_manager *theme_manager_create(struct server *server);
+ 
+ void theme_manager_add_update_listener(struct wl_listener *listener);
+ 
+ void theme_manager_add_icon_update_listener(struct wl_listener *listener);
+ 
+-struct theme *theme_manager_get_current(void);
+-
+-void theme_manager_set_interface(struct theme_interface *impl);
++struct theme *theme_manager_get_theme(void);
+ 
+-bool theme_manager_set_theme(enum theme_type theme_type);
++bool theme_manager_set_widget_theme(const char *name, enum theme_type type);
+ 
+ bool theme_manager_set_font(const char *name, int size);
+ 
+diff --git a/include/util/sysfs.h b/include/util/sysfs.h
+new file mode 100644
+index 0000000..266cacd
+--- /dev/null
++++ b/include/util/sysfs.h
+@@ -0,0 +1,18 @@
++// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef _UTIL_SYSFS_H_
++#define _UTIL_SYSFS_H_
++
++#include <stdbool.h>
++#include <stdint.h>
++#include <stdio.h>
++
++bool sysfs_read_uint64(const char *filename, uint64_t *val);
++
++bool sysfs_write_uint64(const char *filename, uint64_t val);
++
++size_t sysfs_read_data(const char *filename, void *buf, size_t size);
++
++#endif /* _UTIL_SYSFS_H_ */
+diff --git a/include/widget/widget.h b/include/widget/widget.h
+index 86963a6..a1a83a3 100644
+--- a/include/widget/widget.h
++++ b/include/widget/widget.h
+@@ -41,7 +41,7 @@ void widget_set_background_color(struct widget *widget, const float color[static
+ 
+ void widget_set_front_color(struct widget *widget, const float color[static 4]);
+ 
+-void widget_set_hovered_color(struct widget *widget, const float color[static 4]);
++void widget_set_hovered_color(struct widget *widget, const float color[static 4], float radius);
+ 
+ void widget_set_border(struct widget *widget, const float color[static 4], uint32_t mask,
+                        float width);
+diff --git a/meson.build b/meson.build
+index 275b199..6c1f69c 100644
+--- a/meson.build
++++ b/meson.build
+@@ -86,6 +86,7 @@ pango = dependency('pango')
+ pangocairo = dependency('pangocairo')
+ rsvg  = dependency('librsvg-2.0', version: '>=2.46')
+ jpeg = dependency('libjpeg')
++png = dependency('libpng')
+ udev = dependency('libudev')
+ unwind = dependency('libunwind', required : get_option('libunwind'))
+ 
+@@ -102,7 +103,7 @@ wlcom_deps = [
+   wlroots, xkbcommon, drm, input, udev,
+   pixman, xcb, jsonc, sdbus,
+   math, dl, rt, thread, unwind,
+-  cairo, pango, pangocairo, rsvg, jpeg,
++  cairo, pango, pangocairo, rsvg, jpeg, png,
+ ]
+ 
+ wlcom_inc = include_directories('include')
+diff --git a/po/bo_CN.po b/po/bo_CN.po
+index a31b7f4..c9caad8 100644
+--- a/po/bo_CN.po
++++ b/po/bo_CN.po
+@@ -19,7 +19,7 @@ msgstr ""
+ 
+ #: src/view/action.c:108
+ msgid "Screenshot"
+-msgstr "截རིས།"
++msgstr "བཅད་ལེན་པར་རིས།"
+ 
+ #: src/view/action.c:108
+ msgid "Capture saved to"
+@@ -55,7 +55,7 @@ msgstr "བརྙན་ཤེལ།"
+ 
+ #: src/view/window_menu.c:342
+ msgid "_Take Screenshot"
+-msgstr "截རིས།(_T)"
++msgstr "བཅད་ལེན་པར་རིས།(_T)"
+ 
+ #: src/view/window_menu.c:346
+ msgid "_Desktop"
+@@ -107,7 +107,7 @@ msgstr "འཆི་བའི་མཐིལ།(_B)"
+ 
+ #: src/view/window_menu.c:375
+ msgid "_Fullscreen"
+-msgstr "全屏།(_F)"
++msgstr "འཆར་ཤེལ་ཧྲིལ་པོར་འཆར་བ།(_F)"
+ 
+ #: src/view/window_menu.c:378
+ msgid "_Close"
+diff --git a/src/backend/fbdev/fbdev.c b/src/backend/fbdev/fbdev.c
+index 13f469e..cff86fd 100644
+--- a/src/backend/fbdev/fbdev.c
++++ b/src/backend/fbdev/fbdev.c
+@@ -299,43 +299,14 @@ static bool fbdev_fix_screen_info(int fd, struct fbdev_screeninfo *info)
+     return fbdev_set_screen_info(fd, &varinfo, false);
+ }
+ 
+-static void output_destroy(struct wlr_output *wlr_output)
+-{
+-    struct fbdev_output *output = fbdev_output_from_output(wlr_output);
+-    wl_list_remove(&output->link);
+-    if (output->frame_timer) {
+-        wl_event_source_remove(output->frame_timer);
+-    }
+-    free((void *)output->device);
+-
+-    free(output);
+-}
+-
+-bool fbdev_output_offscreen(struct fbdev_output *output)
+-{
+-    /* Unmap frame_buffer */
+-    fbdev_frame_buffer_unmap(output);
+-
+-    if (output->backend->session->active) {
+-        return false;
+-    }
+-
+-    wl_event_source_remove(output->frame_timer);
+-    output->frame_timer = NULL;
+-
+-    close(output->fd);
+-
+-    return true;
+-}
+-
+-static bool fbdev_output_disable(struct fbdev_output *output)
++static bool fbdev_output_disable(struct fbdev_output *output, bool clear_screen)
+ {
+     if (!output->wlr_output.enabled) {
+         return true;
+     }
+ 
+     /* dpms off output */
+-    if (!fbdev_dpms_set(output, DPMS_MODE_OFF)) {
++    if (clear_screen && !fbdev_dpms_set(output, DPMS_MODE_OFF)) {
+         /* clear buffer */
+         memset(output->fb, 0x00, output->screen_info.buffer_length);
+     }
+@@ -351,6 +322,30 @@ static bool fbdev_output_disable(struct fbdev_output *output)
+     return true;
+ }
+ 
++bool fbdev_output_offscreen(struct fbdev_output *output)
++{
++    if (output->backend->session->active) {
++        return false;
++    }
++
++    fbdev_output_disable(output, false);
++    close(output->fd);
++
++    return true;
++}
++
++static void output_destroy(struct wlr_output *wlr_output)
++{
++    struct fbdev_output *output = fbdev_output_from_output(wlr_output);
++    wl_list_remove(&output->link);
++
++    fbdev_output_disable(output, false);
++    close(output->fd);
++
++    free((void *)output->device);
++    free(output);
++}
++
+ static int signal_frame_handler(void *data)
+ {
+     struct fbdev_output *output = data;
+@@ -484,7 +479,6 @@ static bool fbdev_output_state_update_fb(struct fbdev_output *output,
+ 
+     pixman_region32_fini(&clipped);
+     wlr_buffer_end_data_ptr_access(state->buffer);
+-
+     return true;
+ }
+ 
+@@ -563,7 +557,7 @@ static bool fbdev_output_commit(struct wlr_output *wlr_output, const struct wlr_
+         if (pending.base->enabled && !wlr_output->enabled) {
+             fbdev_output_enable(output);
+         } else if (!pending.base->enabled && wlr_output->enabled) {
+-            return fbdev_output_disable(output);
++            return fbdev_output_disable(output, true);
+         }
+     }
+ 
+@@ -655,11 +649,6 @@ bool fbdev_output_reenable(struct fbdev_output *output)
+ {
+     kywc_log(KYWC_INFO, "re-enabling fbdev output");
+ 
+-    if (!output->wlr_output.enabled) {
+-        return false;
+-    }
+-
+-    /* Create the frame buffer */
+     struct fbdev_screeninfo new_screen_info;
+     int fd = fbdev_frame_buffer_open(output->device, &new_screen_info);
+     if (fd < 0) {
+@@ -687,6 +676,8 @@ bool fbdev_output_reenable(struct fbdev_output *output)
+     }
+ 
+     fbdev_output_enable(output);
++    /* refresh the frame immediately */
++    signal_frame_handler(output);
+ 
+     return true;
+ }
+diff --git a/src/config/config.c b/src/config/config.c
+index fce3c6f..bc2acf5 100644
+--- a/src/config/config.c
++++ b/src/config/config.c
+@@ -37,7 +37,7 @@ static char *check_config_file(void)
+     path[folder] = '\0';
+     if (!dir_exists(path)) {
+         kywc_log(KYWC_INFO, "configure dir %s not exist, create it", path);
+-        int ret = mkdir(path, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
++        int ret = mkdir(path, S_IRWXU | S_IRWXG);
+         if (ret) {
+             kywc_log_errno(KYWC_ERROR, "create configure dir failed");
+             goto err;
+diff --git a/src/config/ukui_gsettings.c b/src/config/ukui_gsettings.c
+index 912cc85..b2a6d4d 100644
+--- a/src/config/ukui_gsettings.c
++++ b/src/config/ukui_gsettings.c
+@@ -103,9 +103,9 @@ static void style_name_changed(GSettings *style, const char *key)
+ {
+     const char *style_name = g_settings_get_string(style, key);
+     if (!strcmp(style_name, UKUI_THEME_LIGHT)) {
+-        theme_manager_set_theme(THEME_TYPE_LIGHT);
++        theme_manager_set_widget_theme(NULL, THEME_TYPE_LIGHT);
+     } else if (!strcmp(style_name, UKUI_THEME_DARK)) {
+-        theme_manager_set_theme(THEME_TYPE_DARK);
++        theme_manager_set_widget_theme(NULL, THEME_TYPE_DARK);
+     }
+     free((void *)style_name);
+ }
+diff --git a/src/effect/capture.c b/src/effect/capture.c
+index 8d8e62c..5f8c744 100644
+--- a/src/effect/capture.c
++++ b/src/effect/capture.c
+@@ -834,7 +834,7 @@ struct capture_data {
+ static void capture_write_image(struct wlr_buffer *buffer, const char *path,
+                                 void (*done)(const char *path, void *data), void *user_data)
+ {
+-    painter_buffer_to_file(buffer, path);
++    painter_buffer_write_to_file(buffer, path);
+     wlr_buffer_drop(buffer);
+ 
+     if (done) {
+@@ -867,6 +867,11 @@ void capture_write_file(struct wlr_buffer *buffer, int width, int height, const
+     kywc_log(KYWC_DEBUG, "capture copy buffer to memory");
+ 
+     struct capture_data *data = malloc(sizeof(*data));
++    if (!data) {
++        capture_write_image(dst_buf, path, done, user_data);
++        return;
++    }
++
+     data->buffer = dst_buf;
+     data->path = strdup(path);
+     data->done = done;
+diff --git a/src/effect/locate_pointer.c b/src/effect/locate_pointer.c
+index 924dbfc..02ec200 100644
+--- a/src/effect/locate_pointer.c
++++ b/src/effect/locate_pointer.c
+@@ -171,7 +171,7 @@ static bool handle_frame_render_end(struct effect_entity *entity,
+         }
+ 
+         float progress = (float)(current_time_msec() - pointer->animation_start_time) / INTERVAL;
+-        float *color = theme_manager_get_current()->accent_color;
++        float *color = theme_manager_get_theme()->accent_color;
+         float circle_progress, alpha, radius;
+ 
+         for (int i = 0; i <= CIRCLES; i++) {
+diff --git a/src/effect/scale.c b/src/effect/scale.c
+index 3f21003..3501c77 100644
+--- a/src/effect/scale.c
++++ b/src/effect/scale.c
+@@ -201,7 +201,7 @@ bool view_add_scale_effect(struct view *view, enum scale_action action)
+     }
+ 
+     scale_entity->view = view;
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     if (view->base.ssd == KYWC_SSD_NONE) {
+         memcpy(&scale_entity->shadow, &view->base.padding, sizeof(struct padding));
+     } else {
+diff --git a/src/effect/slide.c b/src/effect/slide.c
+index 18754f5..ea435f0 100644
+--- a/src/effect/slide.c
++++ b/src/effect/slide.c
+@@ -171,7 +171,7 @@ bool slide_effect_create(struct effect_manager *manager)
+ 
+ static struct slide_entity *create_slide_entity(struct ky_scene_node *node,
+                                                 struct ky_scene_buffer *zero_copy_buffer,
+-                                                int location, int offset, bool mapped, bool is_view)
++                                                int location, int offset, bool mapped)
+ {
+     struct slide_entity *slide_entity = calloc(1, sizeof(*slide_entity));
+     if (!slide_entity) {
+@@ -213,7 +213,7 @@ bool node_add_slide_effect(struct ky_scene_node *node, int location, int offset,
+         return false;
+     }
+ 
+-    return create_slide_entity(node, NULL, location, offset, slide_out, false);
++    return create_slide_entity(node, NULL, location, offset, slide_out);
+ }
+ 
+ bool view_add_slide_effect(struct view *view, bool mapped)
+@@ -234,5 +234,5 @@ bool view_add_slide_effect(struct view *view, bool mapped)
+     struct ky_scene_buffer *zero_copy_buffer = mapped ? transform_get_zero_copy_buffer(view) : NULL;
+ 
+     return create_slide_entity(&view->tree->node, zero_copy_buffer, slide.location, slide.offset,
+-                               mapped, true);
++                               mapped);
+ }
+diff --git a/src/effect/watermark.c b/src/effect/watermark.c
+index c2052d2..d775e3f 100644
+--- a/src/effect/watermark.c
++++ b/src/effect/watermark.c
+@@ -5,6 +5,7 @@
+ #define _POSIX_C_SOURCE 200809L
+ #include <assert.h>
+ #include <stdlib.h>
++#include <unistd.h>
+ 
+ #include <wlr/types/wlr_buffer.h>
+ 
+@@ -72,7 +73,7 @@ static struct watermark_buffer *watermark_get_or_create_buffer(struct watermark_
+ {
+     struct watermark_buffer *buffer;
+     wl_list_for_each(buffer, &effect->buffers, link) {
+-        /* if png is used, reuse this buffer always */
++        /* if image is used, reuse this buffer always */
+         return buffer;
+     }
+ 
+@@ -81,9 +82,7 @@ static struct watermark_buffer *watermark_get_or_create_buffer(struct watermark_
+         return NULL;
+     }
+ 
+-    struct draw_info info = {
+-        .png_path = effect->info.file,
+-    };
++    struct draw_info info = { .image = effect->info.file };
+     buffer->buffer = painter_draw_buffer(&info);
+     if (!buffer->buffer) {
+         free(buffer);
+@@ -226,19 +225,7 @@ static void handle_new_enabled_output(struct wl_listener *listener, void *data)
+ 
+ static bool effect_load_image(struct watermark_effect *effect, struct watermark_info *info)
+ {
+-    FILE *fp = fopen(info->file, "rb");
+-    if (!fp) {
+-        return false;
+-    }
+-
+-    uint8_t header[8] = { 0 }; // magic number
+-    fread(header, sizeof(header), 1, fp);
+-    fclose(fp);
+-
+-    bool is_png =
+-        (header[0] == 0x89 && header[1] == 0x50 && header[2] == 0x4E && header[3] == 0x47 &&
+-         header[4] == 0x0D && header[5] == 0x0A && header[6] == 0x1A && header[7] == 0x0A);
+-    if (!is_png) {
++    if (access(info->file, F_OK) == -1) {
+         return false;
+     }
+ 
+diff --git a/src/input/input.c b/src/input/input.c
+index 1cbda3b..3f5ff0d 100644
+--- a/src/input/input.c
++++ b/src/input/input.c
+@@ -616,9 +616,17 @@ struct output *input_current_output(struct seat *seat)
+ 
+ void input_manager_switch_vt(unsigned vt)
+ {
+-    struct wlr_session *session = input_manager->server->session;
++    struct server *server = input_manager->server;
++    if (server->vtnr == vt) {
++        return;
++    }
++
++    struct wlr_session *session = server->session;
+     if (session) {
+-        wlr_session_change_vt(session, vt);
++        server->active = false;
++        if (!wlr_session_change_vt(session, vt)) {
++            server->active = true;
++        }
+     }
+ }
+ 
+diff --git a/src/input/touch.c b/src/input/touch.c
+index 66963c2..ff1d2ff 100644
+--- a/src/input/touch.c
++++ b/src/input/touch.c
+@@ -655,7 +655,9 @@ void touch_handle_motion(struct wlr_touch_motion_event *event, bool handle)
+     point->directions = touch_point_calc_directions(point, dx, dy);
+ 
+     if (!touch->filter_enabled) {
+-        touch_gesture_detect(touch);
++        if (!touch->gestures.handled) {
++            touch_gesture_detect(touch);
++        }
+         if (touch->gestures.type == GESTURE_TYPE_SWIPE) {
+             double avg_dx = 0, avg_dy = 0;
+             touch_calc_average_delta(touch, &avg_dx, &avg_dy);
+diff --git a/src/output/output.c b/src/output/output.c
+index d6f9313..a872d4d 100644
+--- a/src/output/output.c
++++ b/src/output/output.c
+@@ -481,6 +481,10 @@ static void handle_output_present(struct wl_listener *listener, void *data)
+ 
+ static void handle_output_frame(struct wl_listener *listener, void *data)
+ {
++    if (!output_manager->server->active) {
++        return;
++    }
++
+     struct output *output = wl_container_of(listener, output, frame);
+ 
+     if (output_manager->primary_output == &output->base) {
+diff --git a/src/painter/cairo_buffer.c b/src/painter/cairo_buffer.c
+index 471156a..6d978cf 100644
+--- a/src/painter/cairo_buffer.c
++++ b/src/painter/cairo_buffer.c
+@@ -78,32 +78,6 @@ struct cairo_buffer *cairo_buffer_create(uint32_t width, uint32_t height, float
+     return buffer;
+ }
+ 
+-struct cairo_buffer *cairo_buffer_create_from_png(uint32_t width, uint32_t height,
+-                                                  const char *png_path)
+-{
+-    struct cairo_buffer *buffer = calloc(1, sizeof(struct cairo_buffer));
+-    if (!buffer) {
+-        return NULL;
+-    }
+-
+-    buffer->surface = cairo_image_surface_create_from_png(png_path);
+-    if (cairo_surface_status(buffer->surface) != CAIRO_STATUS_SUCCESS) {
+-        free(buffer);
+-        return NULL;
+-    }
+-
+-    uint32_t png_width = cairo_image_surface_get_width(buffer->surface);
+-    uint32_t png_height = cairo_image_surface_get_height(buffer->surface);
+-    wlr_buffer_init(&buffer->base, &cairo_buffer_impl, png_width, png_height);
+-
+-    buffer->cairo = cairo_create(buffer->surface);
+-
+-    buffer->dst_width = width ? width : png_width;
+-    buffer->dst_height = height ? height : png_height;
+-
+-    return buffer;
+-}
+-
+ struct cairo_buffer *cairo_buffer_create_from_pixel(uint32_t width, uint32_t height,
+                                                     uint32_t src_width, uint32_t src_height,
+                                                     unsigned char *src_data)
+@@ -131,11 +105,13 @@ struct cairo_buffer *cairo_buffer_create_from_pixel(uint32_t width, uint32_t hei
+     return buffer;
+ }
+ 
+-struct cairo_buffer *cairo_buffer_create_from_jpeg(uint32_t width, uint32_t height,
+-                                                   const char *jpeg_path)
++struct cairo_buffer *cairo_buffer_create_from_file(uint32_t width, uint32_t height, float scale,
++                                                   const char *path)
+ {
+-    uint32_t src_width, src_height;
+-    uint8_t *src_data = decode_jpeg(jpeg_path, &src_width, &src_height);
++    uint32_t src_width = ceil(width * scale);
++    uint32_t src_height = ceil(height * scale);
++
++    uint8_t *src_data = image_decode_file(path, &src_width, &src_height);
+     if (!src_data) {
+         return NULL;
+     }
+diff --git a/src/painter/image.c b/src/painter/image.c
+index 024e28b..fb38d33 100644
+--- a/src/painter/image.c
++++ b/src/painter/image.c
+@@ -9,8 +9,13 @@
+ #include <sys/mman.h>
+ #include <sys/stat.h>
+ 
+-#include <jpeglib.h>
++#pragma GCC diagnostic push
++#pragma GCC diagnostic ignored "-Wexpansion-to-defined"
+ #include <librsvg/rsvg.h>
++#pragma GCC diagnostic pop
++
++#include <jpeglib.h>
++#include <png.h>
+ 
+ #include "painter_p.h"
+ 
+@@ -54,14 +59,8 @@ bool cairo_buffer_draw_svg(struct cairo_buffer *buffer, const char *data, struct
+     return ok;
+ }
+ 
+-static uint8_t *do_decode_jpeg(void *data, size_t size, uint32_t *width, uint32_t *height)
++static uint8_t *do_decode_jpeg(const uint8_t *data, size_t size, uint32_t *width, uint32_t *height)
+ {
+-    // check signature
+-    const uint8_t signature[] = { 0xff, 0xd8 };
+-    if (size <= sizeof(signature) || memcmp(data, signature, sizeof(signature))) {
+-        return NULL;
+-    }
+-
+     struct jpeg_decompress_struct jpg;
+     struct jpeg_error_mgr err;
+     jpg.err = jpeg_std_error(&err);
+@@ -74,7 +73,7 @@ static uint8_t *do_decode_jpeg(void *data, size_t size, uint32_t *width, uint32_
+     jpg.out_color_space = JCS_EXT_BGRA;
+ #endif // LIBJPEG_TURBO_VERSION
+ 
+-    uint32_t *buffer = calloc(jpg.output_width * jpg.output_height, 4);
++    uint32_t *buffer = malloc(jpg.output_width * jpg.output_height * 4);
+     if (!buffer) {
+         jpeg_destroy_decompress(&jpg);
+         return NULL;
+@@ -115,7 +114,236 @@ static uint8_t *do_decode_jpeg(void *data, size_t size, uint32_t *width, uint32_
+     return (uint8_t *)buffer;
+ }
+ 
+-uint8_t *decode_jpeg(const char *file, uint32_t *width, uint32_t *height)
++// PNG memory reader
++struct mem_reader {
++    const uint8_t *data;
++    const size_t size;
++    size_t position;
++};
++
++static void png_reader(png_structp png, png_bytep buffer, size_t size)
++{
++    struct mem_reader *reader = (struct mem_reader *)png_get_io_ptr(png);
++    if (reader && reader->position + size < reader->size) {
++        memcpy(buffer, reader->data + reader->position, size);
++        reader->position += size;
++    } else {
++        png_error(png, "No data in PNG reader");
++    }
++}
++
++static uint8_t *do_decode_png(const uint8_t *data, size_t size, uint32_t *width, uint32_t *height)
++{
++    png_struct *png = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
++    if (!png) {
++        return NULL;
++    }
++    png_info *info = png_create_info_struct(png);
++    if (!info) {
++        png_destroy_read_struct(&png, NULL, NULL);
++        return NULL;
++    }
++
++    struct mem_reader reader = { .data = data, .size = size, .position = 0 };
++    // get general image info
++    png_set_read_fn(png, &reader, &png_reader);
++    png_read_info(png, info);
++
++    png_byte color_type = png_get_color_type(png, info);
++    png_byte bit_depth = png_get_bit_depth(png, info);
++
++    // setup decoder
++    if (png_get_interlace_type(png, info) != PNG_INTERLACE_NONE) {
++        png_set_interlace_handling(png);
++    }
++    if (color_type == PNG_COLOR_TYPE_PALETTE) {
++        png_set_palette_to_rgb(png);
++    }
++    if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
++        png_set_gray_to_rgb(png);
++        if (bit_depth < 8) {
++            png_set_expand_gray_1_2_4_to_8(png);
++        }
++    }
++    if (png_get_valid(png, info, PNG_INFO_tRNS)) {
++        png_set_tRNS_to_alpha(png);
++    }
++    if (bit_depth == 16) {
++        png_set_strip_16(png);
++    }
++
++    png_set_filler(png, 0xff, PNG_FILLER_AFTER);
++    png_set_alpha_mode(png, PNG_ALPHA_STANDARD, PNG_GAMMA_LINEAR);
++    png_set_packing(png);
++    png_set_packswap(png);
++    png_set_bgr(png);
++    png_set_expand(png);
++    png_read_update_info(png, info);
++
++    uint32_t w = png_get_image_width(png, info);
++    uint32_t h = png_get_image_height(png, info);
++
++    uint8_t *buffer = malloc(w * h * 4);
++    if (!buffer) {
++        png_destroy_read_struct(&png, &info, NULL);
++        return NULL;
++    }
++
++    png_bytep *row_ptrs = malloc(h * sizeof(*row_ptrs));
++    if (!row_ptrs) {
++        free(buffer);
++        png_destroy_read_struct(&png, &info, NULL);
++        return NULL;
++    }
++
++    for (uint32_t i = 0; i < h; i++) {
++        row_ptrs[i] = buffer + w * 4 * i;
++    }
++
++    png_read_image(png, row_ptrs);
++
++    free(row_ptrs);
++    png_destroy_read_struct(&png, &info, NULL);
++
++    *width = w;
++    *height = h;
++
++    return buffer;
++}
++
++static bool image_is_png(const uint8_t *data)
++{
++    return data[0] == 0x89 && data[1] == 0x50 && data[2] == 0x4E && data[3] == 0x47 &&
++           data[4] == 0x0D && data[5] == 0x0A && data[6] == 0x1A && data[7] == 0x0A;
++}
++
++typedef struct __attribute__((__packed__)) {
++    uint16_t type;
++    uint32_t file_size;
++    uint16_t reserved1;
++    uint16_t reserved2;
++    uint32_t offset;
++} bmp_file_header;
++
++typedef struct __attribute__((__packed__)) {
++    uint32_t dib_size;
++    int32_t width;
++    int32_t height;
++    uint16_t planes;
++    uint16_t bpp;
++    uint32_t compression;
++    uint32_t img_size;
++    uint32_t hres;
++    uint32_t vres;
++    uint32_t clr_palette;
++    uint32_t clr_important;
++} bmp_info_header;
++
++static uint8_t *do_decode_bmp(const uint8_t *data, const uint8_t *pixel, uint32_t *width,
++                              uint32_t *height)
++{
++    const bmp_info_header *header = (bmp_info_header *)data;
++    if (header->bpp != 32 || header->compression != 0) {
++        return NULL;
++    }
++
++    uint32_t stride = header->width * 4;
++    // The height of the BMP image must be twice the height in ico
++    uint32_t h = pixel ? abs(header->height) : abs(header->height) / 2;
++
++    uint8_t *buffer = malloc(stride * h);
++    if (!buffer) {
++        return NULL;
++    }
++
++    const uint8_t *src = pixel ? pixel : data + sizeof(*header);
++    // default is bottom-to-top
++    if (header->height < 0) {
++        memcpy(buffer, src, stride * h);
++    } else {
++        for (uint32_t i = 0; i < h; i++) {
++            memcpy(buffer + i * stride, src + (h - 1 - i) * stride, stride);
++        }
++    }
++
++    *width = header->width;
++    *height = h;
++
++    return buffer;
++}
++
++static uint8_t *do_decode_ico(const uint8_t *data, size_t size, uint32_t *width, uint32_t *height)
++{
++    struct __attribute__((__packed__)) ico_header {
++        uint16_t reserved;
++        uint16_t type; // 1 for icon, 2 for cursor
++        uint16_t count;
++    };
++
++    struct __attribute__((__packed__)) ico_directory {
++        uint8_t width;  // should be 0 if 256 pixels
++        uint8_t height; // should be 0 if 256 pixels
++        uint8_t count;  // should be 0 if more than 256 colors
++        uint8_t reserved;
++        uint16_t planes; // should be 0 or 1
++        uint16_t bpp;
++        uint32_t size;
++        uint32_t offset;
++    };
++
++    struct __attribute__((__packed__)) ico {
++        struct ico_header header;
++        struct ico_directory dict[];
++    };
++
++    const struct ico *ico = (struct ico *)data;
++    // header is checked in image_decode_file
++    const struct ico_directory *best_dict = NULL, *max_dict = NULL;
++    // use max size 256 if not set
++    uint32_t best_width = *width ? *width : 256;
++    uint32_t min_width = UINT_MAX, max_width = 0;
++
++    for (uint16_t i = 0; i < ico->header.count; i++) {
++        const struct ico_directory *dict = &ico->dict[i];
++        if (dict->bpp != 32) {
++            continue;
++        }
++        uint32_t width = dict->width ? dict->width : 256;
++        if (width == best_width) {
++            best_dict = dict;
++            break;
++        }
++        if (width > best_width && width < min_width) {
++            min_width = width;
++            best_dict = dict;
++        }
++        if (width > max_width) {
++            max_width = width;
++            max_dict = dict;
++        }
++    }
++
++    if (!best_dict && max_dict) {
++        best_dict = max_dict;
++    }
++    if (!best_dict) {
++        return NULL;
++    }
++
++    const uint8_t *pixels = data + best_dict->offset;
++    uint8_t *buffer = NULL;
++
++    if (image_is_png(pixels)) {
++        buffer = do_decode_png(pixels, best_dict->size, width, height);
++    } else if (*(uint32_t *)pixels == 0x28) {
++        // it must exclude the opening BITMAPFILEHEADER structure
++        buffer = do_decode_bmp(pixels, NULL, width, height);
++    }
++
++    return buffer;
++}
++
++uint8_t *image_decode_file(const char *file, uint32_t *width, uint32_t *height)
+ {
+     int fd = open(file, O_RDONLY);
+     if (fd == -1) {
+@@ -128,13 +356,33 @@ uint8_t *decode_jpeg(const char *file, uint32_t *width, uint32_t *height)
+         return NULL;
+     }
+ 
+-    void *data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
++    uint8_t *data = mmap(NULL, st.st_size, PROT_READ, MAP_PRIVATE, fd, 0);
+     if (data == MAP_FAILED) {
+         close(fd);
+         return NULL;
+     }
+ 
+-    uint8_t *buffer = do_decode_jpeg(data, st.st_size, width, height);
++    if (st.st_size <= 8) {
++        munmap(data, st.st_size);
++        close(fd);
++        return NULL;
++    }
++
++    uint8_t *buffer = NULL;
++
++    if (image_is_png(data)) {
++        buffer = do_decode_png(data, st.st_size, width, height);
++    } else if (data[0] == 0xFF && data[1] == 0xD8) {
++        buffer = do_decode_jpeg(data, st.st_size, width, height);
++    } else if (data[0] == 0x00 && data[1] == 0x00 && data[2] == 0x01 && data[3] == 0x00) {
++        buffer = do_decode_ico(data, st.st_size, width, height);
++    } else if (data[0] == 0x42 && data[1] == 0x4D &&
++               *(uint32_t *)(data + sizeof(bmp_file_header)) == 0x28) {
++        buffer = do_decode_bmp(data + sizeof(bmp_file_header),
++                               data + ((bmp_file_header *)data)->offset, width, height);
++    } else {
++        kywc_log(KYWC_WARN, "%s: unsupported image format", file);
++    }
+ 
+     munmap(data, st.st_size);
+     close(fd);
+@@ -142,7 +390,7 @@ uint8_t *decode_jpeg(const char *file, uint32_t *width, uint32_t *height)
+     return buffer;
+ }
+ 
+-bool cairo_surface_write_to_bmp(cairo_surface_t *surface, const char *filename)
++bool cairo_buffer_write_to_bmp(struct cairo_buffer *buffer, const char *filename)
+ {
+     FILE *file = fopen(filename, "wb");
+     if (!file) {
+@@ -150,51 +398,26 @@ bool cairo_surface_write_to_bmp(cairo_surface_t *surface, const char *filename)
+         return false;
+     }
+ 
+-    int width = cairo_image_surface_get_width(surface);
+-    int height = cairo_image_surface_get_height(surface);
+-    int stride = cairo_image_surface_get_stride(surface);
+-    uint8_t *data = cairo_image_surface_get_data(surface);
+-
+-    struct {
+-        unsigned int biSize;
+-        int biWidth;
+-        int biHeight;
+-        unsigned short biPlanes;
+-        unsigned short biBitCount;
+-        unsigned int biCompression;
+-        unsigned int biSizeImage;
+-        int biXPelsPerMeter;
+-        int biYPelsPerMeter;
+-        unsigned int biClrUsed;
+-        unsigned int biClrImportant;
+-    } info_header = {
+-        .biSize = sizeof(info_header),
+-        .biWidth = width,
+-        .biHeight = -height,
+-        .biPlanes = 1,
+-        .biBitCount = 32,
+-        .biCompression = 0,
+-        .biSizeImage = stride * height,
+-        .biXPelsPerMeter = 0,
+-        .biYPelsPerMeter = 0,
+-        .biClrUsed = 0,
+-        .biClrImportant = 0,
++    int width = cairo_image_surface_get_width(buffer->surface);
++    int height = cairo_image_surface_get_height(buffer->surface);
++    int stride = cairo_image_surface_get_stride(buffer->surface);
++    uint8_t *data = cairo_image_surface_get_data(buffer->surface);
++
++    bmp_info_header info_header = {
++        .dib_size = sizeof(info_header),
++        .width = width,
++        .height = -height,
++        .planes = 1,
++        .bpp = 32,
++        .img_size = stride * height,
+     };
+ 
+-    struct {
+-        unsigned int bfSize;
+-        unsigned short bfReserved1;
+-        unsigned short bfReserved2;
+-        unsigned int bfOffBits;
+-    } file_header = {
+-        .bfSize = 2 + sizeof(file_header) + sizeof(info_header) + stride * height,
+-        .bfReserved1 = 0,
+-        .bfReserved2 = 0,
+-        .bfOffBits = 2 + sizeof(file_header) + sizeof(info_header),
++    bmp_file_header file_header = {
++        .type = 'B' | ('M' << 8),
++        .file_size = sizeof(file_header) + sizeof(info_header) + info_header.img_size,
++        .offset = sizeof(file_header) + sizeof(info_header),
+     };
+ 
+-    unsigned short type = 0x4D42;
+-    fwrite(&type, sizeof(type), 1, file);
+     fwrite(&file_header, sizeof(file_header), 1, file);
+     fwrite(&info_header, sizeof(info_header), 1, file);
+     fwrite(data, stride, height, file);
+diff --git a/src/painter/painter.c b/src/painter/painter.c
+index 11cb1db..9982cb4 100644
+--- a/src/painter/painter.c
++++ b/src/painter/painter.c
+@@ -54,6 +54,7 @@ static void buffer_draw(struct cairo_buffer *buffer, struct draw_info *info, str
+         double y = box->y + offset;
+         double w = box->width - 2 * offset;
+         double h = box->height - 2 * offset;
++        float radius = info->hover_radius;
+         cairo_arc(cairo, x + radius, y + radius, radius, ANGLE(-180), ANGLE(-90));
+         cairo_arc(cairo, x + w - radius, y + radius, radius, ANGLE(-90), ANGLE(0));
+         cairo_arc(cairo, x + w - radius, y + h - radius, radius, ANGLE(0), ANGLE(90));
+@@ -247,10 +248,8 @@ struct wlr_buffer *painter_draw_buffer(struct draw_info *info)
+     }
+ 
+     struct cairo_buffer *buffer = NULL;
+-    if (info->png_path) {
+-        buffer = cairo_buffer_create_from_png(info->width, info->height, info->png_path);
+-    } else if (info->jpeg_path) {
+-        buffer = cairo_buffer_create_from_jpeg(info->width, info->height, info->jpeg_path);
++    if (info->image) {
++        buffer = cairo_buffer_create_from_file(info->width, info->height, info->scale, info->image);
+     } else if (info->pixel.data) {
+         buffer = cairo_buffer_create_from_pixel(info->width, info->height, info->pixel.width,
+                                                 info->pixel.height, info->pixel.data);
+@@ -269,7 +268,7 @@ struct wlr_buffer *painter_draw_buffer(struct draw_info *info)
+     return &buffer->base;
+ }
+ 
+-bool painter_redraw_buffer(struct wlr_buffer *buffer, struct draw_info *info)
++bool painter_buffer_redraw(struct wlr_buffer *buffer, struct draw_info *info)
+ {
+     struct cairo_buffer *buf = cairo_buffer_from_wlr_buffer(buffer);
+     if (!buf) {
+@@ -282,7 +281,7 @@ bool painter_redraw_buffer(struct wlr_buffer *buffer, struct draw_info *info)
+     return painter_draw(buf, info, true);
+ }
+ 
+-void painter_buffer_dest_size(struct wlr_buffer *buffer, int *width, int *height)
++void painter_buffer_get_dest_size(struct wlr_buffer *buffer, int *width, int *height)
+ {
+     struct cairo_buffer *buf = cairo_buffer_from_wlr_buffer(buffer);
+     if (buf && width) {
+@@ -293,18 +292,7 @@ void painter_buffer_dest_size(struct wlr_buffer *buffer, int *width, int *height
+     }
+ }
+ 
+-void painter_buffer_size(struct wlr_buffer *buffer, int *width, int *height)
+-{
+-    struct cairo_buffer *buf = cairo_buffer_from_wlr_buffer(buffer);
+-    if (buf && width) {
+-        *width = buf->base.width;
+-    }
+-    if (buf && height) {
+-        *height = buf->base.height;
+-    }
+-}
+-
+-void painter_buffer_to_file(struct wlr_buffer *buffer, const char *name)
++void painter_buffer_write_to_file(struct wlr_buffer *buffer, const char *name)
+ {
+     struct cairo_buffer *buf = cairo_buffer_from_wlr_buffer(buffer);
+     if (!buf) {
+@@ -314,7 +302,7 @@ void painter_buffer_to_file(struct wlr_buffer *buffer, const char *name)
+     size_t len = strlen(name);
+     const char *suffix = name + len - 3;
+     if (len > 3 && strncmp(suffix, "bmp", 3) == 0) {
+-        cairo_surface_write_to_bmp(buf->surface, name);
++        cairo_buffer_write_to_bmp(buf, name);
+     } else {
+         cairo_surface_write_to_png(buf->surface, name);
+     }
+@@ -330,7 +318,8 @@ struct wlr_buffer *painter_create_buffer(int width, int height, float scale)
+     return &buffer->base;
+ }
+ 
+-void painter_text_size(const char *text, const char *font, int font_size, int *width, int *height)
++void painter_get_text_size(const char *text, const char *font, int font_size, int *width,
++                           int *height)
+ {
+     text_extents(font, font_size, text, width, height);
+ }
+diff --git a/src/painter/painter_p.h b/src/painter/painter_p.h
+index bbb2f01..fe217bf 100644
+--- a/src/painter/painter_p.h
++++ b/src/painter/painter_p.h
+@@ -28,18 +28,21 @@ struct cairo_buffer {
+ 
+ struct cairo_buffer *cairo_buffer_create(uint32_t width, uint32_t height, float scale);
+ 
+-struct cairo_buffer *cairo_buffer_create_from_png(uint32_t width, uint32_t height,
+-                                                  const char *png_path);
++struct cairo_buffer *cairo_buffer_from_wlr_buffer(struct wlr_buffer *wlr_buffer);
+ 
+ struct cairo_buffer *cairo_buffer_create_from_pixel(uint32_t width, uint32_t height,
+                                                     uint32_t src_width, uint32_t src_height,
+                                                     unsigned char *src_data);
+ 
+-struct cairo_buffer *cairo_buffer_create_from_jpeg(uint32_t width, uint32_t height,
+-                                                   const char *jpeg_path);
++struct cairo_buffer *cairo_buffer_create_from_file(uint32_t width, uint32_t height, float scale,
++                                                   const char *path);
++
++uint8_t *image_decode_file(const char *file, uint32_t *width, uint32_t *height);
+ 
+ bool cairo_buffer_draw_svg(struct cairo_buffer *buffer, const char *data, struct kywc_box *box);
+ 
++bool cairo_buffer_write_to_bmp(struct cairo_buffer *buffer, const char *filename);
++
+ bool cairo_buffer_draw_text(struct cairo_buffer *buffer, struct draw_info *info,
+                             struct kywc_box *box);
+ 
+@@ -47,10 +50,4 @@ bool cairo_buffer_draw_blur(struct cairo_buffer *buffer, int margin);
+ 
+ void text_extents(const char *font, int font_size, const char *text, int *width, int *height);
+ 
+-struct cairo_buffer *cairo_buffer_from_wlr_buffer(struct wlr_buffer *wlr_buffer);
+-
+-uint8_t *decode_jpeg(const char *file, uint32_t *width, uint32_t *height);
+-
+-bool cairo_surface_write_to_bmp(cairo_surface_t *surface, const char *filename);
+-
+ #endif /* _BUFFER_H_ */
+diff --git a/src/scene/thumbnail.c b/src/scene/thumbnail.c
+index f15ab74..334af86 100644
+--- a/src/scene/thumbnail.c
++++ b/src/scene/thumbnail.c
+@@ -244,7 +244,7 @@ static void view_thumbnail_get_box(struct view_thumbnail *view_thumbnail, struct
+         box->width += kywc_view->margin.off_width;
+         box->height += kywc_view->margin.off_height;
+     } else if (options & THUMBNAIL_DISABLE_ROUND_CORNER || options == 0) {
+-        struct theme *theme = theme_manager_get_current();
++        struct theme *theme = theme_manager_get_theme();
+         box->x -= kywc_view->margin.off_x + theme->shadow_border;
+         box->y -= kywc_view->margin.off_y + theme->shadow_border;
+         box->width += kywc_view->margin.off_width + theme->shadow_border * 2;
+@@ -553,7 +553,7 @@ static void view_thumbnail_get_position(struct view *view, struct wlr_box *dst_b
+     struct kywc_view *kywc_view = &view->base;
+     struct kywc_box geometry = kywc_view->geometry;
+ 
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     if (kywc_view->ssd != KYWC_SSD_NONE) {
+         dst_box->x = geometry.x - kywc_view->margin.off_x - theme->shadow_border;
+         dst_box->y = geometry.y - kywc_view->margin.off_y - theme->shadow_border;
+diff --git a/src/server.c b/src/server.c
+index 08e1459..0f50590 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -39,6 +39,7 @@
+ #include "server.h"
+ #include "theme.h"
+ #include "util/dbus.h"
++#include "util/sysfs.h"
+ #include "view/view.h"
+ #include "xwayland.h"
+ 
+@@ -90,6 +91,18 @@ static void kywc_log_callback(enum wlr_log_importance verbosity, const char *fmt
+     kywc_vlog(level, fmt, args);
+ }
+ 
++static void server_get_active_vt(struct server *server)
++{
++    char buf[64] = { 0 };
++    size_t len = sysfs_read_data("/sys/class/tty/tty0/active", buf, 63);
++    if (len > 0) {
++        sscanf(buf, "tty%u", &server->vtnr);
++        kywc_log(KYWC_INFO, "Current VT is %u", server->vtnr);
++    } else {
++        server->vtnr = 0;
++    }
++}
++
+ static void handle_session_active(struct wl_listener *listener, void *data)
+ {
+     struct server *server = wl_container_of(listener, server, session_active);
+@@ -114,6 +127,7 @@ static bool wlroots_server_init(struct server *server)
+         server->active = server->session->active;
+         server->session_active.notify = handle_session_active;
+         wl_signal_add(&server->session->events.active, &server->session_active);
++        server_get_active_vt(server);
+     } else {
+         // mark active if in nested backend
+         server->active = true;
+diff --git a/src/theme/config.c b/src/theme/config.c
+index 2869b7b..bf2a7e4 100644
+--- a/src/theme/config.c
++++ b/src/theme/config.c
+@@ -10,56 +10,37 @@
+ #include "theme_p.h"
+ #include "util/dbus.h"
+ 
+-#define WLCOM_THEME_LIGHT "default-light"
+-#define WLCOM_THEME_DARK "default-dark"
+-
+ static const char *service_path = "/com/kylin/Wlcom/Theme";
+ static const char *service_interface = "com.kylin.Wlcom.Theme";
+ 
+-static int list_themes(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
++static int print_theme_config(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
+ {
+     struct theme_manager *manager = userdata;
+-
+     sd_bus_message *reply = NULL;
+-    CK(sd_bus_message_new_method_return(msg, &reply));
+-    CK(sd_bus_message_open_container(reply, 'a', "s"));
+-
+-    struct theme *theme;
+-    wl_list_for_each(theme, &manager->themes, link) {
+-        sd_bus_message_append(reply, "s", theme->theme_name);
+-    }
+ 
+-    CK(sd_bus_message_close_container(reply));
++    CK(sd_bus_message_new_method_return(msg, &reply));
++    const char *config = json_object_to_json_string(manager->config->json);
++    sd_bus_message_append_basic(reply, 's', config);
+     CK(sd_bus_send(NULL, reply, NULL));
+     sd_bus_message_unref(reply);
+     return 1;
+ }
+ 
+-static int current_theme(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
+-{
+-    struct theme_manager *manager = userdata;
+-    return sd_bus_reply_method_return(msg, "s", manager->current->theme_name);
+-}
+-
+-static int set_theme(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
++static int set_widget_theme(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
+ {
+     char *theme = NULL;
+-    CK(sd_bus_message_read(msg, "s", &theme));
+-    enum theme_type theme_type = THEME_TYPE_DEFAULT;
+-    if (!strcmp(theme, WLCOM_THEME_LIGHT)) {
+-        theme_type = THEME_TYPE_LIGHT;
+-    } else if (!strcmp(theme, WLCOM_THEME_DARK)) {
+-        theme_type = THEME_TYPE_DARK;
+-    }
+-    int32_t ret = theme_manager_set_theme(theme_type);
+-    return sd_bus_reply_method_return(msg, "b", &ret);
++    uint32_t type = THEME_TYPE_DEFAULT;
++    CK(sd_bus_message_read(msg, "su", &theme, &type));
++    bool ret = theme_manager_set_widget_theme(theme, type);
++    return sd_bus_reply_method_return(msg, "b", ret);
+ }
+ 
+-static int current_font(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
++static int set_icon_theme(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
+ {
+-    struct theme_manager *manager = userdata;
+-    return sd_bus_reply_method_return(msg, "si", manager->current->font_name,
+-                                      manager->current->font_size);
++    char *icon_theme_name = NULL;
++    CK(sd_bus_message_read(msg, "s", &icon_theme_name));
++    bool ret = theme_manager_set_icon_theme(icon_theme_name);
++    return sd_bus_reply_method_return(msg, "b", ret);
+ }
+ 
+ static int set_font(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
+@@ -67,35 +48,43 @@ static int set_font(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error
+     char *font_name = NULL;
+     int32_t size;
+     CK(sd_bus_message_read(msg, "si", &font_name, &size));
+-    int32_t ret = theme_manager_set_font(font_name, size);
+-    return sd_bus_reply_method_return(msg, "b", &ret);
++    bool ret = theme_manager_set_font(font_name, size);
++    return sd_bus_reply_method_return(msg, "b", ret);
+ }
+ 
+ static int set_accent_color(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
+ {
+     int32_t accent_color;
+     CK(sd_bus_message_read(msg, "i", &accent_color));
+-    int32_t ret = theme_manager_set_accent_color(accent_color);
+-    return sd_bus_reply_method_return(msg, "b", &ret);
++    bool ret = theme_manager_set_accent_color(accent_color);
++    return sd_bus_reply_method_return(msg, "b", ret);
+ }
+ 
+-static int set_icon_theme(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
++static int set_corner_radius(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
+ {
+-    char *icon_theme_name = NULL;
+-    CK(sd_bus_message_read(msg, "s", &icon_theme_name));
+-    int32_t ret = theme_manager_set_icon_theme(icon_theme_name);
+-    return sd_bus_reply_method_return(msg, "b", &ret);
++    int32_t corner_radius;
++    CK(sd_bus_message_read(msg, "i", &corner_radius));
++    bool ret = theme_manager_set_corner_radius(corner_radius);
++    return sd_bus_reply_method_return(msg, "b", ret);
++}
++
++static int set_opacity(sd_bus_message *msg, void *userdata, sd_bus_error *ret_error)
++{
++    int32_t opacity;
++    CK(sd_bus_message_read(msg, "i", &opacity));
++    bool ret = theme_manager_set_opacity(opacity);
++    return sd_bus_reply_method_return(msg, "b", ret);
+ }
+ 
+ static const sd_bus_vtable service_vtable[] = {
+     SD_BUS_VTABLE_START(0),
+-    SD_BUS_METHOD("ListAllThemes", "", "as", list_themes, 0),
+-    SD_BUS_METHOD("currentTheme", "", "s", current_theme, 0),
+-    SD_BUS_METHOD("SetTheme", "s", "b", set_theme, 0),
+-    SD_BUS_METHOD("currentFont", "", "si", current_font, 0),
++    SD_BUS_METHOD("PrintThemeConfig", "", "s", print_theme_config, 0),
++    SD_BUS_METHOD("SetWidgetTheme", "su", "b", set_widget_theme, 0),
++    SD_BUS_METHOD("SetIconTheme", "s", "b", set_icon_theme, 0),
+     SD_BUS_METHOD("SetFont", "si", "b", set_font, 0),
+     SD_BUS_METHOD("SetAccentColor", "i", "b", set_accent_color, 0),
+-    SD_BUS_METHOD("SetIconTheme", "s", "b", set_icon_theme, 0),
++    SD_BUS_METHOD("SetCornerRadius", "i", "b", set_corner_radius, 0),
++    SD_BUS_METHOD("SetOpacity", "i", "b", set_opacity, 0),
+     SD_BUS_VTABLE_END,
+ };
+ 
+@@ -115,30 +104,35 @@ enum theme_type theme_manager_read_config(struct theme_manager *manager)
+     }
+ 
+     json_object *data;
+-    /* some override configs */
++    /* some global configs */
++    free(manager->global.font_name);
+     if (json_object_object_get_ex(manager->config->json, "font_name", &data)) {
+-        free(manager->override.font_name);
+-        manager->override.font_name = strdup(json_object_get_string(data));
++        manager->global.font_name = strdup(json_object_get_string(data));
++    } else {
++        manager->global.font_name = strdup("sans");
+     }
+     if (json_object_object_get_ex(manager->config->json, "font_size", &data)) {
+-        manager->override.font_size = json_object_get_int(data);
++        manager->global.font_size = json_object_get_int(data);
++    } else {
++        manager->global.font_size = 11;
+     }
++
+     if (json_object_object_get_ex(manager->config->json, "accent_color", &data)) {
+-        manager->override.accent_color = json_object_get_int(data);
++        manager->global.accent_color = json_object_get_int(data);
+     } else {
+-        manager->override.accent_color = -1;
++        manager->global.accent_color = -1;
+     }
+ 
+     if (json_object_object_get_ex(manager->config->json, "corner_radius", &data)) {
+-        manager->override.corner_radius = json_object_get_int(data);
++        manager->global.corner_radius = json_object_get_int(data);
+     } else {
+-        manager->override.corner_radius = -1;
++        manager->global.corner_radius = 12;
+     }
+ 
+     if (json_object_object_get_ex(manager->config->json, "opacity", &data)) {
+-        manager->override.opacity = json_object_get_int(data);
++        manager->global.opacity = json_object_get_int(data);
+     } else {
+-        manager->override.opacity = -1;
++        manager->global.opacity = 100;
+     }
+ 
+     if (json_object_object_get_ex(manager->config->json, "type", &data)) {
+@@ -156,33 +150,44 @@ enum theme_type theme_manager_read_config(struct theme_manager *manager)
+ 
+ void theme_manager_write_config(struct theme_manager *manager, enum theme_type theme_type)
+ {
++    if (!manager->config || !manager->config->json) {
++        return;
++    }
++
+     if (theme_type > THEME_TYPE_UNDEFINED) {
+         json_object_object_add(manager->config->json, "type", json_object_new_int(theme_type));
+     }
+ 
+-    if (manager->override.font_name) {
++    if (strcmp(manager->global.font_name, "sans")) {
+         json_object_object_add(manager->config->json, "font_name",
+-                               json_object_new_string(manager->override.font_name));
++                               json_object_new_string(manager->global.font_name));
++    } else {
++        json_object_object_del(manager->config->json, "font_name");
+     }
+-
+-    if (manager->override.font_size > 0) {
++    if (manager->global.font_size != 11) {
+         json_object_object_add(manager->config->json, "font_size",
+-                               json_object_new_int(manager->override.font_size));
++                               json_object_new_int(manager->global.font_size));
++    } else {
++        json_object_object_del(manager->config->json, "font_size");
+     }
+ 
+-    if (manager->override.accent_color >= 0) {
++    if (manager->global.accent_color >= 0) {
+         json_object_object_add(manager->config->json, "accent_color",
+-                               json_object_new_int(manager->override.accent_color));
++                               json_object_new_int(manager->global.accent_color));
+     }
+ 
+-    if (manager->override.corner_radius >= 0) {
++    if (manager->global.corner_radius != 12) {
+         json_object_object_add(manager->config->json, "corner_radius",
+-                               json_object_new_int(manager->override.corner_radius));
++                               json_object_new_int(manager->global.corner_radius));
++    } else {
++        json_object_object_del(manager->config->json, "corner_radius");
+     }
+ 
+-    if (manager->override.opacity >= 0) {
++    if (manager->global.opacity != 100) {
+         json_object_object_add(manager->config->json, "opacity",
+-                               json_object_new_int(manager->override.opacity));
++                               json_object_new_int(manager->global.opacity));
++    } else {
++        json_object_object_del(manager->config->json, "opacity");
+     }
+ }
+ 
+@@ -208,12 +213,14 @@ const char *theme_manager_read_icon_config(struct theme_manager *manager)
+ 
+ void theme_manager_write_icon_config(struct theme_manager *manager, const char *name)
+ {
+-    if (name && name[0]) {
+-        if (strcmp(name, DEFAULT_ICON_THEME_NAME)) {
+-            json_object_object_add(manager->config->json, "icon_theme_name",
+-                                   json_object_new_string(name));
+-        } else {
+-            json_object_object_del(manager->config->json, "icon_theme_name");
+-        }
++    if (!manager->config || !manager->config->json) {
++        return;
++    }
++
++    if (strcmp(name, DEFAULT_ICON_THEME_NAME) || strcmp(name, FALLBACK_ICON_THEME_NAME)) {
++        json_object_object_add(manager->config->json, "icon_theme_name",
++                               json_object_new_string(name));
++    } else {
++        json_object_object_del(manager->config->json, "icon_theme_name");
+     }
+ }
+diff --git a/src/theme/icon.c b/src/theme/icon.c
+index 0f93581..c657600 100644
+--- a/src/theme/icon.c
++++ b/src/theme/icon.c
+@@ -293,10 +293,10 @@ static void parents_icon_theme_load(char *parents_name, struct icon_theme *theme
+     char *s_ptr = NULL;
+     char *parent_name = strtok_r(parents_name, ",", &s_ptr);
+     while (parent_name) {
+-        if (strcmp(parent_name, DEFAULT_ICON_THEME_NAME)) {
++        if (strcmp(parent_name, FALLBACK_ICON_THEME_NAME)) {
+             parent_theme = icon_theme_load(parent_name);
+             if (parent_theme) {
+-                wl_list_insert(&theme->parents_theme, &parent_theme->link);
++                wl_list_insert(&theme->parents, &parent_theme->link);
+             }
+         }
+         parent_name = strtok_r(NULL, ",", &s_ptr);
+@@ -312,7 +312,7 @@ static void icon_theme_dir_load(char *dir_name, struct icon_theme *theme)
+         if (strstr(subdir, "apps") || strstr(subdir, "categories") || strstr(subdir, "status")) {
+             icon_subdir = malloc(sizeof(struct icon_subdir));
+             icon_subdir->subdir = fscan_build_fullname(theme->name, subdir, "");
+-            wl_list_insert(&theme->icons_subdir, &icon_subdir->link);
++            wl_list_insert(&theme->subdirs, &icon_subdir->link);
+         }
+         subdir = strtok_r(NULL, ",", &s_ptr);
+     }
+@@ -446,7 +446,7 @@ static void icon_load(const char *path, const char *full_name, void *data)
+ static void icon_load_theme(struct icon_theme *theme)
+ {
+     struct icon_subdir *icon_subdir;
+-    wl_list_for_each(icon_subdir, &theme->icons_subdir, link) {
++    wl_list_for_each(icon_subdir, &theme->subdirs, link) {
+         fscan_start(ICONPATH, icon_subdir->subdir, icon_load, theme);
+     }
+ }
+@@ -458,7 +458,7 @@ struct icon_theme *icon_theme_load(const char *name)
+         return NULL;
+     }
+     if (!name) {
+-        name = "default";
++        name = DEFAULT_ICON_THEME_NAME;
+     }
+ 
+     theme->name = strdup(name);
+@@ -467,15 +467,15 @@ struct icon_theme *icon_theme_load(const char *name)
+         return NULL;
+     }
+ 
+-    wl_list_init(&theme->parents_theme);
+-    wl_list_init(&theme->icons_subdir);
++    wl_list_init(&theme->parents);
++    wl_list_init(&theme->subdirs);
+     icon_load_index_theme_file(theme);
+     wl_list_init(&theme->icons);
+     icon_load_theme(theme);
+ 
+     if (wl_list_empty(&theme->icons)) {
+         free(theme->name);
+-        theme->name = strdup("default");
++        theme->name = strdup(DEFAULT_ICON_THEME_NAME);
+     }
+ 
+     return theme;
+@@ -488,7 +488,7 @@ void icon_theme_destroy(struct icon_theme *theme)
+     }
+ 
+     struct icon_theme *parent_theme, *parent_tmp;
+-    wl_list_for_each_safe(parent_theme, parent_tmp, &theme->parents_theme, link) {
++    wl_list_for_each_safe(parent_theme, parent_tmp, &theme->parents, link) {
+         icon_theme_destroy(parent_theme);
+     }
+ 
+@@ -498,7 +498,7 @@ void icon_theme_destroy(struct icon_theme *theme)
+     }
+ 
+     struct icon_subdir *subdir, *dir_tmp;
+-    wl_list_for_each_safe(subdir, dir_tmp, &theme->icons_subdir, link) {
++    wl_list_for_each_safe(subdir, dir_tmp, &theme->subdirs, link) {
+         wl_list_remove(&subdir->link);
+         free(subdir->subdir);
+         free(subdir);
+@@ -518,9 +518,9 @@ struct icon *icon_theme_get_icon(struct icon_theme *theme, const char *name, boo
+     }
+ 
+     if (search_parents) {
+-        struct icon_theme *parents_theme;
+-        wl_list_for_each(parents_theme, &theme->parents_theme, link) {
+-            icon = icon_theme_get_icon(parents_theme, name, true);
++        struct icon_theme *parent;
++        wl_list_for_each(parent, &theme->parents, link) {
++            icon = icon_theme_get_icon(parent, name, true);
+             if (icon) {
+                 return icon;
+             }
+@@ -547,7 +547,7 @@ bool icon_need_reload(const char *path, struct icon_theme *theme, time_t thresho
+         return ret;
+     }
+     struct icon_subdir *tmp_subdir;
+-    wl_list_for_each(tmp_subdir, &theme->icons_subdir, link) {
++    wl_list_for_each(tmp_subdir, &theme->subdirs, link) {
+         mtime = fscan_get_latest_mtime(path, tmp_subdir->subdir);
+         ret = mtime > threshold ? true : false;
+         if (ret) {
+@@ -556,7 +556,7 @@ bool icon_need_reload(const char *path, struct icon_theme *theme, time_t thresho
+     }
+ 
+     struct icon_theme *tmp_theme;
+-    wl_list_for_each(tmp_theme, &theme->parents_theme, link) {
++    wl_list_for_each(tmp_theme, &theme->parents, link) {
+         mtime = fscan_get_latest_mtime(path, tmp_theme->name);
+         ret = mtime > threshold ? true : false;
+         if (ret) {
+diff --git a/src/theme/theme.c b/src/theme/theme.c
+index 82bd4aa..2bac9d6 100644
+--- a/src/theme/theme.c
++++ b/src/theme/theme.c
+@@ -23,67 +23,42 @@
+ #include "server.h"
+ #include "theme_p.h"
+ 
+-static struct theme_manager *manager = NULL;
++#define FALLBACK_THEME_NAME "fallback"
+ 
+-/* default light theme from ukui-white */
+-static struct theme light = {
+-    .theme_name = "default-light",
+-    .theme_type = THEME_TYPE_LIGHT,
++static struct theme_manager *manager = NULL;
+ 
++/* fallback light widget theme from ukui-white */
++static struct widget_theme widget_light = {
++    .name = FALLBACK_THEME_NAME,
++    .type = THEME_TYPE_LIGHT,
+     .builtin = true,
+-    .font_name = "sans",
+-    .font_size = 11,
+-    .corner_radius = 12,
+-    .opacity = 100,
++
+     .active_border_color = { 0.0, 0.0, 0.0, 0.15 },
+     .inactive_border_color = { 0.0, 0.0, 0.0, 0.15 },
+     .active_bg_color = { 1.0, 1.0, 1.0, 1.0 },
+     .inactive_bg_color = { 245.0 / 255.0, 245.0 / 255.0, 245.0 / 255.0, 1.0 },
+     .active_text_color = { 38.0 / 255.0, 38.0 / 255.0, 38.0 / 255.0, 1.0 },
+     .inactive_text_color = { 38.0 / 255.0, 38.0 / 255.0, 38.0 / 255.0, 0.3 },
+-    .text_justify = JUSTIFY_LEFT,
+-    .ssd_need_maximize_button = true,
+     .accent_color = { 55.0 / 255, 144.0 / 255, 250.0 / 255, 1.0 },
+-
+-    .icon_size = 24,
+-    .button_width = 30,
+-
+-    .border_width = 1,
+-    .title_height = 38,
+-    .subtitle_height = 38,
+-    .shadow_border = 30,
++    .modal_mask_color = { 0, 0, 0, 0.2 },
+ 
+     .button_svg = base_light_svg_src,
+ };
+ 
+-/* default dark theme from ukui-dark */
+-static struct theme dark = {
+-    .theme_name = "default-dark",
+-    .theme_type = THEME_TYPE_DARK,
+-
++/* fallback dark theme from ukui-dark */
++static struct widget_theme widget_dark = {
++    .name = FALLBACK_THEME_NAME,
++    .type = THEME_TYPE_DARK,
+     .builtin = true,
+-    .font_name = "sans",
+-    .font_size = 11,
+-    .corner_radius = 12,
+-    .opacity = 100,
++
+     .active_border_color = { 1.0, 1.0, 1.0, 0.15 },
+     .inactive_border_color = { 1.0, 1.0, 1.0, 0.15 },
+     .active_bg_color = { 18.0 / 255.0, 18.0 / 255.0, 18.0 / 255.0, 1.0 },
+     .inactive_bg_color = { 28.0 / 255.0, 28.0 / 255.0, 28.0 / 255.0, 1.0 },
+     .active_text_color = { 0xcf / 255.0, 0xcf / 255.0, 0xcf / 255.0, 1.0 },
+-    .inactive_text_color = { 0xcf / 255.0, 0xcf / 255.0, 0xcf / 255.0,
+-                             0.3 }, // 0x69 / 255.0, 0x69 / 255.0, 0x69 / 255.0, 1.0
+-    .text_justify = JUSTIFY_LEFT,
+-    .ssd_need_maximize_button = true,
++    .inactive_text_color = { 0xcf / 255.0, 0xcf / 255.0, 0xcf / 255.0, 0.3 },
+     .accent_color = { 243.0 / 255, 34.0 / 255, 45.0 / 255, 1.0 },
+-
+-    .icon_size = 24,
+-    .button_width = 30,
+-
+-    .border_width = 1,
+-    .title_height = 38,
+-    .subtitle_height = 38,
+-    .shadow_border = 30,
++    .modal_mask_color = { 0, 0, 0, 0.2 },
+ 
+     .button_svg = base_dark_svg_src,
+ };
+@@ -148,7 +123,7 @@ static int handle_manager_timer(void *data)
+     }
+     if (reload_hicolor_theme_file) {
+         old_hicolor_theme = manager->hicolor_theme;
+-        new_hicolor_theme = icon_theme_load(DEFAULT_ICON_THEME_NAME);
++        new_hicolor_theme = icon_theme_load(FALLBACK_ICON_THEME_NAME);
+         manager->hicolor_theme = new_hicolor_theme;
+     }
+ 
+@@ -181,127 +156,135 @@ static struct wlr_buffer *draw_svg(const char *svg, int width, int height, float
+     return painter_draw_buffer(&info);
+ }
+ 
+-static struct theme_buffer *draw_theme_buffers(struct theme *theme, float scale)
++static struct theme_buffer *draw_theme_buffer(struct theme *theme, float scale)
+ {
+-    struct theme_buffer *buffers = calloc(1, sizeof(struct theme_buffer));
+-    if (!buffers) {
++    struct theme_buffer *buffer = calloc(1, sizeof(struct theme_buffer));
++    if (!buffer) {
+         return NULL;
+     }
+ 
+-    struct wlr_buffer *buffer =
++    struct wlr_buffer *buf =
+         draw_svg(theme->button_svg, theme->button_width * 4, theme->button_width * 3, scale);
+-    if (!buffer) {
+-        free(buffers);
++    if (!buf) {
++        free(buffer);
+         return NULL;
+     }
+ 
+-    buffers->scale = scale;
+-    wl_list_insert(&theme->scaled_buffers, &buffers->link);
++    buffer->scale = scale;
++    wl_list_insert(&theme->scaled_buffers, &buffer->link);
+ 
+-    int width, height;
+-    painter_buffer_size(buffer, &width, &height);
+-
+-    buffers->buf = ky_renderer_upload_pixels(manager->server->renderer, manager->server->allocator,
+-                                             width, height, buffer);
+-    if (buffers->buf) {
+-        wlr_buffer_drop(buffer);
++    buffer->buffer = ky_renderer_upload_pixels(
++        manager->server->renderer, manager->server->allocator, buf->width, buf->height, buf);
++    if (buffer->buffer) {
++        wlr_buffer_drop(buf);
+     } else {
+-        buffers->buf = buffer;
++        buffer->buffer = buf;
+     }
+ 
+-    return buffers;
++    return buffer;
+ }
+ 
+-static void theme_override_config(struct theme *theme)
++static uint32_t theme_init(struct widget_theme *widget, float scale)
+ {
+-    struct theme_override *override = &manager->override;
+-
+-    if (override->font_name && strcmp(override->font_name, theme->font_name)) {
+-        if (theme->builtin) {
+-            theme->font_name = override->font_name;
+-        } else {
+-            free((void *)theme->font_name);
+-            theme->font_name = strdup(override->font_name);
+-        }
+-    }
++    struct theme *theme = &manager->theme;
++    uint32_t mask = THEME_UPDATE_MASK_NONE;
+ 
+-    if (override->font_size > 0 && override->font_size != theme->font_size) {
+-        theme->font_size = override->font_size;
+-    }
++    /* use name and type from widget */
++    theme->name = widget->name;
++    theme->builtin = widget->builtin;
+ 
+-    if (override->accent_color >= 0) {
+-        theme->accent_color[0] = (float)((override->accent_color >> 16) & 0xff) / 255;
+-        theme->accent_color[1] = (float)((override->accent_color >> 8) & 0xff) / 255;
+-        theme->accent_color[2] = (float)(override->accent_color & 0xff) / 255;
+-        theme->accent_color[3] = 1.0;
++    if (theme->type != widget->type) {
++        theme->type = widget->type;
++        mask |= THEME_UPDATE_MASK_TYPE;
+     }
+ 
+-    if (override->corner_radius >= 0) {
+-        theme->corner_radius = override->corner_radius;
++    /* copy color from widget */
++    if (memcmp(theme->active_border_color, widget->active_border_color, sizeof(float[4]))) {
++        memcpy(theme->active_border_color, widget->active_border_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_BORDER_COLOR;
++    }
++    if (memcmp(theme->inactive_border_color, widget->inactive_border_color, sizeof(float[4]))) {
++        memcpy(theme->inactive_border_color, widget->inactive_border_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_BORDER_COLOR;
+     }
+ 
+-    if (override->opacity >= 0) {
+-        theme->opacity = override->opacity;
++    if (memcmp(theme->active_bg_color, widget->active_bg_color, sizeof(float[4]))) {
++        memcpy(theme->active_bg_color, widget->active_bg_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_BACKGROUND_COLOR;
++    }
++    if (memcmp(theme->inactive_bg_color, widget->inactive_bg_color, sizeof(float[4]))) {
++        memcpy(theme->inactive_bg_color, widget->inactive_bg_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_BACKGROUND_COLOR;
+     }
+-}
+ 
+-static struct theme *theme_from_theme_type(enum theme_type theme_type)
+-{
+-    struct theme *theme = NULL;
+-    if (manager->impl && manager->impl->get_theme) {
+-        theme = manager->impl->get_theme(theme_type);
++    if (memcmp(theme->active_text_color, widget->active_text_color, sizeof(float[4]))) {
++        memcpy(theme->active_text_color, widget->active_text_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_FONT;
++    }
++    if (memcmp(theme->inactive_text_color, widget->inactive_text_color, sizeof(float[4]))) {
++        memcpy(theme->inactive_text_color, widget->inactive_text_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_FONT;
+     }
+ 
+-    if (!theme) {
+-        if (theme_type == THEME_TYPE_LIGHT) {
+-            theme = &light;
+-        } else if (theme_type == THEME_TYPE_DARK) {
+-            theme = &dark;
+-        }
++    if (memcmp(theme->modal_mask_color, widget->modal_mask_color, sizeof(float[4]))) {
++        memcpy(theme->modal_mask_color, widget->modal_mask_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_MODAL_MASK_COLOR;
+     }
+-    return theme;
+-}
+ 
+-static struct theme *theme_init(struct theme *theme, float scale)
+-{
+-    if (!theme) {
+-        // TODO: load theme from file
+-        return NULL;
++    struct global_theme *global = &manager->global;
++    theme->font_name = global->font_name;
++    theme->font_size = global->font_size;
++
++    if (global->accent_color < 0 &&
++        memcmp(theme->accent_color, widget->accent_color, sizeof(float[4]))) {
++        memcpy(theme->accent_color, widget->accent_color, sizeof(float[4]));
++        mask |= THEME_UPDATE_MASK_ACCENT_COLOR;
++    }
++    if (global->accent_color >= 0) {
++        theme->accent_color[0] = (float)((global->accent_color >> 16) & 0xff) / 255;
++        theme->accent_color[1] = (float)((global->accent_color >> 8) & 0xff) / 255;
++        theme->accent_color[2] = (float)(global->accent_color & 0xff) / 255;
++        theme->accent_color[3] = 1.0;
+     }
+ 
++    theme->corner_radius = global->corner_radius;
++    theme->opacity = global->opacity;
++
+     theme->layout_is_right_to_left = nls_layout_is_right_to_left();
+     theme->text_is_right_align = nls_text_is_right_align();
+-    if (theme->layout_is_right_to_left) {
+-        theme->text_justify = JUSTIFY_RIGHT;
+-    }
+-    wl_list_init(&theme->scaled_buffers);
+-    wl_list_insert(&manager->themes, &theme->link);
++    theme->text_justify = theme->layout_is_right_to_left ? JUSTIFY_RIGHT : JUSTIFY_LEFT;
+ 
+-    /* override some configs */
+-    theme_override_config(theme);
++    theme->ssd_need_maximize_button = true;
++    theme->button_width = 32;
++    theme->icon_size = 24;
++    theme->border_width = 1;
++    theme->title_height = 38;
++    theme->subtitle_height = 38;
++    theme->shadow_border = 30;
++    theme->normal_radius = 6;
+ 
+-    /* paint all buffers in scale */
+-    draw_theme_buffers(theme, scale);
++    // TODO: destroy all buffers, reuse it ?
++    struct theme_buffer *buffer, *tmp;
++    wl_list_for_each_safe(buffer, tmp, &theme->scaled_buffers, link) {
++        wlr_buffer_drop(buffer->buffer);
++        wl_list_remove(&buffer->link);
++        free(buffer);
++    }
++    theme->button_svg = widget->button_svg;
++    /* paint theme buffer in scale */
++    draw_theme_buffer(theme, scale);
+ 
+-    return theme;
++    return mask;
+ }
+ 
+-static void theme_destroy(struct theme *theme)
++static void theme_finish(struct theme *theme)
+ {
+-    wl_list_remove(&theme->link);
+-
+-    /* no need to free strings when builtin themes */
+-    if (!theme->builtin) {
+-        free((void *)theme->font_name);
+-        free((void *)theme->button_svg);
+-    }
+-
+     /* destroy all theme buffers */
+-    struct theme_buffer *bufs, *bufs_tmp;
+-    wl_list_for_each_safe(bufs, bufs_tmp, &theme->scaled_buffers, link) {
+-        wlr_buffer_drop(bufs->buf);
+-        wl_list_remove(&bufs->link);
+-        free(bufs);
++    struct theme_buffer *buffer, *tmp;
++    wl_list_for_each_safe(buffer, tmp, &theme->scaled_buffers, link) {
++        wlr_buffer_drop(buffer->buffer);
++        wl_list_remove(&buffer->link);
++        free(buffer);
+     }
+ }
+ 
+@@ -317,10 +300,8 @@ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ {
+     wl_list_remove(&manager->server_destroy.link);
+ 
+-    struct theme *theme, *tmp;
+-    wl_list_for_each_safe(theme, tmp, &manager->themes, link) {
+-        theme_destroy(theme);
+-    }
++    theme_finish(&manager->theme);
++    free(manager->global.font_name);
+ 
+     desktop_infos_destroy(&manager->desktop_infos);
+     icon_theme_destroy(manager->icon_theme);
+@@ -334,7 +315,6 @@ static void handle_server_destroy(struct wl_listener *listener, void *data)
+         icon_destroy(icon);
+     }
+ 
+-    free(manager->override.font_name);
+     free(manager);
+     manager = NULL;
+ }
+@@ -346,7 +326,6 @@ struct theme_manager *theme_manager_create(struct server *server)
+         return NULL;
+     }
+ 
+-    wl_list_init(&manager->themes);
+     wl_signal_init(&manager->events.update);
+     wl_signal_init(&manager->events.icon_update);
+ 
+@@ -359,39 +338,32 @@ struct theme_manager *theme_manager_create(struct server *server)
+     /* config support */
+     theme_manager_config_init(manager);
+ 
++    /* load theme from config */
++    wl_list_init(&manager->theme.scaled_buffers);
++    enum theme_type theme_type = theme_manager_read_config(manager);
++    theme_manager_set_widget_theme(NULL, theme_type);
++
+     wl_list_init(&manager->icon_pairs);
+     /* load all desktop files and get icon name */
+     wl_list_init(&manager->desktop_infos);
+     icon_load_desktop(&manager->desktop_infos);
++    /* fallback hicolor theme */
++    manager->hicolor_theme = icon_theme_load(FALLBACK_ICON_THEME_NAME);
+ 
+-    /* load theme from config */
+-    enum theme_type theme_type = theme_manager_read_config(manager);
+-    struct theme *theme = theme_from_theme_type(theme_type);
+-    /* theme load failed, fallback to default theme */
+-    if (!theme) {
+-        theme = theme_from_theme_type(THEME_TYPE_DEFAULT);
+-    }
+-    manager->current = theme_init(theme, 1.0);
+-
+-    manager->hicolor_theme = icon_theme_load(DEFAULT_ICON_THEME_NAME);
+     const char *icon_theme = theme_manager_read_icon_config(manager);
+-    if (icon_theme) {
+-        manager->icon_theme = icon_theme_load(icon_theme);
+-    }
++    /* fallback to defaut if NULL */
++    manager->icon_theme = icon_theme_load(icon_theme);
++    assert(manager->icon_theme);
+ 
+     /* load pixmaps path icons */
+     wl_list_init(&manager->pixmaps_icons);
+     icon_load_pixmaps_path(&manager->pixmaps_icons);
+ 
+-    wl_list_init(&manager->specific_icons);
+-
+     manager->fallback_icon = icon_fallback_create();
+     assert(manager->fallback_icon);
+ 
+-    theme_manager_write_config(manager, manager->current->theme_type);
+-    if (manager->icon_theme) {
+-        theme_manager_write_icon_config(manager, manager->icon_theme->name);
+-    }
++    wl_list_init(&manager->specific_icons);
++    theme_manager_write_icon_config(manager, manager->icon_theme->name);
+ 
+     manager->timer = wl_event_loop_add_timer(server->event_loop, handle_manager_timer, NULL);
+     if (manager->timer) {
+@@ -413,29 +385,29 @@ void theme_manager_add_icon_update_listener(struct wl_listener *listener)
+     wl_signal_add(&manager->events.icon_update, listener);
+ }
+ 
+-struct theme *theme_manager_get_current(void)
++struct theme *theme_manager_get_theme(void)
+ {
+-    return manager->current;
++    return &manager->theme;
+ }
+ 
+-static struct theme_buffer *theme_buffers_load(struct theme *theme, float scale)
++static struct theme_buffer *theme_buffer_get_or_create(struct theme *theme, float scale)
+ {
+-    /* find scale buffers */
+-    struct theme_buffer *bufs;
+-    wl_list_for_each(bufs, &theme->scaled_buffers, link) {
+-        if (bufs->scale == scale) {
+-            return bufs;
++    /* find scale buffer */
++    struct theme_buffer *buffer;
++    wl_list_for_each(buffer, &theme->scaled_buffers, link) {
++        if (buffer->scale == scale) {
++            return buffer;
+         }
+     }
+ 
+-    return draw_theme_buffers(theme, scale);
++    return draw_theme_buffer(theme, scale);
+ }
+ 
+ struct wlr_buffer *theme_buffer_load(struct theme *theme, float scale, enum theme_buffer_type type,
+                                      struct wlr_fbox *src)
+ {
+-    struct theme_buffer *bufs = theme_buffers_load(theme, scale);
+-    if (!bufs) {
++    struct theme_buffer *buffer = theme_buffer_get_or_create(theme, scale);
++    if (!buffer) {
+         return NULL;
+     }
+ 
+@@ -446,7 +418,7 @@ struct wlr_buffer *theme_buffer_load(struct theme *theme, float scale, enum them
+         src->y = src->height * (int)(type / 4);
+     }
+ 
+-    return bufs->buf;
++    return buffer->buffer;
+ }
+ 
+ bool theme_manager_set_icon_theme(const char *icon_theme_name)
+@@ -463,13 +435,13 @@ bool theme_manager_set_icon_theme(const char *icon_theme_name)
+     }
+ 
+     /* old icon_theme is hicolor and current icon_theme is hicolor */
+-    if (!old && !strcmp(icon_theme_name, DEFAULT_ICON_THEME_NAME)) {
++    if (!old && !strcmp(icon_theme_name, FALLBACK_ICON_THEME_NAME)) {
+         return true;
+     }
+ 
+     /* not found, keep current icon_theme */
+     struct icon_theme *new = NULL;
+-    if (strcmp(icon_theme_name, DEFAULT_ICON_THEME_NAME)) {
++    if (strcmp(icon_theme_name, FALLBACK_ICON_THEME_NAME)) {
+         new = icon_theme_load(icon_theme_name);
+         if (!new) {
+             return false;
+@@ -489,64 +461,72 @@ bool theme_manager_set_icon_theme(const char *icon_theme_name)
+     return true;
+ }
+ 
+-bool theme_manager_set_theme(enum theme_type theme_type)
++bool theme_manager_set_widget_theme(const char *name, enum theme_type type)
+ {
+-    struct theme *old = manager->current;
+-    const char *theme_name;
+-    struct theme *theme = theme_from_theme_type(theme_type);
+-    if (!theme) {
+-        return false;
++    // fallback to builtin theme
++    if (!name || !*name || !manager->load_widget_theme) {
++        name = FALLBACK_THEME_NAME;
++    }
++    if (type > THEME_TYPE_DARK) {
++        type = THEME_TYPE_DARK;
+     }
+-    theme_name = theme->theme_name;
++
++    struct theme *current = &manager->theme;
+     /* current theme is not changed */
+-    if (old && !strcmp(old->theme_name, theme_name)) {
++    if (current->name && strcmp(current->name, name) == 0 && current->type == type) {
+         return true;
+     }
+ 
+-    /* not found, keep current theme */
+-    struct theme *new = theme_init(theme, 1.0);
+-    if (!new) {
++    struct widget_theme *widget = NULL;
++    if (strcmp(name, FALLBACK_THEME_NAME) == 0) {
++        widget = type == THEME_TYPE_DARK ? &widget_dark : &widget_light;
++    } else if (manager->load_widget_theme) {
++        widget = manager->load_widget_theme(name, type);
++    }
++    if (!widget) {
++        kywc_log(KYWC_WARN, "widget theme %s(%d) load failed", name, type);
+         return false;
+     }
+ 
+-    /* apply the new theme */
+-    manager->current = new;
++    /* merge widget and global to theme */
++    uint32_t mask = theme_init(widget, 1.0);
++    theme_manager_write_config(manager, type);
+ 
+     struct theme_update_event update_event = {
+-        .theme_type = theme_type,
+-        .update_mask = THEME_UPDATE_MASK_ALL,
++        .theme_type = type,
++        .update_mask = mask,
+     };
+     wl_signal_emit_mutable(&manager->events.update, &update_event);
+ 
+-    if (old) {
+-        theme_destroy(old);
+-    }
+-    theme_manager_write_config(manager, manager->current->theme_type);
+     return true;
+ }
+ 
+ bool theme_manager_set_font(const char *name, int size)
+ {
+-    struct theme_override *override = &manager->override;
+-    struct theme *current = manager->current;
++    if (!name || !*name || size <= 0) {
++        return false;
++    }
++
++    struct global_theme *global = &manager->global;
++    struct theme *theme = &manager->theme;
+     bool changed = false;
+ 
+-    if (name && strcmp(name, current->font_name) != 0) {
+-        free(override->font_name);
+-        override->font_name = strdup(name);
++    if (strcmp(name, global->font_name) != 0) {
++        free(global->font_name);
++        global->font_name = strdup(name);
++        theme->font_name = global->font_name;
+         changed = true;
+     }
+-
+-    if (size > 0 && current->font_size != size) {
+-        override->font_size = size;
++    if (global->font_size != size) {
++        global->font_size = size;
++        theme->font_size = global->font_size;
+         changed = true;
+     }
+ 
+     if (!changed) {
+-        return false;
++        return true;
+     }
+ 
+-    theme_override_config(current);
+     struct theme_update_event update_event = {
+         .update_mask = THEME_UPDATE_MASK_FONT,
+     };
+@@ -556,26 +536,21 @@ bool theme_manager_set_font(const char *name, int size)
+     return true;
+ }
+ 
+-static int32_t get_color_int(float *rgba)
+-{
+-    int32_t color = (int)(rgba[0] * 255) << 16;
+-    color |= (int)(rgba[1] * 255) << 8;
+-    color |= (int)(rgba[2] * 255);
+-    return color;
+-}
+-
+ bool theme_manager_set_accent_color(int32_t color)
+ {
+-    struct theme_override *override = &manager->override;
+-    struct theme *current = manager->current;
++    struct global_theme *global = &manager->global;
++    struct theme *theme = &manager->theme;
+ 
+-    int32_t current_color = get_color_int(current->accent_color);
+-    if (color == current_color) {
++    if (global->accent_color == color) {
+         return true;
+     }
+ 
+-    override->accent_color = color;
+-    theme_override_config(current);
++    global->accent_color = color;
++    theme->accent_color[0] = (float)((global->accent_color >> 16) & 0xff) / 255;
++    theme->accent_color[1] = (float)((global->accent_color >> 8) & 0xff) / 255;
++    theme->accent_color[2] = (float)(global->accent_color & 0xff) / 255;
++    theme->accent_color[3] = 1.0;
++
+     struct theme_update_event update_event = {
+         .update_mask = THEME_UPDATE_MASK_ACCENT_COLOR,
+     };
+@@ -587,16 +562,16 @@ bool theme_manager_set_accent_color(int32_t color)
+ 
+ bool theme_manager_set_corner_radius(int32_t radius)
+ {
+-    struct theme_override *override = &manager->override;
+-    struct theme *current = manager->current;
++    struct global_theme *global = &manager->global;
++    struct theme *theme = &manager->theme;
+ 
+-    int32_t current_radius = current->corner_radius;
+-    if (radius == current_radius) {
++    if (global->corner_radius == radius) {
+         return true;
+     }
+ 
+-    override->corner_radius = radius;
+-    theme_override_config(current);
++    global->corner_radius = radius;
++    theme->corner_radius = global->corner_radius;
++
+     struct theme_update_event update_event = {
+         .update_mask = THEME_UPDATE_MASK_CORNER_RADIUS,
+     };
+@@ -608,16 +583,17 @@ bool theme_manager_set_corner_radius(int32_t radius)
+ 
+ bool theme_manager_set_opacity(int32_t opacity)
+ {
+-    struct theme_override *override = &manager->override;
+-    struct theme *current = manager->current;
++    struct global_theme *global = &manager->global;
++    struct theme *theme = &manager->theme;
+ 
+-    int32_t current_opacity = current->opacity;
+-    if (opacity == current_opacity) {
++    opacity = opacity < 0 ? 0 : (opacity > 100 ? 100 : opacity);
++    if (global->opacity == opacity) {
+         return true;
+     }
+ 
+-    override->opacity = opacity;
+-    theme_override_config(current);
++    global->opacity = opacity;
++    theme->opacity = global->opacity;
++
+     struct theme_update_event update_event = {
+         .update_mask = THEME_UPDATE_MASK_OPACITY,
+     };
+@@ -641,13 +617,11 @@ static struct icon_buffer *icon_get_buffer(struct icon *icon, float scale)
+         return NULL;
+     }
+ 
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct draw_info info = {
+         .width = theme->icon_size,
+         .height = theme->icon_size,
+         .scale = scale,
+-        .svg = NULL,
+-        .png_path = NULL,
+     };
+ 
+     if (icon->svg) {
+@@ -668,7 +642,7 @@ static struct icon_buffer *icon_get_buffer(struct icon *icon, float scale)
+             }
+         }
+         if (icon_png_similar) {
+-            info.png_path = icon_png_similar->path;
++            info.image = icon_png_similar->path;
+         }
+     }
+ 
+@@ -837,8 +811,3 @@ struct wlr_buffer *theme_icon_get_buffer(struct icon *icon, float scale)
+     struct icon_buffer *buf = icon_get_buffer(icon, scale);
+     return buf ? buf->buffer : NULL;
+ }
+-
+-void theme_manager_set_interface(struct theme_interface *impl)
+-{
+-    manager->impl = impl;
+-}
+diff --git a/src/theme/theme_p.h b/src/theme/theme_p.h
+index 5f7ca73..5ae08fe 100644
+--- a/src/theme/theme_p.h
++++ b/src/theme/theme_p.h
+@@ -13,12 +13,13 @@
+     "autostart:" EXTRA_APPS_PATH
+ #define PIXMAPPATH "/usr/share/pixmaps"
+ 
+-#define DEFAULT_ICON_THEME_NAME "hicolor"
++#define DEFAULT_ICON_THEME_NAME "default"
++#define FALLBACK_ICON_THEME_NAME "hicolor"
+ 
+ struct theme_buffer {
+     struct wl_list link;
++    struct wlr_buffer *buffer;
+     float scale;
+-    struct wlr_buffer *buf;
+ };
+ 
+ struct icon_buffer {
+@@ -57,20 +58,10 @@ struct icon_pair {
+ 
+ struct icon_theme {
+     struct wl_list link;
+-    struct wl_list parents_theme; // struct icon_theme
+     char *name;
+-    struct wl_list icons;        // struct icon
+-    struct wl_list icons_subdir; // struct icon_subdir
+-};
+-
+-struct theme_override {
+-    /* font config override by dbus */
+-    char *font_name;
+-    int32_t font_size;
+-    /* default to -1 */
+-    int32_t accent_color;
+-    int32_t corner_radius;
+-    int32_t opacity;
++    struct wl_list icons;   // struct icon
++    struct wl_list parents; // struct icon_theme
++    struct wl_list subdirs; // struct icon_subdir
+ };
+ 
+ struct desktop_info {
+@@ -81,12 +72,49 @@ struct desktop_info {
+     char *startup_name;
+ };
+ 
++struct widget_theme {
++    const char *name;
++    enum theme_type type;
++    bool builtin;
++
++    /* border color */
++    float active_border_color[4];
++    float inactive_border_color[4];
++
++    /* background color */
++    float active_bg_color[4];
++    float inactive_bg_color[4];
++
++    /* text color */
++    float active_text_color[4];
++    float inactive_text_color[4];
++
++    /* default accent color, may override by global */
++    float accent_color[4];
++
++    /* modal mask color */
++    float modal_mask_color[4];
++
++    /**
++     * minimize, maximize, restore and close
++     * in different state: active/inactive, hover, click
++     */
++    const char *button_svg;
++};
++
++struct global_theme {
++    /* font config */
++    char *font_name;
++    int32_t font_size;
++    /* default to -1 */
++    int32_t accent_color;
++    int32_t corner_radius;
++    int32_t opacity;
++};
++
+ struct theme_manager {
+-    struct wl_event_source *timer;
+-    struct wl_list themes;
+-    struct theme *current;
+-    struct theme_override override;
+-    struct config *config;
++    struct theme theme;
++    struct global_theme global;
+ 
+     /* cache of appid icon */
+     struct wl_list icon_pairs; // struct icon_pair.link
+@@ -102,14 +130,18 @@ struct theme_manager {
+     struct wl_list specific_icons; // struct icon
+     /* fallback icon */
+     struct icon *fallback_icon;
++    /* timer to check for changes in icon-related files. */
++    struct wl_event_source *timer;
+ 
+-    struct theme_interface *impl;
++    struct widget_theme *(*load_widget_theme)(const char *name, enum theme_type type);
+ 
+     struct {
+         struct wl_signal update;
+         struct wl_signal icon_update;
+     } events;
+ 
++    struct config *config;
++
+     struct server *server;
+     struct wl_listener display_destroy;
+     struct wl_listener server_destroy;
+diff --git a/src/util/logger.c b/src/util/logger.c
+index 8b15608..d85a98d 100644
+--- a/src/util/logger.c
++++ b/src/util/logger.c
+@@ -42,8 +42,8 @@ static void log_file(enum kywc_log_level level, const char *fmt, va_list args)
+     } else {
+         struct timespec ts = { 0 };
+         clock_gettime(CLOCK_MONOTONIC, &ts);
+-        fprintf(log_fp, "[%02d:%02d:%02d.%03ld] %s: ", (int)(ts.tv_sec / 60 / 60),
+-                (int)(ts.tv_sec / 60 % 60), (int)(ts.tv_sec % 60), ts.tv_nsec / 1000000,
++        fprintf(log_fp, "[%02d:%02d:%02d.%06ld] %s: ", (int)(ts.tv_sec / 60 / 60),
++                (int)(ts.tv_sec / 60 % 60), (int)(ts.tv_sec % 60), ts.tv_nsec / 1000,
+                 log_fp == stdout ? level_colors[level] : level_headers[level]);
+     }
+ 
+@@ -133,7 +133,7 @@ void logger_init(enum kywc_log_level level, bool log_to_file, bool realtime)
+     int ret = access(log_path, F_OK);
+     if (ret) {
+         fprintf(stdout, "logger: %s not exist, create it\n", log_path);
+-        ret = mkdir(log_path, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH);
++        ret = mkdir(log_path, S_IRWXU | S_IRWXG);
+         if (ret) {
+             fprintf(stderr, "create log dir failed: %s\n", strerror(errno));
+             return;
+diff --git a/src/util/meson.build b/src/util/meson.build
+index 37e75fa..57d5d78 100644
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -15,6 +15,7 @@ wlcom_sources += files(
+   'quirks.c',
+   'region.c',
+   'spawn.c',
++  'sysfs.c',
+   'time.c',
+   'wayland.c',
+ )
+diff --git a/src/util/spawn.c b/src/util/spawn.c
+index e3bff3f..6890153 100644
+--- a/src/util/spawn.c
++++ b/src/util/spawn.c
+@@ -44,7 +44,7 @@ bool spawn_invoke(const char *command)
+         pid_t grandchild = fork();
+         if (grandchild == 0) {
+             /* close stdout/stderr */
+-            int devnull = open("/dev/null", O_WRONLY | O_CREAT | O_CLOEXEC, 0666);
++            int devnull = open("/dev/null", O_WRONLY | O_CREAT | O_CLOEXEC, 0660);
+             if (devnull < 0) {
+                 kywc_log_errno(KYWC_ERROR, "failed to open /dev/null");
+                 _exit(1);
+@@ -99,7 +99,7 @@ pid_t spawn_session(const char *session)
+         limit_unset_nofile();
+ 
+         /* close stdout/stderr */
+-        int devnull = open("/dev/null", O_WRONLY | O_CREAT | O_CLOEXEC, 0666);
++        int devnull = open("/dev/null", O_WRONLY | O_CREAT | O_CLOEXEC, 0660);
+         if (devnull < 0) {
+             kywc_log_errno(KYWC_ERROR, "failed to open /dev/null");
+             _exit(1);
+@@ -199,7 +199,7 @@ struct wl_client *spawn_client(struct wl_display *display, const char *command)
+             kywc_log(KYWC_ERROR, "run %s in %s", command, wayland_socket_str);
+ 
+             /* close stdout/stderr */
+-            int devnull = open("/dev/null", O_WRONLY | O_CREAT | O_CLOEXEC, 0666);
++            int devnull = open("/dev/null", O_WRONLY | O_CREAT | O_CLOEXEC, 0660);
+             if (devnull < 0) {
+                 kywc_log_errno(KYWC_ERROR, "failed to open /dev/null");
+                 _exit(1);
+diff --git a/src/util/sysfs.c b/src/util/sysfs.c
+index 09dcdc7..ec47528 100644
+--- a/src/util/sysfs.c
++++ b/src/util/sysfs.c
+@@ -2,16 +2,13 @@
+ //
+ // SPDX-License-Identifier: GPL-1.0-or-later
+ 
+-#include <stdio.h>
+-
+ #include <kywc/log.h>
+ 
+ #include "util/sysfs.h"
+ 
+ bool sysfs_read_uint64(const char *filename, uint64_t *val)
+ {
+-    FILE *fp;
+-    fp = fopen(filename, "r");
++    FILE *fp = fopen(filename, "r");
+     if (!fp) {
+         kywc_log(KYWC_ERROR, "reading %s failed", filename);
+         return false;
+@@ -32,15 +29,14 @@ bool sysfs_read_uint64(const char *filename, uint64_t *val)
+ 
+ bool sysfs_write_uint64(const char *filename, uint64_t val)
+ {
+-    FILE *fp;
+-    fp = fopen(filename, "w");
++    FILE *fp = fopen(filename, "w");
+     if (!fp) {
+         kywc_log(KYWC_ERROR, "writing %s failed", filename);
+         return false;
+     }
+ 
+     if (fprintf(fp, "%lu", val) < 0) {
+-        kywc_log(KYWC_ERROR, "Couldn't fprintf an unsigned integer to '%s'", filename);
++        kywc_log(KYWC_ERROR, "Couldn't write an unsigned integer to '%s'", filename);
+         fclose(fp);
+         return false;
+     }
+@@ -48,3 +44,17 @@ bool sysfs_write_uint64(const char *filename, uint64_t val)
+     fclose(fp);
+     return true;
+ }
++
++size_t sysfs_read_data(const char *filename, void *buf, size_t size)
++{
++    FILE *fp = fopen(filename, "r");
++    if (!fp) {
++        kywc_log(KYWC_ERROR, "reading %s failed", filename);
++        return 0;
++    }
++
++    size_t len = fread(buf, 1, size, fp);
++    fclose(fp);
++
++    return len;
++}
+diff --git a/src/view/maximize_switcher.c b/src/view/maximize_switcher.c
+index 80fbfcf..bfb1c1e 100644
+--- a/src/view/maximize_switcher.c
++++ b/src/view/maximize_switcher.c
+@@ -283,7 +283,7 @@ static const struct seat_keyboard_grab_interface keyboard_grab_impl = {
+ 
+ static void update_title_text(struct item_view *item_view)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     int select_width_gap = SELECT_WIDTH_GAP * 2;
+     int max_width = switcher->max_width - theme->button_width - select_width_gap;
+     widget_set_text(item_view->title_text, item_view->text, JUSTIFY_CENTER,
+@@ -330,7 +330,7 @@ static void set_icon_buffer(struct item_view *item_view, float opacity)
+ 
+     int width, height;
+     ky_scene_buffer_set_opacity(buffer, opacity);
+-    painter_buffer_dest_size(buf, &width, &height);
++    painter_buffer_get_dest_size(buf, &width, &height);
+     ky_scene_buffer_set_dest_size(buffer, width, height);
+ }
+ 
+@@ -424,7 +424,7 @@ static void set_select_item_view(int index, struct item_view *current, struct it
+ 
+ static void show_current_page_items(int index)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     int icon_width = theme->button_width;
+     int select_width_gap = SELECT_WIDTH_GAP;
+ 
+@@ -625,7 +625,7 @@ static void switcher_register_shortcuts(void)
+ static void handle_theme_update(struct wl_listener *listener, void *data)
+ {
+     struct theme_update_event *update_event = data;
+-    if (update_event->update_mask != THEME_UPDATE_MASK_ALL) {
++    if (update_event->update_mask != THEME_UPDATE_MASK_TYPE) {
+         return;
+     }
+     switcher->color = update_event->theme_type == THEME_TYPE_LIGHT ? &light : &dark;
+@@ -649,12 +649,12 @@ bool maximize_switcher_create(struct view_manager *view_manager)
+         return false;
+     }
+ 
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct view_layer *layer = view_manager_get_layer(LAYER_ON_SCREEN_DISPLAY, false);
+     switcher->tree = ky_scene_tree_create(layer->tree);
+     ky_scene_node_set_enabled(&switcher->tree->node, false);
+ 
+-    switch (theme->theme_type) {
++    switch (theme->type) {
+     case THEME_TYPE_UNDEFINED:
+     case THEME_TYPE_LIGHT:
+         switcher->color = &light;
+diff --git a/src/view/modal.c b/src/view/modal.c
+index 4eb8627..f953c81 100644
+--- a/src/view/modal.c
++++ b/src/view/modal.c
+@@ -123,7 +123,7 @@ static void modal_box_set_round_corner(struct ky_scene_rect *modal_box, struct v
+     struct kywc_view *kywc_view = &view->base;
+     if (kywc_view->ssd & KYWC_SSD_TITLE) {
+         bool need_corner = !kywc_view->maximized && !kywc_view->fullscreen && !kywc_view->tiled;
+-        struct theme *theme = theme_manager_get_current();
++        struct theme *theme = theme_manager_get_theme();
+         radius[KY_SCENE_ROUND_CORNER_RT] = need_corner ? theme->corner_radius : 0;
+         radius[KY_SCENE_ROUND_CORNER_LT] = need_corner ? theme->corner_radius : 0;
+     }
+diff --git a/src/view/ssd.c b/src/view/ssd.c
+index 7792503..88b51fc 100644
+--- a/src/view/ssd.c
++++ b/src/view/ssd.c
+@@ -162,7 +162,7 @@ static void ssd_tooltip_show(struct seat *seat, struct ssd_part *part, bool enab
+     if (!tooltip) {
+         return;
+     }
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct widget *widget;
+ 
+     switch (part->type) {
+@@ -244,9 +244,9 @@ static void ssd_tooltip_show(struct seat *seat, struct ssd_part *part, bool enab
+ 
+ static void ssd_tooltip_draw_widget(struct widget *widget, const char *text)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     int width = 0, height = 0;
+-    painter_text_size(text, theme->font_name, theme->font_size, &width, &height);
++    painter_get_text_size(text, theme->font_name, theme->font_size, &width, &height);
+ 
+     widget_set_text(widget, text, TEXT_ALIGN_CENTER, TEXT_ATTR_NONE);
+     widget_set_font(widget, theme->font_name, theme->font_size);
+@@ -354,7 +354,7 @@ static struct ssd_tooltip *ssd_tooltip_create(struct seat *seat)
+ static uint32_t get_resize_type(struct ssd_part *part, double x, double y)
+ {
+     struct ky_scene_rect *frame = ky_scene_rect_from_node(part->node);
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     int border = part->ssd->kywc_view->ssd & KYWC_SSD_BORDER ? theme->border_width : 0;
+     int x1 = theme->shadow_border + theme->corner_radius + border;
+     int x2 = frame->width - x1;
+@@ -391,14 +391,15 @@ static uint32_t get_resize_type(struct ssd_part *part, double x, double y)
+ 
+ static void ssd_part_set_button_buffer(struct ssd_part *part, enum button_state state)
+ {
+-    enum theme_buffer_type type = BUTTON_MINIMIZE;
++    enum theme_buffer_type type = THEME_BUFFER_TYPE_BUTTON_MINIMIZE;
+     if (part->type == SSD_BUTTON_MAXIMIZE) {
+-        type = part->ssd->kywc_view->maximized ? BUTTON_RESTORE : BUTTON_MAXIMIZE;
++        type = part->ssd->kywc_view->maximized ? THEME_BUFFER_TYPE_BUTTON_RESTORE
++                                               : THEME_BUFFER_TYPE_BUTTON_MAXIMIZE;
+     } else if (part->type == SSD_BUTTON_CLOSE) {
+-        type = BUTTON_CLOSE;
++        type = THEME_BUFFER_TYPE_BUTTON_CLOSE;
+     }
+ 
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     /* get actual type by current state */
+     type += state * 4;
+ 
+@@ -590,13 +591,13 @@ static void ssd_part_set_icon_buffer(struct ssd_part *part)
+     }
+ 
+     int width, height;
+-    painter_buffer_dest_size(buf, &width, &height);
++    painter_buffer_get_dest_size(buf, &width, &height);
+     ky_scene_buffer_set_dest_size(buffer, width, height);
+ }
+ 
+ static void ssd_update_title_icon(struct ssd *ssd)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct view *view = view_from_kywc_view(ssd->kywc_view);
+     int title_height = view->parent ? theme->subtitle_height : theme->title_height;
+     int y = theme->border_width + (title_height - theme->icon_size) / 2;
+@@ -611,7 +612,7 @@ static void ssd_update_title_icon(struct ssd *ssd)
+ 
+ static void ssd_update_title_text(struct ssd *ssd, uint32_t cause)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct kywc_view *view = ssd->kywc_view;
+     struct view *tmp = view_from_kywc_view(view);
+ 
+@@ -673,7 +674,7 @@ static void ssd_update_title_text(struct ssd *ssd, uint32_t cause)
+ 
+ static void ssd_update_titlebar(struct ssd *ssd, uint32_t cause)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct view *view = view_from_kywc_view(ssd->kywc_view);
+ 
+     int border_w = theme->border_width;
+@@ -733,7 +734,7 @@ static void ssd_update_titlebar(struct ssd *ssd, uint32_t cause)
+ 
+ static void ssd_update_frame(struct ssd *ssd, uint32_t cause)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct kywc_view *view = ssd->kywc_view;
+     struct ky_scene_decoration *frame =
+         ky_scene_decoration_from_node(ssd->parts[SSD_FRAME_RECT].node);
+@@ -798,7 +799,7 @@ static void ssd_update_margin(struct ssd *ssd)
+ {
+     struct kywc_view *view = ssd->kywc_view;
+     struct view *tmp = view_from_kywc_view(view);
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     int title =
+         view->ssd & KYWC_SSD_TITLE ? tmp->parent ? theme->subtitle_height : theme->title_height : 0;
+ 
+@@ -899,9 +900,8 @@ static void handle_theme_update(struct wl_listener *listener, void *data)
+ {
+     struct ssd *ssd = wl_container_of(listener, ssd, theme_update);
+     struct theme_update_event *update_event = data;
+-    int allowed_mask = THEME_UPDATE_MASK_FONT | THEME_UPDATE_MASK_TEXT_ALIGN |
+-                       THEME_UPDATE_MASK_BACKGROUND_COLOR | THEME_UPDATE_MASK_BORDER_COLOR |
+-                       THEME_UPDATE_MASK_CORNER_RADIUS;
++    int allowed_mask = THEME_UPDATE_MASK_FONT | THEME_UPDATE_MASK_BACKGROUND_COLOR |
++                       THEME_UPDATE_MASK_BORDER_COLOR | THEME_UPDATE_MASK_CORNER_RADIUS;
+     if (update_event->update_mask & allowed_mask) {
+         ssd_update_margin(ssd);
+         ssd_check_buttons(ssd);
+@@ -956,7 +956,7 @@ static void handle_view_fullscreen(struct wl_listener *listener, void *data)
+ 
+ static void ssd_check_buttons(struct ssd *ssd)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct kywc_view *kywc_view = ssd->kywc_view;
+ 
+     /* always has a close button */
+diff --git a/src/view/stack_mode.c b/src/view/stack_mode.c
+index 75134ab..f79a023 100644
+--- a/src/view/stack_mode.c
++++ b/src/view/stack_mode.c
+@@ -5,7 +5,6 @@
+ #define _POSIX_C_SOURCE 200809L
+ #include <stdlib.h>
+ 
+-#include "theme.h"
+ #include "view_p.h"
+ 
+ struct stack_mode_view {
+@@ -185,9 +184,6 @@ static void stack_mode_view_click(struct seat *seat, struct view *view, uint32_t
+ 
+ static void stack_mode_enter(void)
+ {
+-    theme_manager_set_interface(NULL);
+-    theme_manager_set_theme(theme_manager_get_current()->theme_type);
+-
+     struct view *view;
+     struct view_manager *view_manager = manager->view_manager;
+     wl_list_for_each(view, &view_manager->views, link) {
+diff --git a/src/view/view.c b/src/view/view.c
+old mode 100644
+new mode 100755
+index cadd1d1..9fdd2f1
+--- a/src/view/view.c
++++ b/src/view/view.c
+@@ -366,7 +366,7 @@ void view_update_round_corner(struct view *view)
+     }
+ 
+     /* don't draw top round corner if ssd has title */
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     bool need_corner = !kywc_view->maximized && !kywc_view->fullscreen && !kywc_view->tiled;
+     if (!view_manager->state.csd_round_corner) {
+         need_corner &= kywc_view->ssd != KYWC_SSD_NONE;
+@@ -917,7 +917,13 @@ void view_set_parent(struct view *view, struct view *parent)
+     wl_list_remove(&view->parent_link);
+     if (parent) {
+         wl_list_insert(&parent->children, &view->parent_link);
+-        view_follow_parent_layer(view, parent);
++        struct view_layer *parent_layer =
++            view_manager_get_layer_by_node(&parent->tree->node, false);
++        struct view_layer *layer = view_manager_get_layer_by_node(&view->tree->node, false);
++        /* do not set layer if parent layer below view layer */
++        if (parent_layer && layer && parent_layer->layer > layer->layer) {
++            view_follow_parent_layer(view, parent);
++        }
+     } else {
+         wl_list_init(&view->parent_link);
+     }
+diff --git a/src/view/window_menu.c b/src/view/window_menu.c
+index 9ef428f..dd71040 100644
+--- a/src/view/window_menu.c
++++ b/src/view/window_menu.c
+@@ -111,7 +111,11 @@ static bool window_menu_action(struct menu_item *item, uint32_t key, void *data)
+     } else if (menu == window_menu->desktop) {
+         struct view *view = window_menu->view;
+         if (key == KEY_A) {
+-            view_add_all_workspace(view);
++            if (view->show_in_all_workspaces) {
++                view_set_workspace(view, workspace_manager_get_current());
++            } else {
++                view_add_all_workspace(view);
++            }
+         } else if (key == KEY_N) {
+             struct workspace *workspace = workspace_create(NULL, workspace_manager_get_count());
+             if (workspace) {
+diff --git a/src/widget/menu.c b/src/widget/menu.c
+index b29d7d3..36da4b4 100644
+--- a/src/widget/menu.c
++++ b/src/widget/menu.c
+@@ -33,7 +33,7 @@ static void menu_draw_item(struct menu_item *item, bool force)
+     }
+     item->redraw = false;
+ 
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     uint32_t border_mask = BORDER_MASK_LEFT | BORDER_MASK_RIGHT;
+     uint32_t corner_mask = CORNER_MASK_NONE;
+ 
+@@ -62,7 +62,7 @@ static void menu_draw_item(struct menu_item *item, bool force)
+         widget_set_text(item->content, item->text,
+                         theme->text_is_right_align ? TEXT_ALIGN_RIGHT : TEXT_ALIGN_LEFT, text_attr);
+         widget_set_size(item->content, item->menu->width, item->menu->item_height);
+-        widget_set_hovered_color(item->content, theme->accent_color);
++        widget_set_hovered_color(item->content, theme->accent_color, theme->normal_radius);
+     }
+     widget_set_shortcut(item->content, item->shortcut);
+     widget_set_font(item->content, theme->font_name, theme->font_size);
+@@ -70,8 +70,8 @@ static void menu_draw_item(struct menu_item *item, bool force)
+     float *background_color = theme->active_bg_color;
+     float *front_color = item->activated ? theme->active_text_color : theme->inactive_text_color;
+     widget_set_background_color(item->content,
+-                               (float[4]){ background_color[0], background_color[1],
+-                                           background_color[2], theme->opacity / 100.0 });
++                                (float[4]){ background_color[0], background_color[1],
++                                            background_color[2], theme->opacity / 100.0 });
+     widget_set_front_color(item->content, front_color);
+     widget_set_border(item->content, theme->inactive_bg_color, border_mask, theme->border_width);
+     widget_set_round_corner(item->content, corner_mask, theme->corner_radius);
+@@ -183,7 +183,7 @@ static void menu_render_items(struct menu *menu, bool force)
+     }
+     menu->redraw = false;
+ 
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     int max_width = 0, max_height = 0, max_shortcut_width = 0;
+     int width = 0, height = 0, shortcut_width = 0, shortcut_height = 0;
+     int item_count = 0;
+@@ -193,7 +193,7 @@ static void menu_render_items(struct menu *menu, bool force)
+         if (item->item_type != ITEM_TYPE_NORMAL) {
+             continue;
+         }
+-        painter_text_size(item->text, theme->font_name, theme->font_size, &width, &height);
++        painter_get_text_size(item->text, theme->font_name, theme->font_size, &width, &height);
+         if (width > max_width) {
+             max_width = width;
+         }
+@@ -208,8 +208,8 @@ static void menu_render_items(struct menu *menu, bool force)
+         if (!item->shortcut) {
+             continue;
+         }
+-        painter_text_size(item->shortcut, theme->font_name, theme->font_size, &shortcut_width,
+-                          &shortcut_height);
++        painter_get_text_size(item->shortcut, theme->font_name, theme->font_size, &shortcut_width,
++                              &shortcut_height);
+         if (shortcut_width > max_shortcut_width) {
+             max_shortcut_width = shortcut_width;
+         }
+@@ -333,7 +333,7 @@ static void menu_set_position(struct menu *menu, int x, int y)
+     if (menu->parent) {
+         ky_scene_node_coords(&menu->parent->tree->node, &lx, &ly);
+     }
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct kywc_box *geo = &output->geometry;
+ 
+     /* keep menu visible in the output */
+@@ -988,7 +988,7 @@ static void menu_handle_output_disable(struct wl_listener *listener, void *data)
+ 
+ static void menu_update_decoration(struct menu *menu)
+ {
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     int radius = theme->corner_radius;
+     int shadow = theme->shadow_border;
+ 
+diff --git a/src/widget/widget.c b/src/widget/widget.c
+index cc0a7c2..6ec71ba 100644
+--- a/src/widget/widget.c
++++ b/src/widget/widget.c
+@@ -34,6 +34,7 @@ static struct wlr_buffer *widget_paint_buffer(struct widget *widget, float scale
+ 
+         .corner_mask = widget->corner_mask,
+         .corner_radius = widget->corner_radius,
++        .hover_radius = widget->hover_radius,
+ 
+         .text = widget->text,
+         .shortcut = widget->shortcut,
+@@ -51,7 +52,7 @@ static struct wlr_buffer *widget_paint_buffer(struct widget *widget, float scale
+ 
+     struct wlr_buffer *buffer = widget->content.buffer->buffer;
+     if (buffer && redraw_only) {
+-        painter_redraw_buffer(buffer, &info);
++        painter_buffer_redraw(buffer, &info);
+     } else {
+         buffer = painter_draw_buffer(&info);
+         if (!buffer) {
+@@ -61,7 +62,7 @@ static struct wlr_buffer *widget_paint_buffer(struct widget *widget, float scale
+ 
+     if (widget->auto_resize) {
+         int width;
+-        painter_buffer_dest_size(buffer, &width, NULL);
++        painter_buffer_get_dest_size(buffer, &width, NULL);
+         widget->text_truncated = width == widget->max_width;
+     }
+ 
+@@ -71,9 +72,8 @@ static struct wlr_buffer *widget_paint_buffer(struct widget *widget, float scale
+ static void widget_buffer_get_size(struct widget *widget, struct wlr_buffer *buffer,
+                                    struct wlr_fbox *src, int *width, int *height)
+ {
+-    int w, h, scaled_w, scaled_h;
+-    painter_buffer_size(buffer, &scaled_w, &scaled_h);
+-    painter_buffer_dest_size(buffer, &w, &h);
++    int w, h, scaled_w = buffer->width, scaled_h = buffer->height;
++    painter_buffer_get_dest_size(buffer, &w, &h);
+ 
+     src->x = 0;
+     src->y = widget->hovered ? scaled_h / 2 : 0;
+@@ -160,7 +160,7 @@ static void widget_do_update(struct widget *widget)
+ 
+     if (widget->pending_cause & WIDGET_UPDATE_CAUSE_SIZE) {
+         int width;
+-        painter_buffer_dest_size(buffer, &width, NULL);
++        painter_buffer_get_dest_size(buffer, &width, NULL);
+         /* skip paint buffer if text not truncated when auto-resized */
+         if (widget->auto_resize && !widget->text_truncated && width <= widget->max_width) {
+             widget->pending_cause &= ~WIDGET_UPDATE_CAUSE_SIZE;
+@@ -301,8 +301,13 @@ void widget_set_front_color(struct widget *widget, const float color[static 4])
+     widget->pending_cause |= WIDGET_UPDATE_CAUSE_CONTENT;
+ }
+ 
+-void widget_set_hovered_color(struct widget *widget, const float color[static 4])
++void widget_set_hovered_color(struct widget *widget, const float color[static 4], float radius)
+ {
++    if (widget->hover_radius != radius) {
++        widget->hover_radius = radius;
++        widget->pending_cause |= WIDGET_UPDATE_CAUSE_CONTENT;
++    }
++
+     if (memcmp(widget->hovered_color, color, sizeof(widget->hovered_color)) == 0) {
+         return;
+     }
+@@ -527,7 +532,7 @@ void widget_get_size(struct widget *widget, int *width, int *height)
+         return;
+     }
+ 
+-    painter_buffer_dest_size(buffer, width, height);
++    painter_buffer_get_dest_size(buffer, width, height);
+ }
+ 
+ float widget_get_scale(struct widget *widget)
+diff --git a/src/widget/widget_p.h b/src/widget/widget_p.h
+index c290281..f3a51c1 100644
+--- a/src/widget/widget_p.h
++++ b/src/widget/widget_p.h
+@@ -50,6 +50,7 @@ struct widget {
+ 
+     uint32_t corner_mask;
+     float corner_radius;
++    float hover_radius;
+ 
+     int width, height;
+     int max_width, max_height;
+diff --git a/src/xwayland/unmanaged.c b/src/xwayland/unmanaged.c
+index 1437235..9c13069 100644
+--- a/src/xwayland/unmanaged.c
++++ b/src/xwayland/unmanaged.c
+@@ -85,7 +85,6 @@ static void xwayland_unmanaged_focus(struct xwayland_unmanaged *unmanaged)
+ 
+     struct seat *seat = seat_from_wlr_seat(unmanaged->xwayland->wlr_xwayland->seat);
+     seat_focus_surface(seat, unmanaged->wlr_xwayland_surface->surface);
+-    kywc_view_activate(NULL);
+ }
+ 
+ static void xwayland_unmanaged_click(struct seat *seat, struct ky_scene_node *node, uint32_t button,
+diff --git a/src/xwayland/view.c b/src/xwayland/view.c
+index 789a8d4..ba97c78 100644
+--- a/src/xwayland/view.c
++++ b/src/xwayland/view.c
+@@ -267,13 +267,11 @@ static void xwayland_view_configure(struct view *view)
+ static struct wlr_buffer *xwayland_view_get_wm_icon_buffer(struct view *view, float scale)
+ {
+     struct xwayland_view *xwayland_view = xwayland_view_from_view(view);
+-    struct theme *theme = theme_manager_get_current();
++    struct theme *theme = theme_manager_get_theme();
+     struct draw_info info = {
+         .width = theme->icon_size,
+         .height = theme->icon_size,
+         .scale = scale,
+-        .svg = NULL,
+-        .png_path = NULL,
+     };
+ 
+     float scale_width = info.width * info.scale;
+@@ -420,6 +418,10 @@ static void xwayland_view_handle_request_activate(struct wl_listener *listener,
+     struct xwayland_view *xwayland_view =
+         wl_container_of(listener, xwayland_view, request_activate);
+ 
++    /* force sync activate surface and focus surface */
++    if (xwayland_view->xwayland->activated_surface == xwayland_view->wlr_xwayland_surface) {
++        wlr_xwayland_surface_activate(xwayland_view->wlr_xwayland_surface, true);
++    }
+     kywc_view_activate(&xwayland_view->view.base);
+ 
+     struct wlr_seat *wlr_seat = xwayland_view->xwayland->wlr_xwayland->seat;

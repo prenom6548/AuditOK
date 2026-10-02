@@ -1,0 +1,546 @@
+#!/bin/bash
+
+set -e
+
+data_unformat=$(get_value data-unformat)
+if [[ "${data_unformat}" == "true" ]]; then
+  return 0
+fi
+
+automatic=$(get_value automatic-installation)
+if [[ "$automatic" == "0" ]]; then
+  return 0
+fi
+
+disk_custom=$(get_value disk-custom)
+if [[ "${disk_custom}" == "false" ]]; then
+  return 0
+fi
+#兼容老版本配置文件
+root_size=$(get_value disk-root)
+if [[ -n "${root_size}" ]]; then
+  return 0
+fi
+
+if [[ "${is_efi}" == "true" ]]; then
+        . /usr/share/kylin-os-installer/scripts/autopart-efi.sh
+else
+        . /usr/share/kylin-os-installer/scripts/autopart.sh
+fi
+
+disk=$(get_value devpath)
+data_device=$(get_value data-device)
+format_disk=$(get_value format-disk)
+
+num=1
+
+if [[ ${format_disk} == "false" ]]; then
+	num=$(get_value parted-num)
+	un_boot=$(get_value parted-num)
+fi
+
+partprobe "${disk}" && sync
+if echo "${disk}" | grep -q nvme; then
+  disk=${disk}p
+fi
+
+
+sleep 1
+
+has_backup=0
+
+do_mkfs_efi(){
+  #if egrep -qi 'kirin.?990' /proc/cpuinfo; then
+  if [[ "${is_990_9a0}" == "true" ]]; then
+    sudo mkfs.vfat -s1 -n ESP "${part_efi}"
+  else
+    sudo mkfs.vfat -n ESP "${part_efi}" || sudo mkfs.vfat -F16 -n ESP "${part_efi}"
+  fi
+}
+
+do_prepare_sw() {
+  umount -l /media/*/* || true
+  dmsetup remove_all -f
+  #gsettings set org.ukui.flash-disk.autoload ifautoload false
+}
+
+do_mkfs_boot() {
+  boot_part=$1
+  if [[ "$(archdetect)" == "sw64/generic" ]]; then
+#    do_prepare_sw
+    mkfs.ext3 -Fq -L SYSBOOT "${boot_part}"
+  else
+    mkfs.ext4 -Fq -L SYSBOOT "${boot_part}"
+  fi
+}
+
+if [[ "${is_efi}" == "true" ]]; then
+
+  custom_partitions=$(get_value custom-partitions | sed 's/\"//g')
+  one_list=${custom_partitions//;/ }
+  two_list=
+  for p in ${one_list[@]}; do
+        two_list="${two_list} $(echo $p | cut -f1)"
+  done
+  three_list=$(echo ${two_list} | tr ' ' '\n')
+
+  for i in ${three_list}; do
+        custom_partition=$(get_value "custom-$i" | sed 's/\"//g')
+        custom_partition=${custom_partition//;/|}
+
+        fs=
+        fs=$(echo ${custom_partition#*fs=})
+        fs=$(echo ${fs%%|*})
+
+        if [[ $i == "efi" ]]; then
+		parted_efi=
+                parted_efi=$(get_value parted-efi)
+                if [ -z  ${parted_efi} ]; then
+                        part_efi="${disk}${num}"
+                        num=`expr $num + 1`
+                	do_mkfs_efi
+                else
+                        part_efi=${parted_efi}
+                fi
+		echo "part-efi=${part_efi}" >> /tmp/ky-installer.cfg
+                continue
+        fi
+
+        if [[ $i == "boot" ]]; then
+                part_boot="${disk}${num}"
+                num=`expr $num + 1`
+                do_mkfs_boot "${part_boot}"
+		echo "part-boot=${part_boot}" >> /tmp/ky-installer.cfg
+                continue
+        fi
+
+        if [[ $i == "root" ]]; then
+                part_root="${disk}${num}"
+                num=`expr $num + 1`
+               # mkfs.${fs} -Fq -L SYSROOT "${part_root}"
+		case "$fs" in
+        		fat32|fat16)
+            		mkfs.vfat -n "$i" "${part_root}";;
+        		ext4)
+           		mkfs.ext4 -Fq -L SYSROOT "${part_root}";;
+        		xfs)
+            		mkfs.xfs -fq -L SYSROOT "${part_root}";;
+        		btrfs)
+            		mkfs.btrfs -fq -L SYSROOT "${part_root}";;
+        		ntfs)
+            		mkfs.ntfs -fq -L "$i" "${part_root}";;
+        		*)
+           		mkfs.${fs} -Fq -L SYSROOT "${part_root}" ||  mkfs.${fs} -fq -L SYSROOT "${part_root}";;
+    		esac
+		echo "part-root=${part_root}" >> /tmp/ky-installer.cfg
+                continue
+        fi
+
+        if [[ $i == "backup" ]]; then
+                part_backup="${disk}${num}"
+                num=`expr $num + 1`
+                mkfs.${fs} -Fq -L KYLIN-BACKUP "${part_backup}"
+		echo "part-backup=${part_backup}" >> /tmp/ky-installer.cfg
+                continue
+        fi
+
+        if [[ $i == "data" ]]; then
+		if [[ -n ${data_device} ]]; then
+	      		if echo "${data_device}" | grep -q nvme; then
+        	       		data_device=${data_device}p
+        		fi
+        		part_data="${data_device}1"
+  		else
+                	part_data="${disk}${num}"
+                	num=`expr $num + 1`
+		fi
+               # mkfs.${fs} -Fq -L DATA "${part_data}"
+		case "$fs" in
+        		fat32|fat16)
+            		mkfs.vfat -n "$i" "${part_data}";;
+        		ext4)
+           		mkfs.ext4 -Fq -L DATA "${part_data}";;
+        		xfs)
+            		mkfs.xfs -fq -L DATA "${part_data}";;
+        		btrfs)
+            		mkfs.btrfs -fq -L DATA "${part_data}";;
+        		ntfs)
+            		mkfs.ntfs -fq -L "$i" "${part_data}";;
+        		*)
+           		mkfs.${fs} -Fq -L DATA "${part_data}" ||  mkfs.${fs} -fq -L DATA "${part_data}";;
+    		esac
+		echo "part-data=${part_data}" >> /tmp/ky-installer.cfg
+
+                continue
+        fi
+
+        if [[ $i == "swap" ]]; then
+                part_swap="${disk}${num}"
+                num=`expr $num + 1`
+                mkswap -L SWAP "${part_swap}"
+                swapon "${part_swap}"
+                continue
+        fi
+
+        part_other="${disk}${num}"
+        num=`expr $num + 1`
+	case "$fs" in
+        	fat32|fat16)
+            	mkfs.vfat -n "$i" "${part_other}";;
+        	ext4)
+           	mkfs.ext4 -Fq -L "$i" "${part_other}";;
+        	xfs)
+            	mkfs.xfs -fq -L "$i" "${part_other}";;
+        	btrfs)
+            	mkfs.btrfs -fq -L "$i" "${part_other}";;
+        	ntfs)
+            	mkfs.ntfs -fq -L "$i" "${part_other}";;
+        	*)
+           	mkfs.${fs} -Fq -L "$i" "${part_other}" ||  mkfs.${fs} -fq -L "$i" "${part_other}";;
+    	esac
+
+  done
+
+  mkdir -p /target
+  mount "${part_root}" /target
+ # if [ -n "${part_boot}" ]; then
+ # 	mkdir -p /target/boot
+ # 	mount "${part_boot}" /target/boot
+ # fi
+ # mkdir -p /target/boot/efi
+ # mount "${part_efi}" /target/boot/efi
+  num=1
+  if [[ ${format_disk} == "false" ]]; then
+        num=$(get_value parted-num)
+  fi
+  for i in ${three_list}; do
+        custom_partition=$(get_value "custom-$i" | sed 's/\"//g')
+        custom_partition=${custom_partition//;/|}
+        mount=
+        mount=$(echo ${custom_partition#*mount=})
+        mount=$(echo ${mount%%|*})
+
+        if [[ $i == "efi" ]]; then
+
+		parted_efi=
+                parted_efi=$(get_value parted-efi)
+                if [ -z  ${parted_efi} ]; then
+                        num=`expr $num + 1`
+                fi
+                continue
+        fi
+
+        if [[ $i == "boot" ]]; then
+                num=`expr $num + 1`
+                continue
+        fi
+
+        if [[ $i == "root" ]]; then
+                num=`expr $num + 1`
+                continue
+        fi
+
+        if [[ $i == "backup" ]]; then
+                #mkdir -p /target/backup
+                #mount "${part_backup}" /target/backup
+                #set_backup "${part_backup}"
+                num=`expr $num + 1`
+                continue
+        fi
+
+        if [[ $i == "data" ]]; then
+               # mkdir -p /target/data
+               # mount "${part_data}" /target/data
+               # chmod 1777 /target/data
+               # do_bind_data
+		if [[ -n ${data_device} ]]; then
+                	continue
+  		else
+                	num=`expr $num + 1`
+  		fi
+                continue
+        fi
+
+        if [[ $i == "swap" ]]; then
+                num=`expr $num + 1`
+                continue
+        fi
+	part_other="${disk}${num}"
+        num=`expr $num + 1`
+	if [[ -n ${mount} ]]; then
+        	mkdir -p /target${mount}
+        	mount "${part_other}" /target${mount}
+	else
+		mkdir -p /target/nomountpoint
+                mount "${part_other}" /target/nomountpoint
+                chmod -R 1777 /target/nomountpoint || true
+                umount -l /target/nomountpoint
+                rmdir /target/nomountpoint
+	fi
+  done
+  return 0
+else
+  custom_partitions=$(get_value custom-partitions | sed 's/\"//g')
+  one_list=${custom_partitions//;/ }
+  two_list=
+  for p in ${one_list[@]}; do
+        two_list="${two_list} $(echo $p | cut -f1)"
+  done
+  three_list=$(echo ${two_list} | tr ' ' '\n')
+
+  for i in ${three_list}; do
+        custom_partition=$(get_value "custom-$i" | sed 's/\"//g')
+        custom_partition=${custom_partition//;/|}
+
+        fs=
+        fs=$(echo ${custom_partition#*fs=})
+        fs=$(echo ${fs%%|*})
+
+        if [[ $i == "efi" ]]; then
+                continue
+        fi
+
+        if [[ $i == "boot" ]]; then
+
+		parted_boot=
+                parted_boot=$(get_value parted-boot)
+                if [ -z  ${parted_boot} ]; then
+                        part_boot="${disk}${num}"
+                        if [ $num -eq 1 ]; then
+                                num=`expr $num + 4`
+                        else
+                                num=`expr $num + 1`
+                        fi
+                        do_mkfs_boot "${part_boot}"
+                else
+                        part_boot=${parted_boot}
+                        if [ ${un_boot} -eq 1 ]; then
+		       		num=`expr $num + 4`
+		        fi
+                fi
+		echo "part-boot=${part_boot}" >> /tmp/ky-installer.cfg
+                continue
+        fi
+
+        if [[ $i == "root" ]]; then
+                part_root="${disk}${num}"
+		if [ $num -eq 1 ]; then
+			num=`expr $num + 4`
+		else
+			num=`expr $num + 1`
+		fi
+                #mkfs.${fs} -Fq -L SYSROOT "${part_root}"
+		case "$fs" in
+                        fat32|fat16)
+                        mkfs.vfat -n "$i" "${part_root}";;
+                        ext4)
+                        mkfs.ext4 -Fq -L SYSROOT "${part_root}";;
+                        xfs)
+                        mkfs.xfs -fq -L SYSROOT "${part_root}";;
+                        btrfs)
+                        mkfs.btrfs -fq -L SYSROOT "${part_root}";;
+        		ntfs)
+            		mkfs.ntfs -fq -L "$i" "${part_root}";;
+                        *)
+                        mkfs.${fs} -Fq -L SYSROOT "${part_root}" ||  mkfs.${fs} -fq -L SYSROOT "${part_root}";;
+                esac
+		echo "part-root=${part_root}" >> /tmp/ky-installer.cfg
+                continue
+        fi
+
+        if [[ $i == "backup" ]]; then
+                part_backup="${disk}${num}"
+		if [ $num -eq 1 ]; then
+			num=`expr $num + 4`
+		else
+			num=`expr $num + 1`
+		fi
+		echo "part-backup=${part_backup}" >> /tmp/ky-installer.cfg
+                mkfs.${fs} -Fq -L KYLIN-BACKUP "${part_backup}"
+                continue
+        fi
+
+        if [[ $i == "data" ]]; then
+		if [[ -n ${data_device} ]]; then
+	      		if echo "${data_device}" | grep -q nvme; then
+        	       		data_device=${data_device}p
+        		fi
+        		part_data="${data_device}1"
+  		else
+                	part_data="${disk}${num}"
+			if [ $num -eq 1 ]; then
+				num=`expr $num + 4`
+			else
+				num=`expr $num + 1`
+			fi
+		fi
+                #mkfs.${fs} -Fq -L DATA "${part_data}"
+                case "$fs" in
+                        fat32|fat16)
+                        mkfs.vfat -n "$i" "${part_data}";;
+                        ext4)
+                        mkfs.ext4 -Fq -L DATA "${part_data}";;
+                        xfs)
+                        mkfs.xfs -fq -L DATA "${part_data}";;
+                        btrfs)
+                        mkfs.btrfs -fq -L DATA "${part_data}";;
+        		ntfs)
+            		mkfs.ntfs -fq -L "$i" "${part_data}";;
+                        *)
+                        mkfs.${fs} -Fq -L DATA "${part_data}" ||  mkfs.${fs} -fq -L DATA "${part_data}";;
+                esac
+		echo "part-data=${part_data}" >> /tmp/ky-installer.cfg
+		continue
+        fi
+
+        if [[ $i == "swap" ]]; then
+                part_swap="${disk}${num}"
+		if [ $num -eq 1 ]; then
+			num=`expr $num + 4`
+		else
+			num=`expr $num + 1`
+		fi
+                mkswap -L SWAP "${part_swap}"
+                swapon "${part_swap}"
+                continue
+        fi
+
+        part_other="${disk}${num}"
+	if [ $num -eq 1 ]; then
+		num=`expr $num + 4`
+	else
+		num=`expr $num + 1`
+	fi
+	case "$fs" in
+                fat32|fat16)
+                mkfs.vfat -n "$i" "${part_other}";;
+                ext4)
+                mkfs.ext4 -Fq -L "$i" "${part_other}";;
+                xfs)
+                mkfs.xfs -fq -L "$i" "${part_other}";;
+                btrfs)
+                mkfs.btrfs -fq -L "$i" "${part_other}";;
+        	ntfs)
+            	mkfs.ntfs -fq -L "$i" "${part_other}";;
+                *)
+                mkfs.${fs} -Fq -L "$i" "${part_other}" ||  mkfs.${fs} -fq -L "$i" "${part_other}";;
+        esac
+
+  done
+
+  mkdir -p /target
+  mount "${part_root}" /target
+  
+  num=1
+  if [[ ${format_disk} == "false" ]]; then
+        num=$(get_value parted-num)
+	un_boot=$(get_value parted-num)
+  fi
+
+  parted_boot=
+  parted_boot=$(get_value parted-boot)
+ # if [ -z  ${parted_boot} ]; then
+ # 	mkdir -p /target/boot
+ # 	mount "${part_boot}" /target/boot
+ # else
+#	if [[ ${un_boot} -gt 1 ]]; then
+#  		mkdir -p /target/boot
+#  		mount "${part_boot}" /target/boot
+#	fi
+#  fi
+  
+  for i in ${three_list}; do
+        custom_partition=$(get_value "custom-$i" | sed 's/\"//g')
+        custom_partition=${custom_partition//;/|}
+        mount=
+        mount=$(echo ${custom_partition#*mount=})
+        mount=$(echo ${mount%%|*})
+
+        if [[ $i == "efi" ]]; then
+                continue
+        fi
+
+        if [[ $i == "boot" ]]; then
+		parted_boot=
+                parted_boot=$(get_value parted-boot)
+                if [ -z  ${parted_boot} ]; then
+                        if [ $num -eq 1 ]; then
+                                num=`expr $num + 4`
+                        else
+                                num=`expr $num + 1`
+                        fi
+		else
+			if [ ${un_boot} -eq 1 ]; then
+                        	num=`expr $num + 4`
+                        fi
+	      	fi
+                continue
+        fi
+
+        if [[ $i == "root" ]]; then
+		if [ $num -eq 1 ]; then
+			num=`expr $num + 4`
+		else
+			num=`expr $num + 1`
+		fi
+                continue
+        fi
+
+        if [[ $i == "backup" ]]; then
+                #mkdir -p /target/backup
+                #mount "${part_backup}" /target/backup
+                #set_backup "${part_backup}"
+		if [ $num -eq 1 ]; then
+			num=`expr $num + 4`
+		else
+			num=`expr $num + 1`
+		fi
+                continue
+        fi
+
+        if [[ $i == "data" ]]; then
+                #mkdir -p /target/data
+                #mount "${part_data}" /target/data
+                #chmod 1777 /target/data
+                #do_bind_data
+		if [[ -n ${data_device} ]]; then
+                	continue
+  		else
+			if [ $num -eq 1 ]; then
+				num=`expr $num + 4`
+			else
+				num=`expr $num + 1`
+			fi
+  		fi
+                continue
+        fi
+
+        if [[ $i == "swap" ]]; then
+		if [ $num -eq 1 ]; then
+			num=`expr $num + 4`
+		else
+			num=`expr $num + 1`
+		fi
+                continue
+        fi
+	part_other="${disk}${num}"
+	if [ $num -eq 1 ]; then
+		num=`expr $num + 4`
+	else
+		num=`expr $num + 1`
+	fi
+	if [[ -n ${mount} ]]; then
+        	mkdir -p /target${mount}
+        	mount "${part_other}" /target${mount}
+	else
+                mkdir -p /target/nomountpoint
+                mount "${part_other}" /target/nomountpoint
+                chmod -R 1777 /target/nomountpoint || true 
+                umount -l /target/nomountpoint
+                rmdir /target/nomountpoint
+	fi
+  done
+fi
+
+
+

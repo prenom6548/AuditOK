@@ -1,0 +1,486 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+
+### BEGIN LICENSE
+ # Copyright (C) 2021 KylinSoft Co., Ltd.
+ #
+ # Authors:
+ #  Yang Min yangmin@kylinos.cn
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation, either version 3 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License
+ # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+### END LICENSE
+
+import sys
+import os
+import re
+
+import json
+import subprocess
+
+from pprint import pprint
+
+from kajsondef import *
+from kathread import *
+from utils import *
+from kaconfig import *
+
+class KAHarddiskInfo() :
+
+    def __init__(self, cmdtool):
+        self.cmdTool = cmdtool
+        pass
+
+    def get_human_read_capacity_size(self, size):
+        size_str = ""
+        displayed_size = 0.0
+        unit = "KB"
+
+        if size < MEGABYTE_FACTOR:
+            displayed_size = float(size/KILOBYTE_FACTOR)
+            unit = "KB"
+        elif size < GIGABYTE_FACTOR:
+            displayed_size = float(size/MEGABYTE_FACTOR)
+            unit = "MB"
+        elif size < TERABYTE_FACTOR:
+            displayed_size = float(size/GIGABYTE_FACTOR)
+            unit = "GB"
+        else:
+            displayed_size = float(size/TERABYTE_FACTOR)
+            unit = "TB"
+        #print "displayed_size=", round(displayed_size)
+        #round 不是简单的四舍五入，而是ROUND_HALF_EVEN的策略
+        #ceil 取大于或者等于x的最小整数
+        #floor 取小于或者等于x的最大整数
+        #print round(2.5)#3.0
+        #print math.ceil(2.5)#3.0
+        #print math.floor(2.5)#2.0
+        #print round(2.3)#2.0
+        #print math.ceil(2.3)#3.0
+        #print math.floor(2.3)#2.0
+        if (unit == "TB"):
+            str_list = [str(int(round(displayed_size, 1))), unit]
+        else:
+            str_list = [str(int(round(displayed_size))), unit]
+
+        size_str = " ".join(str_list)
+        return size_str
+
+    def chkIsMainDisk(self, devName):
+        if len(devName) <= 0 :
+            return "0"
+        status, output = subprocess.getstatusoutput("lsblk -b "+devName)
+        if status :
+            return "0"
+        for line in output.split("\n"):
+            value = line.split()
+            if len(value) >= 7 and value[6]:
+                if value[6] == "/" :
+                    return "1"
+        return "0"
+
+    def chkIsSSD(self, devFileName):
+        if len(devFileName) <= 0 :
+            return "0"
+        status, output = subprocess.getstatusoutput("lsblk -d -o name,rota")
+        if status :
+            return "0"
+        for line in output.split("\n"):
+            value = line.split()
+            if len(value) >= 2 and value[1]:
+                if value[0] == devFileName and value[1] == "0" :
+                    return "1"
+        return "0"
+
+    def get_disk(self):
+        disklist = []
+        disk_manufacturers = {
+                "ST": "Seagate",
+                "IBM": "IBM",
+                "HITACHI": "Hitachi",
+                "IC": "Hitachi",
+                "HTS": "Hitachi",
+                "FUJITSU": "Fujitsu",
+                "MP": "Fujitsu",
+                "TOSHIBA": "Toshiba",
+                "MK": "Toshiba",
+                "MAXTOR": "Maxtor",
+                "Pioneer": "Pioneer",
+                "PHILIPS": "Philips",
+                "QUANTUM": "Quantum",
+                "FIREBALL": "Quantum",
+                "WDC": "Western Digital",
+                "HGST HUS": "Western Digital",
+                #"FORESEE": "Foresee",   江波龙厂商希望展示为1d97 Shenzhen Longsys Electronics Co., Ltd. 而不是 foresee
+                }
+
+        diskList = self.cmdTool.loadInfoFromHwinfo("--disk")
+        self.cmdTool.loadDiskInfoFromLsblk()
+        if "list" in diskList and len(diskList["list"]) > 0 :
+            length = len(diskList["list"])
+            for i in range(length) :
+                if "SysFS BusID" in diskList["list"][i] :
+                    for mapInfo in self.cmdTool.lshwDiskList :
+                        if "bus info" in mapInfo :
+                            words = mapInfo["bus info"].split("@")
+                            if len(words) != 2 :
+                                continue
+                            key = words[1].strip()
+                            key = key.replace(".",":")
+                            if key != diskList["list"][i]["SysFS BusID"] :
+                                continue
+                            diskList["list"][i].update(mapInfo)
+                if "SysFS Device Link" in diskList["list"][i]:
+                    for mapInfo in self.cmdTool.lshwStorageList :
+                        if "bus info" in mapInfo :
+                            words = mapInfo["bus info"].split("@")
+                            if len(words) != 2 :
+                                continue
+                            key = words[1].strip().lower()
+                            if key not in diskList["list"][i]["SysFS Device Link"].lower() :
+                                continue
+                            diskList["list"][i].update(mapInfo)
+                for mapInfo in self.cmdTool.lsblkSmartList :
+                    if "dev_name" in mapInfo and "Device File" in diskList["list"][i] \
+                        and mapInfo["dev_name"] in diskList["list"][i]["Device File"] :
+                        diskList["list"][i].update(mapInfo)
+            flag = Judgment_HW990()
+            flag9A0 = Judgment_HW9A0()
+            flagPGUX = Judgment_PANGUX()
+            # 判断是否为联想定制
+            customedType = Judgment_LENOVO()
+
+            for diskInfo in diskList["list"] :
+                disk = {}
+                DiskProduct,DiskVendor,DiskCapacity,DiskName,DiskFw,DiskSerial,DiskRota,DiskInterface,DiskUFS,DiskUFSRevision = '','','','','','','','','',''
+                devName = ""
+                IsRemoveable = False
+                if "dev_name" in diskInfo :
+                    devName = diskInfo["dev_name"]
+                if "dev_majmin" in diskInfo :
+                    majorId = diskInfo["dev_majmin"].split(":")
+                    # 华为云硬盘主设备型号
+                    if len(majorId) == 2 and majorId[0] != "259" and majorId[0] != "8" and majorId[0] != "253" and majorId[0] != "252" :
+                        continue
+                if flag and len(devName) > 0 :
+                    if "sda" == devName or "sdb" == devName or "sdc" == devName :
+                        continue
+                if "Capacity" in diskInfo :
+                    DiskCapacity = diskInfo["Capacity"]
+                    result = re.findall("\((.*) bytes\)", DiskCapacity)
+                    DiskCapacity = re.sub("\(.*\)", "", DiskCapacity).replace(" ", "")
+                    if DiskCapacity.startswith("0") or DiskCapacity == "" :
+                        continue
+                    if result and len(result) > 0:
+                        if result[0].isdigit() :
+                            jinzhi = 1000.0
+                            # 判断是否为虚拟机
+                            if Judgment_Virt():
+                                jinzhi = 1024.0
+                            size = float(result[0])/jinzhi/jinzhi/jinzhi
+                            if size >= jinzhi :
+                                size = size/jinzhi
+                                DiskCapacity = str(float("%0.1f" % size))+"TB"
+                            else :
+                                DiskCapacity = str(int("%d" % size))+"GB"
+                if len(DiskCapacity) == 0 and "size" in diskInfo :
+                    DiskCapacity = diskInfo["size"]
+                    result = re.findall(".*\((.*)\)$", DiskCapacity)
+                    if result and len(result) > 0 :
+                        DiskCapacity = result[0]
+                capacity = ""
+                if "User Capacity" in diskInfo :
+                    capacity = diskInfo["User Capacity"]
+                    capacityTmp = capacity.replace("[","").replace("]","").split(" ")
+                    if "TB" in capacityTmp and len(capacityTmp) >=2 :
+                        capacityTmp = float(capacityTmp[-2])
+                        DiskCapacity = str(round(round(capacityTmp,0)))+" TB"
+                        capacity = DiskCapacity
+                if len(capacity) == 0 and "Total NVM Capacity" in diskInfo :
+                    capacity = diskInfo["Total NVM Capacity"]
+                    # bug#108169 1.02TB展示问题
+                    capacityTmp = capacity.replace("[","").replace("]","").split(" ")
+                    if "TB" in capacityTmp and len(capacityTmp) >=2 :
+                        capacityTmp = float(capacityTmp[-2])
+                        capacity = str(round(round(capacityTmp,0)))+" TB"
+                if len(capacity) == 0 and "Namespace 1 Size/Capacity" in diskInfo :
+                    # 部分硬盘会缺失 Total NVM Capacity
+                    capacity = diskInfo["Namespace 1 Size/Capacity"]
+                    capacityTmp = capacity.replace("[","").replace("]","").split(" ")
+                    if "TB" in capacityTmp and len(capacityTmp) >=2 :
+                        capacityTmp = float(capacityTmp[-2])
+                        capacity = str(round(round(capacityTmp,0)))+" TB"
+                if len(capacity) > 0 :
+                    result = re.findall(".*\[(.*)\]$", capacity)
+                    if result and len(result) > 0 :
+                        DiskCapacity = result[0]
+                if DiskCapacity.startswith("0") or DiskCapacity == "" :
+                    continue
+                #优化 sw /dev/ram*设备挂载分区为空
+                if "" == devName:
+                    continue;
+                DiskName = ("/dev/" + devName)
+                IsMainDisk = self.chkIsMainDisk(DiskName)
+                IsSSD = "0"
+                if "dev_rota" in diskInfo :
+                    if diskInfo["dev_rota"] == "0" :
+                        IsSSD = "1"
+                    else :
+                        IsSSD = "0"
+                if "Rotation Rate" in diskInfo :
+                    if diskInfo["Rotation Rate"] == "Solid State Device" :
+                        IsSSD = "1"
+                    else :
+                        DiskRota = diskInfo["Rotation Rate"]
+                if "dev_removeable" in diskInfo :
+                    IsRemoveable = (diskInfo["dev_removeable"] == "1")
+                if "Vendor" in diskInfo :
+                    diskVendor = diskInfo["Vendor"].split("\"")
+                    if len(diskVendor) > 1 :
+                        DiskVendor = diskVendor[1]
+                    else :
+                        DiskVendor = diskInfo["Vendor"]
+                if "SubVendor" in diskInfo :
+                    diskVendor = diskInfo["SubVendor"].split("\"")
+                    if len(diskVendor) > 1 :
+                        DiskVendor = diskVendor[1]
+                    else :
+                        DiskVendor = diskInfo["SubVendor"]
+                if "vendor" in diskInfo :
+                    DiskVendor = diskInfo["vendor"]
+                if len(DiskVendor) > 0 :
+                    for key, va in list(disk_manufacturers.items()):
+                        if DiskVendor.startswith(key):
+                            DiskVendor = va
+                            break
+                # # 990和9A0不显示序列号
+                # if not Judgment_HW990() and not Judgment_HW9A0():
+                if "serial" in diskInfo:
+                    DiskSerial = diskInfo["serial"]
+                if "Serial Number" in diskInfo :
+                    DiskSerial = diskInfo["Serial Number"]
+                # ufs 走scsi输出会是Serial number
+                if "Serial number" in diskInfo :
+                    DiskSerial = diskInfo["Serial number"]    
+                if "Model" in diskInfo :
+                    DiskProduct = diskInfo["Model"]
+                if "product" in diskInfo :
+                    DiskProduct = diskInfo["product"]
+                if "Device Model" in diskInfo and len(diskInfo["Device Model"]) > 0 :
+                    DiskProduct = diskInfo["Device Model"]
+                if "Model Number" in diskInfo and len(diskInfo["Model Number"]) > 0 :
+                    DiskProduct = diskInfo["Model Number"]
+                if len(DiskProduct) > 0 :
+                    for key, va in list(disk_manufacturers.items()):
+                        if DiskProduct.startswith(key):
+                            DiskVendor = va
+                            break
+                if "Firmware Version" in diskInfo :
+                    DiskFw = diskInfo["Firmware Version"]
+                if "Revision" in diskInfo and "/dev/sdd" == DiskName :
+                    DiskUFSRevision = diskInfo["Revision"]
+                if "Attached to" in diskInfo :
+                    DiskInterface = diskInfo["Attached to"]
+                    interface = re.findall(".*\((.*)\).*", DiskInterface)
+                    if interface and len(interface) > 0 :
+                        DiskInterface = interface[0]
+                        DiskInterface = DiskInterface.replace("Controller", "").strip()
+                        DiskInterface = DiskInterface.replace("controller", "").strip()
+                else:
+                    # 判断是否为SATA接口硬盘
+                    for mapInfo in self.cmdTool.lsblkSmartList :
+                        if "SATA Version" in mapInfo.keys() and "Device Model" in mapInfo.keys()  and DiskProduct == mapInfo["Device Model"]:
+                            DiskInterface = "SATA"
+
+                if DiskInterface == "USB" and (len(DiskVendor) == 0 or "N/A" == DiskVendor or "USB" == DiskVendor) : 
+                    if "usb_vendor" in diskInfo and "usb_device" in diskInfo :
+                        DiskVendor,_ = self.cmdTool.getUsbVendorProduct(diskInfo["usb_vendor"],diskInfo["usb_device"])
+                        print("vendorInfo:", DiskVendor,",",diskInfo["usb_vendor"],diskInfo["usb_device"])
+
+                if len(DiskCapacity) > 0 :
+                    disk[HDI_CAPACITY] = DiskCapacity
+                if len(DiskName) > 0 :
+                    disk[HDI_NAME] = DiskName
+                if len(DiskProduct) :
+                    disk[HDI_MODEL] = DiskProduct
+                if len(DiskVendor) > 0 and DiskVendor != "USB" :
+                    disk[HDI_MANUFACTURER] = DiskVendor
+                if len(DiskSerial) > 0 :
+                    disk[HDI_SERIALNUM] = DiskSerial;
+                if len(DiskFw) > 0 :
+                    disk[HDI_FIRMWAREVER] = DiskFw
+                disk[HDI_ISMAINDISK] = IsMainDisk
+                if not IsRemoveable and "usb" not in DiskInterface.lower() :
+                    disk[HDI_ISSSD] = IsSSD
+                    disk[HDI_CANREMOVE] = False
+                else :
+                    disk[HDI_CANREMOVE] = True
+                if len(DiskRota) > 0 :
+                    disk[HDI_ROTA] = DiskRota
+                if len(DiskInterface) > 0:
+                    disk[HDI_INTERFACE] = DiskInterface
+
+                # 990/9A0 特殊处理
+                if (flag or flag9A0 or flagPGUX) and len(DiskCapacity) > 0 :
+                    def transHumanReadableSize(disSize):
+                        diffMap = {}
+                        destList = [1, 2, 4, 8, 16, 32, 64, 80, 100, 120, 128, 160, 256, 320, 500, 512, 750]
+                        for size in destList:
+                            diffMap[abs(disSize - size)] = destList.index(size)
+                        return destList[diffMap.get(min(diffMap.keys()))]
+                    if DiskCapacity.find(".") < 0 : # 非浮点数值
+                        result = re.findall("([0-9]+)", DiskCapacity)
+                        if result and len(result) > 0 :
+                            originInfo = result[0]
+                            humanReadableSize = transHumanReadableSize(int(originInfo))
+                            disk[HDI_CAPACITY] = DiskCapacity.replace(originInfo, str(humanReadableSize))
+                    if len(DiskUFSRevision) > 0:
+                        disk[HDI_UFSREVISION] = DiskUFSRevision
+                # if IsSSD == "1" :
+                #     if flag :
+                #         disk[HDI_UFS] = "UFS 3.0"
+                #     elif flag9A0 :
+                #         disk[HDI_UFS] = "UFS 3.1"
+
+                # 当读取cat /sys/devices/platform/f8200000.ufs/host0/scsi_host/host0/wb_en中数值为true，
+                # 且cat /sys/block/sdd/device/spec_version中数值为310时显示UFS 3.1,；
+                if IsSSD == "1" :
+                    if flag9A0:
+                        disk[HDI_UFS] = "UFS 3.1"
+                    # 990
+                    elif flag:
+                        # 非L410为UFS3.0
+                        if not Judgment_L410():
+                            disk[HDI_UFS] = "UFS 3.0"
+                            ufsPath = "/sys/devices/platform/f8200000.ufs/host0/scsi_host/host0/wb_en"
+                            ufsVersion = "/sys/block/sdd/device/spec_version"
+                            if  os.path.exists(ufsPath) and os.path.exists(ufsVersion):
+                                args = ["cat", ufsPath]
+                                pipe = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                output = pipe.stdout.readlines()
+                                for l in output:
+                                    line = bytes.decode(l.strip(),"utf-8","ignore")
+                                    if line.find("true") >= 0:
+                                        args1 = ["cat", ufsVersion]
+                                        pipe1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                        output1 = pipe1.stdout.readlines()
+                                        for l in output1:
+                                            line = bytes.decode(l.strip(),"utf-8","ignore")
+                                            if line.find("310") >= 0:
+                                                disk[HDI_UFS] = "UFS 3.1"
+                                            else:
+                                                disk[HDI_UFS] = "UFS 3.0"
+                                    else:
+                                        disk[HDI_UFS] = "UFS 3.0"
+                            else:
+                                disk[HDI_UFS] = "UFS 3.0"
+                    elif flagPGUX:
+                        disk[HDI_UFS] = "UFS 3.0"
+                        ufsVersion = "/sys/block/sdd/device/spec_version"
+                        if  os.path.exists(ufsVersion):
+                            args1 = ["cat", ufsVersion]
+                            pipe1 = subprocess.Popen(args1, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            output1 = pipe1.stdout.readlines()
+                            for l in output1:
+                                line = bytes.decode(l.strip(),"utf-8","ignore")
+                                if line.isdigit():
+                                    line = int(line)
+                                    if line > 300:
+                                        disk[HDI_UFS] = "UFS 3.1"
+                                    else:
+                                        disk[HDI_UFS] = "UFS 3.0"
+                        else:
+                            disk[HDI_UFS] = "UFS 3.0"
+                # 联想定制 DATANG不走定制
+                if(1 == customedType and HDI_MANUFACTURER in disk and "DATANG" not in disk[HDI_MANUFACTURER]):
+                    disk[HDI_MODEL] = self.exchangeModel([disk])
+                disklist.append(disk)
+        
+        module = "hardDisk"
+        status = KAConfig.getInstance().execute(module,disklist)
+        if "invisible" == status:
+            # return []
+            return ""
+        return disklist
+
+    #概要信息
+    def getOutline(self, customedType) :
+        if "" != self.get_disk():
+            outLineObj = self.get_disk()
+        else:
+            return ""
+        outLine = ""
+        if 1 == customedType :  ## lenovo
+
+            nIndex = 0
+            for info in outLineObj :
+                if HDI_CANREMOVE in info and info[HDI_CANREMOVE] :
+                    continue
+                if nIndex != 0 :
+                    outLine += " / "
+                outLine += self.exchangeModel([info])
+                nIndex = nIndex + 1
+        else:
+            for info in outLineObj :
+                if HDI_ISMAINDISK in info and info[HDI_ISMAINDISK] == '1':
+                    if HDI_MODEL in info :
+                        outLine += info[HDI_MODEL]
+                    if HDI_CAPACITY in info :
+                        outLine += "(" + info[HDI_CAPACITY]+")"
+                    break
+        return outLine
+
+    #联想定制转换
+    def exchangeModel(self, outLineObj):
+        outLine = ""
+        nIndex = 0
+        for info in outLineObj :
+            if HDI_CANREMOVE in info and info[HDI_CANREMOVE] :
+                continue
+            isSSD = False
+            if nIndex != 0 :
+                outLine += " / "
+            if HDI_ISSSD in info and info[HDI_ISSSD] == '1' :
+                outLine += "SSD"
+                isSSD = True
+            else :
+                outLine += "HDD"
+            if HDI_MANUFACTURER in info :
+                diskManufacturer = exchangeManufacturer(info[HDI_MANUFACTURER])
+                outLine += "-"+diskManufacturer
+            if HDI_CAPACITY in info :
+                tempCapacity = info[HDI_CAPACITY]
+                tempCapacity = tempCapacity.replace("GB", "G")
+                outLine += "-" + tempCapacity
+            if isSSD :
+                outLine += "-PCIe"
+            else :
+                outLine += "-SATA"
+            nIndex = nIndex + 1
+        return outLine
+
+if __name__ == "__main__":
+    cmdTool = KACmdTool()
+    cmdTool.loadInfoFromLshw()
+    cc = KAHarddiskInfo(cmdTool)
+    pprint(cc.get_disk())
+    # pprint(cc.getOutline(1))
+# if __name__ == "__main__":
+#     	capacity = "1,024,209,543,168 [1.02 TB]"
+# 	# bug#108169
+# 	capacityTmp = capacity.replace("[","").replace("]","").split(" ");
+# 	if "TB" in capacityTmp[-1]:
+# 		print(capacityTmp)
+# 		print(capacityTmp[-1].split(" "))
+# 	#	capacity = capacityTmp[0].split(".")[0] + ".00"+" TB"
+# 	#print(capacity)

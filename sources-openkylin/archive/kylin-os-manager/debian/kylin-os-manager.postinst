@@ -1,0 +1,88 @@
+#!/bin/bash
+
+chmod 755 /usr/lib/python3/dist-packages/kylin-assistant-daemon/sessiondaemon/kasessiondbusmain.py
+chmod 755 /usr/lib/python3/dist-packages/kylin-assistant-daemon/systemdaemon/kasystemdbusmain.py
+
+ldconfig
+
+glib-compile-schemas /usr/share/glib-2.0/schemas
+
+if [ -f "/usr/sbin/kysec_set" ]; then
+    kysec_set -n protect -v readonly /etc/dbus-1/conf/com.kylin-os-manager.limit
+    kysec_set -n protect -v readonly /usr/share/dbus-1/conf/com.kylin-os-manager.limit
+    kysec_set -n protect -v readonly /etc/dbus-1/conf/com.kylin-os-manager.limit.verify
+fi
+
+systemctl daemon-reload
+
+systemctl enable com.kylin-os-manager.service
+systemctl restart com.kylin-os-manager.service
+
+systemctl enable com.kylin-os-manager-driver-acquirer.service
+systemctl restart com.kylin-os-manager-driver-acquirer.service
+
+# 设置 kylin-core-dump-trailblazer.service、kylin-core-dump-monitor.service 开机自启
+# systemctl enable kylin-core-dump-trailblazer.service
+
+# 安装完包后启动 kylin-core-dump-monitor.service
+systemctl enable kylin-core-dump-monitor.service
+systemctl restart kylin-core-dump-monitor.service
+
+# 远程协助被控工具建立软链接
+if [ ! -f "/usr/share/kylin-os-manager/komt-rcu/komt-rcu" ];then
+    if [ -f "/usr/lib/kylin-os-manager/bin/kylin-os-manager-remote-user" ];then
+        mkdir -p /usr/share/kylin-os-manager/komt-rcu/
+        ln -sf /usr/lib/kylin-os-manager/bin/kylin-os-manager-remote-user /usr/share/kylin-os-manager/komt-rcu/komt-rcu
+    else
+        echo " kom-install not exist kylin-os-manager-remote-user ,ln file fail"
+    fi
+else
+    echo " kom-install exist komt-rcu ,ln file fail "
+fi
+
+# 替换掉旧版的服务与支持
+old_service_bin="/usr/bin/kylin-service-support"
+new_service_bin="/usr/share/kylin-os-manager/kylin-service-support"
+old_service_desktop="/usr/share/applications/kylin-service-support.desktop"
+if [ -f ${old_service_bin} ]; then
+    rm ${old_service_bin}
+fi
+if [ -f ${old_service_desktop} ]; then
+    rm ${old_service_desktop}
+fi
+if [ -f ${new_service_bin} ]; then
+    chmod 755 ${new_service_bin}
+    mv ${new_service_bin} /usr/bin
+else
+    echo "replace service support: the new binary file does not exist"
+fi
+
+# 修改旧版工具箱桌面快捷方式
+for home_dir in /home/*/; do
+    if [ -d "${home_dir}Desktop" ] || [ -d "${home_dir}桌面" ]; then
+        desktop_dir=$(ls -d "${home_dir}"{Desktop,桌面} 2>/dev/null | head -1)
+        # 判断是否存在旧版工具箱桌面快捷方式
+        desktop_file="${desktop_dir}/kylin-assistant.desktop"
+        if [ -f "${desktop_file}" ]; then
+            # 删除旧版工具箱桌面快捷方式
+            rm -f "${desktop_file}"
+            echo "removed: ${desktop_file}"
+
+            # 创建麒麟管家工具箱桌面快捷方式
+            src_file="/usr/share/applications/kylin-os-manager-device-manager.desktop"
+            dest_file="${desktop_dir}/kylin-os-manager-device-manager.desktop"
+            if [ -f "${src_file}" ]; then
+                cp -f "${src_file}" "${dest_file}"
+                # 修改文件所属者和权限
+                user_name=$(basename "${home_dir}")
+                chown "${user_name}":"${user_name}" "${dest_file}"
+                chmod 755 "${dest_file}"
+                echo "copied ${src_file} to ${dest_file}"
+                echo "chowned: ${user_name}:${user_name}"
+                echo "chmoded: 755"
+            else
+                echo "warning: ${src_file} not found!" >&2
+            fi
+        fi
+    fi
+done

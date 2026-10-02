@@ -1,0 +1,277 @@
+From: shangxiaoyang <shangxiaoyang@kylinos.cn>
+Date: Thu, 2 Nov 2023 07:48:11 +0000
+Subject: =?utf-8?q?!48_fix_demand_=2322231_Merge_pull_request_!48_from_?=
+ =?utf-8?q?=E9=82=93=E5=A5=BD/openkylin/yangtze?=
+
+---
+ UI/mainwidget.cpp        | 82 ++++++++++++++++++++++++++++++++++++++++++++++--
+ UI/mainwidget.h          | 23 +++++++++++++-
+ UI/player/miniwidget.cpp | 58 +++++++++++++++++++++++++++++-----
+ UI/player/miniwidget.h   | 19 +++++++++++
+ 4 files changed, 170 insertions(+), 12 deletions(-)
+
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index f9f3b56..397c16e 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -771,6 +771,27 @@ void Widget::allConnect()
+ 
+     connect(m_titleBar->searchEdit,&SearchEdit::signalReturnPressed,musicListTable,&TableOne::slotSearchReturnPressed);
+     connect(&playController::getInstance(),&playController::playerStateChange,this,&Widget::slotStateChanged);
++
++    // mini模式快捷键
++    connect(m_miniWidget, &miniWidget::playPauseKeySignal,playSongArea,&PlaySongArea::slotPlayClicked);
++    connect(m_miniWidget, &miniWidget::previousPlayKeySignal, playSongArea,&PlaySongArea::slotPrevious);
++    connect(m_miniWidget, &miniWidget::nextPlayKeySignal, playSongArea,&PlaySongArea::slotNext);
++    connect(m_miniWidget, &miniWidget::addVolumeKeySignal, this, &Widget::VolumeUp);
++    connect(m_miniWidget, &miniWidget::downVolumeKeySignal, this, &Widget::VolumeDown);
++    connect(m_miniWidget, &miniWidget::miniCompleteSwitchKeySignal, this, &Widget::slotRecoverNormalWidget);
++    connect(m_miniWidget, &miniWidget::loveSongKeySignal, playSongArea, &PlaySongArea::slotFav);
++    connect(m_miniWidget, &miniWidget::changePlaybackMode,playSongArea,&PlaySongArea::setPlayMode);
++
++    // 快捷键设置
++    connect(m_quitWindow, &QShortcut::activated, this, &Widget::slotClose);
++    connect(this,&Widget::playPauseKeySignal,playSongArea,&PlaySongArea::slotPlayClicked);
++    connect(this, &Widget::previousPlayKeySignal, playSongArea,&PlaySongArea::slotPrevious);
++    connect(this, &Widget::nextPlayKeySignal, playSongArea,&PlaySongArea::slotNext);
++    connect(this, &Widget::addVolumeKeySignal, this, &Widget::VolumeUp);
++    connect(this, &Widget::downVolumeKeySignal, this, &Widget::VolumeDown);
++    connect(this, &Widget::miniCompleteSwitchKeySignal, this,&Widget::slotShowMiniWidget);
++    connect(this, &Widget::loveSongKeySignal, playSongArea, &PlaySongArea::slotFav);
++    connect(this, &Widget::changePlaybackMode,playSongArea,&PlaySongArea::setPlayMode);
+ }
+ 
+ void Widget::initGSettings()//初始化GSettings
+@@ -963,12 +984,67 @@ void Widget::keyPressEvent(QKeyEvent *event)
+     if(event->key() == Qt::Key_F1)
+     {
+         Q_EMIT signalShowGuide();
++    } else if(event->key() == Qt::Key_Space) {
++        Q_EMIT playPauseKeySignal();
+     }
+-    else if(event->key() == Qt::Key_Space)
+-    {
+-        Q_EMIT signalSpaceKey();
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Left) {
++        qDebug() << "ctrl+left";
++        Q_EMIT previousPlayKeySignal();
+     }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Right) {
++        qDebug() << "ctrl+right";
++        Q_EMIT nextPlayKeySignal();
++    }
++
++    if (event->key() == Qt::Key_Up) {
++        qDebug() << "ctrl+up";
++        Q_EMIT addVolumeKeySignal();
++    }
++
++    if (event->key() == Qt::Key_Down) {
++        qDebug() << "ctrl+down";
++        Q_EMIT downVolumeKeySignal();
++    }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_M) {
++        qDebug() << "ctrl+m";
++        Q_EMIT miniCompleteSwitchKeySignal();
++    }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_L) {
++        qDebug() << "ctrl+l";
++        Q_EMIT loveSongKeySignal();
++    }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_T){
++        qDebug() << "ctrl+t";
++        if (m_playbackMode == CurrentItemInLoop){
++            Q_EMIT changePlaybackMode(3);
++            m_playbackMode = Loop;
++        }
++        else if (m_playbackMode == Loop){
++            Q_EMIT changePlaybackMode(4);
++            m_playbackMode = Random;
++        }
++        else if (m_playbackMode == Random){
++            Q_EMIT changePlaybackMode(1);
++            m_playbackMode = CurrentItemInLoop;
++        }
++    }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_E) {
++        qDebug() << "ctrl+E";
++        this->m_titleBar->slotFoucusIn();
++    }
++
+     QWidget::keyPressEvent(event);
++
++}
++Widget::PlaybackMode Widget::playbackMode() const
++{
++    return m_playbackMode;
+ }
+ 
+ void Widget::mousePressEvent(QMouseEvent *event)
+diff --git a/UI/mainwidget.h b/UI/mainwidget.h
+index 754b3da..9ad7b7c 100644
+--- a/UI/mainwidget.h
++++ b/UI/mainwidget.h
+@@ -51,6 +51,9 @@ class Widget : public QWidget
+     Q_OBJECT
+     Q_CLASSINFO("D-Bus Interface", "org.ukui.kylin_music.play")
+ public:
++    enum PlaybackMode { CurrentItemOnce=0, CurrentItemInLoop, Sequential, Loop,  Random }; //播放循环模式枚举
++    PlaybackMode playbackMode() const; //获取播放循环模式
++
+     Widget(QStringList str, QWidget *parent = nullptr);
+     ~Widget();
+     //计算播放历史
+@@ -138,6 +141,23 @@ protected:
+ Q_SIGNALS:
+     //空格键控制播放暂停
+     void signalSpaceKey();
++    // Space 控制播放/暂停
++    void playPauseKeySignal();
++    // Ctrl+Left 控制上一首
++    void previousPlayKeySignal();
++    // Ctrl+Right 控制下一首
++    void nextPlayKeySignal();
++    // Ctrl+Up 控制音量增加
++    void addVolumeKeySignal();
++    // Ctrl+down 控制音量降低
++    void downVolumeKeySignal();
++    // Ctrl+M 切换 Mini/完整模式
++    void miniCompleteSwitchKeySignal();
++    // Ctrl+L 将歌曲添加到喜欢歌单
++    void loveSongKeySignal();
++    //Ctrl+T 切换播放模式
++    void changePlaybackMode(int mode);
++
+ private:
+     //初始化dbus
+     void initDbus();
+@@ -156,10 +176,11 @@ private:
+     QStringList getPath(QString playListName);
+     //初始化音乐
+     void initMusic();
++    PlaybackMode m_playbackMode = Loop; //当前列表的循环模式
+ private:
+     QDBusInterface *interface;
+     quint32 m_inhibitValue = 0;             // 阻止锁屏cookie
+-
++    QFocusEvent::Type type =  QEvent::FocusIn;
+     QVBoxLayout *mainVBoxLayout = nullptr;
+     QHBoxLayout *mainHBoxLayout = nullptr;
+     TableOne *musicListTable = nullptr;
+diff --git a/UI/player/miniwidget.cpp b/UI/player/miniwidget.cpp
+index 9a6c7b9..48bfdc2 100644
+--- a/UI/player/miniwidget.cpp
++++ b/UI/player/miniwidget.cpp
+@@ -112,18 +112,60 @@ void miniWidget::leaveEvent(QEvent *)
+ 
+ void miniWidget::keyPressEvent(QKeyEvent *event)
+ {
+-    if(event->key() == Qt::Key_Space)
+-    {
+-        Q_EMIT signalSpaceKey();
++    if(event->key() == Qt::Key_Space) {
++        Q_EMIT playPauseKeySignal();
+     }
+-    else if(event->key() == Qt::Key_Right)
+-    {
+-        return;
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Left) {
++        qDebug() << "ctrl+left";
++        Q_EMIT previousPlayKeySignal();
+     }
+-    else if(event->key() == Qt::Key_Left)
+-    {
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_Right) {
++        qDebug() << "ctrl+right";
++        Q_EMIT nextPlayKeySignal();
++    }
++
++    if (event->key() == Qt::Key_Up) {
++        qDebug() << "ctrl+up";
++        Q_EMIT addVolumeKeySignal();
++    }
++
++    if (event->key() == Qt::Key_Down) {
++        qDebug() << "ctrl+down";
++        Q_EMIT downVolumeKeySignal();
++    }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_M) {
++        qDebug() << "ctrl+m";
++        Q_EMIT miniCompleteSwitchKeySignal();
++    }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_L) {
++        qDebug() << "ctrl+l";
++        Q_EMIT loveSongKeySignal();
++    } else if(event->key() == Qt::Key_Right) {
+         return;
++    } else if(event->key() == Qt::Key_Left) {
++        return;
++    }
++
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_T){
++        qDebug() << "ctrl+t";
++        if (m_playbackMode == CurrentItemInLoop){
++            Q_EMIT changePlaybackMode(3);
++            m_playbackMode = Loop;
++        }
++        else if (m_playbackMode == Loop){
++            Q_EMIT changePlaybackMode(4);
++            m_playbackMode = Random;
++        }
++        else if (m_playbackMode == Random){
++            Q_EMIT changePlaybackMode(1);
++            m_playbackMode = CurrentItemInLoop;
++        }
+     }
++
+     QWidget::keyPressEvent(event);
+ }
+ 
+diff --git a/UI/player/miniwidget.h b/UI/player/miniwidget.h
+index 54959c8..a8ec188 100644
+--- a/UI/player/miniwidget.h
++++ b/UI/player/miniwidget.h
+@@ -42,6 +42,7 @@ class miniWidget : public QFrame
+ {
+     Q_OBJECT
+ public:
++    enum PlaybackMode { CurrentItemOnce=0, CurrentItemInLoop, Sequential, Loop,  Random }; //播放循环模式枚举
+     explicit miniWidget(QWidget *parent = nullptr);
+ 
+     void mousePressEvent(QMouseEvent *);
+@@ -60,7 +61,25 @@ Q_SIGNALS:
+     void signalRefreshFav(QString listName);
+     //空格键控制播放暂停
+     void signalSpaceKey();
++    // Space 控制播放/暂停
++    void playPauseKeySignal();
++    // Ctrl+Left 控制上一首
++    void previousPlayKeySignal();
++    // Ctrl+Right 控制下一首
++    void nextPlayKeySignal();
++    // Ctrl+Up 控制音量增加
++    void addVolumeKeySignal();
++    // Ctrl+down 控制音量降低
++    void downVolumeKeySignal();
++    // Ctrl+M 切换 Mini/完整模式
++    void miniCompleteSwitchKeySignal();
++    // Ctrl+L 将歌曲添加到喜欢歌单
++    void loveSongKeySignal();
++    //Ctrl+T 切换播放模式
++    void changePlaybackMode(int mode);
++
+ private:
++    PlaybackMode m_playbackMode = Loop; //当前列表的循环模式
+     void initAction();
+     void initConnect();
+     //初始化样式

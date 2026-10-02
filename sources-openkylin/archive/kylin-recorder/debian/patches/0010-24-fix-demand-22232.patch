@@ -1,0 +1,373 @@
+From: shangxiaoyang <shangxiaoyang@kylinos.cn>
+Date: Thu, 2 Nov 2023 07:53:42 +0000
+Subject: =?utf-8?q?!24_fix_demand_=2322232_Merge_pull_request_!24_from_?=
+ =?utf-8?q?=E9=82=93=E5=A5=BD/openkylin/yangtze?=
+
+---
+ src/fileitem.cpp   |  10 +++-
+ src/fileitem.h     |   7 +++
+ src/mainwindow.cpp | 146 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ src/mainwindow.h   |  14 +++++
+ src/miniwindow.cpp |  20 ++++++++
+ src/miniwindow.h   |   1 +
+ 6 files changed, 197 insertions(+), 1 deletion(-)
+
+diff --git a/src/fileitem.cpp b/src/fileitem.cpp
+index e710eae..b0df296 100755
+--- a/src/fileitem.cpp
++++ b/src/fileitem.cpp
+@@ -158,6 +158,9 @@ void FileItem::handlePlay()
+         PlayControl::getInstance().play_Audio(m_filePath);
+         m_splitLinestackWidget->setCurrentIndex(1);
+ 
++        m_playRecorder = true;
++        m_pauseState = false;
++
+         connect(PlayControl::getInstance().moveTimer, &QTimer::timeout, this, &FileItem::handleMove); //用的时候连接
+         connect(PlayControl::getInstance().getPlayer(), &QMediaPlayer::stateChanged, this, &FileItem::stateChanged); //用的时候连接
+     } else {
+@@ -179,7 +182,7 @@ void FileItem::handlePause()
+ 
+     PlayControl::getInstance().pause_Audio();
+     m_splitLinestackWidget->setCurrentIndex(0);
+-
++    m_pauseState = true;
+     PlayControl::getInstance().moveTimer->stop();
+     connect(PlayControl::getInstance().getPlayer(), &QMediaPlayer::stateChanged, this,
+             &FileItem::stateChanged); //用的时候连接
+@@ -295,6 +298,8 @@ void FileItem::handleMove()
+         PlayControl::getInstance().moveTimer->stop();
+         PlayControl::getInstance().stop();
+         m_movePos = 0;
++        m_playRecorder = false;
++        m_pauseState = false;
+     }
+ }
+ 
+@@ -309,6 +314,8 @@ void FileItem::stateChanged(QMediaPlayer::State stateNow)
+         m_threeButtonLayout->removeWidget(m_pauseButton);
+         m_pauseButton->setParent(NULL);
+         m_flagButton->setEnabled(false); //音频未播放时不可添加标记
++        m_playRecorder = false;
++        m_pauseState = false;
+     }
+     disconnect(PlayControl::getInstance().moveTimer, &QTimer::timeout, this,
+                &FileItem::handleMove); //防止多次连接，每次状态改变后需要断开连接
+@@ -794,6 +801,7 @@ void FileItem::enterEvent(QEvent *event)
+     m_startRecordTimeLabel->setPalette(m_pal);
+     m_timelengthLabel->setPalette(m_pal);
+     //显示浮窗
++    m_mouseState = true;
+     if (MainWindow::mutual->m_isRecording) {
+         m_buttonStackWidget->setCurrentIndex(0); //切换至录音按钮stackLayout
+     } else {
+diff --git a/src/fileitem.h b/src/fileitem.h
+index 42052d6..21e1875 100755
+--- a/src/fileitem.h
++++ b/src/fileitem.h
+@@ -61,6 +61,10 @@ public:
+     int m_movePos = 0; //每隔毫秒数所移动位置
+     void setName_Time_Length(QString nameStr, QString timeStr, QString lengthStr);
+     QString getfilePath();
++    bool m_mouseState = false; // 用来判断当前鼠标是否在控件中
++    bool m_playRecorder = false; //当前是否在播放
++    bool m_pauseState = false;  // 用来判断当前是否是暂停状态
++
+ private:
+     QString m_filePath; //录音存储的文件路径
+     QPalette m_pal;
+@@ -137,6 +141,9 @@ public slots:
+     void itemFontStyle(QFont fontStyle);    // item字体样式
+     void stateChanged(QMediaPlayer::State); //状态的变化
+     void currentPos_Play();                 //从当前标记位置播放
++    void toFlagFile();
++    void actionOpenFolderSlot();    //打开文件所在位置
++    void toClipPage(); //切换至剪裁窗口
+ 
+ 
+ private slots:
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index e0f002a..e4b6728 100755
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -30,6 +30,7 @@
+ #include <time.h>
+ #include <kysdk/applications/ukuistylehelper/ukuistylehelper.h>
+ #include "tools.h"
++#include "clipwidget.h"
+ #define BufferSize 35280
+ // const qint64 TIME_TRANSFORM = 1000 * 1000;              // 微秒转秒;
+ #define rectangleCount 48 //矩形条个数
+@@ -61,6 +62,7 @@ MainWindow::MainWindow(QStringList str, QWidget *parent) : QWidget(parent)
+     currentGSettingChangeUI(); // GSetting未变化时用当前的值
+     mainWindow_page2(); //必须加上初始化第二个主页面(此函数有两处需要被调用:构造函数+切换页面时)
+     updateGsetting_ListWidget();
++    initShortcutStyle();
+     //点击关闭时把线程关掉
+     connect(m_closeButton, &QToolButton::clicked, [=]() {
+         m_mainThread->quit();
+@@ -349,6 +351,14 @@ void MainWindow::initMainWindow()
+     connect(m_pStackedWidget, &QStackedWidget::currentChanged, this, &MainWindow::monitorStackChanged);
+     connect(&m_fileWatcher, &QFileSystemWatcher::fileChanged, this, &MainWindow::monitorFileChanged);
+     connect(this, &MainWindow::deviceModeChangedSignals, this, &MainWindow::resizeTitleBarSlot);
++
++    //快捷键
++    connect(this, &MainWindow::keySpaceSignal, this, &MainWindow::keySpaceEvent);
++    connect(this, &MainWindow::keyMSignal, this, &MainWindow::keyMEvent);
++    connect(this, &MainWindow::keyCSignal, this, &MainWindow::keyCEvent);
++    connect(this, &MainWindow::keyOSignal, this, &MainWindow::keyOEvent);
++    connect(this, &MainWindow::switchPageSignal, this, &MainWindow::switchPage);
++    connect(this, &MainWindow::stop_clickedSignal, this, &MainWindow::stop_clicked);
+ }
+ 
+ void MainWindow::monitorFileChanged(QString dirStr)
+@@ -829,6 +839,19 @@ void MainWindow::closeWindow()
+ // 实现键盘响应
+ void MainWindow::keyPressEvent(QKeyEvent *event)
+ {
++    if (event->key() == Qt::Key_Space) {
++        qDebug() << " key 空格 开始/停止录音";
++        Q_EMIT keySpaceSignal();
++    } else if (event->key() == Qt::Key_M) {
++        qDebug() << "key M: 添加标记";
++        Q_EMIT keyMSignal();
++    } else if (event->key() == Qt::Key_C) {
++        qDebug() << "key C: 剪辑录音";
++        Q_EMIT keyCSignal();
++    } else if (event->key() == Qt::Key_O) {
++        qDebug() << "key O: 在文件夹中显示";
++        Q_EMIT keyOSignal();
++    }
+     // F1快捷键打开用户手册
+     if (event->key() == Qt::Key_F1) {
+         if (!m_DaemonIpcDbus->daemonIsNotRunning()) {
+@@ -837,6 +860,18 @@ void MainWindow::keyPressEvent(QKeyEvent *event)
+             m_DaemonIpcDbus->showGuide("kylin-recorder");
+         }
+     }
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_R) {
++        qDebug() << "key: ctrl + R";
++        if (!m_isRecording && !m_stratOrPause) {
++            qDebug() << "可以录音";
++            Q_EMIT switchPageSignal();
++        } else if (m_isRecording || m_stratOrPause) {
++            qDebug() << "可以结束";
++            Q_EMIT stop_clickedSignal();
++        }
++    }
++
++    //    QWidget::keyPressEvent(event);
+ }
+ 
+ MainWindow::~MainWindow()
+@@ -1262,6 +1297,7 @@ void MainWindow::mousePressEvent(QMouseEvent *event)
+     //只能是鼠标左键移动和改变大小
+     if (event->button() == Qt::LeftButton) {
+         m_mousePress = true;
++        this->setFocus();
+     }
+ }
+ 
+@@ -1679,6 +1715,14 @@ bool MainWindow::eventFilter(QObject *obj, QEvent *event)
+             return true;
+         }
+     }
++
++    QFocusEvent *  focusEvent = static_cast<QFocusEvent*> (event);
++    if (focusEvent->gotFocus()) {
++        if (!this->hasFocus()) {
++            this->setFocus();
++            qDebug() << "mainwindow focus = " << this->hasFocus();
++        }
++    }
+     return QObject::eventFilter(obj, event);
+ }
+ 
+@@ -1788,3 +1832,105 @@ void MainWindow::recorderBuriedPoint(kdk::kabase::BuriedPoint::PT pt)
+     };
+ 
+ }
++
++
++
++void MainWindow::keySpaceEvent()
++{
++    if(m_pStackedWidget->currentIndex() == 2) {
++        qDebug()<< " Space Event";
++        QList<FileItem *> List = this->findChildren<FileItem *>();
++        for (FileItem *item : List) {
++            if (item->m_mouseState && item->currentWidget() != nullptr && item->currentIndex() == 0) {
++                qDebug() << "m_playRecorder = " << item->m_playRecorder << " m_pauseState = " << item->m_pauseState;
++                if (item->m_playRecorder && !item->m_pauseState)   {
++                    item->handlePause();
++                } else {
++                    item->handlePlay();
++                }
++                return;
++            }
++
++            if (item->m_mouseState && item->currentWidget() != nullptr && item->currentIndex() == 1) {
++                qDebug()<< " 剪辑页面---- Key Space " ;
++                QList<ClipWidget *> clip_list = item->findChildren<ClipWidget *>("clipWid");
++                if (clip_list.isEmpty() ||  clip_list.count() != 1 )
++                    return ;
++
++                if (PlayControl::getInstance().getAudioState() == QMediaPlayer::PlayingState) {
++                    clip_list.first()->pause_ClipFile();
++                } else {
++                    clip_list.first()->play_ClipFile();
++                }
++            }
++        }
++    }
++    return;
++}
++
++
++// M 添加标记
++void MainWindow::keyMEvent()
++{
++    if(m_pStackedWidget->currentIndex() == 2) {
++        qDebug()<< "key M event";
++        QList<FileItem *> List = this->findChildren<FileItem *>();
++        for (FileItem *item : List) {
++            if (item->m_mouseState && item->m_playRecorder && !item->m_pauseState) {
++                item->toFlagFile();
++                return;
++             }
++        }
++    }
++
++    if (m_pStackedWidget->currentIndex() == 1) {
++        // 主界面增加标签的函数
++        handleInsertSlot();
++    }
++}
++
++// C 剪辑录音
++void MainWindow::keyCEvent()
++{
++    if(m_pStackedWidget->currentIndex() == 2) {
++        qDebug()<< "key C event";
++        QList<FileItem *> List = this->findChildren<FileItem *>();
++        for (FileItem *item : List) {
++            if (item->m_mouseState) {
++                if (item->currentWidget() != nullptr && item->currentIndex() == 0) {
++                    item->toClipPage();
++                }
++            }
++        }
++    }
++}
++
++// O 在文件夹中显示
++void MainWindow::keyOEvent()
++{
++    if(m_pStackedWidget->currentIndex() == 2) {
++        qDebug()<< "key O event";
++        QList<FileItem *> List = this->findChildren<FileItem *>();
++        for (FileItem *item : List) {
++            if (item->m_mouseState) {
++                item->actionOpenFolderSlot();
++            }
++        }
++    }
++}
++
++void MainWindow::initShortcutStyle()
++{
++    //不接受焦点。解决程序初始化时，空格键控制 播放/暂停 获取不到（Qt::Key_Space）事件
++    QList<QPushButton*> list = this->findChildren<QPushButton*>();
++
++    for(QPushButton *btn :list) {
++        btn->setFocusPolicy(Qt::NoFocus);
++    }
++
++    QList<QToolButton*> lists = this->findChildren<QToolButton*>();
++
++    for(QToolButton *btn :lists) {
++        btn->setFocusPolicy(Qt::NoFocus);
++    }
++}
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index f5a8a3c..992d78f 100755
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -295,6 +295,12 @@ private:
+ 
+     void removeFlagLayoutWidget();
+ 
++    //快捷键处理
++    void keySpaceEvent();//空格
++    void keyMEvent(); // M 添加标记
++    void keyCEvent(); // C 剪辑录音
++    void keyOEvent(); // O 在文件夹中显示
++    void initShortcutStyle();// 处理焦点
+ 
+ 
+ 
+@@ -313,6 +319,14 @@ signals: //主线程的信号
+     void deviceModeChangedSignals();
+     void themeColorchange();
+ 
++    //快捷键信号
++    void keySpaceSignal();
++    void keyMSignal();
++    void keyCSignal();
++    void keyOSignal();
++    void switchPageSignal();
++    void stop_clickedSignal();
++
+ public slots:
+ 
+     int command_Control(QString cmd1); //命令控制
+diff --git a/src/miniwindow.cpp b/src/miniwindow.cpp
+index 49b9a14..b1dbe37 100755
+--- a/src/miniwindow.cpp
++++ b/src/miniwindow.cpp
+@@ -167,6 +167,13 @@ void MiniWindow::setMiniWindow()
+     m_miniLayout->setContentsMargins(0, 0, 0, 0);
+     m_miniWidget->setLayout(m_miniLayout);
+ }
++void MiniWindow::initShortcutStyle()
++{
++    QList<QPushButton*> list = this->findChildren<QPushButton*>();
++    for(QPushButton *btn :list) {
++        btn->setFocusPolicy(Qt::NoFocus);
++    }
++}
+ 
+ // 实现键盘响应
+ void MiniWindow::keyPressEvent(QKeyEvent *event)
+@@ -178,6 +185,19 @@ void MiniWindow::keyPressEvent(QKeyEvent *event)
+             //由于是小工具类，下面的showGuide参数要填写"kylin-recorder"
+             m_DaemonIpcDbus->showGuide("kylin-recorder");
+         }
++        return;
++    }
++    if (event->modifiers() == Qt::ControlModifier && event->key() == Qt::Key_R) {
++        qDebug() << "mini key: ctrl + R" << " "<<  MainWindow::mutual->m_isRecording
++                 << "main  start:" << MainWindow::mutual->m_stratOrPause << " mini start:" << m_miniStartOrPause;
++        if (!MainWindow::mutual->m_isRecording && !MainWindow::mutual->m_stratOrPause) {
++            qDebug() << "可以录音";
++            switchPage();
++        } else if (MainWindow::mutual->m_isRecording || MainWindow::mutual->m_stratOrPause
++                   || m_miniStartOrPause) {
++            qDebug() << "可以结束";
++            finishSlot();
++        }
+     }
+ }
+ 
+diff --git a/src/miniwindow.h b/src/miniwindow.h
+index e68a3ab..1a4d76c 100755
+--- a/src/miniwindow.h
++++ b/src/miniwindow.h
+@@ -92,6 +92,7 @@ private:
+     void mouseMoveEvent(QMouseEvent *event);
+     void initMiniWindow();
+     void setMiniWindow();
++    void initShortcutStyle();// 处理焦点
+ 
+ public slots:
+ 

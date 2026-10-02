@@ -1,0 +1,3279 @@
+From: Morose <chenlinxiang@kylinos.cn>
+Date: Mon, 15 Jun 2026 09:15:46 +0800
+Subject: update to 1.3.1-ok24
+
+Signed-off-by: Morose <chenlinxiang@kylinos.cn>
+---
+ examples/gui/ui.cpp             |  25 ++--
+ examples/gui/widget.h           |   2 +-
+ examples/simple_plugin.c        |   4 +-
+ include/effect/transform.h      |   2 +
+ include/input/function.h        |   6 +-
+ include/input/input.h           |   2 +-
+ include/input/keyboard.h        |  15 ++-
+ include/kywc/binding.h          |  28 +++--
+ include/security.h              |  47 ++------
+ include/util/client.h           |  34 ++++++
+ src/config/kde_global_accel.c   |  20 ++--
+ src/effect/color_filter.c       |   2 +-
+ src/effect/config.c             |  24 ++--
+ src/effect/effect.c             |  27 -----
+ src/effect/effect_p.h           |   2 -
+ src/effect/scale.c              |   4 +-
+ src/effect/slide.c              |  28 +----
+ src/effect/transform.c          |   7 ++
+ src/effect/translation.c        |  37 +++++-
+ src/effect/zoom.c               |   4 +-
+ src/input/action.c              |   5 +-
+ src/input/binding.c             | 255 ++++++++++++++++++++++++++--------------
+ src/input/cursor.c              |  17 +--
+ src/input/function.c            |  30 ++++-
+ src/input/global_shortcuts.c    | 141 +++++++++++-----------
+ src/input/input_p.h             |  11 +-
+ src/input/keyboard.c            |  41 ++++---
+ src/input/seat.c                |   2 +
+ src/input/touch.c               | 130 ++++++++++++++++++--
+ src/output/output.c             |   2 +-
+ src/scene/thumbnail.c           |  17 +--
+ src/security/global_filter.c    | 106 +++++++++++++++++
+ src/security/meson.build        |   1 +
+ src/security/security.c         | 135 +--------------------
+ src/security/security_context.c |  11 +-
+ src/security/security_p.h       |   2 +
+ src/util/client.c               |  96 +++++++++++++++
+ src/util/meson.build            |   1 +
+ src/view/action.c               |  10 +-
+ src/view/interactive.c          |  17 +--
+ src/view/maximize_switcher.c    |   2 +-
+ src/view/tile/tile_manager.c    |  22 +++-
+ src/view/tile/tile_manager_p.h  |   1 +
+ src/view/ukui_shell.c           |   6 +
+ src/view/ukui_startup.c         |  32 +----
+ src/view/workspace.c            |  77 +++++++-----
+ src/view/xdg_shell.c            |  19 ++-
+ src/xwayland/view.c             |  16 +--
+ src/xwayland/xwayland.c         |   4 +-
+ tools/wlcctrl/main.c            |  16 ++-
+ 50 files changed, 941 insertions(+), 604 deletions(-)
+ create mode 100644 include/util/client.h
+ create mode 100644 src/security/global_filter.c
+ create mode 100644 src/util/client.c
+
+diff --git a/examples/gui/ui.cpp b/examples/gui/ui.cpp
+index 6ee454b..71af638 100644
+--- a/examples/gui/ui.cpp
++++ b/examples/gui/ui.cpp
+@@ -339,7 +339,7 @@ void MainWindow::add_output_item(Output *output)
+         tableWidget_1->setItem(outputs_count, i, new QTableWidgetItem);
+         tableWidget_1->setRowHeight(outputs_count, 30);
+         tableWidget_1->item(outputs_count, i)->setTextAlignment(Qt::AlignCenter); // 居中显示
+-        tableWidget_1->item(outputs_count, i)->setFont(QFont("Helvetica")); // 设置字体为黑体
++        tableWidget_1->item(outputs_count, i)->setFont(QFont("Helvetica"));       // 设置字体为黑体
+     }
+ 
+     tableWidget_1->item(outputs_count, 0)->setText(output->uuid());
+@@ -530,7 +530,7 @@ void MainWindow::add_toplevel_item(Toplevel *toplevel)
+         tableWidget_2->setItem(toplevel_count, i, new QTableWidgetItem);
+         tableWidget_2->setRowHeight(toplevel_count, 30);
+         tableWidget_2->item(toplevel_count, i)->setTextAlignment(Qt::AlignCenter); // 居中显示
+-        tableWidget_2->item(toplevel_count, i)->setFont(QFont("Helvetica")); // 设置字体为黑体
++        tableWidget_2->item(toplevel_count, i)->setFont(QFont("Helvetica"));       // 设置字体为黑体
+     }
+ 
+     tableWidget_2->item(toplevel_count, 0)->setText(toplevel->uuid());
+@@ -866,11 +866,22 @@ void MainWindow::show_menu(const QPoint pos)
+     switch (num) {
+     case 0: {
+         QMenu *menu = new QMenu(tableWidget_0);
+-        QAction *action = new QAction("show thumbnail", tableWidget_0);
+-        menu->addAction(action);
++        QAction *o_action = new QAction("show thumbnail", tableWidget_0);
++        menu->addAction(o_action);
++
++        QMenu *o_menu = new QMenu(tableWidget_0);
++        for (int i = 0; i < outputs_count; i++) {
++            QString uuid = tableWidget_1->item(i, 0)->text();
++            QAction *action = new QAction(uuid, o_menu);
++            o_menu->addAction(action);
++            connect(action, &QAction::triggered, this,
++                    [this, uuid]() { show_workspace_thumbnail(uuid); });
++        }
++        o_action->setMenu(o_menu);
++
+         menu->move(cursor().pos());
+         menu->show();
+-        connect(action, SIGNAL(triggered()), this, SLOT(show_workspace_thumbnail()));
++
+     } break;
+     case 1: {
+         QMenu *menu = new QMenu(tableWidget_1);
+@@ -1127,7 +1138,7 @@ void MainWindow::show_output_thumbnail()
+     process->start(programDir + "/thumbnail", list);
+ }
+ 
+-void MainWindow::show_workspace_thumbnail()
++void MainWindow::show_workspace_thumbnail(const QString &o_uuid)
+ {
+     int row = tableWidget_0->currentRow();
+     QString uuid = tableWidget_0->item(row, 0)->text();
+@@ -1136,6 +1147,6 @@ void MainWindow::show_workspace_thumbnail()
+ 
+     QProcess *process = new QProcess();
+     QStringList list;
+-    list << "workspace" << uuid << primaryOutput;
++    list << "workspace" << uuid << o_uuid;
+     process->start(programDir + "/thumbnail", list);
+ }
+diff --git a/examples/gui/widget.h b/examples/gui/widget.h
+index e3a918e..d1afe02 100644
+--- a/examples/gui/widget.h
++++ b/examples/gui/widget.h
+@@ -65,7 +65,7 @@ class MainWindow : public QMainWindow
+ 
+     void show_toplevel_thumbnail();
+     void show_output_thumbnail();
+-    void show_workspace_thumbnail();
++    void show_workspace_thumbnail(const QString &o_uuid);
+ 
+   private:
+     Context *context = nullptr;
+diff --git a/examples/simple_plugin.c b/examples/simple_plugin.c
+index 8a0e7cb..b301492 100644
+--- a/examples/simple_plugin.c
++++ b/examples/simple_plugin.c
+@@ -54,7 +54,7 @@ static struct gesture {
+ };
+ 
+ static void shortcut_action(struct key_binding *binding, void *data, struct seat *seat,
+-                            enum key_binding_trigger trigger)
++                            enum key_binding_stage stage)
+ {
+     struct shortcut *shortcut = data;
+ 
+@@ -75,7 +75,7 @@ static void simple_plugin_register_shortcuts(void)
+     for (size_t i = 0; i < ARRAY_SIZE(shortcuts); i++) {
+         struct shortcut *shortcut = &shortcuts[i];
+         struct key_binding *binding =
+-            kywc_key_binding_create(shortcut->keybind, shortcut->desc, FUNC_ID_CUSTOM);
++            kywc_key_binding_create(shortcut->keybind, shortcut->desc, FUNC_ID_CUSTOM, 0);
+         if (!binding) {
+             continue;
+         }
+diff --git a/include/effect/transform.h b/include/effect/transform.h
+index 9e41ab9..8d516c3 100644
+--- a/include/effect/transform.h
++++ b/include/effect/transform.h
+@@ -65,6 +65,8 @@ struct transform_effect_interface {
+     void (*update_transform_options)(struct transform_effect *effect, struct transform *transform,
+                                      struct scene_node *node, struct transform_options *options,
+                                      struct animation_data *current, void *data);
++    void (*add_new_effect)(struct transform_effect *effect, struct transform *transform,
++                           struct scene_add_effect_event *event);
+     void (*enable)(struct transform_effect *effect, bool enable, void *data);
+     void (*destroy)(struct transform_effect *effect, void *data);
+ };
+diff --git a/include/input/function.h b/include/input/function.h
+index 8beb238..63e8398 100644
+--- a/include/input/function.h
++++ b/include/input/function.h
+@@ -71,7 +71,7 @@ enum function_id {
+ };
+ 
+ enum key_binding_type;
+-enum key_binding_trigger;
++enum key_binding_stage;
+ enum gesture_device;
+ enum gesture_direction;
+ enum gesture_stage;
+@@ -87,12 +87,14 @@ const char *function_entry_get_desc(enum function_id id);
+ 
+ const char *function_entry_get_l10n_name(enum function_id id);
+ 
++uint32_t function_entry_get_key_binding_options(enum function_id id);
++
+ bool function_entry_get_gesture_optional(enum function_id id, enum gesture_device device,
+                                          enum gesture_direction binding_direction, uint32_t *stages,
+                                          uint32_t *follow_directions, double *follow_threshold);
+ 
+ void function_manager_handle_key_binding(struct key_binding *binding, void *data, struct seat *seat,
+-                                         enum key_binding_trigger trigger);
++                                         enum key_binding_stage stage);
+ 
+ void function_manager_handle_gesture_binding(struct gesture_binding *binding, void *data,
+                                              struct seat *seat, enum gesture_stage stage,
+diff --git a/include/input/input.h b/include/input/input.h
+index 1b56891..8a682ab 100644
+--- a/include/input/input.h
++++ b/include/input/input.h
+@@ -204,7 +204,7 @@ bool global_shortcuts_manager_create(struct server *server);
+ 
+ bool global_gestures_manager_create(struct server *server);
+ 
+-void global_shortcuts_manager_action(void *data, enum key_binding_trigger trigger);
++void global_shortcuts_manager_action(void *data, enum key_binding_stage stage);
+ 
+ void input_action_handle_key_binding(struct key_binding *binding, struct seat *seat);
+ 
+diff --git a/include/input/keyboard.h b/include/input/keyboard.h
+index 9c38e03..a021447 100644
+--- a/include/input/keyboard.h
++++ b/include/input/keyboard.h
+@@ -14,7 +14,14 @@ struct keyboard_state {
+     uint32_t last_keysym;
+     uint32_t last_modifiers;
+     size_t npressed;
+-    bool only_one_modifier;
++};
++
++struct keyboard_binding_state {
++    struct key_binding *binding;
++    uint32_t key;
++    bool active_emitted;
++
++    struct wl_listener binding_cancel;
+ };
+ 
+ struct keyboard {
+@@ -28,11 +35,7 @@ struct keyboard {
+ 
+     bool is_virtual;
+     struct keyboard_state state;
+-    struct {
+-        struct key_binding *binding;
+-        uint32_t key;
+-        bool active;
+-    } active_binding;
++    struct keyboard_binding_state binding_state;
+ 
+     struct {
+         uint32_t key;
+diff --git a/include/kywc/binding.h b/include/kywc/binding.h
+index 7ef2fbb..500f56e 100644
+--- a/include/kywc/binding.h
++++ b/include/kywc/binding.h
+@@ -89,10 +89,17 @@ enum key_binding_type {
+     KEY_BINDING_TYPE_NUM,
+ };
+ 
+-enum key_binding_trigger {
+-    KEY_BINDING_TRIGGER_ACTIVE,
+-    KEY_BINDING_TRIGGER_REPEAT,
+-    KEY_BINDING_TRIGGER_INACTIVE,
++enum key_binding_stage {
++    KEY_BINDING_STAGE_ACTIVE,
++    KEY_BINDING_STAGE_REPEAT,
++    KEY_BINDING_STAGE_INACTIVE,
++};
++
++enum key_binding_option {
++    KEY_BINDING_TRIGGER_IN_ACTIVE = 1 << 0,
++    KEY_BINDING_TRIGGER_IN_INACTIVE = 1 << 1,
++    KEY_BINDING_TRIGGER_IN_REPEAT = 1 << 2,
++    KEY_BINDING_BYPASS_GRAB = 1 << 3,
+ };
+ 
+ /**
+@@ -133,29 +140,32 @@ void kywc_gesture_binding_update(struct gesture_binding *binding, bool enabled,
+                                  enum function_id func_id, uint32_t stages,
+                                  uint32_t follow_directions, double follow_threshold);
+ 
++bool kywc_gesture_binding_check(enum gesture_type type, enum gesture_device device,
++                                uint8_t fingers);
++
+ /**
+  * keysym bindings
+  */
+ 
+ struct key_binding *kywc_key_binding_create(const char *keybind, const char *desc,
+-                                            enum function_id func_id);
++                                            enum function_id func_id, uint32_t options);
+ 
+ struct key_binding *kywc_key_binding_create_by_symbol(unsigned int keysym, unsigned int modifiers,
+-                                                      bool no_repeat, bool bypass_grab,
+-                                                      const char *desc, enum function_id func_id);
++                                                      const char *desc, enum function_id func_id,
++                                                      uint32_t options);
+ 
+ void kywc_key_binding_destroy(struct key_binding *binding);
+ 
+ bool kywc_key_binding_register(struct key_binding *binding, enum key_binding_type type,
+                                void (*action)(struct key_binding *binding, void *data,
+-                                              struct seat *seat, enum key_binding_trigger trigger),
++                                              struct seat *seat, enum key_binding_stage stage),
+                                void *data);
+ 
+ bool kywc_key_binding_update(struct key_binding *binding, unsigned int keysym,
+                              unsigned int modifiers);
+ 
+ bool kywc_key_binding_update_state(struct key_binding *binding, enum function_id func_id,
+-                                   bool no_repeat, bool bypass_grab);
++                                   uint32_t options);
+ 
+ void kywc_key_binding_unregister(struct key_binding *binding);
+ 
+diff --git a/include/security.h b/include/security.h
+index 76c2c8f..e085d9e 100644
+--- a/include/security.h
++++ b/include/security.h
+@@ -12,57 +12,28 @@ struct server;
+ struct output;
+ struct scene_node;
+ 
+-struct security_client {
+-    struct wl_client *client;
++bool security_manager_create(struct server *server);
+ 
+-    char *path;
+-    int fd;
++/* global filter */
++typedef bool (*security_global_filter_func_t)(const struct wl_client *client, void *data);
+ 
+-    pid_t pid;
+-    uid_t uid;
+-    gid_t gid;
+-};
++bool security_add_global_filter(struct wl_global *global, security_global_filter_func_t filter,
++                                void *data);
++
++void security_remove_global_filter(struct wl_global *global);
+ 
++/* security context */
+ struct security_context_state {
+     char *sandbox_engine; // may be NULL
+     char *app_id;         // may be NULL
+     char *instance_id;    // may be NULL
+ };
+ 
+-char *security_get_path_from_pid(pid_t pid);
+-
+-typedef bool (*security_global_filter_func_t)(const struct security_client *client, void *data);
+-
+-bool security_add_global_filter(struct wl_global *global, security_global_filter_func_t filter,
+-                                void *data);
+-
+-void security_remove_global_filter(struct wl_global *global);
+-
+-bool security_manager_create(struct server *server);
+-
+ const struct security_context_state *
+-security_context_manager_lookup_client(struct wl_client *client);
+-
+-#if 1
++security_context_manager_lookup_client(const struct wl_client *client);
+ 
+ bool security_check_node(struct scene_node *node);
+ 
+ bool security_check_output(struct output *output, pixman_region32_t *clip);
+ 
+-#else
+-
+-// clang-format off
+-
+-#define INLINE static __attribute__((unused)) inline
+-
+-INLINE bool security_check_node(struct scene_node *node) { return false; }
+-
+-INLINE bool security_check_output(struct output *output, pixman_region32_t *clip) { return false; }
+-
+-// clang-format on
+-
+-#undef INLINE
+-
+-#endif
+-
+ #endif /* _SECURITY_H_ */
+diff --git a/include/util/client.h b/include/util/client.h
+new file mode 100644
+index 0000000..bee337f
+--- /dev/null
++++ b/include/util/client.h
+@@ -0,0 +1,34 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef _UTIL_CLIENT_H_
++#define _UTIL_CLIENT_H_
++
++#include <sys/types.h>
++
++enum client_type {
++    CLIENT_TYPE_UNKNOWN = 0,
++    CLIENT_TYPE_WAYLAND,
++    CLIENT_TYPE_X11,
++    CLIENT_TYPE_DBUS,
++};
++
++struct client {
++    enum client_type type;
++    pid_t pid;
++    uid_t uid;
++    gid_t gid;
++};
++
++/* free is needed */
++char *client_get_exe(pid_t pid);
++
++/* free is needed */
++char *client_get_comm(pid_t pid);
++
++pid_t client_get_parent(pid_t pid);
++
++pid_t client_get_ancestor(pid_t pid);
++
++#endif /* _UTIL_CLIENT_H_ */
+diff --git a/src/config/kde_global_accel.c b/src/config/kde_global_accel.c
+index 75099b2..3c7e5ec 100644
+--- a/src/config/kde_global_accel.c
++++ b/src/config/kde_global_accel.c
+@@ -412,18 +412,18 @@ static void global_shortcut_emit_signal(struct global_shortcut *shortcut, const
+ }
+ 
+ static void global_shortcut_action(struct key_binding *binding, void *data, struct seat *seat,
+-                                   enum key_binding_trigger trigger)
++                                   enum key_binding_stage stage)
+ {
+     struct global_shortcut *shortcut = data;
+ 
+-    switch (trigger) {
+-    case KEY_BINDING_TRIGGER_ACTIVE:
++    switch (stage) {
++    case KEY_BINDING_STAGE_ACTIVE:
+         global_shortcut_emit_signal(shortcut, "globalShortcutPressed");
+         break;
+-    case KEY_BINDING_TRIGGER_REPEAT:
++    case KEY_BINDING_STAGE_REPEAT:
+         global_shortcut_emit_signal(shortcut, "globalShortcutRepeated");
+         break;
+-    case KEY_BINDING_TRIGGER_INACTIVE:
++    case KEY_BINDING_STAGE_INACTIVE:
+         global_shortcut_emit_signal(shortcut, "globalShortcutReleased");
+         break;
+     }
+@@ -433,12 +433,18 @@ static void global_shortcut_create_binding(struct global_shortcut *shortcut)
+ {
+     uint32_t keysym = qtkey_to_keysym(shortcut->key);
+     uint32_t modifiers = qtkey_to_modifiers(shortcut->key);
++    uint32_t options = KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_INACTIVE |
++                       KEY_BINDING_TRIGGER_IN_REPEAT;
++    if (shortcut->is_grab) {
++        options |= KEY_BINDING_BYPASS_GRAB;
++    }
+ 
+     if (shortcut->binding) {
+         kywc_key_binding_update(shortcut->binding, keysym, modifiers);
++        kywc_key_binding_update_state(shortcut->binding, FUNC_ID_CUSTOM, options);
+     } else {
+-        shortcut->binding = kywc_key_binding_create_by_symbol(
+-            keysym, modifiers, false, shortcut->is_grab, NULL, FUNC_ID_CUSTOM);
++        shortcut->binding =
++            kywc_key_binding_create_by_symbol(keysym, modifiers, NULL, FUNC_ID_CUSTOM, options);
+     }
+ }
+ 
+diff --git a/src/effect/color_filter.c b/src/effect/color_filter.c
+index b3ed17d..9347ded 100644
+--- a/src/effect/color_filter.c
++++ b/src/effect/color_filter.c
+@@ -298,7 +298,7 @@ bool color_filter_effect_create(struct effect_manager *manager)
+                          color_filter);
+ 
+     struct key_binding *binding =
+-        kywc_key_binding_create("Win+Ctrl+c", "colorfilter_toggle", FUNC_ID_TOGGLE_COLOR_FILTER);
++        kywc_key_binding_create("Win+Ctrl+c", "colorfilter_toggle", FUNC_ID_TOGGLE_COLOR_FILTER, 0);
+     if (binding && !kywc_key_binding_register(binding, KEY_BINDING_TYPE_COLOR_FILTER,
+                                               function_manager_handle_key_binding, NULL)) {
+         kywc_key_binding_destroy(binding);
+diff --git a/src/effect/config.c b/src/effect/config.c
+index f093635..2fe8f66 100644
+--- a/src/effect/config.c
++++ b/src/effect/config.c
+@@ -6,7 +6,7 @@
+ #include "effect_p.h"
+ #include "util/dbus.h"
+ 
+-#define ENABLED_KEY "enabled"
++#define ENABLED_KEY "force_enabled"
+ 
+ static const char *service_path = "/com/kylin/Wlcom/Effect";
+ static const char *service_interface = "com.kylin.Wlcom.Effect";
+@@ -111,13 +111,6 @@ static int set_effect_option(sd_bus_message *m, void *userdata, sd_bus_error *re
+     }
+ 
+     if (!effect->impl->configure) {
+-#if 0
+-        /* apply enabled key if no configure support */
+-        if (strcmp(option, ENABLED_KEY) == 0) {
+-            json_object_set_boolean(data, opt.value.boolean);
+-            return sd_bus_reply_method_return(m, NULL);
+-        }
+-#endif
+         const sd_bus_error error =
+             SD_BUS_ERROR_MAKE_CONST(SD_BUS_ERROR_INVALID_ARGS, "Effect is not support configure.");
+         return sd_bus_reply_method_error(m, &error);
+@@ -188,10 +181,14 @@ bool effect_init_config(struct effect *effect)
+     bool enabled = effect->enabled;
+     /* use state in configure file */
+     json_object *data;
+-    if (json_object_object_get_ex(effect->options, ENABLED_KEY, &data)) {
+-        enabled = json_object_get_boolean(data);
++    if (json_object_object_get_ex(effect->options, ENABLED_KEY, &data) &&
++        json_type_int == json_object_get_type(data)) {
++        int state = json_object_get_int(data);
++        if (state != -1) {
++            enabled = state != 0;
++        }
+     } else {
+-        json_object_object_add(effect->options, ENABLED_KEY, json_object_new_boolean(enabled));
++        json_object_object_add(effect->options, ENABLED_KEY, json_object_new_int(-1));
+     }
+ 
+     return enabled;
+@@ -289,11 +286,6 @@ void effect_set_option_string(struct effect *effect, const char *key, const char
+     json_object_object_add(effect->options, key, json_object_new_string(value));
+ }
+ 
+-void effect_write_enabled_option(struct effect *effect, bool enabled)
+-{
+-    effect_set_option_boolean(effect, ENABLED_KEY, enabled);
+-}
+-
+ bool effect_option_is_enabled_option(const struct effect_option *option)
+ {
+     return option->key && strcmp(option->key, ENABLED_KEY) == 0;
+diff --git a/src/effect/effect.c b/src/effect/effect.c
+index 001e85a..5de4841 100644
+--- a/src/effect/effect.c
++++ b/src/effect/effect.c
+@@ -615,23 +615,6 @@ static void node_effect_chain_set_visible_region(struct node_effect_chain *chain
+     }
+ }
+ 
+-typedef bool (*effect_entity_iterator_func_t)(struct effect_entity *entity, void *user_data);
+-
+-static void node_effect_chain_for_each_entity(struct node_effect_chain *chain,
+-                                              effect_entity_iterator_func_t iterator, void *data)
+-{
+-    bool is_root = chain->node->role.type == SCENE_ROLE_ROOT;
+-
+-    struct effect_slot *slot, *tmp;
+-    wl_list_for_each_reverse_safe(slot, tmp, &chain->base.slots, link) {
+-        struct effect_entity *entity = is_root ? wl_container_of(slot, entity, frame_slot)
+-                                               : wl_container_of(slot, entity, slot);
+-        if (iterator && iterator(entity, data)) {
+-            break;
+-        }
+-    }
+-}
+-
+ static struct node_effect_chain *node_effect_chain_create(struct scene_node *node)
+ {
+     struct node_effect_chain *chain = calloc(1, sizeof(*chain));
+@@ -776,12 +759,6 @@ struct effect_entity *scene_node_find_effect_entity(struct scene_node *node, str
+     return NULL;
+ }
+ 
+-static bool node_effect_chain_destroy_entity(struct effect_entity *entity, void *user_data)
+-{
+-    effect_entity_destroy(entity);
+-    return false;
+-}
+-
+ static void effect_check_node_recursive(struct scene_node *node,
+                                         struct scene_add_effect_event *event)
+ {
+@@ -849,8 +826,6 @@ struct effect_entity *scene_node_add_effect(struct scene_node *node, struct effe
+             wl_list_init(&entity->slot.link);
+             entity->slot.chain_destroy.notify = entity_handle_chain_destroy;
+             wl_signal_add(&chain->base.events.destroy, &entity->slot.chain_destroy);
+-            /* remove all exsit effect entities */
+-            node_effect_chain_for_each_entity(chain, node_effect_chain_destroy_entity, NULL);
+             if (effect->enabled) {
+                 entity_insert_to_chain(entity, false);
+             }
+@@ -873,8 +848,6 @@ struct effect_entity *scene_node_add_effect(struct scene_node *node, struct effe
+         wl_signal_add(&chain->base.events.destroy, &entity->slot.chain_destroy);
+         wl_list_init(&entity->frame_slot.link);
+         wl_list_init(&entity->frame_slot.chain_destroy.link);
+-        /* remove all exsit effect entities */
+-        node_effect_chain_for_each_entity(chain, node_effect_chain_destroy_entity, NULL);
+     } else {
+         wl_list_init(&entity->slot.link);
+         wl_list_init(&entity->slot.chain_destroy.link);
+diff --git a/src/effect/effect_p.h b/src/effect/effect_p.h
+index 204222f..ffb7a4f 100644
+--- a/src/effect/effect_p.h
++++ b/src/effect/effect_p.h
+@@ -23,8 +23,6 @@ bool effect_manager_config_init(struct effect_manager *effect_manager);
+ 
+ bool effect_init_config(struct effect *effect);
+ 
+-void effect_write_enabled_option(struct effect *effect, bool enabled);
+-
+ bool effect_option_is_enabled_option(const struct effect_option *option);
+ 
+ bool effect_get_option_boolean(struct effect *effect, const char *key, bool value);
+diff --git a/src/effect/scale.c b/src/effect/scale.c
+index 48f7e20..610163a 100644
+--- a/src/effect/scale.c
++++ b/src/effect/scale.c
+@@ -57,7 +57,9 @@ static void scale_panel_minimized_geometry_from_view(struct view *view, struct k
+ 
+         int lx = 0, ly = 0;
+         struct scene_buffer *buffer =
+-            scene_buffer_try_from_surface(view->minimized_geometry.panel_surface);
++            view->minimized_geometry.panel_surface
++                ? scene_buffer_try_from_surface(view->minimized_geometry.panel_surface)
++                : NULL;
+         if (buffer) {
+             scene_node_coords(&buffer->node, &lx, &ly);
+         }
+diff --git a/src/effect/slide.c b/src/effect/slide.c
+index d308635..df76b0c 100644
+--- a/src/effect/slide.c
++++ b/src/effect/slide.c
+@@ -38,9 +38,7 @@ struct slide_entity {
+ 
+     bool slide_in;
+ 
+-    struct wl_listener add_effect;
+-    struct wl_listener node_destroy;
+-    /* No need to monitor view destroy signal */
++    /* no need to monitor view destroy signal */
+     struct wl_listener destroy;
+ };
+ 
+@@ -156,16 +154,14 @@ static void slide_effect_destroy(struct transform_effect *effect, void *data)
+ static void slide_handle_transform_destroy(struct wl_listener *listener, void *data)
+ {
+     struct slide_entity *slide_entity = wl_container_of(listener, slide_entity, destroy);
+-    wl_list_remove(&slide_entity->add_effect.link);
+-    wl_list_remove(&slide_entity->node_destroy.link);
+     wl_list_remove(&slide_entity->destroy.link);
+     free(slide_entity);
+ }
+ 
+-static void slide_handle_add_effect(struct wl_listener *listener, void *data)
++static void slide_handle_add_new_effect(struct transform_effect *effect,
++                                        struct transform *transform,
++                                        struct scene_add_effect_event *event)
+ {
+-    struct slide_entity *slide_entity = wl_container_of(listener, slide_entity, add_effect);
+-    struct scene_add_effect_event *event = data;
+     if (!event) {
+         return;
+     }
+@@ -178,15 +174,6 @@ static void slide_handle_add_effect(struct wl_listener *listener, void *data)
+     event->allow_add = false;
+ }
+ 
+-static void slide_handle_node_destroy(struct wl_listener *listener, void *data)
+-{
+-    struct slide_entity *slide_entity = wl_container_of(listener, slide_entity, node_destroy);
+-    wl_list_remove(&slide_entity->add_effect.link);
+-    wl_list_init(&slide_entity->add_effect.link);
+-    wl_list_remove(&slide_entity->node_destroy.link);
+-    wl_list_init(&slide_entity->node_destroy.link);
+-}
+-
+ static struct slide_entity *create_slide_entity(struct scene_node *node, enum slide_style style,
+                                                 int location, int offset, bool mapped,
+                                                 struct transform_options *options)
+@@ -217,12 +204,6 @@ static struct slide_entity *create_slide_entity(struct scene_node *node, enum sl
+         return false;
+     }
+ 
+-    slide_entity->add_effect.notify = slide_handle_add_effect;
+-    wl_signal_add(&node->events.add_effect, &slide_entity->add_effect);
+-
+-    slide_entity->node_destroy.notify = slide_handle_node_destroy;
+-    wl_signal_add(&node->events.destroy, &slide_entity->node_destroy);
+-
+     slide_entity->destroy.notify = slide_handle_transform_destroy;
+     transform_add_destroy_listener(slide_entity->transform, &slide_entity->destroy);
+     return slide_entity;
+@@ -288,6 +269,7 @@ const struct action_effect_interface slide_action_impl = {
+ 
+ struct transform_effect_interface slide_impl = {
+     .update_transform_options = slide_update_transform_options,
++    .add_new_effect = slide_handle_add_new_effect,
+     .destroy = slide_effect_destroy,
+ };
+ 
+diff --git a/src/effect/transform.c b/src/effect/transform.c
+index f757e3e..c2f5b4a 100644
+--- a/src/effect/transform.c
++++ b/src/effect/transform.c
+@@ -574,6 +574,13 @@ static void transform_handle_add_effect(struct wl_listener *listener, void *data
+     }
+ 
+     event->allow_add = true;
++    if (transform->effect->impl->add_new_effect) {
++        transform->effect->impl->add_new_effect(transform->effect, transform, event);
++        return;
++    }
++
++    /* remove exsit effect entities */
++    effect_entity_destroy(transform->entity);
+ }
+ 
+ static void transform_handle_node_destroy(struct wl_listener *listener, void *data)
+diff --git a/src/effect/translation.c b/src/effect/translation.c
+index ed4473e..6e89809 100644
+--- a/src/effect/translation.c
++++ b/src/effect/translation.c
+@@ -104,6 +104,23 @@ static struct workspace_output *find_workspace_output(struct workspace_translati
+ 
+ static void workspace_translation_do_destroy(struct workspace_translation *data);
+ 
++static enum direction workspace_translation_reverse_direction(enum direction direction)
++{
++    return direction == DIRECTION_LEFT ? DIRECTION_RIGHT : DIRECTION_LEFT;
++}
++
++static enum direction workspace_translation_direction_from_offset(float offset,
++                                                                  enum direction default_direction)
++{
++    if (offset < 0.0f) {
++        return DIRECTION_LEFT;
++    } else if (offset > 0.0f) {
++        return DIRECTION_RIGHT;
++    }
++
++    return default_direction;
++}
++
+ static void translation_effect_entity_destroy(struct effect_entity *entity)
+ {
+     struct workspace_translation *data = entity->user_data;
+@@ -784,7 +801,7 @@ bool workspace_add_automatic_translation_effect(struct workspace *current, struc
+             struct translation_order *last_order =
+                 wl_container_of(ws_output->orders.next, last_order, link);
+             enum direction round_trip_direction =
+-                direction == DIRECTION_LEFT ? DIRECTION_RIGHT : DIRECTION_LEFT;
++                workspace_translation_reverse_direction(direction);
+             if (next == NULL && last_order->direction == round_trip_direction &&
+                 last_order->workspace == current) {
+                 continue;
+@@ -798,7 +815,7 @@ bool workspace_add_automatic_translation_effect(struct workspace *current, struc
+         /* if current workspace is last workspace, need a short round trip */
+         if (!next) {
+             workspace_output_add_translation_entity(
+-                ws_output, current, direction == DIRECTION_LEFT ? DIRECTION_RIGHT : DIRECTION_LEFT);
++                ws_output, current, workspace_translation_reverse_direction(direction));
+         }
+     }
+ 
+@@ -846,8 +863,9 @@ static void get_workspace_index(struct workspace *center_workspace, uint32_t wor
+ 
+ static bool update_translation_workspace(struct workspace_translation *ws_translation,
+                                          struct workspace *displaying1,
+-                                         struct workspace *displaying2)
++                                         struct workspace *displaying2, bool *order_reversed)
+ {
++    *order_reversed = false;
+     if (!ws_translation->displaying_workspace && !ws_translation->next_workspace) {
+         ws_translation->displaying_workspace = displaying1;
+         ws_translation->next_workspace = displaying2;
+@@ -871,6 +889,7 @@ static bool update_translation_workspace(struct workspace_translation *ws_transl
+     if (is_displaying2_exist) {
+         ws_translation->displaying_workspace = displaying2;
+         ws_translation->next_workspace = displaying1;
++        *order_reversed = true;
+         return true;
+     }
+ 
+@@ -895,6 +914,8 @@ bool workspace_translation_manual(struct workspace_translation *ws_translation,
+         return false;
+     }
+ 
++    direction = workspace_translation_direction_from_offset(offset, direction);
++
+     ws_translation->last_offset = offset;
+ 
+     int64_t displaying1_index, displaying2_index;
+@@ -905,14 +926,18 @@ bool workspace_translation_manual(struct workspace_translation *ws_translation,
+         displaying1_index < 0 ? NULL : workspace_by_position(displaying1_index);
+     struct workspace *displaying2_workspace =
+         displaying2_index < 0 ? NULL : workspace_by_position(displaying2_index);
+-    if (!update_translation_workspace(ws_translation, displaying1_workspace,
+-                                      displaying2_workspace)) {
++
++    bool order_reversed = false;
++    if (!update_translation_workspace(ws_translation, displaying1_workspace, displaying2_workspace,
++                                      &order_reversed)) {
+         /* workspace1 and workspace2 didn't display */
+         return false;
+     }
+ 
+     struct workspace *next = ws_translation->next_workspace;
+     struct workspace *current = ws_translation->displaying_workspace;
++    enum direction next_direction =
++        order_reversed ? workspace_translation_reverse_direction(direction) : direction;
+     bool current_exist = false, next_exist = false;
+     /* reset offset */
+     struct workspace_output *ws_output;
+@@ -955,7 +980,7 @@ bool workspace_translation_manual(struct workspace_translation *ws_translation,
+     }
+ 
+     wl_list_for_each(ws_output, &ws_translation->workspace_outputs, link) {
+-        workspace_output_add_manaul_translation_entity(ws_output, next, direction, offset);
++        workspace_output_add_manaul_translation_entity(ws_output, next, next_direction, offset);
+     }
+ 
+     if (ws_translation->center) {
+diff --git a/src/effect/zoom.c b/src/effect/zoom.c
+index 295cc9f..4dad3b0 100644
+--- a/src/effect/zoom.c
++++ b/src/effect/zoom.c
+@@ -93,6 +93,8 @@ static struct shortcut {
+ } shortcuts[] = {
+     { "Win+Equal:no", "zoom_in", FUNC_ID_ZOOM_IN },
+     { "Win+Minus:no", "zoom_out", FUNC_ID_ZOOM_OUT },
++    { "Win+KP_Add:no", "zoom_in_1", FUNC_ID_ZOOM_IN },
++    { "Win+KP_Subtract:no", "zoom_out_1", FUNC_ID_ZOOM_OUT },
+     { "Win+Escape:no", "stop_zoom", FUNC_ID_ZOOM_STOP },
+ };
+ 
+@@ -849,7 +851,7 @@ static void zoom_register_shortcuts(void)
+     for (size_t i = 0; i < ARRAY_SIZE(shortcuts); i++) {
+         struct shortcut *shortcut = &shortcuts[i];
+         struct key_binding *binding =
+-            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id);
++            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id, 0);
+         if (!binding) {
+             continue;
+         }
+diff --git a/src/input/action.c b/src/input/action.c
+index 11f7da3..012b4e5 100644
+--- a/src/input/action.c
++++ b/src/input/action.c
+@@ -630,7 +630,7 @@ static void input_action_create_with_keyboard(struct input_action_manager *manag
+         }
+ 
+         struct key_binding *binding =
+-            kywc_key_binding_create(keybind, input_action->name, FUNC_ID_CONFIG);
++            kywc_key_binding_create(keybind, input_action->name, FUNC_ID_CONFIG, 0);
+         if (!binding) {
+             continue;
+         }
+@@ -922,8 +922,9 @@ static bool builtin_actions_create(void)
+ {
+     for (size_t i = 0; i < ARRAY_SIZE(shortcuts); i++) {
+         struct shortcut *shortcut = &shortcuts[i];
++        uint32_t options = function_entry_get_key_binding_options(shortcut->id);
+         struct key_binding *binding =
+-            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->id);
++            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->id, options);
+         if (!binding) {
+             continue;
+         }
+diff --git a/src/input/binding.c b/src/input/binding.c
+index f0d4f07..7dabe76 100644
+--- a/src/input/binding.c
++++ b/src/input/binding.c
+@@ -24,8 +24,7 @@ struct key_binding {
+     uint32_t nblocks;
+     uint32_t modifiers;
+     uint32_t keysym;
+-    bool no_repeat;
+-    bool bypass_grab;
++    uint32_t options;
+ 
+     char *keybind;
+     char *desc;
+@@ -33,8 +32,13 @@ struct key_binding {
+     enum function_id func_id;
+ 
+     void (*action)(struct key_binding *binding, void *data, struct seat *seat,
+-                   enum key_binding_trigger trigger);
++                   enum key_binding_stage stage);
+     void *data;
++    bool active;
++
++    struct {
++        struct wl_signal cancel;
++    } events;
+ };
+ 
+ struct keysyms_binding {
+@@ -72,7 +76,6 @@ static struct bindings {
+     size_t keysym_bindings_block;
+     size_t type_nlocks[KEY_BINDING_TYPE_NUM];
+     uint32_t keysyms_binding_masks; /* binding mask */
+-    bool destroying;
+ } *bindings = NULL;
+ 
+ const struct key_binding_type2string {
+@@ -102,37 +105,62 @@ const struct key_binding_type2string {
+     { KEY_BINDING_TYPE_NUM, "WLCOM_ALL" },
+ };
+ 
+-static bool keyboard_clear_active_binding(struct keyboard *keyboard)
++static bool keyboard_binding_finish(struct keyboard *keyboard, bool emit_inactive)
+ {
+-    bool was_active = keyboard->active_binding.active;
++    struct keyboard_binding_state *state = &keyboard->binding_state;
++    struct key_binding *binding = state->binding;
++    if (!binding) {
++        return false;
++    }
++
++    wl_list_remove(&state->binding_cancel.link);
++    keyboard->binding_state = (struct keyboard_binding_state){ 0 };
++    keyboard_repeat_stop(keyboard);
++    binding->active = false;
+ 
+-    keyboard->active_binding.binding = NULL;
+-    keyboard->active_binding.key = 0;
+-    keyboard->active_binding.active = false;
++    if (emit_inactive && (binding->options & KEY_BINDING_TRIGGER_IN_INACTIVE) && binding->action) {
++        binding->action(binding, binding->data, keyboard->seat, KEY_BINDING_STAGE_INACTIVE);
++    }
+ 
+-    return was_active;
++    return true;
+ }
+ 
+-static bool active_binding_clear_from_seat(struct seat *seat, int index, void *data)
++static void keyboard_binding_handle_cancel(struct wl_listener *listener, void *data)
+ {
+-    struct key_binding *binding = data;
+-    struct keyboard *keyboard;
+-    wl_list_for_each(keyboard, &seat->keyboards, link) {
+-        if (keyboard->active_binding.binding == binding) {
+-            keyboard_clear_active_binding(keyboard);
+-        }
+-    }
++    struct keyboard_binding_state *state = wl_container_of(listener, state, binding_cancel);
++    struct keyboard *keyboard = wl_container_of(state, keyboard, binding_state);
++    bool *emit_inactive = data;
+ 
+-    return false;
++    keyboard_binding_finish(keyboard, *emit_inactive);
+ }
+ 
+-static void active_binding_clear(struct key_binding *binding)
++static void key_binding_activate(struct key_binding *binding, struct keyboard *keyboard,
++                                 uint32_t key)
+ {
+-    if (!bindings->destroying) {
+-        return;
+-    }
++    struct keyboard_binding_state *state = &keyboard->binding_state;
++
++    assert(!state->binding);
++
++    *state = (struct keyboard_binding_state){
++        .binding = binding,
++        .key = key,
++    };
++    state->binding_cancel.notify = keyboard_binding_handle_cancel;
++    wl_signal_add(&binding->events.cancel, &state->binding_cancel);
++}
+ 
+-    input_manager_for_each_seat(active_binding_clear_from_seat, binding);
++static void key_binding_cancel_states(struct key_binding *binding, bool emit_inactive)
++{
++    wl_signal_emit_mutable(&binding->events.cancel, &emit_inactive);
++}
++
++static void keysyms_binding_cancel_states(struct keysyms_binding *keysyms_binding,
++                                          bool emit_inactive)
++{
++    struct key_binding *binding, *binding_tmp;
++    wl_list_for_each_safe(binding, binding_tmp, &keysyms_binding->bindings, link) {
++        key_binding_cancel_states(binding, emit_inactive);
++    }
+ }
+ 
+ static bool is_key_binding_desc_unique(const char *desc)
+@@ -159,7 +187,7 @@ static bool is_key_binding_desc_unique(const char *desc)
+ }
+ 
+ struct key_binding *kywc_key_binding_create(const char *keybind, const char *desc,
+-                                            enum function_id func_id)
++                                            enum function_id func_id, uint32_t options)
+ {
+     if (!is_key_binding_desc_unique(desc)) {
+         return NULL;
+@@ -170,10 +198,15 @@ struct key_binding *kywc_key_binding_create(const char *keybind, const char *des
+         return NULL;
+     }
+ 
+-    /* check no_repeat first */
++    binding->options =
++        options ? options : KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_REPEAT;
++    wl_signal_init(&binding->events.cancel);
++
+     size_t length = 0;
+     char **bind_str = string_split(keybind, ":", &length);
+-    binding->no_repeat = length == 2 && strcmp(bind_str[1], "no") == 0;
++    if (length == 2 && strcmp(bind_str[1], "no") == 0) {
++        binding->options &= ~KEY_BINDING_TRIGGER_IN_REPEAT;
++    }
+ 
+     size_t len = 0;
+     const char *bind_name = length == 2 ? bind_str[0] : keybind;
+@@ -209,8 +242,8 @@ struct key_binding *kywc_key_binding_create(const char *keybind, const char *des
+ }
+ 
+ struct key_binding *kywc_key_binding_create_by_symbol(unsigned int keysym, unsigned int modifiers,
+-                                                      bool no_repeat, bool bypass_grab,
+-                                                      const char *desc, enum function_id func_id)
++                                                      const char *desc, enum function_id func_id,
++                                                      uint32_t options)
+ {
+     if (!is_key_binding_desc_unique(desc)) {
+         return NULL;
+@@ -221,10 +254,11 @@ struct key_binding *kywc_key_binding_create_by_symbol(unsigned int keysym, unsig
+         return NULL;
+     }
+ 
++    wl_signal_init(&binding->events.cancel);
+     binding->modifiers = modifiers;
+     binding->keysym = keysym;
+-    binding->no_repeat = no_repeat;
+-    binding->bypass_grab = bypass_grab;
++    binding->options =
++        options ? options : KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_REPEAT;
+     binding->func_id = func_id;
+ 
+     if (desc) {
+@@ -244,7 +278,7 @@ struct key_binding *kywc_key_binding_create_by_symbol(unsigned int keysym, unsig
+ 
+ void kywc_key_binding_destroy(struct key_binding *binding)
+ {
+-    active_binding_clear(binding);
++    key_binding_cancel_states(binding, false);
+     wl_list_remove(&binding->link);
+ 
+     free(binding->keybind);
+@@ -276,7 +310,7 @@ static bool key_binding_is_valid(struct key_binding *binding, uint32_t keysym, u
+ 
+ bool kywc_key_binding_register(struct key_binding *binding, enum key_binding_type type,
+                                void (*action)(struct key_binding *binding, void *data,
+-                                              struct seat *seat, enum key_binding_trigger trigger),
++                                              struct seat *seat, enum key_binding_stage stage),
+                                void *data)
+ {
+     if (kywc_key_binding_is_registered(binding)) {
+@@ -312,7 +346,7 @@ bool kywc_key_binding_update(struct key_binding *binding, unsigned int keysym,
+         return false;
+     }
+ 
+-    active_binding_clear(binding);
++    key_binding_cancel_states(binding, false);
+     binding->keysym = keysym;
+     binding->modifiers = modifiers;
+ 
+@@ -320,7 +354,7 @@ bool kywc_key_binding_update(struct key_binding *binding, unsigned int keysym,
+ }
+ 
+ bool kywc_key_binding_update_state(struct key_binding *binding, enum function_id func_id,
+-                                   bool no_repeat, bool bypass_grab)
++                                   uint32_t options)
+ {
+     if (!kywc_key_binding_is_registered(binding)) {
+         return false;
+@@ -330,19 +364,15 @@ bool kywc_key_binding_update_state(struct key_binding *binding, enum function_id
+         binding->func_id = func_id;
+     }
+ 
+-    if (binding->no_repeat != no_repeat) {
+-        binding->no_repeat = no_repeat;
+-    }
+-
+-    if (binding->bypass_grab != bypass_grab) {
+-        binding->bypass_grab = bypass_grab;
+-    }
++    key_binding_cancel_states(binding, false);
++    binding->options =
++        options ? options : KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_REPEAT;
+     return true;
+ }
+ 
+ void kywc_key_binding_unregister(struct key_binding *binding)
+ {
+-    active_binding_clear(binding);
++    key_binding_cancel_states(binding, true);
+     wl_list_remove(&binding->link);
+     wl_list_init(&binding->link);
+ }
+@@ -354,7 +384,6 @@ bool kywc_key_binding_is_registered(struct key_binding *binding)
+ 
+ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ {
+-    bindings->destroying = true;
+     wl_list_remove(&bindings->server_destroy.link);
+ 
+     for (size_t i = 0; i < KEY_BINDING_TYPE_NUM; ++i) {
+@@ -404,7 +433,8 @@ static bool match_key_binding(struct keyboard_state *keyboard_state, struct key_
+     return false;
+ }
+ 
+-struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_state)
++struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_state,
++                                             uint32_t trigger_options, bool modifier_only_released)
+ {
+     if (bindings->keysym_bindings_block) {
+         return NULL;
+@@ -422,8 +452,7 @@ struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_sta
+                 continue;
+             }
+ 
+-            if ((keyboard_state->only_one_modifier && binding->keysym) ||
+-                (!keyboard_state->only_one_modifier && !binding->keysym)) {
++            if (!(binding->options & trigger_options)) {
+                 continue;
+             }
+ 
+@@ -431,11 +460,19 @@ struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_sta
+                 continue;
+             }
+ 
+-            if (keyboard_state->npressed < 1 && binding->keysym) {
++            if (!binding->keysym) {
++                if (!modifier_only_released) {
++                    continue;
++                }
++
++                return binding;
++            }
++
++            if (keyboard_state->npressed < 1) {
+                 continue;
+             }
+ 
+-            if (!binding->keysym || match_key_binding(keyboard_state, binding)) {
++            if (match_key_binding(keyboard_state, binding)) {
+                 return binding;
+             }
+         }
+@@ -460,7 +497,7 @@ bool bindings_get_key_binding_bypass_grab(struct key_binding *binding)
+         return false;
+     }
+ 
+-    return binding->bypass_grab;
++    return binding->options & KEY_BINDING_BYPASS_GRAB;
+ }
+ 
+ bool bindings_get_key_binding_no_repeat(struct key_binding *binding)
+@@ -469,84 +506,108 @@ bool bindings_get_key_binding_no_repeat(struct key_binding *binding)
+         return false;
+     }
+ 
+-    return binding->no_repeat;
++    return !(binding->options & KEY_BINDING_TRIGGER_IN_REPEAT);
+ }
+ 
+ bool bindings_handle_key_binding(struct keyboard *keyboard, struct key_binding *binding,
+                                  uint32_t key, bool pressed, bool *repeat)
+ {
+-    struct seat *seat = keyboard->seat;
+-    struct key_binding *active = keyboard->active_binding.binding;
++    struct keyboard_binding_state *state = &keyboard->binding_state;
+     *repeat = false;
+ 
+     if (!pressed) {
+-        if (active && keyboard->active_binding.key == key) {
+-            if (keyboard_clear_active_binding(keyboard) && active->action) {
+-                active->action(active, active->data, seat, KEY_BINDING_TRIGGER_INACTIVE);
+-            }
+-            return false;
+-        }
+-
+-        if (!binding) {
+-            return false;
+-        }
+-
+-        if (binding->action) {
+-            binding->action(binding, binding->data, seat, KEY_BINDING_TRIGGER_ACTIVE);
++        if (state->binding && state->key == key) {
++            keyboard_binding_finish(keyboard, true);
++        } else if (binding && binding->active) {
++            return true;
++        } else if (binding && binding->action) {
++            binding->action(binding, binding->data, keyboard->seat, KEY_BINDING_STAGE_INACTIVE);
+         }
+-        return true;
++        return false;
+     }
+ 
+     if (!binding) {
++        if (state->binding && !state->active_emitted) {
++            keyboard_binding_finish(keyboard, false);
++        }
+         return false;
+     }
+ 
+-    if (active == binding) {
+-        if (!keyboard->active_binding.active || binding->no_repeat) {
++    if (state->binding == binding) {
++        if (bindings_get_key_binding_no_repeat(binding)) {
+             return true;
+         }
+ 
+         *repeat = true;
+         if (binding->action) {
+-            binding->action(binding, binding->data, seat, KEY_BINDING_TRIGGER_REPEAT);
++            binding->action(binding, binding->data, keyboard->seat, KEY_BINDING_STAGE_REPEAT);
+         }
+         return true;
+     }
+ 
+-    if (active) {
+-        if (keyboard_clear_active_binding(keyboard) && active->action) {
+-            active->action(active, active->data, seat, KEY_BINDING_TRIGGER_INACTIVE);
++    if (state->binding) {
++        keyboard_binding_finish(keyboard, state->active_emitted);
++    }
++
++    if (binding->active) {
++        return true;
++    }
++
++    key_binding_activate(binding, keyboard, key);
++    binding->active = true;
++    if (binding->options & KEY_BINDING_TRIGGER_IN_ACTIVE) {
++        if (binding->action) {
++            binding->action(binding, binding->data, keyboard->seat, KEY_BINDING_STAGE_ACTIVE);
+         }
++        if (keyboard->binding_state.binding != binding) {
++            return true;
++        }
++        state->active_emitted = true;
+     }
+ 
+-    keyboard->active_binding.binding = binding;
+-    keyboard->active_binding.key = key;
+-    keyboard->active_binding.active = true;
+-    if (binding->action) {
+-        binding->action(binding, binding->data, seat, KEY_BINDING_TRIGGER_ACTIVE);
++    if (keyboard->binding_state.binding != binding) {
++        return true;
+     }
+ 
+-    *repeat = !binding->no_repeat;
++    *repeat = !bindings_get_key_binding_no_repeat(binding);
+ 
+     return true;
+ }
+ 
+ bool bindings_handle_key_binding_modifiers(struct keyboard *keyboard, uint32_t modifiers)
+ {
+-    struct key_binding *active = keyboard->active_binding.binding;
++    struct keyboard_binding_state *state = &keyboard->binding_state;
++    struct key_binding *binding = state->binding;
+ 
+-    if (!active || !keyboard->active_binding.active || !(active->modifiers & ~modifiers)) {
++    if (!binding || !(binding->modifiers & ~modifiers)) {
+         return false;
+     }
+ 
+-    keyboard->active_binding.active = false;
+-    if (active->action) {
+-        active->action(active, active->data, keyboard->seat, KEY_BINDING_TRIGGER_INACTIVE);
+-    }
++    keyboard_binding_finish(keyboard, true);
+ 
+     return true;
+ }
+ 
++bool bindings_cancel_key_binding(struct keyboard *keyboard, uint32_t key, bool pressed)
++{
++    struct keyboard_binding_state *state = &keyboard->binding_state;
++    if (!state->binding) {
++        return false;
++    }
++
++    bool emit_inactive = state->key == key && !pressed;
++    if (state->active_emitted) {
++        emit_inactive = true;
++    }
++
++    return keyboard_binding_finish(keyboard, emit_inactive);
++}
++
++void bindings_clear_key_binding(struct keyboard *keyboard)
++{
++    keyboard_binding_finish(keyboard, false);
++}
++
+ void kywc_gesture_binding_destroy(struct gesture_binding *binding)
+ {
+     wl_list_remove(&binding->link);
+@@ -796,7 +857,7 @@ static uint32_t generate_gesture_id(enum gesture_device device, uint8_t fingers,
+     uint32_t gesture_id = (device << 20) & 0x0F00000;
+     gesture_id |= (fingers << 16) & 0xF0000;
+     gesture_id |= (type << 12) & 0x0F000;
+-    gesture_id |= (direction << 4) & 0x0FF;
++    gesture_id |= (direction << 4) & 0x0FF0;
+     gesture_id |= edge & 0x0F;
+ 
+     return gesture_id;
+@@ -976,6 +1037,17 @@ void kywc_gesture_binding_update(struct gesture_binding *binding, bool enabled,
+     }
+ }
+ 
++bool kywc_gesture_binding_check(enum gesture_type type, enum gesture_device device, uint8_t fingers)
++{
++    struct gesture_binding *binding;
++    wl_list_for_each(binding, &bindings->gesture_bindings, link) {
++        if (binding->type == type && binding->device == device && binding->fingers == fingers) {
++            return true;
++        }
++    }
++    return false;
++}
++
+ void kywc_key_binding_for_each(binding_iterator_func_t iterator)
+ {
+     for (size_t i = 0; i < KEY_BINDING_TYPE_NUM; ++i) {
+@@ -994,6 +1066,11 @@ void kywc_key_binding_block_all(bool block)
+ {
+     if (block) {
+         bindings->keysym_bindings_block++;
++        if (bindings->keysym_bindings_block == 1) {
++            for (size_t i = 0; i < KEY_BINDING_TYPE_NUM; ++i) {
++                keysyms_binding_cancel_states(&bindings->keysyms_binding[i], true);
++            }
++        }
+     } else {
+         assert(bindings->keysym_bindings_block > 0);
+         bindings->keysym_bindings_block--;
+@@ -1005,6 +1082,9 @@ void kywc_key_binding_block_type(enum key_binding_type type, bool block)
+     if (block) {
+         bindings->keysyms_binding_masks &= ~(1 << type);
+         bindings->type_nlocks[type]++;
++        if (bindings->type_nlocks[type] == 1) {
++            keysyms_binding_cancel_states(&bindings->keysyms_binding[type], true);
++        }
+     } else {
+         assert(bindings->type_nlocks[type] > 0);
+         bindings->type_nlocks[type]--;
+@@ -1018,6 +1098,9 @@ void kywc_key_binding_block(struct key_binding *binding, bool block)
+ {
+     if (block) {
+         binding->nblocks++;
++        if (binding->nblocks == 1) {
++            key_binding_cancel_states(binding, true);
++        }
+     } else {
+         assert(binding->nblocks > 0);
+         binding->nblocks--;
+diff --git a/src/input/cursor.c b/src/input/cursor.c
+index 503dcac..2885267 100644
+--- a/src/input/cursor.c
++++ b/src/input/cursor.c
+@@ -77,11 +77,10 @@ static void _cursor_feed_motion(struct cursor *cursor, uint32_t time)
+     struct scene_node *old_hover = cursor->hover.node;
+     bool changed = cursor_update_node(cursor, false);
+ 
+-    bool left_button_pressed =
+-        LEFT_BUTTON_PRESSED(cursor->last_click_button, cursor->last_click_pressed);
+     /* if hold press moving but not dragging */
+-    if (left_button_pressed && cursor->focus.node && cursor->focus.node != cursor->hover.node &&
+-        !selection_is_dragging(seat) && scene_node_is_enabled(cursor->focus.node)) {
++    if (cursor->last_click_pressed && cursor->focus.node &&
++        cursor->focus.node != cursor->hover.node && !selection_is_dragging(seat) &&
++        scene_node_is_enabled(cursor->focus.node) && !wlr_seat_pointer_has_grab(seat->wlr_seat)) {
+         struct input_event_node *inode = input_event_node_from_node(cursor->focus.node);
+         if (inode && inode->impl->hover) {
+             cursor->hold_mode = inode->impl->hover(seat, cursor->focus.node, cursor->lx, cursor->ly,
+@@ -211,7 +210,7 @@ void cursor_feed_button(struct cursor *cursor, uint32_t button, bool pressed, ui
+     if (cursor->hold_mode) {
+         /* send button release to last focus node */
+         if (old_inode && old_inode->impl->click) {
+-            old_inode->impl->click(seat, old_focus, BTN_LEFT, false, time, CLICK_STATE_NONE,
++            old_inode->impl->click(seat, old_focus, last_button, false, time, CLICK_STATE_NONE,
+                                    old_inode->data);
+         }
+         /* leave focus node, otherwise wrong cursor image */
+@@ -533,7 +532,11 @@ static void cursor_handle_touch_up(struct wl_listener *listener, void *data)
+         return;
+     }
+ 
+-    touch_handle_up(event, !cursor->touch_simulation_pointer);
++    bool handle = true;
++    if (cursor->pointer_touch_id == event->touch_id && cursor->touch_simulation_pointer) {
++        handle = false;
++    }
++    touch_handle_up(event, handle);
+ 
+     if (cursor->touch_simulation_pointer && cursor->pointer_touch_id == event->touch_id) {
+         cursor->pointer_touch_up = true;
+@@ -1087,7 +1090,7 @@ void cursor_rebase(struct cursor *cursor)
+ 
+ static bool seat_rebase_cursor(struct seat *seat, int index, void *data)
+ {
+-    if (seat->pointer_grab) {
++    if (seat->pointer_grab || seat->cursor->last_click_pressed) {
+         return false;
+     }
+ 
+diff --git a/src/input/function.c b/src/input/function.c
+index 4dc39c7..717c6af 100644
+--- a/src/input/function.c
++++ b/src/input/function.c
+@@ -849,6 +849,16 @@ static struct function_gesture_optional {
+     },
+ };
+ 
++static const struct function_key_binding_optional {
++    enum function_id id;
++    uint32_t options;
++} function_key_binding_optionals[] = {
++    {
++        FUNC_ID_SHOW_UKUI_MENU,
++        KEY_BINDING_TRIGGER_IN_INACTIVE,
++    },
++};
++
+ const char *function_entry_get_desc(enum function_id id)
+ {
+     return functions[id].desc;
+@@ -864,6 +874,19 @@ enum key_binding_type function_entry_get_type(enum function_id id)
+     return functions[id].type;
+ }
+ 
++uint32_t function_entry_get_key_binding_options(enum function_id id)
++{
++    for (uint32_t i = 0; i < ARRAY_SIZE(function_key_binding_optionals); ++i) {
++        if (function_key_binding_optionals[i].id != id) {
++            continue;
++        }
++
++        return function_key_binding_optionals[i].options;
++    }
++
++    return 0;
++}
++
+ static uint32_t function_get_gesture_follow_directions(enum function_id id,
+                                                        enum gesture_direction binding_direction,
+                                                        uint32_t follow_directions)
+@@ -1098,12 +1121,9 @@ static void ukui_windows_switch_backward_by_shortcut(struct seat *seat, enum ges
+ }
+ 
+ void function_manager_handle_key_binding(struct key_binding *binding, void *data, struct seat *seat,
+-                                         enum key_binding_trigger trigger)
++                                         enum key_binding_stage stage)
+ {
+     enum function_id id = bindings_get_key_binding_function_id(binding);
+-    if (trigger == KEY_BINDING_TRIGGER_INACTIVE && id != FUNC_ID_CUSTOM) {
+-        return;
+-    }
+ 
+     if (!seat) {
+         seat = input_manager_get_default_seat();
+@@ -1114,7 +1134,7 @@ void function_manager_handle_key_binding(struct key_binding *binding, void *data
+         input_action_handle_key_binding(binding, seat);
+         break;
+     case FUNC_ID_CUSTOM:
+-        global_shortcuts_manager_action(data, trigger);
++        global_shortcuts_manager_action(data, stage);
+         break;
+     case FUNC_ID_SWITCH_LEFT_WORKSPACE:
+     case FUNC_ID_SWITCH_RIGHT_WORKSPACE:
+diff --git a/src/input/global_shortcuts.c b/src/input/global_shortcuts.c
+index 220a7f8..0e45043 100644
+--- a/src/input/global_shortcuts.c
++++ b/src/input/global_shortcuts.c
+@@ -62,8 +62,7 @@ struct global_shortcut {
+     const char *current_key;
+ 
+     bool enabled;
+-    bool no_repeat;
+-    bool bypass_grab;
++    uint32_t options;
+ 
+     enum function_id func_id;
+     const char *action;
+@@ -109,6 +108,17 @@ static const char *shortcut_binding_desc(const struct global_shortcut_session *s
+     return shortcut->unique;
+ }
+ 
++static uint32_t shortcut_key_binding_options(struct global_shortcut *shortcut)
++{
++    uint32_t options = shortcut->options;
++    if (options || shortcut_session_is_builtin(shortcut->session)) {
++        return options;
++    }
++
++    return KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_INACTIVE |
++           KEY_BINDING_TRIGGER_IN_REPEAT;
++}
++
+ static void global_shortcut_destroy(struct global_shortcut *shortcut, bool clean)
+ {
+     if (shortcut->binding && clean) {
+@@ -195,9 +205,7 @@ shortcut_get_or_create_by_unique(struct global_shortcut_session *session, const
+     }
+ 
+     shortcut->unique = strdup(unique);
+-    shortcut->no_repeat = false;
+     shortcut->enabled = true;
+-    shortcut->bypass_grab = false;
+     shortcut->func_id = FUNC_ID_CUSTOM;
+     shortcut->session = session;
+     wl_list_insert(&session->shortcuts, &shortcut->link);
+@@ -227,21 +235,20 @@ static bool shortcut_create_binding_and_register(struct global_shortcut_session
+     }
+ 
+     if (shortcut->binding) {
++        uint32_t options = shortcut_key_binding_options(shortcut);
+         if (!kywc_key_binding_update(shortcut->binding, keysym, modifiers)) {
+             return false;
+         }
+ 
+-        if (!kywc_key_binding_update_state(shortcut->binding, shortcut->func_id,
+-                                           shortcut->no_repeat, shortcut->bypass_grab)) {
++        if (!kywc_key_binding_update_state(shortcut->binding, shortcut->func_id, options)) {
+             return false;
+         }
+         return true;
+     }
+ 
+-    bool created_binding = false;
++    uint32_t options = shortcut_key_binding_options(shortcut);
+     struct key_binding *binding = kywc_key_binding_create_by_symbol(
+-        keysym, modifiers, shortcut->no_repeat, shortcut->bypass_grab,
+-        shortcut_binding_desc(session, shortcut), shortcut->func_id);
++        keysym, modifiers, shortcut_binding_desc(session, shortcut), shortcut->func_id, options);
+     if (!binding) {
+         return false;
+     }
+@@ -253,9 +260,8 @@ static bool shortcut_create_binding_and_register(struct global_shortcut_session
+     }
+ 
+     shortcut->binding = binding;
+-    created_binding = true;
+ 
+-    if (builtin_session && !shortcut->enabled && created_binding) {
++    if (builtin_session && !shortcut->enabled) {
+         kywc_key_binding_block(shortcut->binding, true);
+     }
+ 
+@@ -297,9 +303,9 @@ static bool session_shortcut_update(struct global_shortcut_session *session,
+     }
+ 
+     if (!shortcut->binding) {
++        uint32_t options = shortcut_key_binding_options(pending);
+         struct key_binding *binding = kywc_key_binding_create_by_symbol(
+-            new_key, new_mod, pending->no_repeat, pending->bypass_grab,
+-            shortcut_binding_desc(session, shortcut), pending->func_id);
++            new_key, new_mod, shortcut_binding_desc(session, shortcut), pending->func_id, options);
+         if (!binding) {
+             return false;
+         }
+@@ -329,8 +335,8 @@ static bool session_shortcut_update(struct global_shortcut_session *session,
+         }
+     }
+ 
+-    if (!kywc_key_binding_update_state(shortcut->binding, pending->func_id, pending->no_repeat,
+-                                       pending->bypass_grab)) {
++    uint32_t options = shortcut_key_binding_options(pending);
++    if (!kywc_key_binding_update_state(shortcut->binding, pending->func_id, options)) {
+         return false;
+     }
+ 
+@@ -344,8 +350,7 @@ static bool session_shortcut_update(struct global_shortcut_session *session,
+ 
+     shortcut->enabled = pending->enabled;
+     shortcut->func_id = pending->func_id;
+-    shortcut->no_repeat = pending->no_repeat;
+-    shortcut->bypass_grab = pending->bypass_grab;
++    shortcut->options = pending->options;
+ 
+     if (!str_equal(shortcut->action, pending->action)) {
+         free((void *)shortcut->action);
+@@ -434,6 +439,8 @@ static int list_shortcuts(sd_bus_message *m, void *userdata, sd_bus_error *ret_e
+             CK(sd_bus_message_append(reply, "{sv}", "desc_l10n", "s",
+                                      function_entry_get_l10n_name(func_id)));
+         }
++        CK(sd_bus_message_append(reply, "{sv}", "options", "u",
++                                 shortcut_key_binding_options(shortcut)));
+ 
+         CK(sd_bus_message_close_container(reply));
+         CK(sd_bus_message_close_container(reply));
+@@ -471,6 +478,7 @@ static int configure_shortcuts(sd_bus_message *m, void *userdata, sd_bus_error *
+         CK(sd_bus_message_enter_container(m, 'a', "{sv}"));
+ 
+         struct global_shortcut shortcut_state = {
++            .session = shortcut->session,
+             .enabled = shortcut->enabled,
+             .binding = shortcut->binding,
+             .default_key = shortcut->default_key,
+@@ -478,8 +486,7 @@ static int configure_shortcuts(sd_bus_message *m, void *userdata, sd_bus_error *
+             .func_id = shortcut->func_id,
+             .action = shortcut->action,
+             .desc_l10n = shortcut->desc_l10n,
+-            .bypass_grab = shortcut->bypass_grab,
+-            .no_repeat = shortcut->no_repeat,
++            .options = shortcut->options,
+         };
+ 
+         while (!sd_bus_message_at_end(m, 0)) {
+@@ -500,14 +507,8 @@ static int configure_shortcuts(sd_bus_message *m, void *userdata, sd_bus_error *
+                 int enabled;
+                 CK(sd_bus_message_read(m, "b", &enabled));
+                 shortcut_state.enabled = enabled;
+-            } else if (strcmp(key, "no_repeat") == 0) {
+-                int no_repeat;
+-                CK(sd_bus_message_read(m, "b", &no_repeat));
+-                shortcut_state.no_repeat = no_repeat;
+-            } else if (strcmp(key, "bypass_grab") == 0) {
+-                int bypass_grab;
+-                CK(sd_bus_message_read(m, "b", &bypass_grab));
+-                shortcut_state.bypass_grab = bypass_grab;
++            } else if (strcmp(key, "options") == 0) {
++                CK(sd_bus_message_read(m, "u", &shortcut_state.options));
+             } else {
+                 CK(sd_bus_message_skip(m, NULL));
+             }
+@@ -602,14 +603,8 @@ static int bind_shortcuts(sd_bus_message *m, void *userdata, sd_bus_error *ret_e
+                 int enabled;
+                 CK(sd_bus_message_read(m, "b", &enabled));
+                 shortcut->enabled = enabled;
+-            } else if (strcmp(key, "no_repeat") == 0) {
+-                int no_repeat;
+-                CK(sd_bus_message_read(m, "b", &no_repeat));
+-                shortcut->no_repeat = no_repeat;
+-            } else if (strcmp(key, "bypass_grab") == 0) {
+-                int bypass_grab;
+-                CK(sd_bus_message_read(m, "b", &bypass_grab));
+-                shortcut->bypass_grab = bypass_grab;
++            } else if (strcmp(key, "options") == 0) {
++                CK(sd_bus_message_read(m, "u", &shortcut->options));
+             } else {
+                 kywc_log(KYWC_DEBUG, "bind ignore unknown field session=%s unique=%s field=%s",
+                          session->handle, unique, key);
+@@ -1009,7 +1004,7 @@ static bool shortcut_key_name_check_available(const char *key_name)
+     }
+ 
+     struct key_binding *binding =
+-        kywc_key_binding_create_by_symbol(keysym, modifiers, false, false, NULL, FUNC_ID_CUSTOM);
++        kywc_key_binding_create_by_symbol(keysym, modifiers, NULL, FUNC_ID_CUSTOM, 0);
+     if (!binding) {
+         return false;
+     }
+@@ -1043,21 +1038,21 @@ static int is_shortcut_available(sd_bus_message *m, void *userdata, sd_bus_error
+     return 1;
+ }
+ 
+-static const char *global_shortcut_signal_name(enum key_binding_trigger trigger)
++static const char *global_shortcut_signal_name(enum key_binding_stage stage)
+ {
+-    switch (trigger) {
+-    case KEY_BINDING_TRIGGER_ACTIVE:
++    switch (stage) {
++    case KEY_BINDING_STAGE_ACTIVE:
+         return "Activated";
+-    case KEY_BINDING_TRIGGER_REPEAT:
++    case KEY_BINDING_STAGE_REPEAT:
+         return "Repeated";
+-    case KEY_BINDING_TRIGGER_INACTIVE:
++    case KEY_BINDING_STAGE_INACTIVE:
+         return "Deactivated";
+     }
+ 
+     return NULL;
+ }
+ 
+-void global_shortcuts_manager_action(void *data, enum key_binding_trigger trigger)
++void global_shortcuts_manager_action(void *data, enum key_binding_stage stage)
+ {
+     if (!data) {
+         return;
+@@ -1073,7 +1068,7 @@ void global_shortcuts_manager_action(void *data, enum key_binding_trigger trigge
+         return;
+     }
+ 
+-    const char *signal = global_shortcut_signal_name(trigger);
++    const char *signal = global_shortcut_signal_name(stage);
+     if (!signal) {
+         return;
+     }
+@@ -1307,16 +1302,23 @@ static bool setup_system_shortcuts_from_config(struct global_shortcuts_manager *
+             shortcut->default_key = strdup(json_object_get_string(data));
+         }
+ 
+-        if (json_object_object_get_ex(shortcut_data, "no_repeat", &data)) {
+-            shortcut->no_repeat = json_object_get_boolean(data);
++        if (json_object_object_get_ex(shortcut_data, "func_id", &data)) {
++            shortcut->func_id = json_object_get_uint64(data);
+         }
+ 
+-        if (json_object_object_get_ex(shortcut_data, "bypass_grab", &data)) {
+-            shortcut->bypass_grab = json_object_get_boolean(data);
+-        }
++        if (json_object_object_get_ex(shortcut_data, "options", &data)) {
++            shortcut->options = json_object_get_uint64(data);
++        } else {
++            bool no_repeat = json_object_object_get_ex(shortcut_data, "no_repeat", &data) &&
++                             json_object_get_boolean(data);
+ 
+-        if (json_object_object_get_ex(shortcut_data, "func_id", &data)) {
+-            shortcut->func_id = json_object_get_uint64(data);
++            uint32_t options = function_entry_get_key_binding_options(shortcut->func_id);
++            if (!options) {
++                options =
++                    KEY_BINDING_TRIGGER_IN_ACTIVE | (no_repeat ? 0 : KEY_BINDING_TRIGGER_IN_REPEAT);
++            }
++
++            shortcut->options = options;
+         }
+ 
+         if (!shortcut_create_binding_and_register(session, shortcut)) {
+@@ -1364,18 +1366,8 @@ static bool system_shortcut_write_config(struct global_shortcut *shortcut)
+         json_object_object_del(config, "enabled");
+     }
+ 
+-    if (shortcut->no_repeat) {
+-        json_object_object_add(config, "no_repeat", json_object_new_boolean(shortcut->no_repeat));
+-    } else {
+-        json_object_object_del(config, "no_repeat");
+-    }
+-
+-    if (shortcut->bypass_grab) {
+-        json_object_object_add(config, "bypass_grab",
+-                               json_object_new_boolean(shortcut->bypass_grab));
+-    } else {
+-        json_object_object_del(config, "bypass_grab");
+-    }
++    json_object_object_add(config, "options",
++                           json_object_new_uint64(shortcut_key_binding_options(shortcut)));
+ 
+     return true;
+ }
+@@ -1393,20 +1385,31 @@ static bool system_builtin_shortcuts(struct key_binding *binding, char *key_name
+         return false;
+     }
+ 
+-    if (shortcut_by_unique(session, unique)) {
+-        return false;
+-    }
+-
+     struct global_shortcut *shortcut = shortcut_get_or_create_by_unique(session, unique);
+     if (!shortcut) {
+         return false;
+     }
+ 
+     shortcut->binding = binding;
+-    shortcut->default_key = strdup(key_name);
++    if (!shortcut->default_key) {
++        shortcut->default_key = key_name ? strdup(key_name) : NULL;
++    }
+     shortcut->func_id = id;
+-    shortcut->no_repeat = bindings_get_key_binding_no_repeat(binding);
+-    shortcut->bypass_grab = bindings_get_key_binding_bypass_grab(binding);
++    if (!shortcut->options) {
++        uint32_t options = function_entry_get_key_binding_options(id);
++        if (!options) {
++            options = KEY_BINDING_TRIGGER_IN_ACTIVE;
++        }
++
++        if (!bindings_get_key_binding_no_repeat(binding)) {
++            options |= KEY_BINDING_TRIGGER_IN_REPEAT;
++        }
++        if (bindings_get_key_binding_bypass_grab(binding)) {
++            options |= KEY_BINDING_BYPASS_GRAB;
++        }
++
++        shortcut->options = options;
++    }
+ 
+     /* save shortcut config */
+     system_shortcut_write_config(shortcut);
+diff --git a/src/input/input_p.h b/src/input/input_p.h
+index fa19c15..e8e5d1e 100644
+--- a/src/input/input_p.h
++++ b/src/input/input_p.h
+@@ -161,6 +161,8 @@ bool input_method_handle_modifiers(struct keyboard *keyboard);
+ 
+ bool keyboard_is_from_input_method(struct keyboard *keyboard);
+ 
++void keyboard_repeat_stop(struct keyboard *keyboard);
++
+ /**
+  * selection drag icon
+  */
+@@ -215,13 +217,16 @@ void touch_handle_cancel(struct wlr_touch_cancel_event *event, bool handle);
+ 
+ void touch_reset_gesture(struct input_manager *input_manager);
+ 
++void seat_cancel_touch_points(struct seat *seat);
++
+ /**
+  * binding manager for keysym, gesture
+  */
+ 
+ bool bindings_create(struct input_manager *input_manager);
+ 
+-struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_state);
++struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_state,
++                                             uint32_t trigger_options, bool modifier_only_released);
+ 
+ bool bindings_get_key_binding_bypass_grab(struct key_binding *binding);
+ 
+@@ -236,6 +241,10 @@ bool bindings_handle_key_binding(struct keyboard *keyboard, struct key_binding *
+ 
+ bool bindings_handle_key_binding_modifiers(struct keyboard *keyboard, uint32_t modifiers);
+ 
++bool bindings_cancel_key_binding(struct keyboard *keyboard, uint32_t key, bool pressed);
++
++void bindings_clear_key_binding(struct keyboard *keyboard);
++
+ bool bindings_handle_gesture_binding(struct gesture_state *gesture_state);
+ 
+ /**
+diff --git a/src/input/keyboard.c b/src/input/keyboard.c
+index 0af40f7..ff7b480 100644
+--- a/src/input/keyboard.c
++++ b/src/input/keyboard.c
+@@ -136,16 +136,11 @@ static void keyboard_state_clear(struct keyboard_state *keyboard_state)
+ static void handle_keyboard_state(struct keyboard_state *keyboard_state, uint32_t modifiers,
+                                   uint32_t keysym, bool pressed)
+ {
+-
+-    bool last_key_is_modifiers = modifiers != keyboard_state->last_modifiers;
+-
+-    keyboard_state->only_one_modifier = modifiers && keyboard_state->last_modifiers == 0 &&
+-                                        !pressed && keyboard_state->npressed == 1;
+-
++    bool modifier_changed = modifiers != keyboard_state->last_modifiers;
+     keyboard_state->last_modifiers = modifiers;
+ 
+-    if (last_key_is_modifiers && keyboard_state->last_keysym) {
+-        // a modifiier key preesed before this key, erase it
++    if (modifier_changed && keyboard_state->last_keysym) {
++        // A modifier key was pressed before this key, erase it.
+         keyboard_state_erase_key(keyboard_state, keyboard_state->last_keysym);
+         keyboard_state->last_keysym = 0;
+     }
+@@ -163,6 +158,7 @@ static bool keyboard_update_keyboard_state(struct keyboard *keyboard, uint32_t k
+                                            uint32_t modifiers, bool pressed)
+ {
+     struct keyboard_state *keyboard_state = &keyboard->state;
++
+     /* Translate libinput keycode -> xkbcommon keysym */
+     const xkb_keysym_t *keysyms;
+     size_t len = 0; // xkb_state may be null
+@@ -185,7 +181,8 @@ static bool keyboard_update_keyboard_state(struct keyboard *keyboard, uint32_t k
+     return true;
+ }
+ 
+-static struct key_binding *keyboard_get_key_binding(struct keyboard *keyboard, bool pressed)
++static struct key_binding *keyboard_get_key_binding(struct keyboard *keyboard, bool pressed,
++                                                    bool modifier_only_released)
+ {
+     struct keyboard_state *keyboard_state = &keyboard->state;
+ 
+@@ -194,14 +191,18 @@ static struct key_binding *keyboard_get_key_binding(struct keyboard *keyboard, b
+         return NULL;
+     }
+ 
+-    if (!pressed && !keyboard->state.only_one_modifier) {
++    if (!pressed && !modifier_only_released) {
+         return NULL;
+     }
+ 
+-    return bindings_get_key_binding(keyboard_state);
++    uint32_t trigger_options = pressed ? KEY_BINDING_TRIGGER_IN_ACTIVE |
++                                             KEY_BINDING_TRIGGER_IN_INACTIVE |
++                                             KEY_BINDING_TRIGGER_IN_REPEAT
++                                       : KEY_BINDING_TRIGGER_IN_INACTIVE;
++    return bindings_get_key_binding(keyboard_state, trigger_options, modifier_only_released);
+ }
+ 
+-static void keyboard_repeat_stop(struct keyboard *keyboard)
++void keyboard_repeat_stop(struct keyboard *keyboard)
+ {
+     if (!keyboard->repeat.timer) {
+         return;
+@@ -292,21 +293,29 @@ static void keyboard_feed_key(struct keyboard *keyboard, uint32_t key, uint32_t
+     };
+     wl_signal_emit_mutable(&seat->events.keyboard_key, &event);
+ 
++    bool modifier_only_released = modifiers && keyboard->state.last_modifiers == 0 && !pressed &&
++                                  keyboard->state.npressed == 1;
+     if (!keyboard_update_keyboard_state(keyboard, key, modifiers, pressed)) {
+         return;
+     }
+ 
+-    struct key_binding *binding = keyboard_get_key_binding(keyboard, pressed);
+-    bool bypass_grab = bindings_get_key_binding_bypass_grab(binding);
++    struct key_binding *binding =
++        keyboard_get_key_binding(keyboard, pressed, modifier_only_released);
++    struct key_binding *bypass_binding = binding;
++    if (!bypass_binding && keyboard->binding_state.key == key) {
++        bypass_binding = keyboard->binding_state.binding;
++    }
++    bool bypass_grab = bindings_get_key_binding_bypass_grab(bypass_binding);
+ 
+     if (!bypass_grab && seat->keyboard_grab && seat->keyboard_grab->interface->key &&
+         seat->keyboard_grab->interface->key(seat->keyboard_grab, keyboard, time, key, pressed,
+                                             modifiers)) {
++        bindings_cancel_key_binding(keyboard, key, pressed);
+         keyboard_state_clear(&keyboard->state);
+         if (key != keyboard->repeat.key) {
+             keyboard_repeat_stop(keyboard);
+         }
+-        if (!bindings_get_key_binding_no_repeat(binding)) {
++        if (!binding || !bindings_get_key_binding_no_repeat(binding)) {
+             keyboard_repeat_start(keyboard, key, pressed);
+         }
+         return;
+@@ -528,6 +537,8 @@ void keyboard_destroy(struct keyboard *keyboard)
+     struct wlr_seat *wlr_seat = keyboard->seat->wlr_seat;
+     struct wlr_keyboard *wlr_keyboard = keyboard->wlr_keyboard;
+ 
++    bindings_clear_key_binding(keyboard);
++
+     wl_list_remove(&keyboard->link);
+     wl_list_remove(&keyboard->key.link);
+     wl_list_remove(&keyboard->modifiers.link);
+diff --git a/src/input/seat.c b/src/input/seat.c
+index 60cd022..36ee8fd 100644
+--- a/src/input/seat.c
++++ b/src/input/seat.c
+@@ -335,6 +335,8 @@ void seat_start_touch_grab(struct seat *seat, struct seat_touch_grab *touch_grab
+     if (grab && grab->interface->cancel) {
+         grab->interface->cancel(grab);
+     }
++
++    seat_cancel_touch_points(seat);
+ }
+ 
+ void seat_end_touch_grab(struct seat *seat, struct seat_touch_grab *touch_grab)
+diff --git a/src/input/touch.c b/src/input/touch.c
+index 4614a1d..a7675e5 100644
+--- a/src/input/touch.c
++++ b/src/input/touch.c
+@@ -14,6 +14,7 @@
+ #include "backend/libinput.h"
+ #include "input/seat.h"
+ #include "input_p.h"
++#include "output.h"
+ #include "scene/surface.h"
+ #include "server.h"
+ #include "util/macros.h"
+@@ -23,6 +24,8 @@
+ #define TOUCH_HOLD_TIMEOUT (50)
+ #define TOUCH_FILTER_TIMEOUT (100)
+ 
++#define TOUCH_DEAD_ZONE (8.f)
++
+ struct touch_manager {
+     struct wl_listener new_input;
+     struct wl_listener server_destroy;
+@@ -43,12 +46,19 @@ struct touch {
+     /* current gesture state per touch */
+     struct gesture_state gestures;
+     uint32_t hold_points;
++    bool client_cancelled;
+ 
+     /* hold canceled status */
+     uint32_t hold_canceled;
+ 
+     /* pinch angle */
+     double angle;
++
++    /* touch dead zone */
++    struct {
++        double x1, x2;
++        double y1, y2;
++    } dead_zone;
+ };
+ 
+ struct touch_point {
+@@ -115,25 +125,67 @@ static enum gesture_edge touch_calc_edge(struct touch *touch)
+     // TODO: edge normalize by physical size of touch
+ 
+     enum gesture_edge edge = GESTURE_EDGE_NONE;
+-    if (abs_avg_y <= 0.05) {
++    if (abs_avg_y < touch->dead_zone.y1) {
+         edge = GESTURE_EDGE_TOP;
+     }
+ 
+-    if (abs_avg_x <= 0.05) {
++    if (abs_avg_x < touch->dead_zone.x1) {
+         edge = GESTURE_EDGE_LEFT;
+     }
+ 
+-    if (abs_avg_x >= 0.95) {
++    if (abs_avg_x > touch->dead_zone.x2) {
+         edge = GESTURE_EDGE_RIGHT;
+     }
+ 
+-    if (abs_avg_y >= 0.95) {
++    if (abs_avg_y > touch->dead_zone.y2) {
+         edge = GESTURE_EDGE_BOTTOM;
+     }
+ 
+     return edge;
+ }
+ 
++static bool touch_surface_cancelled(struct touch *touch, struct touch_point *target)
++{
++    struct touch_point *point;
++    wl_list_for_each(point, &touch->points, link) {
++        if (point == target || point->touch_id < 0) {
++            break;
++        }
++        if (point->surface == target->surface) {
++            return true;
++        }
++    }
++
++    return false;
++}
++
++static void touch_cancel_client_points(struct touch *touch)
++{
++    if (touch->client_cancelled) {
++        return;
++    }
++
++    struct seat *seat = touch->input->seat;
++    struct touch_point *point;
++    wl_list_for_each(point, &touch->points, link) {
++        if (point->touch_id < 0) {
++            break;
++        }
++        if (!point->surface || touch_surface_cancelled(touch, point)) {
++            continue;
++        }
++        kywc_log(KYWC_DEBUG, "Send touch cancel to client for gesture binding: surface: %p",
++                 point->surface);
++        wlr_seat_touch_notify_cancel(seat->wlr_seat, point->surface);
++    }
++
++    // maybe send cursor button?
++    seat->cursor->touch_simulation_pointer = false;
++    seat->cursor->pointer_touch_id = -1;
++
++    touch->client_cancelled = true;
++}
++
+ static bool touch_gesture_begin(struct touch *touch, enum gesture_type gesture, uint8_t fingers)
+ {
+     struct gesture_state *state = &touch->gestures;
+@@ -148,6 +200,11 @@ static bool touch_gesture_begin(struct touch *touch, enum gesture_type gesture,
+         return false;
+     }
+ 
++    // ignore one finger
++    if (fingers != 1 && kywc_gesture_binding_check(gesture, GESTURE_DEVICE_TOUCHSCREEN, fingers)) {
++        touch_cancel_client_points(touch);
++    }
++
+     enum gesture_edge edge = touch_calc_edge(touch);
+     gesture_state_begin(state, touch->input->seat, gesture, GESTURE_DEVICE_TOUCHSCREEN, edge,
+                         fingers);
+@@ -243,6 +300,27 @@ static int touch_handle_timer(void *data)
+     return 0;
+ }
+ 
++static void touch_update_dead_zone(struct touch *touch)
++{
++    struct kywc_output *kywc_output = touch->input->mapped_output;
++    if (!kywc_output) {
++        touch->dead_zone.x1 = 0.01;
++        touch->dead_zone.x2 = 1 - touch->dead_zone.x1;
++        touch->dead_zone.y1 = 0.01;
++        touch->dead_zone.y2 = 1 - touch->dead_zone.y1;
++    } else {
++        struct output *output = output_from_kywc_output(kywc_output);
++        int width = output->geometry.width;
++        int height = output->geometry.height;
++        touch->dead_zone.x1 = TOUCH_DEAD_ZONE / width;
++        touch->dead_zone.x2 = 1 - touch->dead_zone.x1;
++        touch->dead_zone.y1 = TOUCH_DEAD_ZONE / height;
++        touch->dead_zone.y2 = 1 - touch->dead_zone.y1;
++    }
++    kywc_log(KYWC_DEBUG, "touch dead zone %lf %lf %lf %lf", touch->dead_zone.x1,
++             touch->dead_zone.x2, touch->dead_zone.y1, touch->dead_zone.y2);
++}
++
+ static void handle_new_input(struct wl_listener *listener, void *data)
+ {
+     struct touch_manager *manager = wl_container_of(listener, manager, new_input);
+@@ -274,6 +352,8 @@ static void handle_new_input(struct wl_listener *listener, void *data)
+     touch->wlr_touch->data = touch;
+     wl_list_init(&touch->points);
+ 
++    touch_update_dead_zone(touch);
++
+     gesture_state_init(&touch->gestures, display);
+ }
+ 
+@@ -434,7 +514,9 @@ static void touch_point_reset(struct touch_point *point, bool cancelled)
+                 cancelled = true;
+             }
+         }
+-        gesture_state_end(state, state->type, state->device, cancelled);
++        if (cancelled || point->touch->points_count <= 1) {
++            gesture_state_end(state, state->type, state->device, cancelled);
++        }
+     }
+ 
+     point->touch_id = -1;
+@@ -457,6 +539,7 @@ static void touch_point_reset(struct touch_point *point, bool cancelled)
+     /* last touch point up reset the hold canceled state */
+     if (!point->touch->points_count) {
+         point->touch->hold_canceled = false;
++        point->touch->client_cancelled = false;
+     }
+     /* reinsert to tail */
+     wl_list_remove(&point->link);
+@@ -488,6 +571,16 @@ bool touch_handle_down(struct wlr_touch_down_event *event)
+     point->moved = false;
+     touch->angle = 0.0;
+ 
++    if (touch->client_cancelled) {
++        return true;
++    }
++
++    touch_update_dead_zone(touch);
++    if (event->x < touch->dead_zone.x1 || event->x > touch->dead_zone.x2 ||
++        event->y < touch->dead_zone.y1 || event->y > touch->dead_zone.y2) {
++        return true;
++    }
++
+     struct wlr_surface *toplevel = NULL;
+     double sx, sy;
+     struct wlr_surface *surface = touch_get_surface(touch, &sx, &sy, &toplevel);
+@@ -676,7 +769,7 @@ void touch_handle_motion(struct wlr_touch_motion_event *event, bool handle)
+     point->directions = touch_point_calc_directions(point, dx, dy);
+ 
+     if (!touch->filter_enabled) {
+-        if (!touch->gestures.handled) {
++        if (!touch->gestures.handled && !touch->gestures.triggered) {
+             touch_gesture_detect(touch);
+         }
+         if (touch->gestures.type == GESTURE_TYPE_SWIPE) {
+@@ -694,7 +787,12 @@ void touch_handle_motion(struct wlr_touch_motion_event *event, bool handle)
+         }
+     }
+ 
+-    if (!handle || !point->surface) {
++    if (!handle || touch->client_cancelled || !point->surface) {
++        return;
++    }
++
++    if (event->x < touch->dead_zone.x1 || event->x > touch->dead_zone.x2 ||
++        event->y < touch->dead_zone.y1 || event->y > touch->dead_zone.y2) {
+         return;
+     }
+ 
+@@ -741,6 +839,7 @@ void touch_handle_up(struct wlr_touch_up_event *event, bool handle)
+         return;
+     }
+ 
++    bool client_cancelled = touch->client_cancelled;
+     struct touch_point *point = touch_point_from_id(touch, event->touch_id);
+     if (point) {
+         touch_point_reset(point, false);
+@@ -762,7 +861,7 @@ void touch_handle_up(struct wlr_touch_up_event *event, bool handle)
+         wlr_seat_pointer_notify_frame(seat->wlr_seat);
+     }
+ 
+-    if (handle) {
++    if (handle && !client_cancelled) {
+         wlr_seat_touch_notify_up(seat->wlr_seat, event->time_msec, event->touch_id);
+     }
+ }
+@@ -774,6 +873,7 @@ void touch_handle_cancel(struct wlr_touch_cancel_event *event, bool handle)
+         return;
+     }
+ 
++    bool client_cancelled = touch->client_cancelled;
+     struct touch_point *point = touch_point_from_id(touch, event->touch_id);
+     if (point) {
+         touch_point_reset(point, true);
+@@ -785,8 +885,20 @@ void touch_handle_cancel(struct wlr_touch_cancel_event *event, bool handle)
+         return;
+     }
+ 
+-    if (point && handle && point->surface) {
++    if (point && handle && !client_cancelled && point->surface) {
+         struct seat *seat = touch->input->seat;
+         wlr_seat_touch_notify_cancel(seat->wlr_seat, point->surface);
+     }
+ }
++
++void seat_cancel_touch_points(struct seat *seat)
++{
++    struct input *input;
++    wl_list_for_each(input, &seat->inputs, seat_link) {
++        if (input->prop.type == WLR_INPUT_DEVICE_TOUCH) {
++            struct wlr_touch *wlr_touch = wlr_touch_from_input_device(input->wlr_input);
++            struct touch *touch = touch_from_wlr_touch(wlr_touch);
++            touch_cancel_client_points(touch);
++        }
++    }
++}
+diff --git a/src/output/output.c b/src/output/output.c
+index 4a8297d..b83f24c 100644
+--- a/src/output/output.c
++++ b/src/output/output.c
+@@ -90,7 +90,7 @@ struct output *output_from_wlr_output(struct wlr_output *wlr_output)
+ struct output *output_from_resource(struct wl_resource *resource)
+ {
+     struct wlr_output *wlr_output = wl_resource_get_user_data(resource);
+-    return output_from_wlr_output(wlr_output);
++    return wlr_output ? output_from_wlr_output(wlr_output) : NULL;
+ }
+ 
+ void output_schedule_frame(struct wlr_output *wlr_output)
+diff --git a/src/scene/thumbnail.c b/src/scene/thumbnail.c
+index 5f8979b..868d3e2 100644
+--- a/src/scene/thumbnail.c
++++ b/src/scene/thumbnail.c
+@@ -582,9 +582,6 @@ static void view_thumbnail_destroy(struct thumbnail_buffer *thumbnail_buffer)
+     }
+ 
+     struct view_thumbnail *view_thumbnail = wl_container_of(thumbnail_buffer, view_thumbnail, base);
+-    if (view_thumbnail->view->surface_tree) {
+-        scene_node_force_damage_event(&view_thumbnail->view->surface_tree->node, false);
+-    }
+     scene_node_force_damage_event(&view_thumbnail->view->tree->node, false);
+ 
+     wl_list_remove(&view_thumbnail->view_unmap.link);
+@@ -693,19 +690,7 @@ static struct view_thumbnail *view_thumbnail_get_or_create(struct view *view, ui
+     view_thumbnail->view_unmap.notify = view_thumbnail_handle_source_destroy;
+     wl_signal_add(&view->base.events.unmap, &view_thumbnail->view_unmap);
+ 
+-    /**
+-     * when creating a view thumbnail in unmap,
+-     * only care about whether the tree node of the view are available,
+-     * not whether the surface_tree node are available.
+-     */
+-    if (view_thumbnail->view->surface_tree) {
+-        /* use surface_tree if has no server decoration */
+-        view_thumbnail->source_node =
+-            options & THUMBNAIL_DISABLE_DECOR ? &view->surface_tree->node : &view->tree->node;
+-        scene_node_force_damage_event(&view->surface_tree->node, true);
+-    } else {
+-        view_thumbnail->source_node = &view->tree->node;
+-    }
++    view_thumbnail->source_node = &view->tree->node;
+     scene_node_force_damage_event(&view->tree->node, true);
+     view_thumbnail->source_damage.notify = view_thumbnail_handle_source_damage;
+     wl_signal_add(&view_thumbnail->source_node->events.damage, &view_thumbnail->source_damage);
+diff --git a/src/security/global_filter.c b/src/security/global_filter.c
+new file mode 100644
+index 0000000..720ccc9
+--- /dev/null
++++ b/src/security/global_filter.c
+@@ -0,0 +1,106 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <assert.h>
++#include <stdlib.h>
++
++#include "security_p.h"
++#include "server.h"
++
++struct global_filter {
++    struct wl_list link;
++    struct wl_global *global;
++    security_global_filter_func_t filter;
++    void *filter_data;
++};
++
++static struct global_filter_manager {
++    struct wl_list filters;
++    struct wl_listener server_destroy;
++} *manager = NULL;
++
++static struct global_filter *global_filter_from_global(const struct wl_global *global)
++{
++    struct global_filter *global_filter;
++    wl_list_for_each(global_filter, &manager->filters, link) {
++        if (global_filter->global == global) {
++            return global_filter;
++        }
++    }
++    return NULL;
++}
++
++static bool filter_global(const struct wl_client *wl_client, const struct wl_global *wl_global,
++                          void *data)
++{
++    // TODO: add some builtin filter rules
++
++    struct global_filter *filter = global_filter_from_global(wl_global);
++    if (!filter) {
++        return true;
++    }
++
++    return filter->filter(wl_client, filter->filter_data);
++}
++
++bool security_add_global_filter(struct wl_global *global, security_global_filter_func_t filter,
++                                void *data)
++{
++    if (!manager) {
++        return false;
++    }
++
++    struct global_filter *global_filter = global_filter_from_global(global);
++    if (!global_filter) {
++        global_filter = calloc(1, sizeof(*global_filter));
++        if (!global_filter) {
++            return false;
++        }
++        wl_list_insert(&manager->filters, &global_filter->link);
++    }
++
++    global_filter->global = global;
++    global_filter->filter = filter;
++    global_filter->filter_data = data;
++
++    return true;
++}
++
++void security_remove_global_filter(struct wl_global *global)
++{
++    if (!manager) {
++        return;
++    }
++
++    struct global_filter *filter = global_filter_from_global(global);
++    if (filter) {
++        wl_list_remove(&filter->link);
++        free(filter);
++    }
++}
++
++static void handle_server_destroy(struct wl_listener *listener, void *data)
++{
++    /* global fliter should be removed when global destroy */
++    assert(wl_list_empty(&manager->filters));
++    wl_list_remove(&manager->server_destroy.link);
++    free(manager);
++    manager = NULL;
++}
++
++bool global_filter_manager_create(struct server *server)
++{
++    manager = calloc(1, sizeof(*manager));
++    if (!manager) {
++        return false;
++    }
++
++    manager->server_destroy.notify = handle_server_destroy;
++    server_add_destroy_listener(server, &manager->server_destroy);
++
++    wl_list_init(&manager->filters);
++    wl_display_set_global_filter(server->display, filter_global, NULL);
++
++    return true;
++}
+diff --git a/src/security/meson.build b/src/security/meson.build
+index 2e555d1..b6df697 100644
+--- a/src/security/meson.build
++++ b/src/security/meson.build
+@@ -1,4 +1,5 @@
+ wlcom_sources += files(
++  'global_filter.c',
+   'ky_security.c',
+   'security.c',
+   'security_context.c',
+diff --git a/src/security/security.c b/src/security/security.c
+index fdc4d2d..95c9507 100644
+--- a/src/security/security.c
++++ b/src/security/security.c
+@@ -2,146 +2,24 @@
+ //
+ // SPDX-License-Identifier: GPL-1.0-or-later
+ 
+-#define _POSIX_C_SOURCE 200809L
+-#include <assert.h>
+-#include <limits.h>
+-#include <stdio.h>
+ #include <stdlib.h>
+-#include <unistd.h>
+ 
+ #include <kywc/log.h>
+ 
+ #include "security_p.h"
+ #include "server.h"
+ 
+-struct security_global_filter {
+-    struct wl_list link;
+-    struct wl_global *global;
+-    security_global_filter_func_t filter;
+-    void *filter_data;
+-};
+-
+-struct security_manager {
+-    struct wl_listener new_client;
+-    struct wl_list global_filters;
+-    struct wl_listener display_destroy;
++static struct security_manager {
+     struct wl_listener server_destroy;
+-};
+-
+-static struct security_manager *manager = NULL;
+-
+-char *security_get_path_from_pid(pid_t pid)
+-{
+-    char link_file[32];
+-    snprintf(link_file, sizeof(link_file), "/proc/%d/exe", (int)pid);
+-
+-    char link_target[PATH_MAX];
+-    // PATH_MAX includes the terminating NULL byte
+-    ssize_t read_len = readlink(link_file, link_target, PATH_MAX - 1);
+-    if (read_len < 0) {
+-        kywc_log_errno(KYWC_ERROR, "Failed to readlink() %s", link_file);
+-        return NULL;
+-    }
+-
+-    /* should not assume that the returned contents are null-terminated */
+-    link_target[read_len] = '\0';
+-
+-    return strdup(link_target);
+-}
+-
+-static void handle_client_destroy(void *data)
+-{
+-    struct security_client *client = data;
+-    kywc_log(KYWC_DEBUG, "Client(pid=%d) %s is disconnect", client->pid, client->path);
+-    free(client->path);
+-    free(client);
+-}
+-
+-static void handle_new_client(struct wl_listener *listener, void *data)
+-{
+-    struct security_client *client = calloc(1, sizeof(*client));
+-    if (!client) {
+-        return;
+-    }
+-
+-    struct wl_client *wl_client = data;
+-    client->fd = wl_client_get_fd(wl_client);
+-    wl_client_get_credentials(wl_client, &client->pid, &client->uid, &client->gid);
+-    client->path = security_get_path_from_pid(client->pid);
+-    kywc_log(KYWC_DEBUG, "Client(pid=%d) %s is connect", client->pid, client->path);
+-
+-    client->client = wl_client;
+-    wl_client_set_user_data(wl_client, client, handle_client_destroy);
+-}
+-
+-static struct security_global_filter *global_filter_from_global(const struct wl_global *global)
+-{
+-    struct security_global_filter *global_filter;
+-    wl_list_for_each(global_filter, &manager->global_filters, link) {
+-        if (global_filter->global == global) {
+-            return global_filter;
+-        }
+-    }
+-    return NULL;
+-}
+-
+-static bool filter_global(const struct wl_client *wl_client, const struct wl_global *wl_global,
+-                          void *data)
+-{
+-    // TODO: add some builtin filter rules
+-
+-    struct security_global_filter *filter = global_filter_from_global(wl_global);
+-    if (!filter) {
+-        return true;
+-    }
+-
+-    struct security_client *client = wl_client_get_user_data((struct wl_client *)wl_client);
+-    return filter->filter(client, filter->filter_data);
+-}
+-
+-bool security_add_global_filter(struct wl_global *global, security_global_filter_func_t filter,
+-                                void *data)
+-{
+-    struct security_global_filter *global_filter = global_filter_from_global(global);
+-    if (!global_filter) {
+-        global_filter = calloc(1, sizeof(*global_filter));
+-        if (!global_filter) {
+-            return false;
+-        }
+-        wl_list_insert(&manager->global_filters, &global_filter->link);
+-    }
+-
+-    global_filter->global = global;
+-    global_filter->filter = filter;
+-    global_filter->filter_data = data;
+-
+-    return true;
+-}
+-
+-void security_remove_global_filter(struct wl_global *global)
+-{
+-    struct security_global_filter *filter = global_filter_from_global(global);
+-    if (filter) {
+-        wl_list_remove(&filter->link);
+-        free(filter);
+-    }
+-}
++} *manager = NULL;
+ 
+ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ {
+-    /* global fliter should be removed when global destroy */
+-    assert(wl_list_empty(&manager->global_filters));
+     wl_list_remove(&manager->server_destroy.link);
+     free(manager);
+     manager = NULL;
+ }
+ 
+-static void handle_display_destroy(struct wl_listener *listener, void *data)
+-{
+-    wl_list_remove(&manager->display_destroy.link);
+-    wl_list_remove(&manager->new_client.link);
+-}
+-
+ bool security_manager_create(struct server *server)
+ {
+     manager = calloc(1, sizeof(*manager));
+@@ -149,17 +27,10 @@ bool security_manager_create(struct server *server)
+         return false;
+     }
+ 
+-    manager->new_client.notify = handle_new_client;
+-    wl_display_add_client_created_listener(server->display, &manager->new_client);
+-
+-    manager->display_destroy.notify = handle_display_destroy;
+-    wl_display_add_destroy_listener(server->display, &manager->display_destroy);
+     manager->server_destroy.notify = handle_server_destroy;
+     server_add_destroy_listener(server, &manager->server_destroy);
+ 
+-    wl_list_init(&manager->global_filters);
+-    wl_display_set_global_filter(server->display, filter_global, NULL);
+-
++    global_filter_manager_create(server);
+     ky_security_manager_create(server);
+     security_context_manager_create(server->display);
+ 
+diff --git a/src/security/security_context.c b/src/security/security_context.c
+index 66d1035..090f8b7 100644
+--- a/src/security/security_context.c
++++ b/src/security/security_context.c
+@@ -117,14 +117,14 @@ static void security_context_client_handle_destroy(struct wl_listener *listener,
+ }
+ 
+ const struct security_context_state *
+-security_context_manager_lookup_client(struct wl_client *client)
++security_context_manager_lookup_client(const struct wl_client *client)
+ {
+     if (!manager) {
+         return NULL;
+     }
+ 
+-    struct wl_listener *listener =
+-        wl_client_get_destroy_listener(client, security_context_client_handle_destroy);
++    struct wl_listener *listener = wl_client_get_destroy_listener(
++        (struct wl_client *)client, security_context_client_handle_destroy);
+     if (!listener) {
+         return NULL;
+     }
+@@ -399,10 +399,9 @@ static void handle_display_destroy(struct wl_listener *listener, void *data)
+     manager = NULL;
+ }
+ 
+-static bool security_context_filter_global(const struct security_client *client, void *data)
++static bool security_context_filter_global(const struct wl_client *client, void *data)
+ {
+-    const struct security_context_state *state =
+-        security_context_manager_lookup_client(client->client);
++    const struct security_context_state *state = security_context_manager_lookup_client(client);
+     return state == NULL;
+ }
+ 
+diff --git a/src/security/security_p.h b/src/security/security_p.h
+index 99db436..3362140 100644
+--- a/src/security/security_p.h
++++ b/src/security/security_p.h
+@@ -7,6 +7,8 @@
+ 
+ #include "security.h"
+ 
++bool global_filter_manager_create(struct server *server);
++
+ bool ky_security_manager_create(struct server *server);
+ 
+ bool security_context_manager_create(struct wl_display *display);
+diff --git a/src/util/client.c b/src/util/client.c
+new file mode 100644
+index 0000000..9e8def4
+--- /dev/null
++++ b/src/util/client.c
+@@ -0,0 +1,96 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#define _POSIX_C_SOURCE 200809L
++#include <limits.h>
++#include <stdio.h>
++#include <unistd.h>
++
++#include <kywc/log.h>
++
++#include "util/client.h"
++#include "util/string.h"
++#include "util/sysfs.h"
++
++char *client_get_exe(pid_t pid)
++{
++    char link_file[64];
++    snprintf(link_file, sizeof(link_file), "/proc/%d/exe", (int)pid);
++
++    char link_target[PATH_MAX];
++    // PATH_MAX includes the terminating NULL byte
++    ssize_t read_len = readlink(link_file, link_target, sizeof(link_target) - 1);
++    if (read_len < 0) {
++        kywc_log_errno(KYWC_ERROR, "Failed to readlink() %s", link_file);
++        return NULL;
++    }
++
++    /* should not assume that the returned contents are null-terminated */
++    link_target[read_len] = '\0';
++
++    return strdup(link_target);
++}
++
++char *client_get_comm(pid_t pid)
++{
++    char file[64];
++    snprintf(file, sizeof(file), "/proc/%d/comm", (int)pid);
++
++    char comm[128];
++    size_t read_len = sysfs_read_data(file, comm, sizeof(comm) - 1);
++    if (read_len == 0) {
++        return NULL;
++    }
++
++    comm[read_len] = '\0';
++    string_strip_space(comm);
++
++    return strdup(comm);
++}
++
++pid_t client_get_parent(pid_t pid)
++{
++    char path[64];
++    snprintf(path, sizeof(path), "/proc/%d/status", pid);
++
++    FILE *file = fopen(path, "r");
++    if (!file) {
++        kywc_log_errno(KYWC_ERROR, "Failed to open %s", path);
++        return -1;
++    }
++
++    char line[256];
++    pid_t ppid = -1;
++
++    while (fgets(line, sizeof(line), file)) {
++        if (strncmp(line, "PPid:", 5) == 0) {
++            sscanf(line + 5, "%d", &ppid);
++            break;
++        }
++    }
++
++    fclose(file);
++    return ppid;
++}
++
++pid_t client_get_ancestor(pid_t pid)
++{
++    if (pid <= 1) {
++        return pid < 1 ? -1 : pid;
++    }
++
++    pid_t current = pid;
++    pid_t parent;
++
++    while (1) {
++        parent = client_get_parent(current);
++        if (parent == -1) {
++            return -1;
++        }
++        if (parent <= 1) {
++            return current;
++        }
++        current = parent;
++    }
++}
+diff --git a/src/util/meson.build b/src/util/meson.build
+index 2dc3514..01418fd 100644
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -30,6 +30,7 @@ wlcom_deps += crypto
+ 
+ wlcom_sources += util_sources
+ wlcom_sources += files(
++  'client.c',
+   'dbus.c',
+   'debug.c',
+   'drm_format.c',
+diff --git a/src/view/action.c b/src/view/action.c
+index 629af9d..437e560 100644
+--- a/src/view/action.c
++++ b/src/view/action.c
+@@ -383,11 +383,7 @@ static bool view_manager_handle_special_function(enum function_id id, enum gestu
+         }
+         return true;
+     case FUNC_ID_RESTORE_DESKTOP_WINDOWS:
+-        if (stage != GESTURE_STAGE_NONE) {
+-            view_manager_show_activated_only(false, true);
+-        } else {
+-            view_manager_show_desktop(false, true);
+-        }
++        view_manager_show_desktop(false, true);
+         return true;
+     case FUNC_ID_HIDE_INACTIVE_WINDOWS:
+         view_manager_show_activated_only(true, true);
+@@ -462,7 +458,7 @@ bool window_actions_create(struct view_manager *view_manager)
+     for (size_t i = 0; i < ARRAY_SIZE(window_shortcuts); i++) {
+         struct window_shortcut *shortcut = &window_shortcuts[i];
+         struct key_binding *binding =
+-            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id);
++            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id, 0);
+         if (!binding) {
+             continue;
+         }
+@@ -604,7 +600,7 @@ bool view_manager_actions_create(struct view_manager *view_manager)
+     for (size_t i = 0; i < ARRAY_SIZE(shortcuts); i++) {
+         struct shortcut *shortcut = &shortcuts[i];
+         struct key_binding *binding =
+-            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id);
++            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id, 0);
+         if (!binding) {
+             continue;
+         }
+diff --git a/src/view/interactive.c b/src/view/interactive.c
+index 5e58d04..466dcb7 100644
+--- a/src/view/interactive.c
++++ b/src/view/interactive.c
+@@ -1074,20 +1074,11 @@ static const struct seat_keyboard_grab_interface keyboard_grab_impl = {
+ 
+ static bool touch_grab_touch(struct seat_touch_grab *touch_grab, uint32_t time, bool down)
+ {
+-    if (down) {
+-        return true;
++    if (!down) {
++        struct interactive_grab *grab = touch_grab->data;
++        interactive_done(grab);
+     }
+-
+-    struct interactive_grab *grab = touch_grab->data;
+-    /**
+-     * When touching on a surface, the pointer event is not simulated and the focus is not
+-     * updated. It will call the motion of the pointer and update the hover. Use hover to
+-     * determine whether it is on the surface.
+-     * */
+-    bool on_surface =
+-        grab->seat->cursor->hover.node && wlr_surface_try_from_node(grab->seat->cursor->hover.node);
+-    interactive_done(grab);
+-    return !on_surface;
++    return true;
+ }
+ 
+ static bool touch_grab_motion(struct seat_touch_grab *touch_grab, uint32_t time, double lx,
+diff --git a/src/view/maximize_switcher.c b/src/view/maximize_switcher.c
+index 1649977..0c4c462 100644
+--- a/src/view/maximize_switcher.c
++++ b/src/view/maximize_switcher.c
+@@ -635,7 +635,7 @@ bool maximize_switcher_create(struct view_manager *view_manager)
+     for (size_t i = 0; i < ARRAY_SIZE(shortcuts); i++) {
+         struct shortcut *shortcut = &shortcuts[i];
+         struct key_binding *binding =
+-            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id);
++            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id, 0);
+         if (!binding) {
+             continue;
+         }
+diff --git a/src/view/tile/tile_manager.c b/src/view/tile/tile_manager.c
+index 06dcf0e..1810953 100644
+--- a/src/view/tile/tile_manager.c
++++ b/src/view/tile/tile_manager.c
+@@ -53,6 +53,7 @@ static void tile_view_fix_geometry(struct view *view, struct kywc_box *geo,
+     proxy->item->kywc_output = kywc_output;
+     struct output *new_output = output_from_kywc_output(kywc_output);
+     struct kywc_box *dst_box = &new_output->usable_area;
++    struct kywc_box old_geo = *geo;
+     geo->width = round(dst_box->width * proxy->item->ratio_w) - kywc_view->margin.off_width;
+     geo->height = round(dst_box->height * proxy->item->ratio_h) - kywc_view->margin.off_height;
+     geo->x = dst_box->x + round(proxy->item->ratio_x * dst_box->width) + kywc_view->margin.off_x;
+@@ -63,6 +64,15 @@ static void tile_view_fix_geometry(struct view *view, struct kywc_box *geo,
+ 
+     geo->x = MIN(geo->x, dst_box->x + dst_box->width - geo->width);
+     geo->y = MIN(geo->y, dst_box->y + dst_box->height - geo->height);
++
++    if (kywc_output == view->output) {
++        if (old_geo.width != geo->width || old_geo.height != geo->height) {
++            proxy->item->skip_size_update = true;
++        }
++        if (old_geo.x != geo->x || old_geo.y != geo->y) {
++            proxy->item->skip_pos_update = true;
++        }
++    }
+ }
+ 
+ static void get_view_geometry(struct view *view, struct kywc_box *geo);
+@@ -785,13 +795,13 @@ static void handle_view_tile(struct wl_listener *listener, void *data)
+     struct tiled_item *item = wl_container_of(listener, item, view_tile);
+ 
+     remove_all_item_proxy(item);
++    scene_node_set_enabled(&item->view->tree->node, true);
++
+     if (!view_need_tile_managerd(item->view)) {
+         struct tiled_output *tiled_output = tiled_output_from_kywc_output(item->view->output);
+         tiled_output->in_assist = false;
+         return;
+     }
+-
+-    scene_node_set_enabled(&item->view->tree->node, true);
+     item_ratio_update(item, RATIO_ALL);
+ 
+     update_all_item_proxy(item);
+@@ -874,7 +884,8 @@ static void handle_view_size(struct wl_listener *listener, void *data)
+         return;
+     }
+ 
+-    if (item->kywc_output != item->view->output) {
++    if (item->kywc_output != item->view->output || item->skip_size_update) {
++        item->skip_size_update = false;
+         return;
+     }
+ 
+@@ -890,6 +901,11 @@ static void handle_view_position(struct wl_listener *listener, void *data)
+         return;
+     }
+ 
++    if (item->skip_pos_update) {
++        item->skip_pos_update = false;
++        return;
++    }
++
+     item_ratio_update(item, item->view->pending.configure_action & VIEW_ACTION_RESIZE
+                                 ? RATIO_POSITION
+                                 : RATIO_ALL);
+diff --git a/src/view/tile/tile_manager_p.h b/src/view/tile/tile_manager_p.h
+index 19675ff..548d7b9 100644
+--- a/src/view/tile/tile_manager_p.h
++++ b/src/view/tile/tile_manager_p.h
+@@ -31,6 +31,7 @@ struct tiled_item {
+     struct wl_list item_proxys;
+     struct kywc_output *kywc_output;
+ 
++    bool skip_pos_update, skip_size_update;
+     float ratio_x;
+     float ratio_y;
+     float ratio_w;
+diff --git a/src/view/ukui_shell.c b/src/view/ukui_shell.c
+index 7230a35..f078e75 100644
+--- a/src/view/ukui_shell.c
++++ b/src/view/ukui_shell.c
+@@ -350,10 +350,16 @@ static void ukui_surface_set_state(struct ukui_surface *surface, enum surface_st
+     case STATE_FLAG_MOVABLE:
+         surface->movable = state;
+         mask |= KYWC_VIEW_MOVABLE;
++        if (!surface->movable && surface->view->base.tiled) {
++            kywc_view_set_tiled(&surface->view->base, KYWC_TILE_NONE, NULL);
++        }
+         break;
+     case STATE_FLAG_RESIZABLE:
+         surface->resizable = state;
+         mask |= KYWC_VIEW_RESIZABLE;
++        if (!surface->resizable && surface->view->base.tiled) {
++            kywc_view_set_tiled(&surface->view->base, KYWC_TILE_NONE, NULL);
++        }
+         break;
+     case STATE_FLAG_FOCUSABLE:
+         surface->focusable = state;
+diff --git a/src/view/ukui_startup.c b/src/view/ukui_startup.c
+index 8d6e9c2..91c3086 100644
+--- a/src/view/ukui_startup.c
++++ b/src/view/ukui_startup.c
+@@ -3,14 +3,15 @@
+ // SPDX-License-Identifier: GPL-1.0-or-later
+ 
+ #define _POSIX_C_SOURCE 200809L
+-#include <stdio.h>
+ #include <stdlib.h>
+ #include <strings.h>
+ 
+-#include "ukui-startup-v2-protocol.h"
++#include "util/client.h"
+ #include "util/time.h"
+ #include "view_p.h"
+ 
++#include "ukui-startup-v2-protocol.h"
++
+ #define UKUI_STARTUP_V2_VERSION 1
+ #define DEFAULT_RETIRE_TIME 5000
+ 
+@@ -35,31 +36,6 @@ struct ukui_startup_info {
+ 
+ static struct ukui_startup_management *management = NULL;
+ 
+-static pid_t get_parent_pid(pid_t pid)
+-{
+-    int ppid;
+-    char path[256];
+-    char line[256];
+-    snprintf(path, sizeof(path), "/proc/%d/status", pid);
+-
+-    FILE *file = fopen(path, "r");
+-    if (!file) {
+-        kywc_log(KYWC_ERROR, "Failed to open /proc/[pid]/status");
+-        return -1;
+-    }
+-
+-    while (fgets(line, sizeof(line), file)) {
+-        if (strncmp(line, "PPid:", 5) == 0) {
+-            sscanf(line, "PPid: %d", &ppid);
+-            fclose(file);
+-            return ppid;
+-        }
+-    }
+-
+-    fclose(file);
+-    return -1;
+-}
+-
+ static void ukui_startup_info_destroy(struct ukui_startup_info *info)
+ {
+     /* resource may be destroyed in destroy request */
+@@ -83,7 +59,7 @@ static void ukui_get_startup_geometry_recursive(pid_t pid, struct view *view)
+         }
+     }
+ 
+-    pid_t parent_pid = get_parent_pid(pid);
++    pid_t parent_pid = client_get_parent(pid);
+     /* init/systemd (PID=1) */
+     if (parent_pid > 1) {
+         ukui_get_startup_geometry_recursive(parent_pid, view);
+diff --git a/src/view/workspace.c b/src/view/workspace.c
+index 9750aac..530520c 100644
+--- a/src/view/workspace.c
++++ b/src/view/workspace.c
+@@ -167,43 +167,66 @@ static struct gesture {
+     },
+ };
+ 
+-static void workspace_manager_switch_by_gesture(enum gesture_stage stage,
+-                                                enum gesture_device device,
+-                                                enum gesture_direction binding_direction,
+-                                                enum gesture_direction follow_direction, double dx,
+-                                                double dy, enum direction switch_direction)
++static bool workspace_gesture_get_offset(enum gesture_stage stage, enum gesture_device device,
++                                         enum gesture_direction binding_direction,
++                                         enum gesture_direction follow_direction, double dx,
++                                         double dy, enum gesture_direction *gesture_direction,
++                                         float *offset)
+ {
+-    enum gesture_direction gesture_direction =
++    *gesture_direction =
+         follow_direction != GESTURE_DIRECTION_NONE ? follow_direction : binding_direction;
+-    float percent = 0.0f;
+-    switch (gesture_direction) {
++    *offset = 0.0f;
++
++    switch (*gesture_direction) {
+     case GESTURE_DIRECTION_LEFT:
+     case GESTURE_DIRECTION_RIGHT:
+-        percent = -dx / (device == GESTURE_DEVICE_TOUCHPAD ? 300.0 : 0.2);
++        *offset = -dx / (device == GESTURE_DEVICE_TOUCHPAD ? 300.0 : 0.2);
+         break;
+     case GESTURE_DIRECTION_UP:
+     case GESTURE_DIRECTION_DOWN:
+-        percent = -dy / (device == GESTURE_DEVICE_TOUCHPAD ? 300.0 : 0.2);
++        *offset = -dy / (device == GESTURE_DEVICE_TOUCHPAD ? 300.0 : 0.2);
+         break;
+     case GESTURE_DIRECTION_NONE:
+         if (stage != GESTURE_STAGE_STOP) {
+-            return;
++            return false;
+         }
+         break;
+     default:
+-        return;
++        return false;
+     }
+ 
+-    enum direction direct = switch_direction;
+-    bool can_switch = workspace_manager_can_switch_direction(direct);
++    return true;
++}
++
++static enum direction workspace_gesture_direction_from_offset(float offset,
++                                                              enum direction default_direction)
++{
++    if (offset < 0.0f) {
++        return DIRECTION_LEFT;
++    } else if (offset > 0.0f) {
++        return DIRECTION_RIGHT;
++    }
++
++    return default_direction;
++}
+ 
+-    float manual_offset = percent;
+-    if (direct == DIRECTION_LEFT && manual_offset > 0.0f) {
+-        manual_offset = -manual_offset;
+-    } else if (direct == DIRECTION_RIGHT && manual_offset < 0.0f) {
+-        manual_offset = -manual_offset;
++static void workspace_manager_switch_by_gesture(enum gesture_stage stage,
++                                                enum gesture_device device,
++                                                enum gesture_direction binding_direction,
++                                                enum gesture_direction follow_direction, double dx,
++                                                double dy, enum direction switch_direction)
++{
++    enum gesture_direction gesture_direction;
++    float manual_offset;
++    if (!workspace_gesture_get_offset(stage, device, binding_direction, follow_direction, dx, dy,
++                                      &gesture_direction, &manual_offset)) {
++        return;
+     }
+ 
++    enum direction direct =
++        workspace_gesture_direction_from_offset(manual_offset, switch_direction);
++    bool can_switch = workspace_manager_can_switch_direction(direct);
++
+     if (!can_switch) {
+         manual_offset *= TRANSLATION_EDGE_OFFSET_SCALE;
+         if (stage == GESTURE_STAGE_STOP) {
+@@ -236,8 +259,8 @@ static void workspace_manager_switch_by_gesture(enum gesture_stage stage,
+             }
+             kywc_log(KYWC_DEBUG,
+                      "Workspace manual translation direct: %d, gesture = %d, dx = %f, dy = %f, "
+-                     "percent = %f",
+-                     direct, gesture_direction, dx, dy, percent);
++                     "offset = %f",
++                     direct, gesture_direction, dx, dy, manual_offset);
+         }
+ 
+         workspace_translation_manual(workspace_manager->translation, direct, manual_offset);
+@@ -245,11 +268,11 @@ static void workspace_manager_switch_by_gesture(enum gesture_stage stage,
+         if (workspace_manager->translation) {
+             workspace_translation_manual(workspace_manager->translation, direct, manual_offset);
+         } else {
+-            workspace_manager_switch_to(switch_direction);
++            workspace_manager_switch_to(direct);
+             kywc_log(KYWC_DEBUG,
+-                     "Workspace auto translation direct: %d, gesture = %d, dx = %f, dy = %f, "
+-                     "percent = %f",
+-                     direct, gesture_direction, dx, dy, percent);
++                     "Workspace auto translation direct: %d, switch = %d, gesture = %d, dx = %f, "
++                     "dy = %f, offset = %f",
++                     direct, switch_direction, gesture_direction, dx, dy, manual_offset);
+         }
+     } else if (stage == GESTURE_STAGE_AFTER && workspace_manager->translation) {
+         workspace_translation_manual(workspace_manager->translation, direct, manual_offset);
+@@ -314,7 +337,7 @@ static void workspace_register_shortcut(void)
+     for (size_t i = 0; i < ARRAY_SIZE(shortcuts); i++) {
+         struct shortcut *shortcut = &shortcuts[i];
+         struct key_binding *binding =
+-            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id);
++            kywc_key_binding_create(shortcut->keybind, shortcut->desc, shortcut->func_id, 0);
+         if (!binding) {
+             continue;
+         }
+@@ -596,7 +619,7 @@ static void fix_workspace(struct workspace *workspace)
+ 
+     /* move all views to activate workspace */
+     struct view_proxy *view_proxy, *tmp;
+-    wl_list_for_each_safe(view_proxy, tmp, &workspace->view_proxies, workspace_link) {
++    wl_list_for_each_reverse_safe(view_proxy, tmp, &workspace->view_proxies, workspace_link) {
+         struct view_proxy *new_proxy = view_add_workspace(view_proxy->view, activate_workspace);
+         if (new_proxy) {
+             view_set_current_proxy(view_proxy->view, new_proxy);
+diff --git a/src/view/xdg_shell.c b/src/view/xdg_shell.c
+index 7d8527f..daa45e9 100644
+--- a/src/view/xdg_shell.c
++++ b/src/view/xdg_shell.c
+@@ -6,15 +6,15 @@
+ #include <assert.h>
+ #include <float.h>
+ #include <stdlib.h>
++
+ #include <wlr/types/wlr_xdg_shell.h>
+ 
+ #include "effect/scale.h"
+ #include "input/event.h"
+ #include "output.h"
+ #include "scene/xdg_shell.h"
+-#include "security.h"
++#include "util/client.h"
+ #include "util/macros.h"
+-#include "util/string.h"
+ #include "view/action.h"
+ #include "view_p.h"
+ 
+@@ -539,7 +539,6 @@ static void xdg_view_handle_map(struct wl_listener *listener, void *data)
+ {
+     struct xdg_view *xdg_view = wl_container_of(listener, xdg_view, map);
+     struct wlr_xdg_surface *wlr_xdg_surface = xdg_view->wlr_xdg_surface;
+-    struct wlr_surface *wlr_surface = wlr_xdg_surface->surface;
+     struct wlr_xdg_toplevel *toplevel = wlr_xdg_surface->toplevel;
+     struct kywc_view *kywc_view = &xdg_view->view.base;
+ 
+@@ -582,15 +581,6 @@ static void xdg_view_handle_map(struct wl_listener *listener, void *data)
+     xdg_view->new_popup.notify = xdg_view_handle_new_popup;
+     wl_signal_add(&wlr_xdg_surface->events.new_popup, &xdg_view->new_popup);
+ 
+-    struct wl_client *client = wl_resource_get_client(wlr_surface->resource);
+-    wl_client_get_credentials(client, &xdg_view->view.pid, NULL, NULL);
+-    struct security_client *security_client = wl_client_get_user_data(client);
+-    char *exec_path = security_client->path ? strdup(security_client->path) : NULL;
+-    if (exec_path) {
+-        string_strip_path(exec_path);
+-        xdg_view->view.base.exec = exec_path;
+-    }
+-
+     view_map(&xdg_view->view);
+ }
+ 
+@@ -640,6 +630,11 @@ static void handle_new_xdg_toplevel(struct wl_listener *listener, void *data)
+ 
+     struct wlr_xdg_surface *wlr_xdg_surface = wlr_xdg_toplevel->base;
+     xdg_view->view.surface = wlr_xdg_surface->surface;
++
++    struct wl_client *client = wl_resource_get_client(wlr_xdg_toplevel->resource);
++    wl_client_get_credentials(client, &xdg_view->view.pid, NULL, NULL);
++    xdg_view->view.base.exec = client_get_comm(xdg_view->view.pid);
++
+     view_init(&xdg_view->view, &xdg_surface_impl, xdg_view);
+ 
+     xdg_view->wlr_xdg_surface = wlr_xdg_surface;
+diff --git a/src/xwayland/view.c b/src/xwayland/view.c
+index 4000b8f..01154c0 100644
+--- a/src/xwayland/view.c
++++ b/src/xwayland/view.c
+@@ -15,10 +15,9 @@
+ #include "output.h"
+ #include "painter.h"
+ #include "scene/surface.h"
+-#include "security.h"
+ #include "theme.h"
++#include "util/client.h"
+ #include "util/macros.h"
+-#include "util/string.h"
+ #include "view/action.h"
+ #include "view/workspace.h"
+ #include "xwayland_p.h"
+@@ -853,7 +852,7 @@ static void xwayland_view_apply_type(struct xwayland_view *xwayland_view)
+         removed_from_workspace = true;
+     } else if (xwayland_surface_has_type(surface, NET_WM_WINDOW_TYPE_DOCK)) {
+         layer = view_manager_get_layer(LAYER_DOCK, false);
+-        xwayland_view->focusable = xwayland_view->activatable = xwayland_view->resizable = false;
++        xwayland_view->focusable = xwayland_view->resizable = false;
+         view_update_capabilities(&xwayland_view->view,
+                                  KYWC_VIEW_FOCUSABLE | KYWC_VIEW_ACTIVATABLE | KYWC_VIEW_RESIZABLE);
+         xwayland_view->view.base.role = KYWC_VIEW_ROLE_PANEL;
+@@ -1032,13 +1031,6 @@ static void xwayland_view_handle_map(struct wl_listener *listener, void *data)
+ 
+     xwayland_view_fixup_geometry(xwayland_view);
+ 
+-    xwayland_view->view.pid = wlr_xwayland_surface->pid;
+-    char *exec_path = security_get_path_from_pid(xwayland_view->view.pid);
+-    if (exec_path) {
+-        string_strip_path(exec_path);
+-        xwayland_view->view.base.exec = exec_path;
+-    }
+-
+     bool modal = wlr_xwayland_surface->modal;
+     if (modal && wlr_xwayland_surface->parent) {
+         modal = xwayland_view_fixup_parent(xwayland_view);
+@@ -1326,6 +1318,10 @@ void xwayland_view_create(struct xwayland_server *xwayland,
+ 
+     xwayland_view->xwayland = xwayland;
+     wl_list_insert(&xwayland->surfaces, &xwayland_view->link);
++
++    xwayland_view->view.pid = wlr_xwayland_surface->pid;
++    xwayland_view->view.base.exec = client_get_comm(xwayland_view->view.pid);
++
+     view_init(&xwayland_view->view, &xwl_surface_impl, xwayland_view);
+ 
+     xwayland_view->wlr_xwayland_surface = wlr_xwayland_surface;
+diff --git a/src/xwayland/xwayland.c b/src/xwayland/xwayland.c
+index cfef8c7..a7437d8 100644
+--- a/src/xwayland/xwayland.c
++++ b/src/xwayland/xwayland.c
+@@ -453,10 +453,10 @@ static void handle_server_destroy(struct wl_listener *listener, void *data)
+     xwayland = NULL;
+ }
+ 
+-static bool xwayland_filter_global(const struct security_client *client, void *data)
++static bool xwayland_filter_global(const struct wl_client *client, void *data)
+ {
+     /* only expose this global to Xwayland clients */
+-    return xwayland_check_client(client->client);
++    return xwayland_check_client(client);
+ }
+ 
+ xcb_sync_counter_t xwayland_get_sync_counter(xcb_window_t window_id)
+diff --git a/tools/wlcctrl/main.c b/tools/wlcctrl/main.c
+index 143c9a4..e21562e 100644
+--- a/tools/wlcctrl/main.c
++++ b/tools/wlcctrl/main.c
+@@ -352,6 +352,7 @@ static void workspace_action(struct wlcom_ctrl_manager *manager)
+         if (!options.param) {
+             kywc_workspace_create(manager->kywc_ctx, NULL, options.workspace_num);
+             options.workspace_num++;
++            fprintf(stdout, "Successfully added a new workspace.\n");
+         } else if (sscanf(options.param, "%u", &num) != 1) {
+             fprintf(stderr, "The --workspaceadd option expects an integer.\n");
+         } else if ((options.workspace_num + num) > MAX_WORKSPACES) {
+@@ -360,6 +361,7 @@ static void workspace_action(struct wlcom_ctrl_manager *manager)
+             for (unsigned int i = 0; i < num; i++) {
+                 kywc_workspace_create(manager->kywc_ctx, NULL, options.workspace_num + i);
+             }
++            fprintf(stdout, "Successfully added %d new workspaces.\n", num);
+         }
+         return;
+     }
+@@ -647,7 +649,7 @@ static const struct option long_options[] = {
+ 
+     { "workspace", no_argument, 0, 0 },
+     { "workspacecapture", required_argument, 0, 0 }, // uuid
+-    { "workspaceadd", optional_argument, 0, 0 },
++    { "workspaceadd", required_argument, 0, 0 },
+     { "workspaceremove", required_argument, 0, 0 },
+     { "workspaceactive", required_argument, 0, 0 },
+ 
+@@ -827,6 +829,7 @@ int main(int argc, char *argv[])
+     kywc_context_process(ctx);
+ 
+     int option_index = -1, opt_count = 0, opt;
++    const char *name;
+     while ((opt = getopt_long(argc, argv, "lo:x:y:S:w:h:v", long_options, &option_index)) != -1) {
+         switch (opt) {
+         case 'l':
+@@ -851,11 +854,20 @@ int main(int argc, char *argv[])
+             printf("wlcctrl v%d.%d.%d\n", WLCCTRL_MAJOR, WLCCTRL_MINOR, WLCCTRL_PATH);
+             return EXIT_SUCCESS;
+         case '?':
++            if (optopt == 0) {
++                if (argv[optind - 1] && strcmp(argv[optind - 1], "--workspaceadd") == 0) {
++                    optarg = "1";
++                    opt = 0;
++                    name = "workspaceadd";
++                    goto default_handle;
++                }
++            }
+             printf("%s", usage);
+             goto end;
+         case 0:
+-            const char *name = long_options[option_index].name;
++            name = long_options[option_index].name;
+ 
++        default_handle:
+             if (strncmp(argv[optind - 1], "--", 2) == 0) {
+                 const char *provided_arg = argv[optind - 1] + 2;
+                 if (strcmp(provided_arg, name) != 0) {

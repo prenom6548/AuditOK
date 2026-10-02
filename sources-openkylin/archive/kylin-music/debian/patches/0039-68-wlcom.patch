@@ -1,0 +1,348 @@
+From: zhoudisi <zhoudisi@kylinos.cn>
+Date: Tue, 23 Apr 2024 01:37:07 +0000
+Subject: =?utf-8?q?!68_wlcom=E9=80=82=E9=85=8D_Merge_pull_request_!68_from_?=
+ =?utf-8?q?zhoudisi/openkylin/nile?=
+
+---
+ UI/mainwidget.cpp             | 16 +++++++++++-----
+ UI/player/miniwidget.cpp      |  5 +++++
+ UI/player/miniwidget.h        |  3 ++-
+ UI/player/searchedit.cpp      |  5 ++++-
+ UI/sidebar/sidebarwidget.cpp  |  6 ++++--
+ UI/tableview/tablehistory.cpp |  4 ++++
+ UI/tableview/tableone.cpp     | 38 +++++++++++++++++++++++++++++++++++---
+ UI/titlebar/menumodule.cpp    | 43 ++++++++++++++-----------------------------
+ 8 files changed, 79 insertions(+), 41 deletions(-)
+
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index 5797c71..645c957 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -292,11 +292,19 @@ int Widget::kylin_music_play_request(QString cmd1, QString cmd2, QString cmd3)
+     //无参数，单例触发
+     if(!this->isActiveWindow())
+     {
+-        KWindowSystem::forceActiveWindow(this->winId());
++        if (Global::isWayland) {
++            kdk::WindowManager::activateWindow(this->winId());
++        }else{
++            KWindowSystem::forceActiveWindow(this->winId());
++        }
+     }
+     if(!m_miniWidget->isActiveWindow())
+     {
+-        KWindowSystem::forceActiveWindow(m_miniWidget->winId());
++        if (Global::isWayland) {
++            kdk::WindowManager::activateWindow(m_miniWidget->getWindowId());
++        }else{
++            KWindowSystem::forceActiveWindow(m_miniWidget->winId());
++        }
+     }
+     if(isFirstObject&&!QFileInfo::exists(cmd1))
+     {
+@@ -1095,9 +1103,7 @@ void Widget::slotShowMiniWidget()
+         kdk::WindowManager::setGeometry(m_miniWidget->windowHandle(), QRect((sw-m_miniWidget->width())/2, (sh-m_miniWidget->height())/2, m_miniWidget->width(),m_miniWidget->height() ));
+     }
+ 
+-    m_miniWidget->activateWindow();
+-//    animation->start(QAbstractAnimation::DeleteWhenStopped);
+-//    animation_mini->start(QAbstractAnimation::DeleteWhenStopped);
++    kdk::WindowManager::activateWindow(m_miniWidget->getWindowId());
+ }
+ 
+ void Widget::moveWidget(QString newWidth, QString newHeight)
+diff --git a/UI/player/miniwidget.cpp b/UI/player/miniwidget.cpp
+index ba1a405..96ba9fa 100644
+--- a/UI/player/miniwidget.cpp
++++ b/UI/player/miniwidget.cpp
+@@ -845,3 +845,8 @@ void miniWidget::songText(QString songName)
+         m_songNameLab->setToolTip(songName);
+     }
+ }
++
++quint32 miniWidget::getWindowId()
++{
++    return m_window_id;
++}
+diff --git a/UI/player/miniwidget.h b/UI/player/miniwidget.h
+index 9b32be8..9c3bd74 100644
+--- a/UI/player/miniwidget.h
++++ b/UI/player/miniwidget.h
+@@ -52,6 +52,7 @@ public:
+     void leaveEvent(QEvent*);
+ 
+     void songText(QString songName); //mini 正在播放
++    quint32 getWindowId();
+ protected:
+     void keyPressEvent(QKeyEvent *event) Q_DECL_OVERRIDE;
+ Q_SIGNALS:
+@@ -79,7 +80,7 @@ Q_SIGNALS:
+     void changePlaybackMode(int mode);
+ 
+ private:
+-    quint64 m_window_id;
++    quint32 m_window_id;
+     PlaybackMode m_playbackMode = Loop; //当前列表的循环模式
+     void initAction();
+     void initConnect();
+diff --git a/UI/player/searchedit.cpp b/UI/player/searchedit.cpp
+index 3d4f340..3114e96 100644
+--- a/UI/player/searchedit.cpp
++++ b/UI/player/searchedit.cpp
+@@ -128,7 +128,10 @@ void SearchEdit::setWidget(QWidget *mainWidget)
+ 
+ void SearchEdit::moveSearchResult()
+ {
++    kdk::UkuiStyleHelper::self()->removeHeader(m_result);
+     m_result->show();
++    kdk::WindowManager::setSkipSwitcher(m_result->windowHandle(),true);
++    kdk::WindowManager::setSkipTaskBar(m_result->windowHandle(),true);
+ //    m_result->raise();
+     m_result->setFixedWidth(240);
+ 
+@@ -146,7 +149,7 @@ void SearchEdit::moveSearchResult()
+         kdk::WindowManager::setGeometry(m_result->windowHandle(), QRect(newPosX, newPosY + 12 + editSize.height() *2 , editSize.width(), editSize.height()));
+     } else {
+         m_result->move(resultPos);
+-
++        kdk::WindowManager::setGeometry(m_result->windowHandle(),m_result->geometry());
+     }
+ 
+ }
+diff --git a/UI/sidebar/sidebarwidget.cpp b/UI/sidebar/sidebarwidget.cpp
+index 0be3fd2..e3cb248 100644
+--- a/UI/sidebar/sidebarwidget.cpp
++++ b/UI/sidebar/sidebarwidget.cpp
+@@ -5,6 +5,8 @@
+ #include "UI/mainwidget.h"
+ #include <ukui-log4qt.h>
+ #include "UI/globalsignal.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
+ 
+ SideBarWidget::SideBarWidget(QWidget *parent) : LeftsiderbarWidget(parent)
+ {
+@@ -282,8 +284,8 @@ void SideBarWidget::addPlayList()
+ {
+     newSonglistPup->confirmBtn->setDisabled(true);
+     newSonglistPup->enterLineEdit->clear();
+-    QRect availableGeometry = Widget::mutual->geometry();
+-    newSonglistPup->move(availableGeometry.center() - newSonglistPup->rect().center());
++    newSonglistPup->move(Widget::mutual->width()/2-newSonglistPup->width()/2+Widget::mutual->x(),Widget::mutual->height()/2-newSonglistPup->height()/2-18+Widget::mutual->y());
++    kdk::WindowManager::setGeometry(newSonglistPup->windowHandle(),newSonglistPup->geometry());
+     newSonglistPup->show();
+     newSonglistPup->enterLineEdit->setFocus();
+ }
+diff --git a/UI/tableview/tablehistory.cpp b/UI/tableview/tablehistory.cpp
+index 84cddfa..53b96cb 100644
+--- a/UI/tableview/tablehistory.cpp
++++ b/UI/tableview/tablehistory.cpp
+@@ -2,6 +2,8 @@
+ #include "UI/mainwidget.h"
+ #include "UI/base/widgetstyle.h"
+ #include "UIControl/global/global.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
+ 
+ #define PT_15 15
+ 
+@@ -127,6 +129,8 @@ void TableHistory::deleteAllClicked()
+ {
+     QMessageBox msg(QMessageBox::Warning,tr("Prompt information"),tr("Clear the playlist?"),QMessageBox::Yes|QMessageBox::No,Widget::mutual);
+     msg.setWindowTitle(tr("kylin-music"));
++    kdk::UkuiStyleHelper::self()->removeHeader(&msg);
++
+     int ret = msg.exec();
+     if(ret == QMessageBox::Yes)
+     {
+diff --git a/UI/tableview/tableone.cpp b/UI/tableview/tableone.cpp
+index df8c9d6..efa2321 100644
+--- a/UI/tableview/tableone.cpp
++++ b/UI/tableview/tableone.cpp
+@@ -6,7 +6,9 @@
+ #include "UI/mainwidget.h"
+ #include "UI/base/widgetstyle.h"
+ #include "UI/globalsignal.h"
+-
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
++#include "UIControl/global/global.h"
+ #define PT_18 18
+ 
+ TableOne::TableOne(QString listName, QWidget *parent) : QWidget(parent)
+@@ -363,6 +365,7 @@ void TableOne::isDeleteSongs()
+ {
+     //确认将选中的歌曲从歌单中删除？
+     QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Confirm that the selected song will be deleted from the song list?"),QMessageBox::Yes | QMessageBox::No,Widget::mutual);
++    kdk::UkuiStyleHelper::self()->removeHeader(warn);
+     warn->setWindowTitle(tr("kylin-music"));
+     QRect availableGeometry = parentWidget()->geometry();
+     warn->move((availableGeometry.center() - warn->rect().center()));
+@@ -392,10 +395,12 @@ void TableOne::isDeleteLocalSongs()
+ 
+     //歌曲从本地删除后不可恢复，是否确定删除？
+     QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("After the song is deleted from the local, it cannot be resumed. Is it sure to delete?"),QMessageBox::Yes | QMessageBox::No,Widget::mutual);
++    kdk::UkuiStyleHelper::self()->removeHeader(warn);
+     QRect availableGeometry = parentWidget()->geometry();
+     warn->move(availableGeometry.center() - warn->rect().center());
+     warn->button(QMessageBox::Yes)->setText(tr("Yes"));
+     warn->button(QMessageBox::No)->setText(tr("No"));
++    kdk::WindowManager::setGeometry(warn->windowHandle(),warn->geometry());
+     int result = warn->exec();
+ 
+     if(result == QMessageBox::Yes) {
+@@ -520,9 +525,12 @@ void TableOne::deleteLocalSongs()
+             },Qt::BlockingQueuedConnection);
+         } else {
+                 QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("After the song is deleted from the local, it cannot be resumed. Is it sure to delete?"),QMessageBox::Yes | QMessageBox::No);
++                kdk::UkuiStyleHelper::self()->removeHeader(warn);
+                 warn->setWindowTitle(tr("kylin-music"));
+                 warn->button(QMessageBox::Yes)->setText(tr("Yes"));
+                 warn->button(QMessageBox::No)->setText(tr("No"));
++                warn->move(warn->parentWidget()->width()/2-warn->width()/2+warn->parentWidget()->x(),warn->parentWidget()->height()/2-warn->height()/2+warn->parentWidget()->y());
++                kdk::WindowManager::setGeometry(warn->windowHandle(),warn->geometry());
+                 int result = warn->exec();
+                 if(result == QMessageBox::Yes)
+                 {
+@@ -621,9 +629,12 @@ void TableOne::deleteLocalSongsWayland()
+ 
+         } else {
+                 QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("After the song is deleted from the local, it cannot be resumed. Is it sure to delete?"),QMessageBox::Yes | QMessageBox::No);
++                kdk::UkuiStyleHelper::self()->removeHeader(warn);
+                 warn->setWindowTitle(tr("kylin-music"));
+                 warn->button(QMessageBox::Yes)->setText(tr("Yes"));
+                 warn->button(QMessageBox::No)->setText(tr("No"));
++                warn->move(warn->parentWidget()->width()/2-warn->width()/2+warn->parentWidget()->x(),warn->parentWidget()->height()/2-warn->height()/2+warn->parentWidget()->y());
++                kdk::WindowManager::setGeometry(warn->windowHandle(),warn->geometry());
+                 int result = warn->exec();
+ 
+                 if(result == QMessageBox::Yes) {
+@@ -687,8 +698,13 @@ void TableOne::showInfo()
+ //    connect(infoDialog,&MusicInfoDialog::accepted,infoDialog,&MusicInfoDialog::deleteLater);
+ //    connect(infoDialog,&MusicInfoDialog::rejected,infoDialog,&MusicInfoDialog::deleteLater);
+     //将弹窗应用居中显示
+-    QRect availableGeometry = this->parentWidget()->parentWidget()->geometry();
+-    infoDialog->move(availableGeometry.center() - infoDialog->rect().center());
++    if(!Global::isWayland){
++        infoDialog->move(Widget::mutual->width()/2-infoDialog->width()/2+Widget::mutual->x(),Widget::mutual->height()/2-infoDialog->height()/2-20+Widget::mutual->y());
++        kdk::WindowManager::setGeometry(infoDialog->windowHandle(),infoDialog->geometry());
++    }else{
++        QRect availableGeometry = this->parentWidget()->parentWidget()->geometry();
++        infoDialog->move(availableGeometry.center() - infoDialog->rect().center());
++    }
+     infoDialog->exec();
+ }
+ 
+@@ -728,6 +744,10 @@ void TableOne::addMusicSlot()
+ 
+     QFileDialog *fileDialog = new QFileDialog(Widget::mutual);
+     fileDialog->setWindowTitle(tr("kylin-music"));
++    kdk::UkuiStyleHelper::self()->removeHeader(fileDialog);
++    fileDialog->move(fileDialog->parentWidget()->width()/2-fileDialog->width()/2+fileDialog->parentWidget()->x(),fileDialog->parentWidget()->height()/2-fileDialog->height()/2+38+fileDialog->parentWidget()->y());
++    kdk::WindowManager::setGeometry(fileDialog->windowHandle(),fileDialog->geometry());
++
+ //    fileDialog->setParent(Widget::mutual);
+     QList<QUrl> list = fileDialog->sidebarUrls();
+     int sidebarNum = 8;//最大添加U盘数，可以自己定义
+@@ -804,6 +824,9 @@ void TableOne::addDirMusicSlot()
+ 
+     QFileDialog *fileDialog = new QFileDialog(Widget::mutual);
+     fileDialog->setWindowTitle(tr("kylin-music"));
++    kdk::UkuiStyleHelper::self()->removeHeader(fileDialog);
++    fileDialog->move(fileDialog->parentWidget()->width()/2-fileDialog->width()/2+fileDialog->parentWidget()->x(),fileDialog->parentWidget()->height()/2-fileDialog->height()/2+38+fileDialog->parentWidget()->y());
++    kdk::WindowManager::setGeometry(fileDialog->windowHandle(),fileDialog->geometry());
+ 
+     QList<QUrl> list = fileDialog->sidebarUrls();
+     int sidebarNum = 8;//最大添加U盘数，可以自己定义
+@@ -942,6 +965,9 @@ void TableOne::importFinished(int successCount, int m_failCount, int allCount)
+         QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Add failed"),QMessageBox::Yes,Widget::mutual);
+         warn->setWindowTitle(tr("kylin-music"));
+         warn->button(QMessageBox::Yes)->setText(tr("Yes"));
++        kdk::UkuiStyleHelper::self()->removeHeader(warn);
++        warn->move(warn->parentWidget()->width()/2-warn->width()/2+warn->parentWidget()->x(),warn->parentWidget()->height()/2-warn->height()/2+warn->parentWidget()->y());
++        kdk::WindowManager::setGeometry(warn->windowHandle(),warn->geometry());
+         warn->exec();
+     }
+ }
+@@ -952,6 +978,9 @@ void TableOne::importFailed(int successCount, int m_failCount, int allCount)
+     {
+         QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Success add %1 songs").arg(successCount),QMessageBox::Ok,Widget::mutual);
+         warn->setWindowTitle(tr("kylin-music"));
++        kdk::UkuiStyleHelper::self()->removeHeader(warn);
++        warn->move(warn->parentWidget()->width()/2-warn->width()/2+warn->parentWidget()->x(),warn->parentWidget()->height()/2-warn->height()/2+warn->parentWidget()->y());
++        kdk::WindowManager::setGeometry(warn->windowHandle(),warn->geometry());
+         warn->exec();
+     }
+     else
+@@ -960,6 +989,9 @@ void TableOne::importFailed(int successCount, int m_failCount, int allCount)
+             QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Repeat add"),QMessageBox::Yes,Widget::mutual);
+             warn->setWindowTitle(tr("kylin-music"));
+             warn->button(QMessageBox::Yes)->setText(tr("Yes"));
++            kdk::UkuiStyleHelper::self()->removeHeader(warn);
++            warn->move(warn->parentWidget()->width()/2-warn->width()/2+warn->parentWidget()->x(),warn->parentWidget()->height()/2-warn->height()/2+warn->parentWidget()->y());
++            kdk::WindowManager::setGeometry(warn->windowHandle(),warn->geometry());
+             warn->exec();
+         }
+     }
+diff --git a/UI/titlebar/menumodule.cpp b/UI/titlebar/menumodule.cpp
+index 7ffc45a..7735596 100644
+--- a/UI/titlebar/menumodule.cpp
++++ b/UI/titlebar/menumodule.cpp
+@@ -6,6 +6,8 @@
+ #include "ukuistylehelper/ukuistylehelper.h"
+ #include "windowmanager/windowmanager.h"
+ 
++#include <kaboutdialog.h>
++
+ #define PT_14 14
+ 
+ menuModule::menuModule(QWidget *parent = nullptr) : QWidget(parent)
+@@ -197,36 +199,19 @@ void menuModule::helpAction(){
+ }
+ 
+ void menuModule::initAbout(){
+-    aboutWindow->setWindowModality(Qt::ApplicationModal);
+-    aboutWindow->setWindowFlag(Qt::Tool);
+-
+-    if (Global::isWayland) {
+-        kdk::UkuiStyleHelper::self()->removeHeader(aboutWindow);
+-    } else {
+-        MotifWmHints hints;
+-        hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+-        hints.functions = MWM_FUNC_ALL;
+-        hints.decorations = MWM_DECOR_BORDER;
+-        XAtomHelper::getInstance()->setWindowMotifHint(aboutWindow->winId(), hints);
++    KAboutDialog about_dialog(this);
++    about_dialog.setModal(true);
++    about_dialog.setAppIcon(QIcon::fromTheme("kylin-music"));
++    about_dialog.setAppName(tr("Music Player"));
++    about_dialog.setAppVersion(tr("Version: ").append(appVersion));
++    kdk::UkuiStyleHelper::self()->removeHeader(&about_dialog);
++//    about_dialog.move(Widget::mutual->width()/2-about_dialog.width()/2+Widget::mutual->x(),Widget::mutual->height()/2-about_dialog.height()/2+Widget::mutual->y());
++    about_dialog.show();
++    if(!Global::isWayland){
++        about_dialog.move(Widget::mutual->width()/2-about_dialog.width()/2+Widget::mutual->x(),Widget::mutual->height()/2-about_dialog.height()/2+Widget::mutual->y());
++        kdk::WindowManager::setGeometry(about_dialog.windowHandle(),about_dialog.geometry());
+     }
+-
+-
+-    aboutWindow->setFixedSize(420,390);
+-    QVBoxLayout *mainlyt = new QVBoxLayout();
+-    QHBoxLayout *titleLyt = initTitleBar();
+-    QVBoxLayout *bodylyt = initBody();
+-    mainlyt->setMargin(0);
+-    mainlyt->addLayout(titleLyt);
+-    mainlyt->addLayout(bodylyt);
+-    mainlyt->addStretch();
+-    aboutWindow->setLayout(mainlyt);
+-    //TODO:在屏幕中央显示
+-//    QRect availableGeometry = qApp->primaryScreen()->availableGeometry();
+-//    aboutWindow->move((availableGeometry.width()-aboutWindow->width())/2,(availableGeometry.height()- aboutWindow->height())/2);
+-    //弹窗位置应用居中
+-    QRect availableGeometry = Widget::mutual->geometry();
+-    aboutWindow->move(availableGeometry.center() - aboutWindow->rect().center());
+-    aboutWindow->show();
++    about_dialog.exec();
+ }
+ 
+ QHBoxLayout* menuModule::initTitleBar(){

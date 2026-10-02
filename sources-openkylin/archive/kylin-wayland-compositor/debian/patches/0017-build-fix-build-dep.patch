@@ -1,0 +1,2081 @@
+From: Morose <chenlinxiang@kylinos.cn>
+Date: Wed, 2 Sep 2026 16:46:44 +0800
+Subject: build: fix build dep
+
+Signed-off-by: Morose <chenlinxiang@kylinos.cn>
+---
+ include/kywc/binding.h            |  80 +++++--
+ include/xwayland/xwm.h            |   1 +
+ src/config/kde_global_accel.c     |  83 +++++--
+ src/input/action.c                |   6 +-
+ src/input/binding.c               | 448 +++++++++++++++++++++++++-------------
+ src/input/function.c              |  19 +-
+ src/input/gesture.c               |   7 +
+ src/input/global_gestures.c       | 204 +++++++++--------
+ src/input/global_shortcuts.c      | 145 ++++++++----
+ src/input/touch.c                 |   8 +
+ src/view/view.c                   |  13 +-
+ src/xwayland/selection/incoming.c |   2 +
+ src/xwayland/xwm.c                |   1 +
+ 13 files changed, 685 insertions(+), 332 deletions(-)
+
+diff --git a/include/kywc/binding.h b/include/kywc/binding.h
+index fc9101b..25261e5 100644
+--- a/include/kywc/binding.h
++++ b/include/kywc/binding.h
+@@ -11,6 +11,7 @@
+ #include "input/function.h"
+ 
+ struct seat;
++struct wl_listener;
+ 
+ enum gesture_type {
+     GESTURE_TYPE_NONE = 0,
+@@ -21,11 +22,24 @@ enum gesture_type {
+ };
+ 
+ enum gesture_device {
+-    GESTURE_DEVICE_NONE = 0,
+-    GESTURE_DEVICE_TOUCHPAD = 1 << 0,
+-    GESTURE_DEVICE_TOUCHSCREEN = 1 << 1,
++    GESTURE_DEVICE_NONE = -1,
++    GESTURE_DEVICE_TOUCHPAD = 0,
++    GESTURE_DEVICE_TOUCHSCREEN,
++    GESTURE_DEVICE_COUNT,
+ };
+ 
++#define GESTURE_DEVICE_BIT(device) (1u << (device))
++#define GESTURE_ID_EDGE_SHIFT 0
++#define GESTURE_ID_EDGE_MASK 0x0F
++#define GESTURE_ID_DIRECTION_SHIFT 4
++#define GESTURE_ID_DIRECTION_MASK 0xFF
++#define GESTURE_ID_TYPE_SHIFT 12
++#define GESTURE_ID_TYPE_MASK 0x0F
++#define GESTURE_ID_FINGERS_SHIFT 16
++#define GESTURE_ID_FINGERS_MASK 0x0F
++#define GESTURE_ID_DEVICE_SHIFT 20
++#define GESTURE_ID_DEVICE_MASK 0x0F
++
+ enum gesture_direction {
+     GESTURE_DIRECTION_NONE = 0,
+     // Directions based on delta x and y
+@@ -106,6 +120,22 @@ enum key_binding_option {
+  * gesture bindings
+  */
+ 
++struct gesture_binding_info {
++    uint32_t id;
++    const char *desc;
++    enum function_id func_id;
++
++    enum gesture_type type;
++    enum gesture_device device;
++    enum gesture_direction direction;
++    enum gesture_edge edge;
++    uint8_t fingers;
++
++    uint32_t stages;
++    uint32_t follow_directions;
++    double follow_threshold;
++};
++
+ struct gesture_binding *kywc_gesture_binding_create_by_string(const char *gestures,
+                                                               const char *desc,
+                                                               enum function_id func_id);
+@@ -118,6 +148,11 @@ kywc_gesture_binding_create(enum gesture_type type, uint32_t stages, enum gestur
+ 
+ void kywc_gesture_binding_destroy(struct gesture_binding *binding);
+ 
++void kywc_gesture_binding_add_destroy_listener(struct gesture_binding *binding,
++                                               struct wl_listener *listener);
++
++void kywc_gesture_binding_add_registered_listener(struct wl_listener *listener);
++
+ bool kywc_gesture_binding_register(struct gesture_binding *binding,
+                                    void (*action)(struct gesture_binding *binding, void *data,
+                                                   struct seat *seat, enum gesture_stage stage,
+@@ -125,16 +160,9 @@ bool kywc_gesture_binding_register(struct gesture_binding *binding,
+                                                   uint32_t follow_directions, double dx, double dy),
+                                    void *data);
+ 
+-enum function_id kywc_gesture_binding_function_id(struct gesture_binding *binding);
+-
+-enum gesture_direction kywc_gesture_binding_direction(struct gesture_binding *binding);
+-
+-const char *kywc_gesture_binding_desc(struct gesture_binding *binding);
+-
+-typedef bool (*gesture_binding_iterator_func_t)(struct gesture_binding *binding,
+-                                                uint32_t gesture_id, const char *desc);
+-
+-void kywc_gesture_binding_for_each(gesture_binding_iterator_func_t iterator);
++/* Info belongs to binding and may change. Do not use it after binding is destroyed. */
++const struct gesture_binding_info *
++kywc_gesture_binding_get_info(const struct gesture_binding *binding);
+ 
+ void kywc_gesture_binding_update(struct gesture_binding *binding, bool enabled,
+                                  enum function_id func_id, uint32_t stages,
+@@ -145,12 +173,25 @@ bool kywc_gesture_binding_check(enum gesture_type type, enum gesture_device devi
+ 
+ enum gesture_edge kywc_gesture_binding_check_edge(enum gesture_device device);
+ 
++bool kywc_gesture_binding_device_available(enum gesture_device device);
++
+ void kywc_gesture_binding_block(struct gesture_binding *binding, bool block);
+ 
++void kywc_gesture_binding_block_device(enum gesture_device device, bool block);
++
+ /**
+  * keysym bindings
+  */
+ 
++struct key_binding_info {
++    const char *keybind;
++    const char *desc;
++    enum function_id func_id;
++    uint32_t modifiers;
++    uint32_t keysym;
++    uint32_t options;
++};
++
+ struct key_binding *kywc_key_binding_create(const char *keybind, const char *desc,
+                                             enum function_id func_id, uint32_t options);
+ 
+@@ -160,6 +201,11 @@ struct key_binding *kywc_key_binding_create_by_symbol(unsigned int keysym, unsig
+ 
+ void kywc_key_binding_destroy(struct key_binding *binding);
+ 
++void kywc_key_binding_add_destroy_listener(struct key_binding *binding,
++                                           struct wl_listener *listener);
++
++void kywc_key_binding_add_registered_listener(struct wl_listener *listener);
++
+ bool kywc_key_binding_register(struct key_binding *binding, enum key_binding_type type,
+                                void (*action)(struct key_binding *binding, void *data,
+                                               struct seat *seat, enum key_binding_stage stage),
+@@ -173,12 +219,12 @@ bool kywc_key_binding_update_state(struct key_binding *binding, enum function_id
+ 
+ void kywc_key_binding_unregister(struct key_binding *binding);
+ 
+-bool kywc_key_binding_is_registered(struct key_binding *binding);
++/* Info belongs to binding and may change. Do not use it after binding is destroyed. */
++const struct key_binding_info *kywc_key_binding_get_info(const struct key_binding *binding);
+ 
+-typedef bool (*binding_iterator_func_t)(struct key_binding *binding, char *keybind, char *desc,
+-                                        int32_t modifiers, int32_t key);
++typedef bool (*key_binding_iterator_func_t)(struct key_binding *binding);
+ 
+-void kywc_key_binding_for_each(binding_iterator_func_t iterator);
++void kywc_key_binding_for_each(key_binding_iterator_func_t iterator);
+ 
+ void kywc_key_binding_block_all(bool block);
+ 
+diff --git a/include/xwayland/xwm.h b/include/xwayland/xwm.h
+index 18fc706..fb2b0f8 100644
+--- a/include/xwayland/xwm.h
++++ b/include/xwayland/xwm.h
+@@ -475,6 +475,7 @@ enum atom_name {
+     TARGETS,
+     WL_SELECTION,
+     CLIPBOARD_MANAGER,
++    MULTIPLE,
+ 
+     DND_SELECTION,
+     DND_AWARE,
+diff --git a/src/config/kde_global_accel.c b/src/config/kde_global_accel.c
+index 1ff75b6..9cc198e 100644
+--- a/src/config/kde_global_accel.c
++++ b/src/config/kde_global_accel.c
+@@ -190,6 +190,7 @@ enum SetShortcutFlag {
+ struct global_shortcut_registry {
+     struct wl_list components;
+ 
++    struct wl_listener binding_registered;
+     struct wl_listener destroy;
+ };
+ 
+@@ -225,6 +226,7 @@ struct global_shortcut {
+     char *friendly_name;
+ 
+     struct key_binding *binding;
++    struct wl_listener binding_destroy;
+ 
+     /* keys. default_keys, mostly combined with modifiers */
+     int32_t key;
+@@ -285,18 +287,53 @@ static struct global_shortcut *global_shortcut_create(struct global_shortcut_con
+     return shortcut;
+ }
+ 
++static void global_shortcut_clear_binding(struct global_shortcut *shortcut)
++{
++    if (!shortcut->binding) {
++        return;
++    }
++
++    shortcut->binding = NULL;
++    shortcut->is_registered = false;
++    wl_list_remove(&shortcut->binding_destroy.link);
++    wl_list_init(&shortcut->binding_destroy.link);
++}
++
++static void handle_key_binding_destroy(struct wl_listener *listener, void *data)
++{
++    struct global_shortcut *shortcut = wl_container_of(listener, shortcut, binding_destroy);
++    global_shortcut_clear_binding(shortcut);
++}
++
++static void global_shortcut_set_binding(struct global_shortcut *shortcut,
++                                        struct key_binding *binding)
++{
++    if (shortcut->binding == binding) {
++        return;
++    }
++    if (shortcut->binding) {
++        global_shortcut_clear_binding(shortcut);
++    }
++
++    shortcut->binding = binding;
++    shortcut->binding_destroy.notify = handle_key_binding_destroy;
++    kywc_key_binding_add_destroy_listener(binding, &shortcut->binding_destroy);
++}
++
+ static void global_shortcut_destroy(struct global_shortcut *shortcut, bool clean)
+ {
++    if (shortcut->binding) {
++        if (clean) {
++            kywc_key_binding_destroy(shortcut->binding);
++        } else {
++            global_shortcut_clear_binding(shortcut);
++        }
++    }
++
+     wl_list_remove(&shortcut->link);
+ 
+     free(shortcut->unique_name);
+     free(shortcut->friendly_name);
+-
+-    /* destroyed in runtime */
+-    if (clean && shortcut->binding) {
+-        kywc_key_binding_destroy(shortcut->binding);
+-    }
+-
+     free(shortcut);
+ }
+ 
+@@ -448,8 +485,11 @@ static void global_shortcut_create_binding(struct global_shortcut *shortcut)
+         kywc_key_binding_update(shortcut->binding, keysym, modifiers);
+         kywc_key_binding_update_state(shortcut->binding, FUNC_ID_CUSTOM, options);
+     } else {
+-        shortcut->binding =
++        struct key_binding *binding =
+             kywc_key_binding_create_by_symbol(keysym, modifiers, NULL, FUNC_ID_CUSTOM, options);
++        if (binding) {
++            global_shortcut_set_binding(shortcut, binding);
++        }
+     }
+ }
+ 
+@@ -465,7 +505,6 @@ static void global_shortcut_set_active(struct global_shortcut *shortcut)
+ 
+     if (!shortcut->is_registered) {
+         kywc_key_binding_destroy(shortcut->binding);
+-        shortcut->binding = NULL;
+     }
+ }
+ 
+@@ -1150,6 +1189,7 @@ static const sd_bus_vtable kglobalaccel_vtable[] = {
+ 
+ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ {
++    wl_list_remove(&registry->binding_registered.link);
+     wl_list_remove(&registry->destroy.link);
+ 
+     /* free all components contexts shortcuts */
+@@ -1164,30 +1204,39 @@ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ 
+ static const char *component_builtin = TARGET_NAME;
+ 
+-static bool kglobalaccel_builtin_shortcuts(struct key_binding *binding, char *unique_name,
+-                                           char *friendly_name, int32_t modifiers, int32_t key)
++static bool kglobalaccel_builtin_shortcut(struct key_binding *binding)
+ {
++    const struct key_binding_info *info = kywc_key_binding_get_info(binding);
++    if (!info || info->func_id == FUNC_ID_CUSTOM || !info->keybind || !info->desc) {
++        return false;
++    }
++
+     struct global_shortcut *shortcut =
+-        global_shortcut_registry_get_shortcut_by_name(component_builtin, unique_name);
++        global_shortcut_registry_get_shortcut_by_name(component_builtin, info->keybind);
+     if (!shortcut) {
+         /* create a shortcut */
+         struct global_shortcut_component *component =
+             global_shortcut_registry_get_component(component_builtin);
+         /*  Create the component if necessary */
+         if (!component) {
+-            component = global_shortcut_component_create(component_builtin, friendly_name);
++            component = global_shortcut_component_create(component_builtin, info->desc);
+         }
+-        shortcut = global_shortcut_create(component->current, unique_name, friendly_name);
++        shortcut = global_shortcut_create(component->current, info->keybind, info->desc);
+     }
+ 
+-    shortcut->binding = binding;
+-    shortcut->key = modifiers_to_qtkey(modifiers) | keysym_to_qtkey(key);
++    global_shortcut_set_binding(shortcut, binding);
++    shortcut->key = modifiers_to_qtkey(info->modifiers) | keysym_to_qtkey(info->keysym);
+     shortcut->is_present = true;
+     shortcut->is_registered = true;
+ 
+     return false;
+ }
+ 
++static void handle_key_binding_registered(struct wl_listener *listener, void *data)
++{
++    kglobalaccel_builtin_shortcut(data);
++}
++
+ bool kde_global_accel_manager_create(struct config_manager *config_manager)
+ {
+     registry = calloc(1, sizeof(*registry));
+@@ -1204,7 +1253,9 @@ bool kde_global_accel_manager_create(struct config_manager *config_manager)
+ 
+     wl_list_init(&registry->components);
+ 
+-    kywc_key_binding_for_each(kglobalaccel_builtin_shortcuts);
++    registry->binding_registered.notify = handle_key_binding_registered;
++    kywc_key_binding_add_registered_listener(&registry->binding_registered);
++    kywc_key_binding_for_each(kglobalaccel_builtin_shortcut);
+ 
+     registry->destroy.notify = handle_server_destroy;
+     server_add_destroy_listener(config_manager->server, &registry->destroy);
+diff --git a/src/input/action.c b/src/input/action.c
+index 0bfee02..5a39f2e 100644
+--- a/src/input/action.c
++++ b/src/input/action.c
+@@ -422,8 +422,8 @@ void input_action_handle_gesture_binding(struct gesture_binding *binding, struct
+                                          enum gesture_stage stage,
+                                          enum gesture_direction follow_direction)
+ {
+-    const char *name = kywc_gesture_binding_desc(binding);
+-    if (!name) {
++    const struct gesture_binding_info *info = kywc_gesture_binding_get_info(binding);
++    if (!info || !info->desc) {
+         return;
+     }
+ 
+@@ -432,7 +432,7 @@ void input_action_handle_gesture_binding(struct gesture_binding *binding, struct
+         if (input_action->type != INPUT_TYPE_GESTURE) {
+             continue;
+         }
+-        if (!input_action->name || strcmp(input_action->name, name)) {
++        if (!input_action->name || strcmp(input_action->name, info->desc)) {
+             continue;
+         }
+         handle_input_action(input_action, seat, stage, follow_direction);
+diff --git a/src/input/binding.c b/src/input/binding.c
+index 5f37157..10c8ee4 100644
+--- a/src/input/binding.c
++++ b/src/input/binding.c
+@@ -20,24 +20,18 @@
+ 
+ struct key_binding {
+     struct wl_list link;
++    struct key_binding_info info;
+ 
+     uint32_t nblocks;
+-    uint32_t modifiers;
+-    uint32_t keysym;
+-    uint32_t options;
+-
+-    char *keybind;
+-    char *desc;
+-
+-    enum function_id func_id;
++    bool active;
+ 
+     void (*action)(struct key_binding *binding, void *data, struct seat *seat,
+                    enum key_binding_stage stage);
+     void *data;
+-    bool active;
+ 
+     struct {
+         struct wl_signal cancel;
++        struct wl_signal destroy;
+     } events;
+ };
+ 
+@@ -47,20 +41,9 @@ struct keysyms_binding {
+ 
+ struct gesture_binding {
+     struct wl_list link;
++    struct gesture_binding_info info;
+ 
+     uint32_t nblocks;
+-    enum gesture_type type;
+-    enum gesture_device device;
+-    enum gesture_direction direction;
+-    enum gesture_edge edge;
+-    uint8_t fingers;
+-    uint32_t stages;
+-    uint32_t follow_directions;
+-    double follow_threshold;
+-    char *desc;
+-
+-    uint32_t id;
+-    uint32_t func_id;
+     bool enabled;
+ 
+     void (*action)(struct gesture_binding *binding, void *data, struct seat *seat,
+@@ -70,12 +53,26 @@ struct gesture_binding {
+ 
+     struct {
+         struct wl_signal cancel;
++        struct wl_signal destroy;
+     } events;
+ };
+ 
++struct gesture_binding_group {
++    struct wl_list bindings; /* gesture binding */
++
++    size_t available_count; /* enabled bindings with no binding blocks */
++    size_t nblocks;         /* device block count */
++};
++
+ static struct bindings {
+     struct keysyms_binding keysyms_binding[KEY_BINDING_TYPE_NUM];
+-    struct wl_list gesture_bindings;
++    struct gesture_binding_group gesture_groups[GESTURE_DEVICE_COUNT];
++
++    struct {
++        struct wl_signal key_registered;
++        struct wl_signal gesture_registered;
++    } events;
++
+     struct wl_listener server_destroy;
+ 
+     size_t keysym_bindings_block;
+@@ -83,6 +80,51 @@ static struct bindings {
+     uint32_t keysyms_binding_masks; /* binding mask */
+ } *bindings = NULL;
+ 
++static struct gesture_binding_group *gesture_binding_group_get(enum gesture_device device)
++{
++    if (!bindings || device <= GESTURE_DEVICE_NONE || device >= GESTURE_DEVICE_COUNT) {
++        return NULL;
++    }
++
++    return &bindings->gesture_groups[device];
++}
++
++static bool key_binding_is_registered(struct key_binding *binding)
++{
++    return !wl_list_empty(&binding->link);
++}
++
++static bool gesture_binding_is_registered(struct gesture_binding *binding)
++{
++    return !wl_list_empty(&binding->link);
++}
++
++static bool gesture_binding_is_available(struct gesture_binding *binding)
++{
++    return binding->enabled && !binding->nblocks;
++}
++
++static bool gesture_binding_group_is_available(struct gesture_binding_group *gesture_group)
++{
++    return gesture_group && !gesture_group->nblocks && gesture_group->available_count > 0;
++}
++
++static void
++gesture_binding_group_update_available_count(struct gesture_binding_group *gesture_group,
++                                             bool old_available, bool new_available)
++{
++    if (old_available == new_available) {
++        return;
++    }
++
++    if (new_available) {
++        gesture_group->available_count++;
++    } else {
++        assert(gesture_group->available_count > 0);
++        gesture_group->available_count--;
++    }
++}
++
+ const struct key_binding_type2string {
+     enum key_binding_type type;
+     const char *name;
+@@ -123,7 +165,8 @@ static bool keyboard_binding_finish(struct keyboard *keyboard, bool emit_inactiv
+     keyboard_repeat_stop(keyboard);
+     binding->active = false;
+ 
+-    if (emit_inactive && (binding->options & KEY_BINDING_TRIGGER_IN_INACTIVE) && binding->action) {
++    if (emit_inactive && (binding->info.options & KEY_BINDING_TRIGGER_IN_INACTIVE) &&
++        binding->action) {
+         binding->action(binding, binding->data, keyboard->seat, KEY_BINDING_STAGE_INACTIVE);
+     }
+ 
+@@ -178,11 +221,11 @@ static bool is_key_binding_desc_unique(const char *desc)
+         struct key_binding *bind;
+         struct keysyms_binding *keysyms_binding = &bindings->keysyms_binding[i];
+         wl_list_for_each(bind, &keysyms_binding->bindings, link) {
+-            if (!bind->desc) {
++            if (!bind->info.desc) {
+                 continue;
+             }
+-            if (!strcmp(bind->desc, desc)) {
+-                kywc_log(KYWC_DEBUG, "%s is already registered", bind->desc);
++            if (!strcmp(bind->info.desc, desc)) {
++                kywc_log(KYWC_DEBUG, "%s is already registered", bind->info.desc);
+                 return false;
+             }
+         }
+@@ -203,42 +246,43 @@ struct key_binding *kywc_key_binding_create(const char *keybind, const char *des
+         return NULL;
+     }
+ 
+-    binding->options =
++    binding->info.options =
+         options ? options : KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_REPEAT;
+     wl_signal_init(&binding->events.cancel);
++    wl_signal_init(&binding->events.destroy);
+ 
+     size_t length = 0;
+     char **bind_str = string_split(keybind, ":", &length);
+     if (length == 2 && strcmp(bind_str[1], "no") == 0) {
+-        binding->options &= ~KEY_BINDING_TRIGGER_IN_REPEAT;
++        binding->info.options &= ~KEY_BINDING_TRIGGER_IN_REPEAT;
+     }
+ 
+     size_t len = 0;
+     const char *bind_name = length == 2 ? bind_str[0] : keybind;
+     char **split_str = string_split(bind_name, "+", &len);
+-    binding->keybind = strdup(bind_name);
++    binding->info.keybind = strdup(bind_name);
+ 
+     string_free_split(bind_str);
+ 
+     for (size_t i = 0; i < len; i++) {
+         uint32_t mod = keyboard_get_modifier_mask_by_name(split_str[i]);
+         if (mod) {
+-            binding->modifiers |= mod;
++            binding->info.modifiers |= mod;
+             continue;
+         }
+ 
+         /* whatever keep the lower keysym */
+         xkb_keysym_t sym = xkb_keysym_from_name(split_str[i], XKB_KEYSYM_CASE_INSENSITIVE);
+-        binding->keysym = xkb_keysym_to_lower(sym);
++        binding->info.keysym = xkb_keysym_to_lower(sym);
+     }
+ 
+     string_free_split(split_str);
+ 
+     if (desc) {
+-        binding->desc = strdup(desc);
++        binding->info.desc = strdup(desc);
+     }
+ 
+-    binding->func_id = func_id;
++    binding->info.func_id = func_id;
+ 
+     wl_list_init(&binding->link);
+     kywc_log(KYWC_DEBUG, "Keybind %s: %s", keybind, desc);
+@@ -260,20 +304,21 @@ struct key_binding *kywc_key_binding_create_by_symbol(unsigned int keysym, unsig
+     }
+ 
+     wl_signal_init(&binding->events.cancel);
+-    binding->modifiers = modifiers;
+-    binding->keysym = keysym;
+-    binding->options =
++    wl_signal_init(&binding->events.destroy);
++    binding->info.modifiers = modifiers;
++    binding->info.keysym = keysym;
++    binding->info.options =
+         options ? options : KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_REPEAT;
+-    binding->func_id = func_id;
++    binding->info.func_id = func_id;
+ 
+     if (desc) {
+-        binding->desc = strdup(desc);
++        binding->info.desc = strdup(desc);
+     }
+ 
+     char name[64];
+     if (xkb_keysym_get_name(keysym, name, sizeof(name)) > 0) {
+         const char *mods = keyboard_get_modifier_names(modifiers, '+');
+-        binding->keybind = string_create("%s+%s", mods, name);
++        binding->info.keybind = string_create("%s+%s", mods, name);
+     }
+ 
+     wl_list_init(&binding->link);
+@@ -285,12 +330,26 @@ void kywc_key_binding_destroy(struct key_binding *binding)
+ {
+     key_binding_cancel_states(binding, false);
+     wl_list_remove(&binding->link);
++    wl_list_init(&binding->link);
++    wl_signal_emit_mutable(&binding->events.destroy, binding);
++    assert(wl_list_empty(&binding->events.destroy.listener_list));
+ 
+-    free(binding->keybind);
+-    free(binding->desc);
++    free((void *)binding->info.keybind);
++    free((void *)binding->info.desc);
+     free(binding);
+ }
+ 
++void kywc_key_binding_add_destroy_listener(struct key_binding *binding,
++                                           struct wl_listener *listener)
++{
++    wl_signal_add(&binding->events.destroy, listener);
++}
++
++void kywc_key_binding_add_registered_listener(struct wl_listener *listener)
++{
++    wl_signal_add(&bindings->events.key_registered, listener);
++}
++
+ static bool key_binding_is_valid(struct key_binding *binding, uint32_t keysym, uint32_t modifiers)
+ {
+     for (int i = 0; i < KEY_BINDING_TYPE_NUM; ++i) {
+@@ -302,9 +361,10 @@ static bool key_binding_is_valid(struct key_binding *binding, uint32_t keysym, u
+                 continue;
+             }
+ 
+-            if (!(modifiers ^ bind->modifiers) && keysym == bind->keysym) {
++            if (!(modifiers ^ bind->info.modifiers) && keysym == bind->info.keysym) {
+                 kywc_log(KYWC_WARN, "Keybind %s(%s) is already registered by %s(%s)",
+-                         binding->keybind, binding->desc, bind->keybind, bind->desc);
++                         binding->info.keybind, binding->info.desc, bind->info.keybind,
++                         bind->info.desc);
+                 return false;
+             }
+         }
+@@ -318,11 +378,11 @@ bool kywc_key_binding_register(struct key_binding *binding, enum key_binding_typ
+                                               struct seat *seat, enum key_binding_stage stage),
+                                void *data)
+ {
+-    if (kywc_key_binding_is_registered(binding)) {
++    if (key_binding_is_registered(binding)) {
+         return true;
+     }
+ 
+-    if (!key_binding_is_valid(binding, binding->keysym, binding->modifiers)) {
++    if (!key_binding_is_valid(binding, binding->info.keysym, binding->info.modifiers)) {
+         return false;
+     }
+ 
+@@ -339,6 +399,7 @@ bool kywc_key_binding_register(struct key_binding *binding, enum key_binding_typ
+     if (data) {
+         binding->data = data;
+     }
++    wl_signal_emit_mutable(&bindings->events.key_registered, binding);
+ 
+     return true;
+ }
+@@ -346,14 +407,13 @@ bool kywc_key_binding_register(struct key_binding *binding, enum key_binding_typ
+ bool kywc_key_binding_update(struct key_binding *binding, unsigned int keysym,
+                              unsigned int modifiers)
+ {
+-    if (kywc_key_binding_is_registered(binding) &&
+-        !key_binding_is_valid(binding, keysym, modifiers)) {
++    if (key_binding_is_registered(binding) && !key_binding_is_valid(binding, keysym, modifiers)) {
+         return false;
+     }
+ 
+     key_binding_cancel_states(binding, false);
+-    binding->keysym = keysym;
+-    binding->modifiers = modifiers;
++    binding->info.keysym = keysym;
++    binding->info.modifiers = modifiers;
+ 
+     return true;
+ }
+@@ -361,16 +421,16 @@ bool kywc_key_binding_update(struct key_binding *binding, unsigned int keysym,
+ bool kywc_key_binding_update_state(struct key_binding *binding, enum function_id func_id,
+                                    uint32_t options)
+ {
+-    if (!kywc_key_binding_is_registered(binding)) {
++    if (!key_binding_is_registered(binding)) {
+         return false;
+     }
+ 
+-    if (binding->func_id != func_id) {
+-        binding->func_id = func_id;
++    if (binding->info.func_id != func_id) {
++        binding->info.func_id = func_id;
+     }
+ 
+     key_binding_cancel_states(binding, false);
+-    binding->options =
++    binding->info.options =
+         options ? options : KEY_BINDING_TRIGGER_IN_ACTIVE | KEY_BINDING_TRIGGER_IN_REPEAT;
+     return true;
+ }
+@@ -382,9 +442,9 @@ void kywc_key_binding_unregister(struct key_binding *binding)
+     wl_list_init(&binding->link);
+ }
+ 
+-bool kywc_key_binding_is_registered(struct key_binding *binding)
++const struct key_binding_info *kywc_key_binding_get_info(const struct key_binding *binding)
+ {
+-    return !wl_list_empty(&binding->link);
++    return binding ? &binding->info : NULL;
+ }
+ 
+ static void handle_server_destroy(struct wl_listener *listener, void *data)
+@@ -399,9 +459,13 @@ static void handle_server_destroy(struct wl_listener *listener, void *data)
+         }
+     }
+ 
+-    struct gesture_binding *gesture_binding, *gesture_binding_tmp;
+-    wl_list_for_each_safe(gesture_binding, gesture_binding_tmp, &bindings->gesture_bindings, link) {
+-        kywc_gesture_binding_destroy(gesture_binding);
++    for (int i = 0; i < GESTURE_DEVICE_COUNT; ++i) {
++        struct gesture_binding_group *gesture_group = &bindings->gesture_groups[i];
++        struct gesture_binding *gesture_binding, *gesture_binding_tmp;
++        wl_list_for_each_safe(gesture_binding, gesture_binding_tmp, &gesture_group->bindings,
++                              link) {
++            kywc_gesture_binding_destroy(gesture_binding);
++        }
+     }
+ 
+     free(bindings);
+@@ -419,7 +483,12 @@ bool bindings_create(struct input_manager *input_manager)
+         struct keysyms_binding *keysyms_binding = &bindings->keysyms_binding[i];
+         wl_list_init(&keysyms_binding->bindings);
+     }
+-    wl_list_init(&bindings->gesture_bindings);
++    for (int i = 0; i < GESTURE_DEVICE_COUNT; ++i) {
++        struct gesture_binding_group *gesture_group = &bindings->gesture_groups[i];
++        wl_list_init(&gesture_group->bindings);
++    }
++    wl_signal_init(&bindings->events.key_registered);
++    wl_signal_init(&bindings->events.gesture_registered);
+ 
+     bindings->server_destroy.notify = handle_server_destroy;
+     server_add_destroy_listener(input_manager->server, &bindings->server_destroy);
+@@ -430,7 +499,7 @@ static bool match_key_binding(struct keyboard_state *keyboard_state, struct key_
+ {
+     for (size_t j = 0; j < keyboard_state->npressed; j++) {
+         uint32_t keysym = keyboard_state->pressed_keysyms[j];
+-        if (binding->keysym == xkb_keysym_to_lower(keysym)) {
++        if (binding->info.keysym == xkb_keysym_to_lower(keysym)) {
+             return true;
+         }
+     }
+@@ -457,15 +526,15 @@ struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_sta
+                 continue;
+             }
+ 
+-            if (!(binding->options & trigger_options)) {
++            if (!(binding->info.options & trigger_options)) {
+                 continue;
+             }
+ 
+-            if (keyboard_state->last_modifiers ^ binding->modifiers) {
++            if (keyboard_state->last_modifiers ^ binding->info.modifiers) {
+                 continue;
+             }
+ 
+-            if (!binding->keysym) {
++            if (!binding->info.keysym) {
+                 if (!modifier_only_released) {
+                     continue;
+                 }
+@@ -488,12 +557,12 @@ struct key_binding *bindings_get_key_binding(struct keyboard_state *keyboard_sta
+ 
+ enum function_id bindings_get_key_binding_function_id(struct key_binding *binding)
+ {
+-    return binding ? binding->func_id : FUNC_ID_NONE;
++    return binding ? binding->info.func_id : FUNC_ID_NONE;
+ }
+ 
+ const char *bindings_get_key_binding_unique(struct key_binding *binding)
+ {
+-    return binding ? binding->desc : NULL;
++    return binding ? binding->info.desc : NULL;
+ }
+ 
+ bool bindings_get_key_binding_bypass_grab(struct key_binding *binding)
+@@ -502,7 +571,7 @@ bool bindings_get_key_binding_bypass_grab(struct key_binding *binding)
+         return false;
+     }
+ 
+-    return binding->options & KEY_BINDING_BYPASS_GRAB;
++    return binding->info.options & KEY_BINDING_BYPASS_GRAB;
+ }
+ 
+ bool bindings_get_key_binding_no_repeat(struct key_binding *binding)
+@@ -511,7 +580,7 @@ bool bindings_get_key_binding_no_repeat(struct key_binding *binding)
+         return false;
+     }
+ 
+-    return !(binding->options & KEY_BINDING_TRIGGER_IN_REPEAT);
++    return !(binding->info.options & KEY_BINDING_TRIGGER_IN_REPEAT);
+ }
+ 
+ bool bindings_handle_key_binding(struct keyboard *keyboard, struct key_binding *binding,
+@@ -560,7 +629,7 @@ bool bindings_handle_key_binding(struct keyboard *keyboard, struct key_binding *
+ 
+     key_binding_activate(binding, keyboard, key);
+     binding->active = true;
+-    if (binding->options & KEY_BINDING_TRIGGER_IN_ACTIVE) {
++    if (binding->info.options & KEY_BINDING_TRIGGER_IN_ACTIVE) {
+         if (binding->action) {
+             binding->action(binding, binding->data, keyboard->seat, KEY_BINDING_STAGE_ACTIVE);
+         }
+@@ -584,7 +653,7 @@ bool bindings_handle_key_binding_modifiers(struct keyboard *keyboard, uint32_t m
+     struct keyboard_binding_state *state = &keyboard->binding_state;
+     struct key_binding *binding = state->binding;
+ 
+-    if (!binding || !(binding->modifiers & ~modifiers)) {
++    if (!binding || !(binding->info.modifiers & ~modifiers)) {
+         return false;
+     }
+ 
+@@ -654,20 +723,39 @@ void bindings_clear_gesture_binding(struct gesture_state *gesture_state)
+ void kywc_gesture_binding_destroy(struct gesture_binding *binding)
+ {
+     wl_signal_emit_mutable(&binding->events.cancel, binding);
++
++    if (gesture_binding_is_registered(binding)) {
++        struct gesture_binding_group *gesture_group =
++            gesture_binding_group_get(binding->info.device);
++        assert(gesture_group);
++        gesture_binding_group_update_available_count(gesture_group,
++                                                     gesture_binding_is_available(binding), false);
++    }
+     wl_list_remove(&binding->link);
+-    free(binding->desc);
++    wl_list_init(&binding->link);
++    wl_signal_emit_mutable(&binding->events.destroy, binding);
++    assert(wl_list_empty(&binding->events.destroy.listener_list));
++    free((void *)binding->info.desc);
+     free(binding);
+ }
+ 
+-static bool gesture_binding_is_valid(struct gesture_binding *binding, uint32_t gesture_id)
++void kywc_gesture_binding_add_destroy_listener(struct gesture_binding *binding,
++                                               struct wl_listener *listener)
++{
++    wl_signal_add(&binding->events.destroy, listener);
++}
++
++void kywc_gesture_binding_add_registered_listener(struct wl_listener *listener)
++{
++    wl_signal_add(&bindings->events.gesture_registered, listener);
++}
++
++static bool gesture_binding_id_is_unique(struct gesture_binding_group *gesture_group,
++                                         uint32_t gesture_id)
+ {
+     struct gesture_binding *bind;
+-    wl_list_for_each(bind, &bindings->gesture_bindings, link) {
+-        /* skip itself */
+-        if (bind == binding) {
+-            continue;
+-        }
+-        if (bind->id == gesture_id) {
++    wl_list_for_each(bind, &gesture_group->bindings, link) {
++        if (bind->info.id == gesture_id) {
+             return false;
+         }
+     }
+@@ -851,8 +939,9 @@ static bool gesture_checked(enum gesture_type type, enum gesture_device device,
+                             enum gesture_direction direction, enum gesture_edge edge,
+                             uint8_t fingers)
+ {
+-    /* gesture type、devices and fingers cannot be 0 */
+-    if (type == GESTURE_TYPE_NONE || device == GESTURE_DEVICE_NONE || fingers == 0) {
++    /* gesture type, device and fingers must be valid */
++    if (type == GESTURE_TYPE_NONE || device < GESTURE_DEVICE_TOUCHPAD ||
++        device >= GESTURE_DEVICE_COUNT || fingers == 0) {
+         return false;
+     }
+ 
+@@ -867,7 +956,7 @@ static bool gesture_checked(enum gesture_type type, enum gesture_device device,
+     }
+ 
+     /* the number of fingers for touchpad gestures need to be greater than 2 */
+-    if (type == GESTURE_TYPE_TAP && device & GESTURE_DEVICE_TOUCHPAD && fingers < 3) {
++    if (type == GESTURE_TYPE_TAP && device == GESTURE_DEVICE_TOUCHPAD && fingers < 3) {
+         return false;
+     }
+ 
+@@ -899,28 +988,20 @@ static uint32_t generate_gesture_id(enum gesture_device device, uint8_t fingers,
+                                     enum gesture_type type, enum gesture_direction direction,
+                                     enum gesture_edge edge)
+ {
+-    uint32_t gesture_id = (device << 20) & 0x0F00000;
+-    gesture_id |= (fingers << 16) & 0xF0000;
+-    gesture_id |= (type << 12) & 0x0F000;
+-    gesture_id |= (direction << 4) & 0x0FF0;
+-    gesture_id |= edge & 0x0F;
++    uint32_t gesture_id = (GESTURE_DEVICE_BIT(device) & GESTURE_ID_DEVICE_MASK)
++                          << GESTURE_ID_DEVICE_SHIFT;
++    gesture_id |= (fingers & GESTURE_ID_FINGERS_MASK) << GESTURE_ID_FINGERS_SHIFT;
++    gesture_id |= (type & GESTURE_ID_TYPE_MASK) << GESTURE_ID_TYPE_SHIFT;
++    gesture_id |= (direction & GESTURE_ID_DIRECTION_MASK) << GESTURE_ID_DIRECTION_SHIFT;
++    gesture_id |= (edge & GESTURE_ID_EDGE_MASK) << GESTURE_ID_EDGE_SHIFT;
+ 
+     return gesture_id;
+ }
+ 
+-enum function_id kywc_gesture_binding_function_id(struct gesture_binding *binding)
++const struct gesture_binding_info *
++kywc_gesture_binding_get_info(const struct gesture_binding *binding)
+ {
+-    return binding->func_id;
+-}
+-
+-enum gesture_direction kywc_gesture_binding_direction(struct gesture_binding *binding)
+-{
+-    return binding->direction;
+-}
+-
+-const char *kywc_gesture_binding_desc(struct gesture_binding *binding)
+-{
+-    return binding->desc;
++    return binding ? &binding->info : NULL;
+ }
+ 
+ struct gesture_binding *
+@@ -940,21 +1021,22 @@ kywc_gesture_binding_create(enum gesture_type type, uint32_t stages, enum gestur
+     }
+ 
+     binding->enabled = true;
+-    binding->func_id = func_id;
+-    binding->id = generate_gesture_id(device, fingers, type, direction, edge);
+-    binding->type = type;
+-    binding->stages = stages;
+-    binding->device = device;
+-    binding->direction = direction;
+-    binding->fingers = fingers;
+-    binding->edge = edge;
+-    binding->follow_threshold = follow_threshold > 0.0 ? follow_threshold : 0.0;
+-    binding->follow_directions = follow_directions;
++    binding->info.func_id = func_id;
++    binding->info.id = generate_gesture_id(device, fingers, type, direction, edge);
++    binding->info.direction = direction;
++    binding->info.type = type;
++    binding->info.stages = stages;
++    binding->info.device = device;
++    binding->info.fingers = fingers;
++    binding->info.edge = edge;
++    binding->info.follow_threshold = follow_threshold > 0.0 ? follow_threshold : 0.0;
++    binding->info.follow_directions = follow_directions;
+     if (desc) {
+-        binding->desc = strdup(desc);
++        binding->info.desc = strdup(desc);
+     }
+     wl_list_init(&binding->link);
+     wl_signal_init(&binding->events.cancel);
++    wl_signal_init(&binding->events.destroy);
+ 
+     return binding;
+ }
+@@ -966,24 +1048,37 @@ bool kywc_gesture_binding_register(struct gesture_binding *binding,
+                                                   uint32_t follow_directions, double dx, double dy),
+                                    void *data)
+ {
+-    if (!wl_list_empty(&binding->link)) {
++    if (gesture_binding_is_registered(binding)) {
+         return true;
+     }
+-    if (!gesture_binding_is_valid(binding, binding->id)) {
++
++    struct gesture_binding_group *gesture_group = gesture_binding_group_get(binding->info.device);
++    if (!gesture_group || !gesture_binding_id_is_unique(gesture_group, binding->info.id)) {
+         return false;
+     }
+ 
+-    wl_list_insert(&bindings->gesture_bindings, &binding->link);
+     binding->action = action;
+     binding->data = data;
++    wl_list_insert(&gesture_group->bindings, &binding->link);
++    gesture_binding_group_update_available_count(gesture_group, false,
++                                                 gesture_binding_is_available(binding));
++    wl_signal_emit_mutable(&bindings->events.gesture_registered, binding);
+ 
+     return true;
+ }
+ 
+ bool bindings_handle_gesture_binding(struct gesture_state *gesture_state)
+ {
++    struct gesture_binding_group *gesture_group = gesture_binding_group_get(gesture_state->device);
++    if (!gesture_group) {
++        return false;
++    }
++    if (!gesture_state->active_binding && !gesture_binding_group_is_available(gesture_group)) {
++        return false;
++    }
++
+     struct gesture_binding *binding;
+-    wl_list_for_each(binding, &bindings->gesture_bindings, link) {
++    wl_list_for_each(binding, &gesture_group->bindings, link) {
+         if (gesture_state->active_binding && binding != gesture_state->active_binding) {
+             continue;
+         }
+@@ -993,45 +1088,42 @@ bool bindings_handle_gesture_binding(struct gesture_state *gesture_state)
+         if (binding->nblocks && binding != gesture_state->active_binding) {
+             continue;
+         }
+-        if (gesture_state->device != binding->device) {
+-            continue;
+-        }
+-        if (gesture_state->type != binding->type) {
++        if (gesture_state->type != binding->info.type) {
+             continue;
+         }
+-        if (gesture_state->fingers != binding->fingers) {
++        if (gesture_state->fingers != binding->info.fingers) {
+             continue;
+         }
+-        if (!(gesture_state->stage & binding->stages)) {
++        if (!(gesture_state->stage & binding->info.stages)) {
+             continue;
+         }
+-        if (binding->edge != GESTURE_EDGE_NONE && binding->edge != gesture_state->edge) {
++        if (binding->info.edge != GESTURE_EDGE_NONE && binding->info.edge != gesture_state->edge) {
+             continue;
+         }
+ 
+         if (gesture_state->stage == GESTURE_STAGE_BEFORE &&
+-            gesture_state->follow_direction != binding->direction) {
++            gesture_state->follow_direction != binding->info.direction) {
+             continue;
+         }
+         if (!gesture_state->active_binding && gesture_state->stage != GESTURE_STAGE_BEFORE &&
+-            binding->direction != GESTURE_DIRECTION_NONE && gesture_state->directions &&
+-            !(gesture_state->directions & binding->direction)) {
++            binding->info.direction != GESTURE_DIRECTION_NONE && gesture_state->directions &&
++            !(gesture_state->directions & binding->info.direction)) {
+             continue;
+         }
+         if (gesture_state->stage == GESTURE_STAGE_AFTER &&
+-            !(binding->follow_directions
+-                  ? (gesture_state->follow_direction & binding->follow_directions)
+-                  : (gesture_state->follow_direction == binding->direction))) {
++            !(binding->info.follow_directions
++                  ? (gesture_state->follow_direction & binding->info.follow_directions)
++                  : (gesture_state->follow_direction == binding->info.direction))) {
+             continue;
+         }
+ 
+         /* do not trigger follow if interval < follow_threshold */
+         if (gesture_state->stage == GESTURE_STAGE_BEFORE ||
+             gesture_state->stage == GESTURE_STAGE_AFTER) {
+-            if (gesture_state->follow_dx > -binding->follow_threshold &&
+-                gesture_state->follow_dx < binding->follow_threshold &&
+-                gesture_state->follow_dy > -binding->follow_threshold &&
+-                gesture_state->follow_dy < binding->follow_threshold) {
++            if (gesture_state->follow_dx > -binding->info.follow_threshold &&
++                gesture_state->follow_dx < binding->info.follow_threshold &&
++                gesture_state->follow_dy > -binding->info.follow_threshold &&
++                gesture_state->follow_dy < binding->info.follow_threshold) {
+                 continue;
+             }
+         }
+@@ -1039,7 +1131,7 @@ bool bindings_handle_gesture_binding(struct gesture_state *gesture_state)
+         kywc_log(KYWC_DEBUG,
+                  "Start gesture [type:%d] [fingers:%d] [stage:%d] [direction:%d] binding: %s",
+                  gesture_state->type, gesture_state->fingers, gesture_state->stage,
+-                 gesture_state->directions, binding->desc);
++                 gesture_state->directions, binding->info.desc);
+         if (!gesture_state->active_binding && (gesture_state->stage == GESTURE_STAGE_BEFORE ||
+                                                gesture_state->stage == GESTURE_STAGE_TRIGGER)) {
+             gesture_binding_activate(binding, gesture_state);
+@@ -1054,51 +1146,58 @@ bool bindings_handle_gesture_binding(struct gesture_state *gesture_state)
+     return false;
+ }
+ 
+-void kywc_gesture_binding_for_each(gesture_binding_iterator_func_t iterator)
+-{
+-    struct gesture_binding *binding;
+-    wl_list_for_each(binding, &bindings->gesture_bindings, link) {
+-        if (iterator(binding, binding->id, binding->desc)) {
+-            return;
+-        }
+-    }
+-}
+-
+ void kywc_gesture_binding_update(struct gesture_binding *binding, bool enabled,
+                                  enum function_id func_id, uint32_t stages,
+                                  uint32_t follow_directions, double follow_threshold)
+ {
++    bool registered = gesture_binding_is_registered(binding);
++    bool old_available = registered && gesture_binding_is_available(binding);
++
+     if (binding->enabled != enabled) {
+         binding->enabled = enabled;
+     }
+ 
++    if (registered) {
++        struct gesture_binding_group *gesture_group =
++            gesture_binding_group_get(binding->info.device);
++        assert(gesture_group);
++        gesture_binding_group_update_available_count(gesture_group, old_available,
++                                                     gesture_binding_is_available(binding));
++    }
++
+     if (!binding->enabled) {
+         return;
+     }
+ 
+-    if (binding->func_id != func_id) {
+-        binding->func_id = func_id;
++    if (binding->info.func_id != func_id) {
++        binding->info.func_id = func_id;
+     }
+ 
+-    if (binding->stages != stages) {
+-        binding->stages = stages;
++    if (binding->info.stages != stages) {
++        binding->info.stages = stages;
+     }
+ 
+-    if (binding->follow_directions != follow_directions) {
+-        binding->follow_directions = follow_directions;
++    if (binding->info.follow_directions != follow_directions) {
++        binding->info.follow_directions = follow_directions;
+     }
+ 
+-    if (binding->follow_threshold != follow_threshold) {
+-        binding->follow_threshold = follow_threshold;
++    if (binding->info.follow_threshold != follow_threshold) {
++        binding->info.follow_threshold = follow_threshold;
+     }
+ }
+ 
+ bool kywc_gesture_binding_check(enum gesture_type type, enum gesture_device device, uint8_t fingers)
+ {
++    struct gesture_binding_group *gesture_group = gesture_binding_group_get(device);
++    if (!gesture_binding_group_is_available(gesture_group)) {
++        return false;
++    }
++
+     struct gesture_binding *binding;
+-    wl_list_for_each(binding, &bindings->gesture_bindings, link) {
+-        if (binding->type == type && binding->device == device && binding->fingers == fingers) {
+-            return binding->enabled && !binding->nblocks;
++    wl_list_for_each(binding, &gesture_group->bindings, link) {
++        if (binding->info.type == type && binding->info.fingers == fingers &&
++            gesture_binding_is_available(binding)) {
++            return true;
+         }
+     }
+     return false;
+@@ -1106,34 +1205,69 @@ bool kywc_gesture_binding_check(enum gesture_type type, enum gesture_device devi
+ 
+ enum gesture_edge kywc_gesture_binding_check_edge(enum gesture_device device)
+ {
++    struct gesture_binding_group *gesture_group = gesture_binding_group_get(device);
++    if (!gesture_binding_group_is_available(gesture_group)) {
++        return GESTURE_EDGE_NONE;
++    }
++
+     enum gesture_edge edges = GESTURE_EDGE_NONE;
+     struct gesture_binding *binding;
+-    wl_list_for_each(binding, &bindings->gesture_bindings, link) {
+-        if (binding->enabled && !binding->nblocks && binding->device == device) {
+-            edges |= binding->edge;
++    wl_list_for_each(binding, &gesture_group->bindings, link) {
++        if (gesture_binding_is_available(binding)) {
++            edges |= binding->info.edge;
+         }
+     }
+     return edges;
+ }
+ 
++bool kywc_gesture_binding_device_available(enum gesture_device device)
++{
++    return gesture_binding_group_is_available(gesture_binding_group_get(device));
++}
++
+ void kywc_gesture_binding_block(struct gesture_binding *binding, bool block)
+ {
++    bool registered = gesture_binding_is_registered(binding);
++    bool old_available = registered && gesture_binding_is_available(binding);
++
+     if (block) {
+         binding->nblocks++;
+     } else {
+         assert(binding->nblocks > 0);
+         binding->nblocks--;
+     }
++
++    if (registered) {
++        struct gesture_binding_group *gesture_group =
++            gesture_binding_group_get(binding->info.device);
++        assert(gesture_group);
++        gesture_binding_group_update_available_count(gesture_group, old_available,
++                                                     gesture_binding_is_available(binding));
++    }
++}
++
++void kywc_gesture_binding_block_device(enum gesture_device device, bool block)
++{
++    struct gesture_binding_group *gesture_group = gesture_binding_group_get(device);
++    if (!gesture_group) {
++        return;
++    }
++
++    if (block) {
++        gesture_group->nblocks++;
++    } else {
++        assert(gesture_group->nblocks > 0);
++        gesture_group->nblocks--;
++    }
+ }
+ 
+-void kywc_key_binding_for_each(binding_iterator_func_t iterator)
++void kywc_key_binding_for_each(key_binding_iterator_func_t iterator)
+ {
+     for (size_t i = 0; i < KEY_BINDING_TYPE_NUM; ++i) {
+         struct key_binding *binding;
+         struct keysyms_binding *keysyms_binding = &bindings->keysyms_binding[i];
+         wl_list_for_each(binding, &keysyms_binding->bindings, link) {
+-            if (iterator(binding, binding->keybind, binding->desc, binding->modifiers,
+-                         binding->keysym)) {
++            if (iterator(binding)) {
+                 return;
+             }
+         }
+diff --git a/src/input/function.c b/src/input/function.c
+index e11ad2e..50c6166 100644
+--- a/src/input/function.c
++++ b/src/input/function.c
+@@ -1411,7 +1411,8 @@ void function_manager_handle_gesture_binding(struct gesture_binding *binding, vo
+         seat = input_manager_get_default_seat();
+     }
+ 
+-    enum function_id id = kywc_gesture_binding_function_id(binding);
++    const struct gesture_binding_info *info = kywc_gesture_binding_get_info(binding);
++    enum function_id id = info->func_id;
+     switch (id) {
+     case FUNC_ID_CONFIG:
+         input_action_handle_gesture_binding(binding, seat, stage, follow_direction);
+@@ -1422,8 +1423,8 @@ void function_manager_handle_gesture_binding(struct gesture_binding *binding, vo
+     case FUNC_ID_SWITCH_RIGHT_WORKSPACE:
+     case FUNC_ID_SWITCH_LEFT_WORKSPACE_GESTURE:
+     case FUNC_ID_SWITCH_RIGHT_WORKSPACE_GESTURE:
+-        workspace_manager_handle_function(
+-            id, stage, device, kywc_gesture_binding_direction(binding), follow_direction, dx, dy);
++        workspace_manager_handle_function(id, stage, device, info->direction, follow_direction, dx,
++                                          dy);
+         break;
+     case FUNC_ID_TOGGLE_DESKTOP_VISIBILITY:
+     case FUNC_ID_SHOW_DESKTOP:
+@@ -1496,8 +1497,8 @@ void function_manager_handle_gesture_binding(struct gesture_binding *binding, vo
+         ukui_media_do_action("MUTE_KEY");
+         break;
+     case FUNC_ID_MEDIA_VOL_CONTROL:
+-        ukui_media_control_do_action(control_gesture_direction(
+-            kywc_gesture_binding_direction(binding), follow_direction, dx, dy));
++        ukui_media_control_do_action(
++            control_gesture_direction(info->direction, follow_direction, dx, dy));
+         break;
+     case FUNC_ID_MEDIA_REWIND:
+         ukui_media_do_action("REWIND_KEY");
+@@ -1506,8 +1507,8 @@ void function_manager_handle_gesture_binding(struct gesture_binding *binding, vo
+         ukui_media_do_action("FORWARD_KEY");
+         break;
+     case FUNC_ID_MEDIA_PROGRESS_CONTROL:
+-        ukui_media_progress_control_do_action(control_gesture_direction(
+-            kywc_gesture_binding_direction(binding), follow_direction, dx, dy));
++        ukui_media_progress_control_do_action(
++            control_gesture_direction(info->direction, follow_direction, dx, dy));
+         break;
+     case FUNC_ID_BRIGHTNESS_UP:
+         ukui_media_do_action("BRIGHT_UP_KEY");
+@@ -1516,8 +1517,8 @@ void function_manager_handle_gesture_binding(struct gesture_binding *binding, vo
+         ukui_media_do_action("BRIGHT_DOWN_KEY");
+         break;
+     case FUNC_ID_BRIGHTNESS_CONTROL:
+-        ukui_brightness_control_do_action(control_gesture_direction(
+-            kywc_gesture_binding_direction(binding), follow_direction, dx, dy));
++        ukui_brightness_control_do_action(
++            control_gesture_direction(info->direction, follow_direction, dx, dy));
+         break;
+     default:
+         break;
+diff --git a/src/input/gesture.c b/src/input/gesture.c
+index 203c20d..15cf0fd 100644
+--- a/src/input/gesture.c
++++ b/src/input/gesture.c
+@@ -210,6 +210,13 @@ void gesture_state_finish(struct gesture_state *state)
+ void gesture_state_begin(struct gesture_state *state, struct seat *seat, enum gesture_type type,
+                          enum gesture_device device, enum gesture_edge edge, uint8_t fingers)
+ {
++    if (!kywc_gesture_binding_device_available(device)) {
++        if (state->type != GESTURE_TYPE_NONE) {
++            gesture_state_end(state, state->type, state->device, true);
++        }
++        return;
++    }
++
+     state->seat = seat;
+     state->type = type;
+     state->device = device;
+diff --git a/src/input/global_gestures.c b/src/input/global_gestures.c
+index da2a105..4dab7d9 100644
+--- a/src/input/global_gestures.c
++++ b/src/input/global_gestures.c
+@@ -3,6 +3,7 @@
+ // SPDX-License-Identifier: GPL-1.0-or-later
+ #define _POSIX_C_SOURCE 200809L
+ 
++#include <assert.h>
+ #include <stdlib.h>
+ 
+ #include <kywc/binding.h>
+@@ -28,6 +29,7 @@ struct gesture {
+ 
+     const char *name;
+     struct gesture_binding *binding;
++    struct wl_listener binding_destroy;
+ 
+     bool enabled;
+ 
+@@ -60,12 +62,16 @@ static struct gestures_manager {
+     struct wl_list gestures;
+     struct wl_list block_owners;
+ 
+-    struct wl_listener server_start;
++    struct wl_listener binding_registered;
+     struct wl_listener server_destroy;
+ } *manager = NULL;
+ 
+ static void gesture_destroy(struct gesture *gesture)
+ {
++    if (gesture->binding) {
++        wl_list_remove(&gesture->binding_destroy.link);
++    }
++
+     wl_list_remove(&gesture->link);
+     free((void *)gesture->name);
+     free(gesture);
+@@ -82,14 +88,21 @@ static struct gesture *gesture_by_id(uint32_t id)
+     return NULL;
+ }
+ 
+-static enum gesture_device gesture_device_by_id(uint32_t id)
++static enum gesture_device gesture_device_from_id(uint32_t gesture_id)
+ {
+-    return (id >> 20) & 0x0F;
++    uint32_t device_bit = (gesture_id >> GESTURE_ID_DEVICE_SHIFT) & GESTURE_ID_DEVICE_MASK;
++    for (int i = 0; i < GESTURE_DEVICE_COUNT; ++i) {
++        if (device_bit == GESTURE_DEVICE_BIT(i)) {
++            return i;
++        }
++    }
++
++    return GESTURE_DEVICE_NONE;
+ }
+ 
+ static bool gesture_device_is_valid(enum gesture_device device)
+ {
+-    return device != GESTURE_DEVICE_NONE && !(device & (device - 1));
++    return device > GESTURE_DEVICE_NONE && device < GESTURE_DEVICE_COUNT;
+ }
+ 
+ static struct gesture_block_owner *gesture_block_owner_get(const char *owner)
+@@ -117,11 +130,6 @@ static struct gesture_block *gesture_block_find(struct gesture_block_owner *bloc
+     return NULL;
+ }
+ 
+-static bool gesture_block_exists(struct gesture_block_owner *block_owner, uint32_t id)
+-{
+-    return gesture_block_find(block_owner, id) != NULL;
+-}
+-
+ static struct gesture_block *gesture_block_get_or_create(struct gesture_block_owner *block_owner,
+                                                          uint32_t id)
+ {
+@@ -141,37 +149,25 @@ static struct gesture_block *gesture_block_get_or_create(struct gesture_block_ow
+     return gesture_block;
+ }
+ 
+-static bool gesture_blocked_by_owner(struct gesture_block_owner *block_owner, uint32_t gesture_id)
+-{
+-    enum gesture_device device = gesture_device_by_id(gesture_id);
+-    return (gesture_device_is_valid(device) && (block_owner->blocked_devices & device)) ||
+-           gesture_block_exists(block_owner, gesture_id);
+-}
+-
+-static void gesture_binding_update_owner_block(struct gesture *gesture, bool old_blocked,
+-                                               bool new_blocked)
+-{
+-    if (!gesture || !gesture->binding || old_blocked == new_blocked) {
+-        return;
+-    }
+-
+-    kywc_gesture_binding_block(gesture->binding, new_blocked);
+-}
+-
+ static void gesture_block_owner_destroy(struct gesture_block_owner *block_owner)
+ {
+-    struct gesture *gesture;
+-    wl_list_for_each(gesture, &manager->gestures, link) {
+-        bool old_blocked = gesture_blocked_by_owner(block_owner, gesture->id);
+-        gesture_binding_update_owner_block(gesture, old_blocked, false);
+-    }
+-
+     struct gesture_block *gesture_block, *tmp;
+     wl_list_for_each_safe(gesture_block, tmp, &block_owner->gestures, link) {
++        struct gesture *gesture = gesture_by_id(gesture_block->id);
++        if (gesture && gesture->binding) {
++            kywc_gesture_binding_block(gesture->binding, false);
++        }
++
+         wl_list_remove(&gesture_block->link);
+         free(gesture_block);
+     }
+ 
++    for (int i = 0; i < GESTURE_DEVICE_COUNT; ++i) {
++        if (block_owner->blocked_devices & GESTURE_DEVICE_BIT(i)) {
++            kywc_gesture_binding_block_device(i, false);
++        }
++    }
++
+     if (block_owner->watcher) {
+         sd_bus_slot_unref(block_owner->watcher);
+     }
+@@ -248,6 +244,31 @@ static bool gesture_block_owner_is_unused(struct gesture_block_owner *block_owne
+     return block_owner && !block_owner->blocked_devices && wl_list_empty(&block_owner->gestures);
+ }
+ 
++static void handle_gesture_binding_destroy(struct wl_listener *listener, void *data)
++{
++    struct gesture *gesture = wl_container_of(listener, gesture, binding_destroy);
++
++    wl_list_remove(&gesture->binding_destroy.link);
++    wl_list_init(&gesture->binding_destroy.link);
++    gesture->binding = NULL;
++}
++
++static void gesture_set_binding(struct gesture *gesture, struct gesture_binding *binding)
++{
++    assert(!gesture->binding);
++
++    gesture->binding = binding;
++    gesture->binding_destroy.notify = handle_gesture_binding_destroy;
++    kywc_gesture_binding_add_destroy_listener(binding, &gesture->binding_destroy);
++
++    struct gesture_block_owner *block_owner;
++    wl_list_for_each(block_owner, &manager->block_owners, link) {
++        if (gesture_block_find(block_owner, gesture->id)) {
++            kywc_gesture_binding_block(binding, true);
++        }
++    }
++}
++
+ static bool system_gesture_write_config(struct gesture *gesture)
+ {
+     if (!manager || !manager->config || !manager->config->json || !gesture) {
+@@ -283,23 +304,26 @@ static bool system_gesture_write_config(struct gesture *gesture)
+ 
+ static bool gesture_update(struct gesture *gesture, struct gesture *pending)
+ {
+-    if (!gesture || !pending || !gesture->binding) {
++    if (!gesture || !pending) {
+         return false;
+     }
+ 
+     struct gesture_optional *optional = &gesture->optional;
+ 
+     if (gesture->current_id != pending->current_id) {
+-        enum gesture_device device = (gesture->id >> 20) & 0x0F;
+-        enum gesture_direction direction = (gesture->id >> 4) & 0xFF;
++        enum gesture_device device = gesture_device_from_id(gesture->id);
++        enum gesture_direction direction =
++            (gesture->id >> GESTURE_ID_DIRECTION_SHIFT) & GESTURE_ID_DIRECTION_MASK;
+         function_entry_get_gesture_optional(pending->current_id, device, direction,
+                                             &optional->stages, &optional->follow_directions,
+                                             &optional->follow_threshold);
+     }
+ 
+-    kywc_gesture_binding_update(gesture->binding, pending->enabled, pending->current_id,
+-                                optional->stages, optional->follow_directions,
+-                                optional->follow_threshold);
++    if (gesture->binding) {
++        kywc_gesture_binding_update(gesture->binding, pending->enabled, pending->current_id,
++                                    optional->stages, optional->follow_directions,
++                                    optional->follow_threshold);
++    }
+ 
+     gesture->default_id = pending->default_id;
+     gesture->enabled = pending->enabled;
+@@ -445,28 +469,19 @@ static bool gesture_block_owner_set_device_block(struct gesture_block_owner *blo
+         return false;
+     }
+ 
+-    bool old_device_blocked = block_owner->blocked_devices & device;
++    uint32_t device_bit = GESTURE_DEVICE_BIT(device);
++    bool old_device_blocked = block_owner->blocked_devices & device_bit;
+     if (old_device_blocked == block) {
+         return false;
+     }
+ 
+     if (block) {
+-        block_owner->blocked_devices |= device;
++        block_owner->blocked_devices |= device_bit;
+     } else {
+-        block_owner->blocked_devices &= ~device;
++        block_owner->blocked_devices &= ~device_bit;
+     }
+ 
+-    struct gesture *gesture;
+-    wl_list_for_each(gesture, &manager->gestures, link) {
+-        if (gesture_device_by_id(gesture->id) != device) {
+-            continue;
+-        }
+-
+-        bool has_gesture_block = gesture_block_exists(block_owner, gesture->id);
+-        bool old_blocked = old_device_blocked || has_gesture_block;
+-        bool new_blocked = block || has_gesture_block;
+-        gesture_binding_update_owner_block(gesture, old_blocked, new_blocked);
+-    }
++    kywc_gesture_binding_block_device(device, block);
+ 
+     return true;
+ }
+@@ -475,20 +490,16 @@ static bool gesture_block_owner_set_gesture_block(struct gesture_block_owner *bl
+                                                   uint32_t gesture_id, bool block)
+ {
+     struct gesture *gesture = gesture_by_id(gesture_id);
+-    if (!gesture || !gesture->binding) {
++    if (!gesture) {
+         return false;
+     }
+ 
+-    enum gesture_device device = gesture_device_by_id(gesture_id);
+-    bool device_blocked =
+-        gesture_device_is_valid(device) && (block_owner->blocked_devices & device);
+     struct gesture_block *gesture_block = gesture_block_find(block_owner, gesture_id);
+     bool old_gesture_blocked = gesture_block != NULL;
+     if (old_gesture_blocked == block) {
+         return false;
+     }
+ 
+-    bool old_blocked = device_blocked || old_gesture_blocked;
+     if (block) {
+         gesture_block = gesture_block_get_or_create(block_owner, gesture_id);
+         if (!gesture_block) {
+@@ -499,8 +510,9 @@ static bool gesture_block_owner_set_gesture_block(struct gesture_block_owner *bl
+         free(gesture_block);
+     }
+ 
+-    bool new_blocked = device_blocked || block;
+-    gesture_binding_update_owner_block(gesture, old_blocked, new_blocked);
++    if (gesture->binding) {
++        kywc_gesture_binding_block(gesture->binding, block);
++    }
+ 
+     return true;
+ }
+@@ -515,8 +527,7 @@ static int block_gestures_by_device(sd_bus_message *m, struct gesture_block_owne
+ 
+         CK(sd_bus_message_enter_container(m, 'e', "ub"));
+         CK(sd_bus_message_read(m, "ub", &device_id, &block));
+-        enum gesture_device device = device_id;
+-        if (gesture_block_owner_set_device_block(block_owner, device, block)) {
++        if (gesture_block_owner_set_device_block(block_owner, device_id, block)) {
+             (*ret_count)++;
+         }
+         CK(sd_bus_message_exit_container(m));
+@@ -642,11 +653,12 @@ static struct gesture *gesture_get_or_create_by_id(uint32_t id)
+ 
+ static bool gesture_create_binding_and_register(struct gesture *gesture)
+ {
+-    enum gesture_device device = (gesture->id >> 20) & 0x0F;
+-    uint8_t fingers = (gesture->id >> 16) & 0x0F;
+-    enum gesture_type type = (gesture->id >> 12) & 0x0F;
+-    enum gesture_direction direction = (gesture->id >> 4) & 0xFF;
+-    enum gesture_edge edge = gesture->id & 0x0F;
++    enum gesture_device device = gesture_device_from_id(gesture->id);
++    uint8_t fingers = (gesture->id >> GESTURE_ID_FINGERS_SHIFT) & GESTURE_ID_FINGERS_MASK;
++    enum gesture_type type = (gesture->id >> GESTURE_ID_TYPE_SHIFT) & GESTURE_ID_TYPE_MASK;
++    enum gesture_direction direction =
++        (gesture->id >> GESTURE_ID_DIRECTION_SHIFT) & GESTURE_ID_DIRECTION_MASK;
++    enum gesture_edge edge = (gesture->id >> GESTURE_ID_EDGE_SHIFT) & GESTURE_ID_EDGE_MASK;
+ 
+     struct gesture_optional *optional = &gesture->optional;
+     function_entry_get_gesture_optional(gesture->current_id, device, direction, &optional->stages,
+@@ -670,7 +682,7 @@ static bool gesture_create_binding_and_register(struct gesture *gesture)
+         return false;
+     }
+ 
+-    gesture->binding = binding;
++    gesture_set_binding(gesture, binding);
+ 
+     return true;
+ }
+@@ -715,10 +727,6 @@ static bool setup_system_gestures_from_config(struct gestures_manager *manager)
+         if (!has_current && gesture->default_id != FUNC_ID_NONE) {
+             gesture->current_id = gesture->default_id;
+         }
+-        struct gesture_optional *optional = &gesture->optional;
+-        function_entry_get_gesture_optional(
+-            gesture->current_id, (gesture->id >> 20) & 0x0F, (gesture->id >> 4) & 0xFF,
+-            &optional->stages, &optional->follow_directions, &optional->follow_threshold);
+ 
+         if (!gesture_create_binding_and_register(gesture)) {
+             gesture_destroy(gesture);
+@@ -728,37 +736,53 @@ static bool setup_system_gestures_from_config(struct gestures_manager *manager)
+     return true;
+ }
+ 
+-static bool system_builtin_gestures(struct gesture_binding *binding, uint32_t gesture_id,
+-                                    const char *desc)
++static void system_gesture_attach_binding(struct gesture_binding *binding)
+ {
+-    struct gesture *gesture = gesture_by_id(gesture_id);
+-    if (gesture) {
+-        return false;
++    const struct gesture_binding_info *info = kywc_gesture_binding_get_info(binding);
++    if (!info || !info->desc) {
++        return;
+     }
+ 
+-    gesture = gesture_create_by_id(gesture_id);
+-    if (!gesture) {
+-        return false;
++    struct gesture *gesture = gesture_by_id(info->id);
++    if (gesture && gesture->binding) {
++        return;
+     }
+ 
+-    gesture->binding = binding;
+-    gesture->default_id = kywc_gesture_binding_function_id(binding);
+-    gesture->current_id = gesture->default_id;
+-    gesture->name = strdup(desc);
+-    system_gesture_write_config(gesture);
++    if (!gesture) {
++        gesture = gesture_create_by_id(info->id);
++        if (!gesture) {
++            return;
++        }
++
++        gesture_set_binding(gesture, binding);
++        gesture->default_id = info->func_id;
++        gesture->current_id = gesture->default_id;
++        gesture->name = strdup(info->desc);
++        system_gesture_write_config(gesture);
++
++        return;
++    }
+ 
+-    return false;
++    enum gesture_device device = gesture_device_from_id(gesture->id);
++    enum gesture_direction direction =
++        (gesture->id >> GESTURE_ID_DIRECTION_SHIFT) & GESTURE_ID_DIRECTION_MASK;
++    struct gesture_optional *optional = &gesture->optional;
++    function_entry_get_gesture_optional(gesture->current_id, device, direction, &optional->stages,
++                                        &optional->follow_directions, &optional->follow_threshold);
++    kywc_gesture_binding_update(binding, gesture->enabled, gesture->current_id, optional->stages,
++                                optional->follow_directions, optional->follow_threshold);
++    gesture_set_binding(gesture, binding);
+ }
+ 
+-static void handle_server_start(struct wl_listener *listener, void *data)
++static void handle_gesture_binding_registered(struct wl_listener *listener, void *data)
+ {
+-    kywc_gesture_binding_for_each(system_builtin_gestures);
++    system_gesture_attach_binding(data);
+ }
+ 
+ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ {
++    wl_list_remove(&manager->binding_registered.link);
+     wl_list_remove(&manager->server_destroy.link);
+-    wl_list_remove(&manager->server_start.link);
+ 
+     struct gesture_block_owner *block_owner, *block_owner_tmp;
+     wl_list_for_each_safe(block_owner, block_owner_tmp, &manager->block_owners, link) {
+@@ -790,8 +814,8 @@ bool global_gestures_manager_create(struct server *server)
+ 
+     setup_system_gestures_from_config(manager);
+ 
+-    manager->server_start.notify = handle_server_start;
+-    wl_signal_add(&server->events.start, &manager->server_start);
++    manager->binding_registered.notify = handle_gesture_binding_registered;
++    kywc_gesture_binding_add_registered_listener(&manager->binding_registered);
+ 
+     manager->server_destroy.notify = handle_server_destroy;
+     server_add_destroy_listener(server, &manager->server_destroy);
+diff --git a/src/input/global_shortcuts.c b/src/input/global_shortcuts.c
+index 5d14344..fe5a73f 100644
+--- a/src/input/global_shortcuts.c
++++ b/src/input/global_shortcuts.c
+@@ -57,6 +57,7 @@ struct global_shortcut_session {
+ struct global_shortcut {
+     struct global_shortcut_session *session;
+     struct key_binding *binding;
++    struct wl_listener binding_destroy;
+ 
+     const char *unique;
+     const char *default_key;
+@@ -75,7 +76,7 @@ struct global_shortcut {
+ static struct global_shortcuts_manager {
+     struct config *config;
+ 
+-    struct wl_listener server_start;
++    struct wl_listener binding_registered;
+     struct wl_listener server_destroy;
+ 
+     struct wl_list sessions; // all session
+@@ -86,6 +87,7 @@ static struct global_shortcuts_manager {
+ static const char *session_builtin = "kylin_wlcom";
+ 
+ static bool system_shortcut_write_config(struct global_shortcut *shortcut);
++static void shortcut_binding_apply_session_blocks(struct global_shortcut *shortcut);
+ static void session_block_scopes_destroy(struct global_shortcut_session *session);
+ static int session_name_owner_changed_handle(sd_bus_message *m, void *userdata,
+                                              sd_bus_error *ret_error);
+@@ -121,10 +123,43 @@ static uint32_t shortcut_key_binding_options(struct global_shortcut *shortcut)
+            KEY_BINDING_TRIGGER_IN_REPEAT;
+ }
+ 
++static void shortcut_clear_binding(struct global_shortcut *shortcut)
++{
++    wl_list_remove(&shortcut->binding_destroy.link);
++    wl_list_init(&shortcut->binding_destroy.link);
++    shortcut->binding = NULL;
++}
++
++static void handle_key_binding_destroy(struct wl_listener *listener, void *data)
++{
++    struct global_shortcut *shortcut = wl_container_of(listener, shortcut, binding_destroy);
++
++    shortcut_clear_binding(shortcut);
++}
++
++static void shortcut_set_binding(struct global_shortcut *shortcut, struct key_binding *binding)
++{
++    if (shortcut->binding) {
++        return;
++    }
++
++    shortcut->binding = binding;
++    shortcut->binding_destroy.notify = handle_key_binding_destroy;
++    kywc_key_binding_add_destroy_listener(binding, &shortcut->binding_destroy);
++    shortcut_binding_apply_session_blocks(shortcut);
++    if (shortcut_session_is_builtin(shortcut->session) && !shortcut->enabled) {
++        kywc_key_binding_block(binding, true);
++    }
++}
++
+ static void global_shortcut_destroy(struct global_shortcut *shortcut, bool clean)
+ {
+-    if (shortcut->binding && clean) {
+-        kywc_key_binding_destroy(shortcut->binding);
++    if (shortcut->binding) {
++        if (clean) {
++            kywc_key_binding_destroy(shortcut->binding);
++        } else {
++            shortcut_clear_binding(shortcut);
++        }
+     }
+ 
+     wl_list_remove(&shortcut->link);
+@@ -225,7 +260,6 @@ static bool shortcut_create_binding_and_register(struct global_shortcut_session
+     if (!shortcut->enabled && !builtin_session) {
+         if (shortcut->binding) {
+             kywc_key_binding_destroy(shortcut->binding);
+-            shortcut->binding = NULL;
+         }
+         return true;
+     }
+@@ -264,11 +298,7 @@ static bool shortcut_create_binding_and_register(struct global_shortcut_session
+         return false;
+     }
+ 
+-    shortcut->binding = binding;
+-
+-    if (builtin_session && !shortcut->enabled) {
+-        kywc_key_binding_block(shortcut->binding, true);
+-    }
++    shortcut_set_binding(shortcut, binding);
+ 
+     return true;
+ }
+@@ -281,13 +311,11 @@ static bool session_shortcut_update(struct global_shortcut_session *session,
+     if (!pending->enabled && !builtin_session) {
+         if (shortcut->binding) {
+             kywc_key_binding_destroy(shortcut->binding);
+-            shortcut->binding = NULL;
+         }
+         shortcut->enabled = false;
+         return true;
+     }
+ 
+-    bool created_binding = false;
+     // only built-in session can change the function ID
+     if (shortcut->func_id != pending->func_id && strcmp(session->handle, session_builtin) != 0) {
+         return false;
+@@ -320,8 +348,8 @@ static bool session_shortcut_update(struct global_shortcut_session *session,
+             kywc_key_binding_destroy(binding);
+             return false;
+         }
+-        shortcut->binding = binding;
+-        created_binding = true;
++
++        shortcut_set_binding(shortcut, binding);
+     }
+ 
+     if (old_mod != new_mod || old_key != new_key) {
+@@ -348,8 +376,6 @@ static bool session_shortcut_update(struct global_shortcut_session *session,
+     if (builtin_session && shortcut->binding) {
+         if (shortcut->enabled != pending->enabled) {
+             kywc_key_binding_block(shortcut->binding, !pending->enabled);
+-        } else if (!pending->enabled && created_binding) {
+-            kywc_key_binding_block(shortcut->binding, true);
+         }
+     }
+ 
+@@ -378,7 +404,6 @@ static void shortcuts_reset_default_key(struct global_shortcut_session *session)
+             continue;
+         }
+         kywc_key_binding_destroy(shortcut->binding);
+-        shortcut->binding = NULL;
+ 
+         if (str_equal(shortcut->current_key, shortcut->default_key)) {
+             free((void *)shortcut->current_key);
+@@ -687,10 +712,12 @@ static bool shortcut_session_block(struct global_shortcut_session *session, cons
+     bool is_block_all = strcmp(unique, IDENTIFIER_ALL) == 0;
+     if (!is_block_all) {
+         struct global_shortcut *shortcut = shortcut_by_unique(session, unique);
+-        if (!shortcut || !shortcut->binding) {
++        if (!shortcut) {
+             return !block;
+         }
+-        kywc_key_binding_block(shortcut->binding, block);
++        if (shortcut->binding) {
++            kywc_key_binding_block(shortcut->binding, block);
++        }
+         return true;
+     }
+ 
+@@ -814,6 +841,25 @@ static bool block_shortcut_effective_blocked(struct session_block_scope *session
+     return session_block_scope->all_set && session_block_scope->all_blocked;
+ }
+ 
++static void shortcut_binding_apply_session_blocks(struct global_shortcut *shortcut)
++{
++    struct global_shortcut_session *source_session;
++    wl_list_for_each(source_session, &manager->sessions, link) {
++        struct session_block_scope *block_scope;
++        wl_list_for_each(block_scope, &source_session->blocks, link) {
++            if (strcmp(block_scope->target_session_handle, shortcut->session->handle)) {
++                continue;
++            }
++
++            struct block_shortcut *block_shortcut =
++                block_shortcut_state_get(block_scope, shortcut->unique);
++            if (block_shortcut_effective_blocked(block_scope, block_shortcut)) {
++                kywc_key_binding_block(shortcut->binding, true);
++            }
++        }
++    }
++}
++
+ static bool apply_session_all_block_state(struct session_block_scope *session_block_scope,
+                                           bool block)
+ {
+@@ -1377,60 +1423,81 @@ static bool system_shortcut_write_config(struct global_shortcut *shortcut)
+     return true;
+ }
+ 
+-static bool system_builtin_shortcuts(struct key_binding *binding, char *key_name, char *unique,
+-                                     int32_t modifiers, int32_t key)
++static void system_shortcut_attach_binding(struct key_binding *binding)
+ {
+-    enum function_id id = bindings_get_key_binding_function_id(binding);
+-    if (id == FUNC_ID_CUSTOM || !unique) {
+-        return false;
++    const struct key_binding_info *info = kywc_key_binding_get_info(binding);
++    if (!info || info->func_id == FUNC_ID_CUSTOM || !info->desc) {
++        return;
+     }
+ 
+     struct global_shortcut_session *session = shortcut_session_get_or_create(session_builtin, NULL);
+     if (!session) {
+-        return false;
++        return;
++    }
++
++    struct global_shortcut *shortcut = shortcut_by_unique(session, info->desc);
++    if (shortcut && shortcut->binding) {
++        return;
+     }
+ 
+-    struct global_shortcut *shortcut = shortcut_get_or_create_by_unique(session, unique);
++    bool created_shortcut = false;
+     if (!shortcut) {
+-        return false;
++        shortcut = shortcut_get_or_create_by_unique(session, info->desc);
++        created_shortcut = true;
++    }
++    if (!shortcut) {
++        return;
+     }
+ 
+-    shortcut->binding = binding;
+     if (!shortcut->default_key) {
+-        shortcut->default_key = key_name ? strdup(key_name) : NULL;
++        shortcut->default_key = info->keybind ? strdup(info->keybind) : NULL;
++    }
++    if (shortcut->func_id == FUNC_ID_CUSTOM) {
++        shortcut->func_id = info->func_id;
+     }
+-    shortcut->func_id = id;
+     if (!shortcut->options) {
+-        uint32_t options = function_entry_get_key_binding_options(id);
++        uint32_t options = function_entry_get_key_binding_options(shortcut->func_id);
+         if (!options) {
+             options = KEY_BINDING_TRIGGER_IN_ACTIVE;
+         }
+ 
+-        if (!bindings_get_key_binding_no_repeat(binding)) {
++        if (info->options & KEY_BINDING_TRIGGER_IN_REPEAT) {
+             options |= KEY_BINDING_TRIGGER_IN_REPEAT;
+         }
+-        if (bindings_get_key_binding_bypass_grab(binding)) {
++        if (info->options & KEY_BINDING_BYPASS_GRAB) {
+             options |= KEY_BINDING_BYPASS_GRAB;
+         }
+ 
+         shortcut->options = options;
+     }
+ 
++    uint32_t current_modifiers;
++    uint32_t current_keysym;
++    const char *current_key = shortcut->current_key ? shortcut->current_key : shortcut->default_key;
++    if (!shortcut_key_name_parse(current_key, &current_modifiers, &current_keysym) ||
++        !kywc_key_binding_update(binding, current_keysym, current_modifiers) ||
++        !kywc_key_binding_update_state(binding, shortcut->func_id,
++                                       shortcut_key_binding_options(shortcut))) {
++        if (created_shortcut) {
++            global_shortcut_destroy(shortcut, false);
++        }
++        return;
++    }
++
++    shortcut_set_binding(shortcut, binding);
+     /* save shortcut config */
+     system_shortcut_write_config(shortcut);
+-
+-    return false;
+ }
+ 
+-static void handle_server_start(struct wl_listener *listener, void *data)
++static void handle_key_binding_registered(struct wl_listener *listener, void *data)
+ {
+-    kywc_key_binding_for_each(system_builtin_shortcuts);
++    system_shortcut_attach_binding(data);
+ }
+ 
+ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ {
++    wl_list_remove(&manager->binding_registered.link);
+     wl_list_remove(&manager->server_destroy.link);
+-    wl_list_remove(&manager->server_start.link);
+ 
+     /* free all session shortcuts */
+     struct global_shortcut_session *session, *tmp;
+@@ -1460,8 +1527,8 @@ bool global_shortcuts_manager_create(struct server *server)
+     global_shortcuts_manager_config_init(manager);
+     setup_system_shortcuts_from_config(manager);
+ 
+-    manager->server_start.notify = handle_server_start;
+-    wl_signal_add(&server->events.start, &manager->server_start);
++    manager->binding_registered.notify = handle_key_binding_registered;
++    kywc_key_binding_add_registered_listener(&manager->binding_registered);
+ 
+     manager->server_destroy.notify = handle_server_destroy;
+     server_add_destroy_listener(server, &manager->server_destroy);
+diff --git a/src/input/touch.c b/src/input/touch.c
+index 7f3aa27..8bf3de3 100644
+--- a/src/input/touch.c
++++ b/src/input/touch.c
+@@ -222,6 +222,14 @@ static void touch_gesture_detect(struct touch *touch)
+         return;
+     }
+ 
++    struct gesture_state *state = &touch->gestures;
++    if (!kywc_gesture_binding_device_available(GESTURE_DEVICE_TOUCHSCREEN)) {
++        if (!state->active_binding && state->type != GESTURE_TYPE_NONE) {
++            gesture_state_end(state, state->type, state->device, true);
++        }
++        return;
++    }
++
+     bool all_points_moved = true;
+     struct touch_point *point;
+     wl_list_for_each(point, &touch->points, link) {
+diff --git a/src/view/view.c b/src/view/view.c
+index c2a5495..8e70f5e 100644
+--- a/src/view/view.c
++++ b/src/view/view.c
+@@ -1638,6 +1638,12 @@ void view_raise_to_top(struct view *view, bool find_parent)
+ void kywc_view_activate(struct kywc_view *kywc_view)
+ {
+     struct view *view = kywc_view ? view_from_kywc_view(kywc_view) : NULL;
++    struct view *auth_view = view_manager_get_global_authentication();
++
++    if (auth_view && view != auth_view) {
++        return;
++    }
++
+     if (!view) {
+         view_do_activate(NULL);
+         return;
+@@ -1681,6 +1687,11 @@ void view_set_focus(struct view *view, struct seat *seat)
+         return;
+     }
+ 
++    struct view *auth_view = view_manager_get_global_authentication();
++    if (auth_view && auth_view != view) {
++        return;
++    }
++
+     struct view *descendant = view_find_descendant_modal(view);
+     if (descendant) {
+         view = descendant;
+@@ -2880,7 +2891,7 @@ static void xdg_foreign_create(struct server *server)
+ {
+     struct wlr_xdg_foreign_registry *foreign_registry =
+         wlr_xdg_foreign_registry_create(server->display);
+-    if(!foreign_registry) {
++    if (!foreign_registry) {
+         kywc_log(KYWC_ERROR, "Failed to create xdg foreign registry");
+         return;
+     }
+diff --git a/src/xwayland/selection/incoming.c b/src/xwayland/selection/incoming.c
+index 985bbd9..649bd4f 100644
+--- a/src/xwayland/selection/incoming.c
++++ b/src/xwayland/selection/incoming.c
+@@ -390,6 +390,8 @@ static bool source_get_targets(struct xwm_selection *selection, struct wl_array
+             mime_type = strdup("text/plain;charset=utf-8");
+         } else if (value[i] == xwm->atoms[TEXT].atom) {
+             mime_type = strdup("text/plain");
++        } else if (value[i] == xwm->atoms[MULTIPLE].atom) {
++            continue;
+         } else if (value[i] != xwm->atoms[TARGETS].atom && value[i] != xwm->atoms[TIMESTAMP].atom) {
+             xcb_get_atom_name_cookie_t name_cookie = xcb_get_atom_name(xwm->xcb_conn, value[i]);
+             xcb_get_atom_name_reply_t *name_reply =
+diff --git a/src/xwayland/xwm.c b/src/xwayland/xwm.c
+index 4cb4801..410c747 100644
+--- a/src/xwayland/xwm.c
++++ b/src/xwayland/xwm.c
+@@ -2755,6 +2755,7 @@ static struct {
+     [TARGETS] = {.name = "TARGETS",},
+     [WL_SELECTION] = {.name = "_WL_SELECTION",},
+     [CLIPBOARD_MANAGER] = {.name = "CLIPBOARD_MANAGER",},
++    [MULTIPLE] = {.name = "MULTIPLE",},
+     // dnd
+     [DND_SELECTION] = {.name = "XdndSelection",},
+     [DND_AWARE] = {.name = "XdndAware",},

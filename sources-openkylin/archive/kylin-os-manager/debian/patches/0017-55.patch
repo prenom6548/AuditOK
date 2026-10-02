@@ -1,0 +1,904 @@
+From: snowsi <348240162@qq.com>
+Date: Fri, 12 Jan 2024 06:36:06 +0000
+Subject: =?utf-8?b?ITU1IOaNouacuuWKqeaJiy3lupTnlKjlkoznlKjmiLfmlbDmja7ov4E=?=
+ =?utf-8?b?56e7IE1lcmdlIHB1bGwgcmVxdWVzdCAhNTUgZnJvbSB6aGFuZ3hpbnhpbi9vcGVu?=
+ =?utf-8?b?a3lsaW4vbmlsZQ==?=
+
+---
+ daemons/service/dbus.cpp                           | 372 ++++++++++++++++-----
+ daemons/service/dbus.h                             |  29 +-
+ .../replacement/component/progressbar.cpp          |   1 -
+ treasure-chest/replacement/globaldata.cpp          |   9 +-
+ treasure-chest/replacement/globaldata.h            |   1 +
+ .../replacement/view/acceptmigrationappdata.cpp    |  14 +-
+ .../replacement/view/acceptmigrationappdata.h      |   6 +-
+ .../replacement/view/acceptmigrationdata.cpp       |   2 +-
+ 8 files changed, 335 insertions(+), 99 deletions(-)
+
+diff --git a/daemons/service/dbus.cpp b/daemons/service/dbus.cpp
+index eec965e..a2dd33f 100644
+--- a/daemons/service/dbus.cpp
++++ b/daemons/service/dbus.cpp
+@@ -1,6 +1,13 @@
+ #include <QDebug>
+ #include <QDBusConnection>
+ #include <QDBusMessage>
++#include <QtDBus/QDBusConnection>
++#include <QtDBus/QDBusConnectionInterface>
++#include <QtDBus/QDBusMessage>
++#include <QtDBus/QDBusReply>
++#include <QtDBus/QDBusArgument>
++#include <QtDBus/QDBusMetaType>
++#include <QtDBus/QDBusInterface>
+ #include <QProcess>
+ #include <QFileInfo>
+ #include <QDebug>
+@@ -11,6 +18,29 @@
+ 
+ using namespace dbus;
+ 
++inline QDBusArgument &operator<<(QDBusArgument &argument, const dbus::DataMigration::UseInfo& useinfo)
++{
++    argument.beginStructure();
++    argument << useinfo.uid;
++    argument << useinfo.name;
++    argument << useinfo.path;
++    argument.endStructure();
++
++    return argument;
++}
++
++inline const QDBusArgument &operator>>(const QDBusArgument &argument, dbus::DataMigration::UseInfo &useinfo)
++{
++    argument.beginStructure();
++    argument >> useinfo.uid;
++    argument >> useinfo.name;
++    argument >> useinfo.path;
++    argument.endStructure();
++
++    return argument;
++}
++
++
+ void Dbus::creatDbusServer()
+ {
+     Tool *toolBus = new Tool(this);
+@@ -53,6 +83,10 @@ DbusManager::DbusManager()
+ 
+ DataMigration::DataMigration(QObject *parent)
+ {
++    qRegisterMetaType<dbus::DataMigration::UseInfo>("UseInfo");
++    qRegisterMetaType<dbus::DataMigration::UseInfoList>("UseInfoList");
++    qDBusRegisterMetaType<dbus::DataMigration::UseInfo>();
++    qDBusRegisterMetaType<dbus::DataMigration::UseInfoList>();
+ 
+ }
+ 
+@@ -159,13 +193,116 @@ void DataMigration::senderCreatPwdFile(QString name, QString pwd)
+     QProcess process;
+     QStringList options;
+     options << "600" << m_sendPwdFile;
+-    process.startDetached("chmod", options);
++    process.start("chmod", options);
+     process.waitForFinished();
+     process.close();
+ 
+ }
+ 
+-void DataMigration::receiverTestServer(QString pwd, QString ip, QString name)
++void DataMigration::senderGetVersion()
++{
++    QString versionStr;
++    QFile fileVersion("/etc/issue");
++    fileVersion.close();
++    if (fileVersion.open(QIODevice::ReadOnly | QIODevice::Text)) {
++
++        QByteArray bytes = fileVersion.readAll();
++
++        versionStr = bytes;
++
++        fileVersion.close();
++    } 
++    versionStr = versionStr.remove(" ").toLower();
++
++    QFile file(m_senderVersion);
++    file.resize(0);
++    file.close();
++    if (file.open(QIODevice::ReadWrite | QIODevice::Text)) {
++
++        QByteArray bytes = versionStr.toUtf8();
++        int len = file.write(bytes);
++        if (len == 0) {
++            qDebug() << " ===== DBUS === Receiver PWD File write data failed !!! ===== ";
++        }
++        file.close();
++    } 
++}
++
++void DataMigration::senderGetUserInfo()
++{
++    // QFileInfo fileInfo("/etc/uid_list");
++    // if (fileInfo.isFile()) {
++    //     return;
++    // }
++
++    QProcess process;
++    QStringList options;
++    options << "-c" << "ls -ln /home | awk  '{if($3>=1000){print $3,$NF}}'";
++    process.start("bash", options);
++    process.waitForFinished();
++
++    QString output = process.readAllStandardOutput();
++    if (output == "") {
++        qDebug() << " ===== Dbus ===== bash -c ls -ln /home 获取信息为空";
++        return;
++    }
++    QStringList lines = output.split("\n");
++    if (lines.isEmpty()) {
++        qDebug() << " ===== Dbus =====  ls -ln /home 转换成qstringlist为空";
++        return;
++    }
++    QFile file(m_senderUserInfo);
++    file.resize(0);
++    // 遍历子目录，将目录名存入 QStringList
++    foreach (const QString& line, lines) {
++        if (line == "") {
++            continue;
++        }
++        qDebug() << line;
++        QStringList info = line.split(" ");
++        file.close();
++        if (file.open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
++            QString str = info.at(1)  + ":" + info.at(0) + "\n";
++
++            QByteArray bytes = str.toUtf8();
++            int len = file.write(bytes);
++            if (len == 0) {
++                qDebug() << " ===== DBUS === Read Dbus listUsers, File write data failed !!! ===== ";
++            }
++            file.close();
++        } 
++    }
++
++    process.close();
++
++    // QDBusInterface interface( SYSTEMD_SERVICE, SYSTEMD_PATH, SYSTEMD_INTERFACE, QDBusConnection::systemBus() );
++
++    // auto message = interface.call("ListUsers");
++    // auto arg = message.arguments().at(0);
++    // auto a = arg.value<QDBusArgument>();
++    // UseInfoList list;
++    // a >> list;
++    // qDebug() << "+++++++++++++++++" << list.at(0).name;
++    // QFile file(m_senderUserInfo);
++    // file.resize(0);
++    // for (int i = 0; i < list.count(); i++) {
++        // file.close();
++        // if (file.open(QIODevice::ReadWrite | QIODevice::Text | QIODevice::Append)) {
++
++        //     QString str = list.at(i).name  + ":" + QString::number(list.at(i).uid) + "\n";
++
++        //     QByteArray bytes = str.toUtf8();
++        //     int len = file.write(bytes);
++        //     if (len == 0) {
++        //         qDebug() << " ===== DBUS === Read Dbus listUsers, File write data failed !!! ===== ";
++        //     }
++        //     file.close();
++        // } 
++    // }
++
++}
++
++QString DataMigration::receiverTestServer(QString pwd, QString ip, QString name)
+ {
+     m_name = name;
+     m_ip = ip;
+@@ -198,7 +335,8 @@ void DataMigration::receiverTestServer(QString pwd, QString ip, QString name)
+     m_processTest->waitForStarted();
+     m_processTest->waitForFinished();
+ 
+-    receiverMigrateAppData();
++    receiverMigrateVersionFile();
++    return m_receiverDataFile;
+ }
+ 
+ void DataMigration::receiverSendSuccSig()
+@@ -227,7 +365,7 @@ void DataMigration::receiverSendSuccSig()
+     // receiverMigrateAppData();
+ }
+ 
+-int dbus::DataMigration::receiverError(QString error)
++int DataMigration::receiverError(QString error)
+ {
+     ErrorTypeEnum type = ErrorTypeEnum::ErrorNormal;
+     if (error.contains("No route to host", Qt::CaseSensitive)) {
+@@ -514,7 +652,7 @@ void DataMigration::receiverAppDataList(QStringList list)
+     appDesktopToPkg(list);
+ }
+ 
+-void dbus::DataMigration::appDesktopToPkg(QStringList list)
++void DataMigration::appDesktopToPkg(QStringList list)
+ {
+     QStringList packageDesktopList;
+     QStringList allDesktopsList;
+@@ -551,6 +689,7 @@ void dbus::DataMigration::appDesktopToPkg(QStringList list)
+             if (packDeskInfoHash.contains(valuePack)) {
+                 QStringList valueDesktopList = packDeskInfoHash.value(valuePack);
+                 valueDesktopList.append(listStr);
++                packDeskInfoHash.insert(valuePack, valueDesktopList);
+             } else {
+                 QStringList valueDesktopList;
+                 valueDesktopList.append(listStr);
+@@ -579,29 +718,27 @@ void dbus::DataMigration::appDesktopToPkg(QStringList list)
+     }
+ }
+ 
+-void dbus::DataMigration::receiverStopRsync()
++void DataMigration::receiverStopRsync()
+ {
+     m_processMigrateDate->close();
+ }
+ 
+-void dbus::DataMigration::receiverConfigData()
++void DataMigration::receiverConfigData()
+ {
+     // 1.etc配置 2.home配置 3.应用配置
+-    
++    qDebug() << m_type;
+     switch (m_type)
+     {
+-        // 1+2
++        // 2
+     case MigrateDataType::UserData:
+-        configSysData();
+         configUseData();
+         break;
+-        //1
++        // 1
+     case MigrateDataType::SysConfData:
+         configSysData();
+         break;
+-        //1+3
++        // 3
+     case MigrateDataType::AppData:
+-        configSysData();
+         configAppData();
+         break;
+         // 1+3
+@@ -611,14 +748,13 @@ void dbus::DataMigration::receiverConfigData()
+         break;
+         // 1+2
+     case MigrateDataType::AppAndUserData:
+-        configSysData();
+         configUseData();
++        configAppData();
+         break;
+         // 1+2+3
+     case MigrateDataType::UserAndSysData:
+         configSysData();
+         configUseData();
+-        configAppData();
+         break;
+         // 1+2+3
+     case MigrateDataType::AllData:
+@@ -632,7 +768,65 @@ void dbus::DataMigration::receiverConfigData()
+         // configAppData();
+ }
+ 
+-void dbus::DataMigration::receiverMigrateAppData()
++void DataMigration::receiverMigrateVersionFile()
++{
++    QProcess process;
++
++    QStringList options;
++    options << "-c"
++            << " rsync -avz --password-file=" + m_recePwdFile + " " + m_name + "@" + m_ip + "::shareFile" + m_senderDataDir + " " + m_senderDataDir;
++    process.start("bash", options);
++    process.waitForFinished();
++
++    QString output = process.readAllStandardOutput();
++            
++    process.close();
++
++    // 判断文件是否存在，存在生成文件夹名称
++    QFileInfo fileInfo(m_senderVersion);
++    if (!fileInfo.isFile()) {
++        m_receiverFilePathName = "fs.old-v10sp1";
++        m_receiverDataFile = "/"  + m_receiverFilePathName;
++        receiverMigrateAppData();
++        return;
++    }
++    QFile file(m_senderVersion);
++
++    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
++        qDebug() << "Failed to open file!";
++        m_receiverFilePathName = "fs.old-v10sp1";
++        m_receiverDataFile = "/"  + m_receiverFilePathName;
++        receiverMigrateAppData();
++        return;
++    }
++    QString info = file.readAll().trimmed();
++    if (info.startsWith("ubuntu16.04", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-u16";
++    } else if (info.startsWith("ubuntu18.04", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-u18";
++    } else if (info.startsWith("ubuntu20.04", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-u20";
++    } else if (info.startsWith("ubuntu22.04", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-u22";
++    } else if (info.startsWith("openkylin1.0", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-ok1";
++    } else if (info.startsWith("openkylin2.0", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-ok2";
++    } else if (info.startsWith("v4", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-v4";
++    } else if (info.startsWith("v10", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-v10";
++    } else if (info.contains("v10sp1", Qt::CaseInsensitive)) {
++        m_receiverFilePathName = "fs.old-v10sp1";
++    } else {
++        m_receiverFilePathName = "fs.old-v10sp1";
++    }
++    m_receiverDataFile = "/"  + m_receiverFilePathName;
++
++    receiverMigrateAppData();
++}
++
++void DataMigration::receiverMigrateAppData()
+ {
+     QString path = "usr/share/applications/";
+     QString getDataPath = m_receiverDataFile + "/" + path;
+@@ -643,13 +837,6 @@ void dbus::DataMigration::receiverMigrateAppData()
+     }
+     if (m_processMigrateDektopDate == nullptr ) {
+         m_processMigrateDektopDate = new QProcess();
+-        connect(m_processMigrateDektopDate, &QProcess::readyReadStandardError, this,[=](){
+-            QString error = m_processMigrateDektopDate->readAllStandardError();
+-            QDBusMessage send =
+-                    QDBusMessage::createSignal(DBUS_PARH_DATA_MIGRATION, DBUS_INTERFACE_DATA_MIGRATION, "sigReceProcessFail");
+-            send << error;
+-            QDBusConnection::systemBus().send(send);
+-        });
+         connect(m_processMigrateDektopDate, &QProcess::readyReadStandardOutput, this, [=](){
+             // 解析标准输出，获取文件名、当前速度和当前拉取数据大小
+             QString output = m_processMigrateDektopDate->readAllStandardOutput();
+@@ -671,7 +858,7 @@ void dbus::DataMigration::receiverMigrateAppData()
+     m_processMigrateDektopDate->waitForFinished();
+ }
+ 
+-void dbus::DataMigration::senderGetAppDesktopInfo()
++void DataMigration::senderGetAppDesktopInfo()
+ {
+     // 读取/usr/share/application/的所有desktop文件
+     QDir* dirinfo = new QDir(desktopFilePath);
+@@ -729,6 +916,15 @@ void dbus::DataMigration::senderGetAppDesktopInfo()
+     processDesktopToPackageOut();
+     // 使用dpkg -l获取包信息
+     senderGetAppPackageInfo(m_packsgeNameList);
++
++    // 创建文件夹 /tmp/komt/
++    QDir dataDir = QDir(m_senderDataDir);
++    if (!dataDir.exists()) {
++        dataDir.mkpath(m_senderDataDir);
++    }
++
++    senderGetVersion();
++    senderGetUserInfo();
+ }
+ 
+ void DataMigration::processDesktopToPackageOut()
+@@ -803,7 +999,7 @@ void DataMigration::senderGetAppPackageInfo(QStringList list)
+     processPackageInfoOut();
+ }
+ 
+-void dbus::DataMigration::processPackageInfoOut()
++void DataMigration::processPackageInfoOut()
+ {
+     QString outPut = m_processGetPackageInfo->readAllStandardOutput();
+     QStringList lines = outPut.split("\n");
+@@ -869,6 +1065,7 @@ QStringList DataMigration::readYamlFile(QString str)
+ 
+ void DataMigration::configSysData()
+ {
++    qDebug() << "++ configSysData ++";
+     m_listFile.clear();
+     m_listFolders.clear();
+ 
+@@ -882,17 +1079,21 @@ void DataMigration::configSysData()
+         QStringList options;
+         options << m_receiverDataFile + "/etc/" + m_listFile[i] << "/etc";
+         process.start("cp", options);
++        process.waitForFinished();
++        qDebug() << " ==== etc文件cp ==== " ;
+     }
+     for (int i = 0; i < m_listFolders.size(); i++) {
+         QProcess process;
+         QStringList options;
+         options << "-r" << m_receiverDataFile + "/etc/" + m_listFolders[i] << "/etc";
+         process.start("cp", options);
++        process.waitForFinished();
++        qDebug() << " ==== etc文件夹cp ==== " ;
+     }
+ 
+ }
+ 
+-QStringList dbus::DataMigration::getHomeDirChildDir(QString str)
++QStringList DataMigration::getHomeDirChildDir(QString str)
+ {
+     // 读取当前home目录下存在的用户名
+     QStringList currentUserNameList;
+@@ -920,7 +1121,7 @@ QStringList DataMigration::getUserInfo(QString uname, QString filePath)
+     // 打开文件
+     QFile file(filePath);
+     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+-        qDebug() << "Failed to open file!";
++        qDebug() << "Failed to open file!" << filePath;
+         return listInfo;
+     }
+ 
+@@ -930,9 +1131,11 @@ QStringList DataMigration::getUserInfo(QString uname, QString filePath)
+         QString line = in.readLine();
+ 
+         // 判断开头是否包含指定字符串
+-        if (line.startsWith(uname)) {
+-            listInfo = line.simplified().split(':');
++        listInfo = line.simplified().split(':');
++        if (listInfo[0] == uname) {
++            break;
+         }
++        listInfo.clear();
+     }
+ 
+     // 关闭文件
+@@ -946,6 +1149,11 @@ bool DataMigration::NewSysExistUid(int id)
+     QString etcNewPath ="/etc/";
+     QString uidlistFile = "uid_list";
+ 
++    QFileInfo oldUidListFile = QFileInfo(etcNewPath + uidlistFile);
++    if (!oldUidListFile.isFile()) {
++        uidlistFile = "group";
++    }
++
+     // 打开文件
+     QFile file(etcNewPath + uidlistFile);
+     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+@@ -956,8 +1164,8 @@ bool DataMigration::NewSysExistUid(int id)
+     QTextStream in(&file);
+     while (!in.atEnd()) {
+         QString line = in.readLine();
+-        QString idStr = line.simplified().split(':').at(1);
+-        if (idStr == QString::number(id)) {
++        QStringList strList = line.simplified().split(':');
++        if (strList.contains(QString::number(id))) {
+             return true;
+         } 
+     }
+@@ -968,13 +1176,13 @@ void DataMigration::updateNewSysEtcFile(QString filePath, QStringList list, int
+ {
+     qDebug() << filePath << "list ==== " << list << " ===== " << oldUid << newUid;
+ 
+-        for (int i = 0; i < list.size(); i++ ) {
+-            QString s = list[i];
+-            if (s == QString::number(oldUid)) {
+-                list[i] = QString::number(newUid);
+-            }
++    for (int i = 0; i < list.size(); i++ ) {
++        QString s = list[i];
++        if (s == QString::number(oldUid)) {
++            list[i] = QString::number(newUid);
+         }
+-        QString str = list.join(":");
++    }
++    // QString str = list.join(":");
+     qDebug() << filePath << "list ==== " << list << " ===== " << oldUid << newUid;
+ 
+ 
+@@ -1011,64 +1219,63 @@ void DataMigration::configUseData()
+      * 6. 将老系统用户的uid，与当前uidlist进行比对，若自增id；
+      * 7. 将用户名，uid更改所有当前/etc目录下修改的文件
+     */
+-
++qDebug() << "++ configUseData ++";
+     // 读取home目录下存在的用户名【步骤1，2】
+     QStringList currentUserNameList = getHomeDirChildDir("/home");
+     QStringList oldUserNameList = getHomeDirChildDir(m_receiverDataFile + "/" + "home");
+ 
+     // 获取需要在当前/etc目录下修改的文件【步骤3】
+     QStringList list = readYamlFile("userfile:");
+-    qDebug() << " -------- " << list;
+ 
+     QString etcNewPath ="/etc/";
+     QString etcOldPath = m_receiverDataFile + "/" + "etc/";
+     QString uidlistFile = "uid_list";
++    QString getUserFilePath;
++
+     int uidNum = 1100;
+     QStringList info;
+ 
+-    for (int i = 0; i< currentUserNameList.size(); i++) {
+-        for (int j = 0; j < oldUserNameList.size(); j++) {
+-            if (currentUserNameList[i] == oldUserNameList[j]) {
+-                continue;
+-            }
+-            QStringList info = getUserInfo(oldUserNameList[j], etcOldPath + uidlistFile);
+-            int oldUid = info.at(1).toInt();
+-            qDebug() << " -----------    ------------- " << info;
+-            while (NewSysExistUid(uidNum)) {
+-                uidNum++;
+-                qDebug() << uidNum;
+-            }
+-            // 处理etc目录下的对应文件
+-            for(int k = 0; k < list.size(); k++ ) {
+-                info = getUserInfo(currentUserNameList[i], etcOldPath + list[k]);
+-                updateNewSysEtcFile(etcNewPath + list[k], info, oldUid, uidNum);
++    qDebug() << " currentUserNameList " << currentUserNameList;
++    qDebug() << " oldUserNameList " << oldUserNameList;
+ 
+-                qDebug() << " -----------  "<< k <<" ------------- " << info;
++    for (const auto &i: oldUserNameList) {
++        // 判断新机器的用户列表包含老机器的用户列表
++        if ( currentUserNameList.contains(i)) {
++            continue;
++        }
++        // 判断文件/fs.old/etc/uid_list是否存在
++        QFileInfo oldUidListFile = QFileInfo(etcOldPath + uidlistFile);
++        if (!oldUidListFile.isFile()) {
++            getUserFilePath = m_senderUserInfo;
++        } else {
++            getUserFilePath = etcOldPath + uidlistFile;
++        }
++        qDebug() << " getUserFilePath " << getUserFilePath;
++        // 使用老用户名，获取信息
++        info = getUserInfo(i, getUserFilePath);
++        qDebug() << " info " << info;
++        int oldUid = info.at(1).toInt();
++        while (NewSysExistUid(uidNum)) {
++            uidNum++;
++            qDebug() << uidNum;
++        }
++        // 处理etc目录下的对应文件
++        for(int k = 0; k < list.size(); k++ ) {
++            QStringList userInfo = getUserInfo(i, etcOldPath + list[k]);
++            qDebug() << userInfo;
++            if (userInfo.isEmpty()) {
++                continue;
+             }
+-
+-            // info = getUserInfo(currentUserNameList[i], etcNewPath + uidlistFile);
+-            // int oldUid = info.at(1).toInt();
+-            // qDebug() << " -----------    ------------- " << info;
+-            // int uid = info.at(1).toInt();
+-            // while (NewSysExistUid(uid)) {
+-            //     uid++;
+-            //     qDebug() << uid;
+-            // }
+-            // qDebug() << "uid : " << uid;
+-            // // 处理etc目录下的对应文件
+-            // for(int k = 0; k < list.size(); k++ ) {
+-            //     info = getUserInfo(currentUserNameList[i], etcNewPath + list[k]);
+-            //     updateNewSysEtcFile(etcOldPath + list[k], info, oldUid, uid);
+-
+-            //     qDebug() << " -----------  "<< k <<" ------------- " << info;
+-            // }
++            updateNewSysEtcFile(etcNewPath + list[k], userInfo, oldUid, uidNum);
+         }
+-        
+     }
++
+     QProcess process;
+     QStringList options;
+-    options << "-rn" << m_receiverDataFile + "/" + "home/*" << "/home";
+-    process.start("cp", options);
++    options << "-c" << "cp -rn " + m_receiverDataFile + "/home/* /home/";
++    qDebug() << options;
++    process.start("bash", options);
++    process.waitForFinished();
+ 
+ }
+ 
+@@ -1089,7 +1296,6 @@ void DataMigration::configAppData()
+     QString DesktopGroup = "Desktop Entry";
+     while (!in.atEnd()) {
+         QString line = in.readLine();
+-        qDebug() << " &&&&&& " << line;
+         QSettings desktopFileSetting(filePath + line, QSettings::IniFormat);
+         // QSettings desktopFileSetting(iconPath + line, QSettings::IniFormat);
+         desktopFileSetting.setIniCodec(QTextCodec::codecForName("UTF-8"));
+@@ -1120,15 +1326,15 @@ void DataMigration::configAppData()
+                 QStringList newList;
+                 newList.clear();
+                 for(int i = 0; i< list.size(); i++) {
+-                    if(list[i] != "fs.old") {
++                    if(list[i] != m_receiverFilePathName) {
+                         newList.append(list[i]);
+                     }
+                 }
+                 QString newIcon = newList.join("/");
+                 QProcess p;
+                 QStringList opt; 
+-                opt << "-n" << line << newIcon;
+-                p.start("/usr/bin/cp", opt);
++                opt<< "-c" << "cp -n " + line + " " + newIcon;
++                p.start("bash", opt);
+                 p.waitForFinished();
+             }
+         } 
+@@ -1136,7 +1342,7 @@ void DataMigration::configAppData()
+     startKare();
+ }
+ 
+-// QStringList dbus::DataMigration::findIcon(QString path, QString name)
++// QStringList DataMigration::findIcon(QString path, QString name)
+ // {
+ //     QStringList list;
+ //     list.clear();
+@@ -1159,11 +1365,13 @@ void DataMigration::configAppData()
+ //     return list;
+ // }
+ 
+-void dbus::DataMigration::startKare()
++void DataMigration::startKare()
+ {
+     QProcess process;
+     QStringList opt;
+     opt << "-c" << "/usr/bin/buildCompatibilityEnv.sh";
+     process.start("bash", opt);
++    process.waitForStarted();
++    process.waitForFinished();
+ 
+ }
+diff --git a/daemons/service/dbus.h b/daemons/service/dbus.h
+index 9d522e4..da97656 100644
+--- a/daemons/service/dbus.h
++++ b/daemons/service/dbus.h
+@@ -3,10 +3,13 @@
+ 
+ #include <QThread>
+ #include <QProcess>
++#include <QtDBus/QDBusObjectPath>
+ #include "dbus_args.h"
+ namespace dbus
+ {
+-
++    #define SYSTEMD_SERVICE         "org.freedesktop.login1"
++    #define SYSTEMD_PATH            "/org/freedesktop/login1"
++    #define SYSTEMD_INTERFACE       "org.freedesktop.login1.Manager"
+ class Tool : public QObject
+ {
+     Q_OBJECT
+@@ -60,6 +63,14 @@ public:
+         ErrorFileTransfer,      /* receiving incremental file list */
+         ErrorNormal,
+     };
++
++    struct UseInfo {
++        quint32 uid;
++        QString name;
++        QDBusObjectPath path;
++    };
++    typedef QList<UseInfo> UseInfoList;
++
+ public slots:
+     /* 发送端 */
+     void senderStartServer(QString name, QString pwd) ; // 开启服务
+@@ -68,17 +79,20 @@ public slots:
+     void senderGetAppPackageInfo(QStringList list); // 获取本机应用包的信息
+ 
+     /* 接收端 */
+-    void receiverTestServer(QString pwd, QString IP, QString name); // 创建用户认证，测试连接
++    QString receiverTestServer(QString pwd, QString IP, QString name); // 创建用户认证，测试连接
+     void receiverGetDataInfo(int type); // 获取迁移数据大小
+     void receiverMigrateData(int type); // 迁移数据
+     void receiverReboot();
+     void receiverAppDataList(QStringList list);
+     void receiverConfigData();//迁移完成后进行配置
+     void receiverStopRsync(); // 停止文件迁移
++    void receiverMigrateVersionFile(); // 迁移前获取系统类别
+     void receiverMigrateAppData(); // 应用desktop迁移
+ private:
+     void senderCreatConfigFile(QString name); // 创建rsync的配置文件，
+     void senderCreatPwdFile(QString name, QString pwd); // 创建用户认证文件
++    void senderGetVersion();
++    void senderGetUserInfo(); // 发送端获取本机信息（用户信息id）
+ 
+     void receiverCreatPwdFile(QString pwd); // 生成用户认证文件
+     void receiverSendSuccSig(); // 接收端测试连接，发出成功信号
+@@ -115,15 +129,19 @@ private:
+     QString m_excludeFile = "/usr/share/kylin-os-manager/replacement/data/ReplacementDataExcludeFile"; // 黑名单
+     QString m_excludeHomeAndEtcFile = "/usr/share/kylin-os-manager/replacement/data/mrigationHomeAndEtcFile.list"; // 黑名单
+ 
+-    QString m_appListFile = "/usr/share/kylin-os-manager/replacement/destktop.list"; // 被选中应用列表
++    QString m_appListFile = "/usr/share/kylin-os-manager/replacement/desktop.list"; // 被选中应用列表
+     QString m_appInfoListFile = "/usr/share/kylin-os-manager/replacement/package-desktop.info"; // 被选中的应用列表
+ 
+     QString m_senderappInfoListFile = "/usr/share/applications/package-desktop.info"; // 应用列表信息
+     QString m_senderappListFile = "/usr/share/applications/replacement_destktop.list"; // 可迁移应用列表
++    QString m_senderDataDir = "/tmp/komt/"; // 存放【系统类别、用户信息】文件夹
++    QString m_senderVersion = "/tmp/komt/komtReplacement"; // 系统版本
++    QString m_senderUserInfo = "/tmp/komt/komtUserInfo"; // 使用dbus获取到的用户信息数据
+ 
+     QString m_appDataYamlFile = "/usr/share/kylin-os-manager/replacement/data/appClassification.yaml"; // app的列表
+     QString m_configDataYamlFile = "/usr/share/kylin-os-manager/replacement/data/etcPolicy.yaml"; // etc的列表
+     QString m_receiverDataFile = "/fs.old";// 接受数据目录 todo:后续会读取发送端的类型，标为目录名
++    QString m_receiverFilePathName = "fs.old";// 接受数据目录 todo:后续会读取发送端的类型，标为目录名
+     QString desktopFilePath = "/usr/share/applications/";
+     QString DesktopGroup = "Desktop Entry";
+     QString DesktopKeyNameEN = "Name";
+@@ -137,7 +155,7 @@ private:
+     QProcess *m_processGetDesktopInfo = nullptr;
+     QProcess *m_processGetPackageInfo = nullptr;
+     int num = 0;
+-    
++
+ signals:
+     void sigReceTestSuccess();
+     void sigReceProcessFail(int);
+@@ -150,4 +168,7 @@ signals:
+ 
+ } // namespace dbus
+ 
++Q_DECLARE_METATYPE(dbus::DataMigration::UseInfo)
++Q_DECLARE_METATYPE(dbus::DataMigration::UseInfoList)
++
+ #endif // DBUS_H
+diff --git a/treasure-chest/replacement/component/progressbar.cpp b/treasure-chest/replacement/component/progressbar.cpp
+index 864ddc4..15aadfb 100644
+--- a/treasure-chest/replacement/component/progressbar.cpp
++++ b/treasure-chest/replacement/component/progressbar.cpp
+@@ -31,7 +31,6 @@ void ProgressBar::setSpeedValue(QString str)
+ 
+ void ProgressBar::SetBarRange(qint64 min, qint64 max)
+ {
+-    qDebug() << " ^^^^^^^^^^^^^^^^^^^^^ " << max;
+     m_bar->setRange(min, max);
+ }
+ 
+diff --git a/treasure-chest/replacement/globaldata.cpp b/treasure-chest/replacement/globaldata.cpp
+index 17825b2..9d01b2d 100644
+--- a/treasure-chest/replacement/globaldata.cpp
++++ b/treasure-chest/replacement/globaldata.cpp
+@@ -266,7 +266,7 @@ void GlobalData::dbusSenderGetDesktopInfo()
+ {
+     QDBusMessage msg = m_dbus->call("senderGetAppDesktopInfo");
+     if (msg.errorMessage() != "") {
+-        qDebug() << "dbus interface error : senderStopServer" << msg.errorMessage();
++        qDebug() << "dbus interface error : senderGetAppDesktopInfo" << msg.errorMessage();
+     }
+ }
+ 
+@@ -276,6 +276,13 @@ void GlobalData::dbusReceiverTestServer(QString pwd, QString IP, QString name)
+     if (msg.errorMessage() != "") {
+         qDebug() << "dbus interface error : receiverTestServer " << msg.errorMessage();
+     }
++
++    if (msg.type() == QDBusMessage::ReplyMessage) {
++        if (!msg.arguments().isEmpty()) {
++            g_receiverFilePathName = msg.arguments().first().toString();
++        }
++    }
++    qDebug() << " ====== " <<  g_receiverFilePathName;
+ }
+ 
+ void GlobalData::dbusReceiverMigrateData(ChooseDataType type)
+diff --git a/treasure-chest/replacement/globaldata.h b/treasure-chest/replacement/globaldata.h
+index f318c21..be0336c 100644
+--- a/treasure-chest/replacement/globaldata.h
++++ b/treasure-chest/replacement/globaldata.h
+@@ -155,6 +155,7 @@ public:
+     QDateTime g_timeEnd;
+     QString g_time = "";
+     bool g_chooseAppData = true;
++    QString g_receiverFilePathName = "";
+ 
+     QDBusInterface *m_dbus = nullptr;
+     void dbusSenderStartServer(QString name, QString pwd);
+diff --git a/treasure-chest/replacement/view/acceptmigrationappdata.cpp b/treasure-chest/replacement/view/acceptmigrationappdata.cpp
+index fccda10..00c02be 100644
+--- a/treasure-chest/replacement/view/acceptmigrationappdata.cpp
++++ b/treasure-chest/replacement/view/acceptmigrationappdata.cpp
+@@ -38,6 +38,9 @@ void AcceptMigrationAppData::initUI()
+     this->windowButtonBar()->maximumButton()->hide();
+     this->windowButtonBar()->menuButton()->hide();
+ 
++    m_FsoldDesktopFilePath = GlobalData::getInstance()->g_receiverFilePathName + desktopFilePath;
++    m_FsolddesktopListAllowFilePath = GlobalData::getInstance()->g_receiverFilePathName + desktopListAllowFilePath;
++
+     m_btnCannel = new QPushButton(this);
+     m_btnSure = new QPushButton(this);
+     m_label = new K::TextLabel(this);
+@@ -133,7 +136,7 @@ void AcceptMigrationAppData::initTreeWidget()
+ {
+     readSenderDesktopAllowMigrationFile();
+ 
+-    QDir* dirinfo = new QDir(desktopFilePath);
++    QDir* dirinfo = new QDir(m_FsoldDesktopFilePath);
+     if (!dirinfo->exists()) {
+         delete dirinfo, dirinfo = nullptr;
+     }
+@@ -151,7 +154,7 @@ void AcceptMigrationAppData::initTreeWidget()
+             continue;
+         }
+ 
+-        QString file = desktopFilePath + fileList[i];
++        QString file = m_FsoldDesktopFilePath + fileList[i];
+ 
+         QSettings desktopFileSetting(file, QSettings::IniFormat);
+         desktopFileSetting.setIniCodec(QTextCodec::codecForName("UTF-8"));
+@@ -317,7 +320,7 @@ void AcceptMigrationAppData::writeJsonFile()
+ void AcceptMigrationAppData::readSenderDesktopAllowMigrationFile()
+ {
+     m_listAllowDesktopFile.clear();
+-    QFile file(desktopListAllowFilePath);
++    QFile file(m_FsolddesktopListAllowFilePath);
+     if(!file.open(QIODevice::ReadOnly|QIODevice::Text)) {
+         qDebug()<<" Open json file failed ";
+         return;
+@@ -355,31 +358,26 @@ void AcceptMigrationAppData::readJsonFile()
+     QJsonArray jsonArrayIncompatible = rootObj.value("incompatible").toArray();
+     for(int i=0; i < jsonArrayIncompatible.size(); i++) {
+         m_listIncompatible.append(jsonArrayIncompatible.at(i).toString());
+-        qDebug() << "incompatible" << jsonArrayIncompatible.at(i).toString();
+     }
+  
+     QJsonArray jsonArrayNameContain = rootObj.value("nameContain").toArray();
+     for(int i=0; i < jsonArrayNameContain.size(); i++) {
+         m_listNameContains.append(jsonArrayNameContain.at(i).toString());
+-        qDebug() << "name" << jsonArrayNameContain.at(i).toString();
+     }
+ 
+     QJsonArray jsonArrayV10 = rootObj.value("v10App").toArray();
+     for(int i=0; i < jsonArrayV10.size(); i++) {
+         m_listApp.append(jsonArrayV10.at(i).toString());
+-        qDebug() << "v10" << jsonArrayV10.at(i).toString();
+     }
+ 
+     QJsonArray jsonArraySp1 = rootObj.value("sp1App").toArray();
+     for(int i=0; i < jsonArraySp1.size(); i++) {
+         m_listApp.append(jsonArraySp1.at(i).toString());
+-        qDebug() << "sp1" << jsonArraySp1.at(i).toString();
+     }
+ 
+     QJsonArray jsonArrayOther = rootObj.value("otherApp").toArray();
+     for(int i=0; i < jsonArrayOther.size(); i++) {
+         m_listApp.append(jsonArrayOther.at(i).toString());
+-        qDebug() << "other" << jsonArrayOther.at(i).toString();
+     }
+ 
+     return;
+diff --git a/treasure-chest/replacement/view/acceptmigrationappdata.h b/treasure-chest/replacement/view/acceptmigrationappdata.h
+index b0599ce..48c7938 100644
+--- a/treasure-chest/replacement/view/acceptmigrationappdata.h
++++ b/treasure-chest/replacement/view/acceptmigrationappdata.h
+@@ -13,8 +13,8 @@
+ 
+ using namespace kdk;
+ 
+-const QString desktopFilePath = "/fs.old/usr/share/applications/";
+-const QString desktopListAllowFilePath = "/fs.old/usr/share/applications/replacement_destktop.list";
++const QString desktopFilePath = "/usr/share/applications/";
++const QString desktopListAllowFilePath = "/usr/share/applications/replacement_destktop.list";
+ const QString DesktopGroup = "Desktop Entry";
+ const QString DesktopKeyNameEN = "Name";
+ const QString DesktopKeyNameZH = "Name[zh_CN]";
+@@ -59,6 +59,8 @@ private:
+     QStringList m_listIncompatible;
+     QStringList m_listAllowDesktopFile;
+ 
++    QString m_FsoldDesktopFilePath = "/usr/share/applications/";
++    QString m_FsolddesktopListAllowFilePath = "/usr/share/applications/replacement_destktop.list";
+ public slots:
+     void treeItemChanged(QTreeWidgetItem *item, int column);
+ signals:
+diff --git a/treasure-chest/replacement/view/acceptmigrationdata.cpp b/treasure-chest/replacement/view/acceptmigrationdata.cpp
+index aa89d40..07131cb 100644
+--- a/treasure-chest/replacement/view/acceptmigrationdata.cpp
++++ b/treasure-chest/replacement/view/acceptmigrationdata.cpp
+@@ -175,7 +175,7 @@ void AcceptMigrationData::slotMigrationDataInfo(QStringList list)
+ 
+     if (list[1].toLongLong() == GlobalData::getInstance()->g_migrationDataSize) {
+         // 配置 receiverConfigData
+-        slotConfigData();
++        // slotConfigData();
+     }
+ }
+ 

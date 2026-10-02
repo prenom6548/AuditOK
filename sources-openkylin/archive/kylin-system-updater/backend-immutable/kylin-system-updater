@@ -1,0 +1,100 @@
+#!/usr/bin/python3
+
+# /*
+#  * Copyright (C) 2020, KylinSoft Co., Ltd.
+#  *
+#  * This program is free software: you can redistribute it and/or modify
+#  * it under the terms of the GNU General Public License as published by
+#  * the Free Software Foundation, either version 3 of the License, or
+#  * (at your option) any later version.
+#  *
+#  * This program is distributed in the hope that it will be useful,
+#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  * GNU General Public License for more details.
+#  *
+#  * You should have received a copy of the GNU General Public License
+#  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#  */
+
+from SystemUpdater.UpdateManager import UpdateManager
+from gettext import gettext as _
+import logging
+from optparse import OptionParser
+import dbus
+dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+import signal
+import os
+import sys
+import gettext
+from SystemUpdater.configs import settings
+from SystemUpdater.Core.LogManager import get_logfile as logfile
+from SystemUpdater.constants import KYLIN_OS_NAME
+
+# 获取翻译目录的绝对路径
+locale_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)),"locale")
+gettext.bindtextdomain('kylin-system-updater',locale_dir)
+gettext.textdomain('kylin-system-updater')
+_ = gettext.gettext
+
+#定义日志的格式 
+FORMAT = "%(asctime)s [%(levelname)s]: %(message)s"
+FORMAT_DEBUG = '%(asctime)-15s %(levelname)s(%(filename)s:%(lineno)d):%(message)s'
+
+def signal_handler_term(signal, frame):
+    # type: (int, object) -> None
+    logging.warning("SIGTERM received, will stop")
+    app.dbus_send.Quit(None)
+
+if __name__ == "__main__":
+  # Begin parsing of options
+  parser = OptionParser()
+  parser.add_option ("-d", "--debug", action="store_true", default=False,
+                    help=_("Show debug messages"))
+  parser.add_option("-r", "--replace",
+                    default=False,
+                    action="store_true", dest="replace",
+                    help=_("Quit and replace an already running "
+                            "daemon"))
+  parser.add_option("", "--sysroot", default=None,
+                      action="store", type="string", dest="sysroot",
+                      help=_("Import sysroot path in the given path"))
+  parser.add_option("", "--os", default=KYLIN_OS_NAME,
+                      action="store", type="string", dest="os",
+                      help=_("Import os name in the given string"))
+  parser.add_option("-p", "--prohibit-shutdown",
+                    default=False,
+                    action="store_true", dest="prohibit_shutdown",
+                    help=_("close auto shutdown"))
+  parser.add_option ("-n","--no-update-source", action="store_false",
+                    dest="enable_push", default=True,
+                    help=_("Do not check for updates source when updating"))
+  parser.add_option("--no-check-network",
+                    default=True,
+                    action="store_false", dest="check_network",
+                    help=_("Quit and close check network"))
+
+  (options, args) = parser.parse_args()
+
+  # 将命令行参数 加载到settings的配置项中
+  settings.update(vars(options))
+
+  if os.getuid() != 0:
+      print(_("You need to be root to run this application"))
+      sys.exit(1)
+
+  # ensure that we are not killed when the terminal goes away e.g. on
+  # shutdown
+  signal.signal(signal.SIGHUP, signal.SIG_IGN)
+  signal.signal(signal.SIGINT,signal_handler_term)
+
+  if options.debug:
+    logging.basicConfig(format=FORMAT,level=logging.INFO,datefmt='%m-%d,%H:%M:%S')
+  else:
+    logging.basicConfig(format=FORMAT,level=logging.INFO,datefmt='%m-%d,%H:%M:%S',filename = logfile(),filemode = 'a')
+
+  logging.info('kylin-system-updater starting ...')
+
+  app = UpdateManager(options)
+
+  app.run()

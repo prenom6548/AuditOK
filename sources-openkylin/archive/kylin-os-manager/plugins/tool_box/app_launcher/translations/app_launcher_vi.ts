@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="vi">
+<context>
+    <name>K::UserExperienceDialog</name>
+    <message>
+        <location filename="../../../fault_diagnosis/component/user_experience_dialog.cpp" line="11"/>
+        <source>Have all issues been fixed?</source>
+        <translation>Tất cả các vấn đề đã được khắc phục chưa?</translation>
+    </message>
+    <message>
+        <location filename="../../../fault_diagnosis/component/user_experience_dialog.cpp" line="12"/>
+        <source>If there are any unresolved issues, you can click &quot;Submit feedback&quot; to let us know about the problem.</source>
+        <translation>Nếu còn vấn đề chưa được khắc phục, bạn có thể nhấn vào “gửi phản hồi” để thông báo cho chúng tôi.</translation>
+    </message>
+    <message>
+        <location filename="../../../fault_diagnosis/component/user_experience_dialog.cpp" line="16"/>
+        <source>Submit feedback</source>
+        <translation>Gửi phản hồi</translation>
+    </message>
+    <message>
+        <location filename="../../../fault_diagnosis/component/user_experience_dialog.cpp" line="20"/>
+        <source>Fixed</source>
+        <translation>Đã sửa chữa</translation>
+    </message>
+</context>
+</TS>

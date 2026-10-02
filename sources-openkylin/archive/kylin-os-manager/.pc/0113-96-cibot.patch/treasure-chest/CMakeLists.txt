@@ -1,0 +1,26 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(treasure-chest)
+
+add_subdirectory(win-data-migration)
+add_subdirectory(file-smash)
+add_subdirectory(network-bandwidth-test)
+add_subdirectory(network-route-track)
+add_subdirectory(network-iputils-arping)
+add_subdirectory(network-telnet)
+add_subdirectory(system-cleanup)
+add_subdirectory(tcpdump)
+add_subdirectory(source-update)
+# 换机助手
+if (OPENKYLIN_OPTION)
+    add_subdirectory(replacement)
+endif()
+
+# 安装独立的插件配置文件
+install(FILES 3rdparty/kylin-baobab.conf DESTINATION /usr/share/kylin-os-manager/plugins/tool-box/plugins/)
+install(FILES 3rdparty/kylin-d-feet.conf DESTINATION /usr/share/kylin-os-manager/plugins/tool-box/plugins/)
+# 启动助手
+if (ICBC_OPTION)
+    install(FILES 3rdparty/00_0000_kylin-boot-guide.conf DESTINATION /usr/share/kylin-os-manager/plugins/tool-box/plugins/)
+endif ()
+#install(FILES 3rdparty/kylin-gpu-controller.conf DESTINATION /usr/share/kylin-os-manager/plugins/tool-box/plugins/)

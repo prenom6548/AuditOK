@@ -1,0 +1,48 @@
+#!/bin/bash
+
+ENABLE_LOG=0
+PROGRAM="/usr/bin/kylin-printer-applet"
+ENV_FILE="/tmp/kylin-printer-applet-env"
+LOG_FILE="/var/log/kylin-printer-applet-start.log"
+
+log() {
+    if [ $ENABLE_LOG -eq 1 ]; then
+        echo "[$(date)] $@" >> "${LOG_FILE}"
+    fi
+    echo "$@"
+}
+
+log "$@"
+
+xtty="$(cat /sys/class/tty/tty0/active)"
+if [ -z "$xtty" ]; then
+    exit 0
+fi
+
+xuser="$(who | grep "${xtty}" | head -n 1 | cut -d' ' -f1)"
+if [ -z "$xuser" ]; then
+    exit 0
+fi
+
+xuserid=$(id -u "$xuser")
+if [ -z "$xuserid" ]; then
+    exit 0
+fi
+
+if [ -f $ENV_FILE ];then
+    rm -rf $ENV_FILE
+fi
+
+if [ $# -gt 0 ]; then
+    cat >> "$ENV_FILE" <<EOF
+$@
+EOF
+fi
+
+if pgrep -f "^$PROGRAM" > /dev/null; then
+    log "$PROGRAM is running, reloading..."
+    sudo -u ${xuser} XDG_RUNTIME_DIR=/run/user/${xuserid} systemctl --user reload kylin-printer-applet.service
+else
+    log "$PROGRAM is not running, starting..."
+    sudo -u ${xuser} XDG_RUNTIME_DIR=/run/user/${xuserid} systemctl --user start kylin-printer-applet.service
+fi

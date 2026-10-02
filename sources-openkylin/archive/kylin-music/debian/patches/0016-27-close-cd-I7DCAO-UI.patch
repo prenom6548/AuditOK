@@ -1,0 +1,178 @@
+From: =?utf-8?b?5YiY5L2z6Ziz?= <liujiayang@kylinos.cn>
+Date: Wed, 30 Aug 2023 01:57:26 +0000
+Subject: =?utf-8?b?ITI3IGNsb3NlLWNkOiAgI0k3RENBTyDjgJDorr7orqHotbDmn6XjgJE=?=
+ =?utf-8?b?5L6n6L655qCPVUnpl67popggKiBjbG9zZS1jZDogICNJN0RDQU8g44CQ6K6+6K6h?=
+ =?utf-8?b?6LWw5p+l44CR5L6n6L655qCPVUnpl67popg=?=
+
+---
+ UI/mainwidget.cpp                 | 37 +++++++++++++++++++++++++++----------
+ UI/mainwidget.h                   |  1 +
+ UI/sidebar/leftsiderbarwidget.cpp | 31 ++++++++++++++++++++++++++-----
+ UI/sidebar/sidebarwidget.cpp      |  2 +-
+ 4 files changed, 55 insertions(+), 16 deletions(-)
+
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index c8d745c..00e54f7 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -4,6 +4,8 @@
+ #include "UI/base/xatom-helper.h"
+ #include "ukuistylehelper/ukuistylehelper.h"
+ #include "windowmanager/windowmanager.h"
++#include "kwindoweffects.h"
++#include <KWindowEffects>
+ #include "UI/globalsignal.h"
+ #include "UIControl/global/global.h"
+ 
+@@ -270,6 +272,20 @@ void Widget::slotPrepareForSwitchuser()
+     }
+ }
+ 
++void Widget::changeEvent(QEvent *event)
++{
++
++    QWidget::changeEvent(event);
++    // 主窗口需要先获取焦点，否则按键事件（键盘按下、松开）会捕捉不到
++    if (historyListTable &&  historyListTable->isHidden()) {
++        this->setFocus();
++    }
++    if (sideBarWid) {
++            // fix #160022, 在音乐软件打开进行打开文件等操作，软件侧边栏显示异常
++            sideBarWid->sidecolor();
++    }
++}
++
+ int Widget::kylin_music_play_request(QString cmd1, QString cmd2, QString cmd3)
+ {
+     //无参数，单例触发
+@@ -640,6 +656,7 @@ void Widget::initAllComponent()
+         hintt.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+         hintt.functions = MWM_FUNC_ALL;
+         hintt.decorations = MWM_DECOR_BORDER;
++        KWindowEffects::enableBlurBehind(this->winId(), true); //毛玻璃
+         XAtomHelper::getInstance()->setWindowMotifHint(this->winId(), hintt);
+ 
+         MotifWmHints hints;
+@@ -773,14 +790,14 @@ void Widget::initGSettings()//初始化GSettings
+     if (QGSettings::isSchemaInstalled(FITCONTROLTRANS)) {
+         m_transparencyGSettings = new QGSettings(FITCONTROLTRANS);
+     }
+-//    if (m_transparencyGSettings != nullptr) {
+-//        connect(m_transparencyGSettings, &QGSettings::changed, this, [=](const QString &key) {
+-//            if (key == "transparency") {
+-//                transparencyChange();
+-//            }
+-//        });
+-//        transparencyChange();
+-//    }
++    if (m_transparencyGSettings != nullptr) {
++        connect(m_transparencyGSettings, &QGSettings::changed, this, [=](const QString &key) {
++            if (key == "transparency") {
++                transparencyChange();
++            }
++        });
++        transparencyChange();
++    }
+ 
+ 
+     if(QGSettings::isSchemaInstalled(FITTHEMEWINDOWS))
+@@ -935,8 +952,8 @@ void Widget::paintEvent(QPaintEvent *event)
+ 
+ void Widget::transparencyChange()
+ {
+-//    m_transparency = m_transparencyGSettings->get("transparency").toDouble() * 255;
+-//    this->update();
++    m_transparency = m_transparencyGSettings->get("transparency").toDouble() * 255;
++    this->update();
+ }
+ 
+ //键盘F1响应唤出用户手册
+diff --git a/UI/mainwidget.h b/UI/mainwidget.h
+index c29042d..754b3da 100644
+--- a/UI/mainwidget.h
++++ b/UI/mainwidget.h
+@@ -131,6 +131,7 @@ private Q_SLOTS:
+     void inputDevice_get(QString str);
+     void slotPrepareForSwitchuser();
+ protected:
++    void changeEvent(QEvent *event) Q_DECL_OVERRIDE;
+     void resizeEvent(QResizeEvent *event) Q_DECL_OVERRIDE;
+     void keyPressEvent(QKeyEvent *event) Q_DECL_OVERRIDE;
+     void mousePressEvent(QMouseEvent *event) Q_DECL_OVERRIDE;
+diff --git a/UI/sidebar/leftsiderbarwidget.cpp b/UI/sidebar/leftsiderbarwidget.cpp
+index 16b0057..dcd740b 100644
+--- a/UI/sidebar/leftsiderbarwidget.cpp
++++ b/UI/sidebar/leftsiderbarwidget.cpp
+@@ -2,8 +2,10 @@
+ #include <QDebug>
+ #include <QGSettings>
+ #include <QStyleOption>
++#include <QPainterPath>
+ #include <QPainter>
+-
++#include "kwindoweffects.h"
++#include "UI/base/widgetstyle.h"
+ #define PERSONALSIE_SCHEMA     "org.ukui.control-center.personalise"
+ #define PERSONALSIE_TRAN_KEY   "transparency"
+ #define CONTAIN_PERSONALSIE_TRAN_KEY   "transparency"
+@@ -11,6 +13,7 @@
+ LeftsiderbarWidget::LeftsiderbarWidget(QWidget *parent)
+     : QWidget(parent)
+ {
++
+     QGSettings *personalQgsettings = nullptr;
+     if (QGSettings::isSchemaInstalled(PERSONALSIE_SCHEMA)) {
+         personalQgsettings = new QGSettings(PERSONALSIE_SCHEMA, QByteArray(), this);
+@@ -35,17 +38,35 @@ LeftsiderbarWidget::~LeftsiderbarWidget()
+ 
+ void LeftsiderbarWidget::paintEvent(QPaintEvent *event)
+ {
+-    QStyleOption opt;
+-    opt.init(this);
+     QPainter p(this);
++    p.setRenderHint(QPainter::Antialiasing); // 反锯齿
++    QPainterPath rectPath;
++    rectPath.addRoundedRect(this->rect(), 0, 0);
++    /* 开启背景模糊效果（毛玻璃）可以使用主题的QMe */
++    KWindowEffects::enableBlurBehind(this->winId(), true, QRegion(rectPath.toFillPolygon().toPolygon()));
++
+     p.setPen(Qt::NoPen);
++
+     QColor color = palette().color(QPalette::Window);
+     color.setAlpha(transparency);
+     QPalette pal(this->palette());
+-    pal.setColor(QPalette::Window,QColor(color));
+-    this->setPalette(pal);
++
++    if(WidgetStyle::themeColor == 1 ){
++       pal.setColor(QPalette::Window,QColor(38, 38, 38, 0));
++       this->setPalette(pal);
++    }else if(WidgetStyle::themeColor == 0){
++           pal.setColor(QPalette::Window,QColor(255, 255, 255, 0));
++           this->setPalette(pal);
++       }
++
++
++    QStyleOption opt;
++    opt.init(this);
++
+     QBrush brush =QBrush(color);
+     p.setBrush(brush);
+     p.drawRoundedRect(opt.rect,0,0);
+     style()->drawPrimitive(QStyle::PE_Widget, &opt, &p, this);
++
++    QWidget::paintEvent(event);
+ }
+diff --git a/UI/sidebar/sidebarwidget.cpp b/UI/sidebar/sidebarwidget.cpp
+index 967f5c0..395a7ca 100644
+--- a/UI/sidebar/sidebarwidget.cpp
++++ b/UI/sidebar/sidebarwidget.cpp
+@@ -44,7 +44,7 @@ void SideBarWidget::initAddButton()
+ void SideBarWidget::initWidget()
+ {
+     this->setProperty("useSystemStyleBlur", true);
+-    this->setAttribute(Qt::WA_TranslucentBackground, true);
++//    this->setAttribute(Qt::WA_TranslucentBackground, true);
+ 
+     //侧边栏界面样式
+     QVBoxLayout *mainLayout = new QVBoxLayout();

@@ -1,0 +1,97 @@
+#!/bin/bash
+
+set -e
+
+# TODO, 多次重复
+disk=$(get_value devpath)
+if echo "${disk}" | grep -q nvme; then
+    disk=${disk}p
+fi
+
+readonly GENFSTAB="${IN_TARGET}"/in_chroot/genfstab
+if [[ -f "${GENFSTAB}" ]]; then
+    if [[ "${is_990_9a0}" = "true" ]]; then
+        bash "${GENFSTAB}" -p / >/etc/fstab
+	if egrep -qi 'kirin.?900' /proc/cpuinfo; then
+        	bash "${GENFSTAB}" -p -U /sysroot >/etc/fstab
+    	fi
+
+	if dmidecode -t system|grep "Product Name"|grep PGUX > /dev/null ;then
+                bash "${GENFSTAB}" -p -U /sysroot >/etc/fstab
+        fi
+
+        # 990, 9a0 不自动挂载 swapfile
+        sed -i "/${swap_file}/d" /etc/fstab
+      #  sed -i '/\/boot/s/rw,/ro,/g' /etc/fstab
+    else
+        bash "${GENFSTAB}" -p -U /sysroot >/etc/fstab
+#	bash "${GENFSTAB}" -p -U /data >> /etc/fstab
+    fi
+fi
+
+# 删除安装介质
+tac /etc/fstab | sed -n '/cdrom/,+1!p' | tac >/etc/fstab.new
+mv /etc/fstab.new /etc/fstab
+
+# 修改 /data, /backup 的 options
+#sed -n '/\/data /p' /etc/fstab |
+#    while read dev mp fs options; do
+#        sed -i "s/\\$mp .*/\\$mp     \t$fs     \trw,user,x-gvfs-show,nosuid,nofail     \t0 0/" /etc/fstab
+#    done
+
+sed -n '/\/backup /p' /etc/fstab |
+    while read dev mp fs options; do
+        sed -i "s/\\$mp .*/\\$mp     \t$fs     \tnoauto     \t0 0/" /etc/fstab
+    done
+
+#获取data UUID
+#data_dev_name=`mount | grep /data | awk -F " " '{print $1}' | awk -F "/" '{print $(NF)}'`
+#if [ ! -z $data_dev_name ]; then
+#        #data_uuid_name=`ls -l /dev/disk/by-uuid/* | grep $data_dev_name | awk -F "->" '{print $1}' | awk -F "/" '{print $(NF)}'`
+#        echo -e "UUID=$data_uuid_name     \t/data     \tnone     \trw,relatime     \t0 0" >>/etc/fstab
+#fi
+data_part=$(get_value part-data)
+data_uuid_name=`lsblk -o UUID "${data_part}" | grep -v "UUID"`
+echo -e "UUID=$data_uuid_name     \t/data     \tnone     \trw,relatime     \t0 0" >>/etc/fstab
+    
+# add bind
+if grep -q '/home' /proc/mounts; then
+    echo -e "/data/home     \t/home     \tnone     \tdefaults,bind     \t0 0" >>/etc/fstab
+fi
+if grep -q '/root' /proc/mounts; then
+    echo -e "/data/root     \t/root     \tnone     \tdefaults,bind     \t0 0" >>/etc/fstab
+fi
+
+do_peony_data() {
+    if [ -d  "/data" ] && [ -d  "/data/root" ] && [ -d  "/data/home" ] && [ -d  "/data/usershare" ] ; then
+        echo "data block bind mount is exist"
+        data_has_user_file="false"
+        for dir_or_file in /data/*
+        do
+                echo $dir_or_file
+                if [ "$dir_or_file" != "/data/root" ] && [ "$dir_or_file" != "/data/home" ] && [ "$dir_or_file" != "/data/usershare" ] && [ "$dir_or_file" != "/data/lost+found" ]
+                then
+                        echo "$dir_or_file is user file"
+                        data_has_user_file="true"
+                        echo "data_has_user_file:"$data_has_user_file
+                        break
+                else
+                        echo "$dir_or_file is system folder"
+                fi
+        done
+
+        printf "$data_has_user_file" > /etc/xdg/peony-data.conf
+        chmod 444 /etc/xdg/peony-data.conf
+
+        if [ "$data_has_user_file" != "true" ]
+        then
+                echo "only has system file file in /data, chmod mod /data -w"
+                chmod 555 /data
+        fi
+   else
+        echo "data is not binded mount"
+   fi
+}
+#全新安装的系统，点击数据盘未跳转到usershare目录(配合文件管理器修改)
+do_peony_data || true
+

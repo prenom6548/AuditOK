@@ -1,0 +1,98 @@
+#!/usr/bin/python3
+
+# /*
+#  * Copyright (C) 2020, KylinSoft Co., Ltd.
+#  *
+#  * This program is free software: you can redistribute it and/or modify
+#  * it under the terms of the GNU General Public License as published by
+#  * the Free Software Foundation, either version 3 of the License, or
+#  * (at your option) any later version.
+#  *
+#  * This program is distributed in the hope that it will be useful,
+#  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#  * GNU General Public License for more details.
+#  *
+#  * You should have received a copy of the GNU General Public License
+#  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#  */
+
+from SystemUpdater.UpgradeStrategies import UpgradeStrategies
+from gettext import gettext as _
+import logging
+from optparse import OptionParser
+import dbus
+dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+import signal
+import os
+import sys
+import gettext
+
+from SystemUpdater.Core.LogManager import upgrade_strategies_logfile as logfile
+
+gettext.bindtextdomain('kylin-system-updater', '/usr/share/locale')
+gettext.textdomain('kylin-system-updater')
+_ = gettext.gettext
+
+#定义日志的格式 
+FORMAT = "%(asctime)s [%(levelname)s]: %(message)s"
+
+FORMAT_DEBUG = '%(asctime)-15s %(levelname)s(%(filename)s:%(lineno)d):%(message)s'
+
+def signal_handler_term(signal, frame):
+    # type: (int, object) -> None
+    logging.warning("SIGTERM received, will stop")
+    app.dbus_send.Quit(None)
+
+if __name__ == "__main__":
+  # Begin parsing of options
+  parser = OptionParser()
+  parser.add_option ("-d", "--debug", action="store_true", default=False,
+                    help=_("Show debug messages"))
+  parser.add_option("-r", "--replace",
+                    default=False,
+                    action="store_true", dest="replace",
+                    help=_("Quit and replace an already running "
+                            "daemon"))
+
+
+  (options, args) = parser.parse_args()
+
+  if os.getuid() != 0:
+      print(_("You need to be root to run this application"))
+      sys.exit(1)
+      
+  # set debconf to NON_INTERACTIVE
+  os.environ["DEBIAN_FRONTEND"] = "noninteractive"
+  os.environ["TERM"] = "xterm"
+  os.environ["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  #当不存在语言变量时 默认显示中文
+  if not "LANGUAGE" in os.environ:
+    os.environ["LANGUAGE"] = "zh_CN.UTF-8"
+  
+  #当不存在语言变量时 默认显示中文
+  if not "LANG" in os.environ:
+    os.environ["LANG"] = "zh_CN.UTF-8"
+
+  #做一些规范处理
+  if os.environ["LANGUAGE"] == "en":
+    os.environ["LANGUAGE"] = "en_US.UTF-8"
+  if os.environ["LANGUAGE"] == "zh_CN:en" or os.environ["LANGUAGE"] == "zh_CN:zh":
+    os.environ["LANGUAGE"] = "zh_CN.UTF-8"
+
+  # ensure that we are not killed when the terminal goes away e.g. on
+  # shutdown
+  signal.signal(signal.SIGHUP, signal.SIG_IGN)
+  signal.signal(signal.SIGINT,signal_handler_term)
+
+  if options.debug:
+    logging.basicConfig(format=FORMAT,level=logging.INFO,datefmt='%m-%d,%H:%M:%S')
+  else:
+    logging.basicConfig(format=FORMAT,level=logging.DEBUG,datefmt='%m-%d,%H:%M:%S',filename = logfile(),filemode = 'a')
+
+
+  logging.info('Updater Config Manager Daemon(LANGUAGE:%s LANG:%s) starting ...',os.environ["LANGUAGE"],os.environ["LANG"])
+
+  app = UpgradeStrategies(options)
+  app.run()

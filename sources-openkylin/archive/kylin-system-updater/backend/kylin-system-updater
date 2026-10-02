@@ -1,0 +1,104 @@
+#!/usr/bin/python3
+
+from SystemUpdater.UpdateManager import UpdateManager
+from gettext import gettext as _
+import logging
+from optparse import OptionParser
+import dbus
+dbus.mainloop.glib.DBusGMainLoop(set_as_default=True)
+import signal
+import os
+import sys
+import gettext
+
+from SystemUpdater.Core.LogManager import get_logfile as logfile
+
+gettext.bindtextdomain('kylin-system-updater', '/usr/share/locale')
+gettext.textdomain('kylin-system-updater')
+_ = gettext.gettext
+
+#定义日志的格式 
+FORMAT = "%(asctime)s [%(levelname)s]: %(message)s"
+
+FORMAT_DEBUG = '%(asctime)-15s %(levelname)s(%(filename)s:%(lineno)d):%(message)s'
+
+def signal_handler_term(signal, frame):
+    # type: (int, object) -> None
+    logging.warning("SIGTERM received, will stop")
+    app.dbusController.Quit(None)
+
+if __name__ == "__main__":
+  # Begin parsing of options
+  parser = OptionParser()
+  parser.add_option ("-d", "--debug", action="store_true", default=False,
+                    help=_("Show debug messages"))
+  parser.add_option("-r", "--replace",
+                    default=False,
+                    action="store_true", dest="replace",
+                    help=_("Quit and replace an already running "
+                            "daemon"))
+  parser.add_option ("-n","--no-update-source", action="store_true",
+                    dest="no_update_source", default=False,
+                    help=_("Do not check for updates source when updating"))
+  parser.add_option ("--no-update", action="store_true",
+                    dest="no_update", default=False,
+                    help="Do not check for updates when starting")
+  parser.add_option("-c", "--close-filter",
+                    default=False,
+                    action="store_true", dest="close_filter",
+                    help=_("Quit and close allowed origin"))
+  parser.add_option("--no-check-network",
+                    default=False,
+                    action="store_true", dest="no_check_network",
+                    help=_("Quit and close check network"))
+
+  (options, args) = parser.parse_args()
+
+  if os.getuid() != 0:
+      print(_("You need to be root to run this application"))
+      sys.exit(1)
+      
+  # set debconf to NON_INTERACTIVE
+  os.environ["DEBIAN_FRONTEND"] = "noninteractive"
+  os.environ["TERM"] = "xterm"
+  os.environ["PATH"] = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+  #当不存在语言变量时 默认显示中文
+  if not "LANGUAGE" in os.environ:
+    os.environ["LANGUAGE"] = "zh_CN.UTF-8"
+  
+  #当不存在语言变量时 默认显示中文
+  if not "LANG" in os.environ:
+    os.environ["LANG"] = "zh_CN.UTF-8"
+
+  #做一些规范处理
+  if os.environ["LANGUAGE"] == "en":
+    os.environ["LANGUAGE"] = "en_US.UTF-8"
+  if os.environ["LANGUAGE"] == "zh_CN:en" or os.environ["LANGUAGE"] == "zh_CN:zh":
+    os.environ["LANGUAGE"] = "zh_CN.UTF-8"
+
+  # ensure that we are not killed when the terminal goes away e.g. on
+  # shutdown
+  signal.signal(signal.SIGHUP, signal.SIG_IGN)
+  signal.signal(signal.SIGINT,signal_handler_term)
+
+  if options.debug:
+    logging.basicConfig(format=FORMAT,level=logging.DEBUG,datefmt='%m-%d,%H:%M:%S')
+  else:
+    logging.basicConfig(format=FORMAT,level=logging.DEBUG,datefmt='%m-%d,%H:%M:%S',filename = logfile(),filemode = 'a')
+
+  logging.info('kylin-system-updater(LANGUAGE:%s LANG:%s) starting ...',os.environ["LANGUAGE"],os.environ["LANG"])
+
+  app = UpdateManager(options)
+
+  #当出现安装过程中异常的重启时 开机直接进行修复操作
+  if app.configs_uncover.getWithDefault("SystemStatus", "abnormal_reboot", False) == True:
+    app.configs_uncover.setValue("SystemStatus","abnormal_reboot",str(False),True)
+    app.start_update()
+
+  #自我升级完成后 初始化列表
+  if app.configs_uncover.getWithDefault("SystemStatus", "reboot_update", False) == True:
+    app.configs_uncover.setValue("SystemStatus","reboot_update",str(False),True)
+    app.start_available()
+
+  app.run()

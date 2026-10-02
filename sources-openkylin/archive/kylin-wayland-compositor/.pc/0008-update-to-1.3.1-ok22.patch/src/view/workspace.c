@@ -1,0 +1,662 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#define _POSIX_C_SOURCE 200809L
+#include <assert.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include <kywc/binding.h>
+#include <kywc/identifier.h>
+#include <kywc/log.h>
+
+#include "effect/translation.h"
+#include "input/cursor.h"
+#include "nls.h"
+#include "server.h"
+#include "util/macros.h"
+#include "util/string.h"
+#include "view/workspace.h"
+#include "view_p.h"
+
+#define TRANSLATION_THRESHOLD 0.35
+
+struct workspace_manager {
+    struct view_manager *view_manager;
+    struct workspace_translation *translation; // for worskspace translation effect
+
+    /* current activated workspace */
+    struct workspace *current;
+    struct workspace **workspaces;
+
+    struct {
+        struct wl_signal new_workspace;
+    } events;
+
+    struct wl_listener display_destroy;
+    struct wl_listener server_ready;
+    struct wl_listener server_destroy;
+
+    uint32_t count, rows, columns;
+};
+
+static struct workspace_manager *workspace_manager = NULL;
+
+static struct shortcut {
+    char *keybind;
+    char *desc;
+    int switch_workspace;
+} shortcuts[] = {
+    { "Ctrl+Alt+Left:no", "switch to left workspace", DIRECTION_LEFT },
+    { "Ctrl+Alt+Right:no", "switch to right workspace", DIRECTION_RIGHT },
+    { "Ctrl+F1:no", "switch to workspace 0", 4 },
+    { "Ctrl+F2:no", "switch to workspace 1", 5 },
+    { "Ctrl+F3:no", "switch to workspace 2", 6 },
+    { "Ctrl+F4:no", "switch to workspace 3", 7 },
+    { "Win+ctrl+left:no", "switch to left workspace", DIRECTION_LEFT },
+    { "Win+ctrl+Right:no", "switch to right workspace", DIRECTION_RIGHT },
+};
+
+static void workspace_switch_to(int switch_workspace)
+{
+    int32_t current = workspace_manager->current->position;
+    int32_t last = workspace_manager->count - 1;
+    int32_t pending = current;
+
+    if (switch_workspace == DIRECTION_LEFT) {
+        pending = current - 1;
+    } else if (switch_workspace == DIRECTION_RIGHT) {
+        pending = current + 1;
+    } else {
+        /* add ctrl+f1...f4 to workspace */
+        pending = switch_workspace - 4;
+        if (pending == current || pending > last) {
+            return;
+        }
+        switch_workspace = pending > current ? DIRECTION_RIGHT : DIRECTION_LEFT;
+    }
+
+    struct workspace *pending_workspace =
+        pending < 0 || pending > last ? NULL : workspace_manager->workspaces[pending];
+    if (!workspace_add_automatic_translation_effect(workspace_manager->workspaces[current],
+                                                    pending_workspace, switch_workspace)) {
+        workspace_activate(pending_workspace);
+    }
+}
+
+static void shortcut_action(struct key_binding *binding, void *data)
+{
+    struct shortcut *shortcut = data;
+    workspace_switch_to(shortcut->switch_workspace);
+}
+
+static struct gesture {
+    enum gesture_type type;
+    enum gesture_stage stage;
+    uint8_t fingers;
+    uint32_t devices;
+    uint32_t directions;
+    uint32_t edges;
+    uint32_t follow_direction;
+    double follow_threshold;
+    char *desc;
+} gestures[] = {
+    {
+        GESTURE_TYPE_SWIPE,
+        GESTURE_STAGE_BEFORE,
+        4,
+        GESTURE_DEVICE_TOUCHPAD,
+        GESTURE_DIRECTION_NONE,
+        GESTURE_EDGE_NONE,
+        GESTURE_DIRECTION_LEFT,
+        0.0,
+        "switch workspace tridge before",
+    },
+    {
+        GESTURE_TYPE_SWIPE,
+        GESTURE_STAGE_BEFORE,
+        4,
+        GESTURE_DEVICE_TOUCHPAD,
+        GESTURE_DIRECTION_NONE,
+        GESTURE_EDGE_NONE,
+        GESTURE_DIRECTION_RIGHT,
+        0.0,
+        "switch workspace tridge before",
+    },
+    {
+        GESTURE_TYPE_SWIPE,
+        GESTURE_STAGE_TRIGGER,
+        4,
+        GESTURE_DEVICE_TOUCHPAD,
+        GESTURE_DIRECTION_LEFT,
+        GESTURE_EDGE_NONE,
+        GESTURE_DIRECTION_NONE,
+        0.0,
+        "switch workspace tridge",
+    },
+    {
+        GESTURE_TYPE_SWIPE,
+        GESTURE_STAGE_TRIGGER,
+        4,
+        GESTURE_DEVICE_TOUCHPAD,
+        GESTURE_DIRECTION_RIGHT,
+        GESTURE_EDGE_NONE,
+        GESTURE_DIRECTION_NONE,
+        0.0,
+        "switch workspace tridge",
+    },
+    {
+        GESTURE_TYPE_SWIPE,
+        GESTURE_STAGE_AFTER,
+        4,
+        GESTURE_DEVICE_TOUCHPAD,
+        GESTURE_DIRECTION_LEFT | GESTURE_DIRECTION_RIGHT,
+        GESTURE_EDGE_NONE,
+        GESTURE_DIRECTION_LEFT,
+        0.0,
+        "switch workspace left follow finger",
+    },
+    {
+        GESTURE_TYPE_SWIPE,
+        GESTURE_STAGE_AFTER,
+        4,
+        GESTURE_DEVICE_TOUCHPAD,
+        GESTURE_DIRECTION_LEFT | GESTURE_DIRECTION_RIGHT,
+        GESTURE_EDGE_NONE,
+        GESTURE_DIRECTION_RIGHT,
+        0.0,
+        "switch workspace right follow finger",
+    },
+    {
+        GESTURE_TYPE_SWIPE,
+        GESTURE_STAGE_STOP,
+        4,
+        GESTURE_DEVICE_TOUCHPAD,
+        GESTURE_DIRECTION_NONE,
+        GESTURE_EDGE_NONE,
+        GESTURE_DIRECTION_NONE,
+        0.0,
+        "stop switch workspace follow finger",
+    },
+};
+
+static void gestures_action(struct gesture_binding *binding, void *data, double dx, double dy)
+{
+    struct gesture *gesture = data;
+    /* the opposite direction of the gesture for the drag effect */
+    enum direction direct = DIRECTION_UP;
+    if (gesture->follow_direction == GESTURE_DIRECTION_LEFT) {
+        direct = DIRECTION_RIGHT;
+    } else if (gesture->follow_direction == GESTURE_DIRECTION_RIGHT) {
+        direct = DIRECTION_LEFT;
+    }
+
+    float percent = -dx / 300;
+    if (gesture->stage == GESTURE_STAGE_BEFORE) {
+        if (!workspace_manager->translation) {
+            workspace_manager->translation =
+                workspace_create_manual_translation_effect(workspace_manager->current);
+            if (!workspace_manager->translation) {
+                return;
+            }
+            kywc_log(KYWC_DEBUG,
+                     "Workspace manual translation direct: %d, dx = %f, dy = %f, percent = %f",
+                     direct, dx, dy, percent);
+        }
+
+        workspace_translation_manual(workspace_manager->translation, direct, percent);
+    } else if (gesture->stage == GESTURE_STAGE_TRIGGER) {
+        if (workspace_manager->translation &&
+            (direct == DIRECTION_RIGHT || direct == DIRECTION_LEFT)) {
+            workspace_translation_manual(workspace_manager->translation, direct, percent);
+        } else if (!workspace_manager->translation) {
+            if (gesture->directions == GESTURE_DIRECTION_LEFT) {
+                direct = DIRECTION_RIGHT;
+            } else if (gesture->directions == GESTURE_DIRECTION_RIGHT) {
+                direct = DIRECTION_LEFT;
+            }
+            workspace_switch_to(direct);
+            kywc_log(KYWC_DEBUG,
+                     "Workspace auto translation direct: %d, dx = %f, dy = %f, percent = %f",
+                     direct, dx, dy, percent);
+        }
+    } else if (gesture->stage == GESTURE_STAGE_AFTER && workspace_manager->translation &&
+               (direct == DIRECTION_RIGHT || direct == DIRECTION_LEFT)) {
+        workspace_translation_manual(workspace_manager->translation, direct, percent);
+    } else if (gesture->stage == GESTURE_STAGE_STOP && workspace_manager->translation) {
+        struct workspace *last_show =
+            workspace_translation_destroy(workspace_manager->translation, TRANSLATION_THRESHOLD);
+        if (last_show) {
+            workspace_activate(last_show);
+        }
+        workspace_manager->translation = NULL;
+    }
+}
+
+static void workspace_register_shortcut(void)
+{
+    for (size_t i = 0; i < ARRAY_SIZE(shortcuts); i++) {
+        struct shortcut *shortcut = &shortcuts[i];
+        struct key_binding *binding = kywc_key_binding_create(shortcut->keybind, shortcut->desc);
+        if (!binding) {
+            continue;
+        }
+
+        if (!kywc_key_binding_register(binding, KEY_BINDING_TYPE_SWITCH_WORKSPACE, shortcut_action,
+                                       shortcut)) {
+            kywc_key_binding_destroy(binding);
+            continue;
+        }
+    }
+
+    for (size_t i = 0; i < ARRAY_SIZE(gestures); i++) {
+        struct gesture *gesture = &gestures[i];
+        struct gesture_binding *binding = kywc_gesture_binding_create(
+            gesture->type, gesture->stage, gesture->devices, gesture->directions, gesture->edges,
+            gesture->fingers, gesture->follow_direction, gesture->follow_threshold, gesture->desc);
+        if (!binding) {
+            continue;
+        }
+
+        if (!kywc_gesture_binding_register(binding, gestures_action, gesture)) {
+            kywc_gesture_binding_destroy(binding);
+            continue;
+        }
+    }
+}
+
+static void workspace_manager_update_count(uint32_t count)
+{
+    uint32_t column = count / workspace_manager->rows;
+    if (count % workspace_manager->rows > 0) {
+        column++;
+    }
+
+    workspace_manager->count = count;
+    workspace_manager->columns = column;
+}
+
+static void handle_server_destroy(struct wl_listener *listener, void *data)
+{
+    assert(wl_list_empty(&workspace_manager->events.new_workspace.listener_list));
+    wl_list_remove(&workspace_manager->server_destroy.link);
+    wl_list_remove(&workspace_manager->server_ready.link);
+
+    free(workspace_manager->workspaces);
+    free(workspace_manager);
+    workspace_manager = NULL;
+}
+
+static void handle_display_destroy(struct wl_listener *listener, void *data)
+{
+    wl_list_remove(&workspace_manager->display_destroy.link);
+
+    workspace_manager->current = NULL;
+    /* workspace_destroy will update count */
+    while (workspace_manager->count) {
+        workspace_destroy(workspace_manager->workspaces[0]);
+    }
+}
+
+static void handle_server_ready(struct wl_listener *listener, void *data)
+{
+    /* create the default workspace and activate it */
+    workspace_activate(
+        workspace_create(workspace_manager->view_manager->state.workspace_names[0], 0));
+    /* create workspaces according to configuration */
+    for (uint32_t i = 1; i < workspace_manager->view_manager->state.num_workspaces; i++) {
+        workspace_create(workspace_manager->view_manager->state.workspace_names[i], i);
+    }
+}
+
+bool workspace_manager_create(struct view_manager *view_manager)
+{
+    workspace_manager = calloc(1, sizeof(*workspace_manager));
+    if (!workspace_manager) {
+        return false;
+    }
+
+    workspace_manager->view_manager = view_manager;
+    workspace_manager->workspaces = calloc(MAX_WORKSPACES, sizeof(struct workspace *));
+    workspace_manager->rows = 2;
+
+    wl_signal_init(&workspace_manager->events.new_workspace);
+
+    workspace_manager->server_ready.notify = handle_server_ready;
+    wl_signal_add(&view_manager->server->events.ready, &workspace_manager->server_ready);
+    workspace_manager->server_destroy.notify = handle_server_destroy;
+    server_add_destroy_listener(view_manager->server, &workspace_manager->server_destroy);
+    workspace_manager->display_destroy.notify = handle_display_destroy;
+    wl_display_add_destroy_listener(view_manager->server->display,
+                                    &workspace_manager->display_destroy);
+
+    ky_workspace_manager_create(view_manager->server);
+    /* kde-plasma-virtual-desktop support */
+    kde_virtual_desktop_management_create(view_manager->server);
+
+    workspace_register_shortcut();
+
+    return true;
+}
+
+void workspace_manager_add_new_listener(struct wl_listener *listener)
+{
+    wl_signal_add(&workspace_manager->events.new_workspace, listener);
+}
+
+void workspace_manager_set_rows(uint32_t rows)
+{
+    if (rows == workspace_manager->rows) {
+        return;
+    }
+
+    workspace_manager->rows = rows;
+    /* update columns */
+    workspace_manager_update_count(workspace_manager->count);
+}
+
+uint32_t workspace_manager_get_rows(void)
+{
+    return workspace_manager->rows;
+}
+
+struct workspace *workspace_manager_get_current(void)
+{
+    return workspace_manager->current;
+}
+
+uint32_t workspace_manager_get_count(void)
+{
+    return workspace_manager->count;
+}
+
+void workspace_manager_for_each_workspace(workspace_iterator_func_t iterator, void *data)
+{
+    for (uint32_t i = 0; i < workspace_manager->count; i++) {
+        if (iterator(workspace_manager->workspaces[i], data)) {
+            break;
+        }
+    }
+}
+
+static void workspace_set_enabled(struct workspace *workspace, bool enabled)
+{
+    for (int i = 0; i < 3; i++) {
+        ky_scene_node_set_enabled(&workspace->layers[i].tree->node, enabled);
+    }
+}
+
+void workspace_update_name(struct workspace *workspace, const char *name)
+{
+    if (workspace->name && name && strcmp(workspace->name, name) == 0) {
+        return;
+    }
+
+    free((void *)workspace->name);
+    workspace->name = STRING_VALID(name)
+                          ? strdup(name)
+                          : string_create("%s %d", tr("Desktop"), workspace->position + 1);
+    workspace->has_custom_name = STRING_VALID(name);
+
+    wl_signal_emit_mutable(&workspace->events.name, NULL);
+}
+
+/* auto add views in all workspaces */
+static void workspace_auto_add_views(struct workspace *workspace)
+{
+    if (!workspace_manager->view_manager->server->ready) {
+        return;
+    }
+    struct workspace *first_workspace = workspace_manager->workspaces[0];
+    struct view_proxy *view_proxy;
+    wl_list_for_each(view_proxy, &first_workspace->view_proxies, workspace_link) {
+        struct view *view = view_proxy->view;
+        if (view->base.sticky) {
+            view_add_workspace(view, workspace);
+        }
+    }
+}
+
+struct workspace *workspace_create(const char *name, uint32_t position)
+{
+    /* too many workspaces, reject it */
+    if (workspace_manager->count == MAX_WORKSPACES) {
+        return NULL;
+    }
+
+    struct workspace *workspace = calloc(1, sizeof(*workspace));
+    if (!workspace) {
+        return NULL;
+    };
+
+    if (position > workspace_manager->count) {
+        position = workspace_manager->count;
+    }
+
+    wl_list_init(&workspace->view_proxies);
+    wl_signal_init(&workspace->events.name);
+    wl_signal_init(&workspace->events.position);
+    wl_signal_init(&workspace->events.activate);
+    wl_signal_init(&workspace->events.destroy);
+    wl_signal_init(&workspace->events.view_enter);
+    wl_signal_init(&workspace->events.view_leave);
+
+    /* create 3 tree per workspace and disabled default */
+    struct view_layer *layers = workspace_manager->view_manager->layers;
+    workspace->layers[0].layer = LAYER_BELOW;
+    workspace->layers[0].tree = ky_scene_tree_create(layers[LAYER_BELOW].tree);
+    workspace->layers[0].tree->node.role.type = KY_SCENE_ROLE_WORKSPACE;
+    workspace->layers[0].tree->node.role.data = &workspace->layers[0];
+    workspace->layers[1].layer = LAYER_NORMAL;
+    workspace->layers[1].tree = ky_scene_tree_create(layers[LAYER_NORMAL].tree);
+    workspace->layers[1].tree->node.role.type = KY_SCENE_ROLE_WORKSPACE;
+    workspace->layers[1].tree->node.role.data = &workspace->layers[1];
+    workspace->layers[2].layer = LAYER_ABOVE;
+    workspace->layers[2].tree = ky_scene_tree_create(layers[LAYER_ABOVE].tree);
+    workspace->layers[2].tree->node.role.type = KY_SCENE_ROLE_WORKSPACE;
+    workspace->layers[2].tree->node.role.data = &workspace->layers[2];
+    workspace_set_enabled(workspace, false);
+
+    /* insert to workspace manager workspaces */
+    for (uint32_t i = workspace_manager->count; i > position; i--) {
+        workspace_manager->workspaces[i] = workspace_manager->workspaces[i - 1];
+        workspace_manager->workspaces[i]->position = i;
+    }
+    workspace->position = position;
+    workspace_manager->workspaces[position] = workspace;
+    workspace_manager_update_count(workspace_manager->count + 1);
+
+    workspace->uuid = kywc_identifier_uuid_generate();
+    workspace_update_name(workspace, name);
+    wl_signal_emit_mutable(&workspace_manager->events.new_workspace, workspace);
+    /* after new_workspace */
+    workspace_auto_add_views(workspace);
+
+    return workspace;
+}
+
+static void fix_workspace(struct workspace *workspace)
+{
+    /* fixup workspace position */
+    for (uint32_t i = workspace->position; i < workspace_manager->count - 1; i++) {
+        workspace_manager->workspaces[i] = workspace_manager->workspaces[i + 1];
+        workspace_manager->workspaces[i]->position = i;
+        wl_signal_emit_mutable(&workspace_manager->workspaces[i]->events.position, NULL);
+        if (!workspace_manager->workspaces[i]->has_custom_name) {
+            workspace_update_name(workspace_manager->workspaces[i], NULL);
+        }
+    }
+    workspace_manager_update_count(workspace_manager->count - 1);
+
+    if (workspace_manager->count == 0) {
+        return;
+    }
+
+    /* fixup activated workspace */
+    struct workspace *activate_workspace =
+        workspace_manager->workspaces[workspace->position ? workspace->position - 1 : 0];
+    if (workspace_manager->current == workspace) {
+        workspace_activate(activate_workspace);
+    }
+
+    /* move all views to activate workspace */
+    struct view_proxy *view_proxy, *tmp;
+    wl_list_for_each_safe(view_proxy, tmp, &workspace->view_proxies, workspace_link) {
+        struct view_proxy *new_proxy = view_add_workspace(view_proxy->view, activate_workspace);
+        if (new_proxy) {
+            view_set_current_proxy(view_proxy->view, new_proxy);
+        }
+        view_proxy_destroy(view_proxy);
+    }
+}
+
+void workspace_destroy(struct workspace *workspace)
+{
+    kywc_log(KYWC_INFO, "Workspace %s destroy", workspace->name);
+
+    fix_workspace(workspace);
+
+    wl_signal_emit_mutable(&workspace->events.destroy, NULL);
+    assert(wl_list_empty(&workspace->events.view_enter.listener_list));
+    assert(wl_list_empty(&workspace->events.view_leave.listener_list));
+    assert(wl_list_empty(&workspace->events.name.listener_list));
+    assert(wl_list_empty(&workspace->events.position.listener_list));
+    assert(wl_list_empty(&workspace->events.activate.listener_list));
+    assert(wl_list_empty(&workspace->events.destroy.listener_list));
+
+    /* destroy trees, trees must be empty */
+    for (int i = 0; i < 3; i++) {
+        ky_scene_node_destroy(&workspace->layers[i].tree->node);
+    }
+
+    free((void *)workspace->uuid);
+    free((void *)workspace->name);
+    free(workspace);
+}
+
+static void workspace_set_activated(struct workspace *workspace, bool activated)
+{
+    if (workspace->activated == activated) {
+        return;
+    }
+
+    workspace_set_enabled(workspace, activated);
+
+    /* reparent view_tree which in multi workspace */
+    struct view_proxy *view_proxy;
+    wl_list_for_each(view_proxy, &workspace->view_proxies, workspace_link) {
+        if (view_proxy->view->current_proxy != view_proxy) {
+            view_set_current_proxy(view_proxy->view, view_proxy);
+        }
+    }
+
+    workspace->activated = activated;
+    wl_signal_emit_mutable(&workspace->events.activate, NULL);
+}
+
+void workspace_activate(struct workspace *workspace)
+{
+    struct workspace *old = workspace_manager->current;
+    if (!workspace || old == workspace) {
+        return;
+    }
+
+    if (old) {
+        workspace_set_activated(old, false);
+    }
+
+    /* disable show desktop when switching between workspaces */
+    view_manager_show_desktop(false, true);
+
+    workspace_manager->current = workspace;
+    workspace_set_activated(workspace, true);
+
+    /* auto activate topmost enabled view */
+    view_activate_topmost(true);
+
+    cursor_rebase_all(false);
+    kywc_log(KYWC_INFO, "Workspace %s(%d) is activated", workspace->name, workspace->position);
+}
+
+void workspace_activate_with_effect(struct workspace *workspace)
+{
+    struct workspace *current = workspace_manager->current;
+    enum direction direction =
+        current->position < workspace->position ? DIRECTION_RIGHT : DIRECTION_LEFT;
+
+    if (!workspace_add_automatic_translation_effect(current, workspace, direction)) {
+        workspace_activate(workspace);
+    }
+}
+
+struct view_layer *workspace_layer(struct workspace *workspace, enum layer layer)
+{
+    switch (layer) {
+    case LAYER_BELOW:
+        return &workspace->layers[0];
+    case LAYER_NORMAL:
+        return &workspace->layers[1];
+    case LAYER_ABOVE:
+        return &workspace->layers[2];
+    default:
+        return NULL;
+    }
+}
+
+struct workspace *workspace_by_position(uint32_t position)
+{
+    if (position >= workspace_manager->count) {
+        return NULL;
+    }
+
+    return workspace_manager->workspaces[position];
+}
+
+struct workspace *workspace_by_uuid(const char *uuid)
+{
+    struct workspace *workspace;
+    for (uint32_t i = 0; i < workspace_manager->count; i++) {
+        workspace = workspace_manager->workspaces[i];
+        if (strcmp(workspace->uuid, uuid) == 0) {
+            return workspace;
+        }
+    }
+    return NULL;
+}
+
+void workspace_set_position(struct workspace *workspace, uint32_t position)
+{
+    /* insert to last if position is too bigger */
+    if (position >= workspace_manager->count) {
+        position = workspace_manager->count - 1;
+    }
+    if (position == workspace->position) {
+        return;
+    }
+
+    /* move workspaces */
+    for (uint32_t i = workspace->position; i > position; i--) {
+        workspace_manager->workspaces[i] = workspace_manager->workspaces[i - 1];
+        workspace_manager->workspaces[i]->position = i;
+        wl_signal_emit_mutable(&workspace_manager->workspaces[i]->events.position, NULL);
+        if (!workspace_manager->workspaces[i]->has_custom_name) {
+            workspace_update_name(workspace_manager->workspaces[i], NULL);
+        }
+    }
+    for (uint32_t i = workspace->position; i < position; i++) {
+        workspace_manager->workspaces[i] = workspace_manager->workspaces[i + 1];
+        workspace_manager->workspaces[i]->position = i;
+        wl_signal_emit_mutable(&workspace_manager->workspaces[i]->events.position, NULL);
+        if (!workspace_manager->workspaces[i]->has_custom_name) {
+            workspace_update_name(workspace_manager->workspaces[i], NULL);
+        }
+    }
+
+    workspace->position = position;
+    workspace_manager->workspaces[position] = workspace;
+    wl_signal_emit_mutable(&workspace->events.position, NULL);
+    if (!workspace->has_custom_name) {
+        workspace_update_name(workspace, NULL);
+    }
+}

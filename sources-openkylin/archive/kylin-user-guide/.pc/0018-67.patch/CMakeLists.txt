@@ -1,0 +1,6 @@
+cmake_minimum_required(VERSION 3.0)
+project(kylin-user-guide)
+add_subdirectory(src)
+add_subdirectory(icon)
+add_subdirectory(introduction)
+#add_subdirectory(tests)

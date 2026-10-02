@@ -1,0 +1,755 @@
+#!/bin/bash
+
+set -e
+
+export info_version_string=
+export mate_data_add_string=
+export os_version_name=
+export sign_position=
+export ostree_branch_name=
+
+do_user_file() {
+	old_file=$1
+	new_file=$2
+	if [[ -f ${new_file} ]]; then
+		user_name=
+		user_names=
+		user_names=`cat "/tmp/etc/passwd" | grep home | grep "/bin/bash"`
+		for i in ${user_names}; do
+			user_name=${i%%:*}
+        		echo "${user_name}"
+			cat $1 | grep "^${user_name}:" >> $2 || true
+		done
+	else
+		cp -a ${old_file} ${new_file} || true
+	fi
+}
+
+set_swap() {
+  while (true); do
+    if ! echo ${array} | grep -q linux-swap; then
+        break
+    fi
+    swaptmp=${array#*linux-swap:}
+    swapdev=$(echo ${swaptmp%%|*})
+    #mkswap ${swapdev}
+    if echo "${swapdev}" | grep -q lvm; then
+        swapdev=/dev/kylin-vg/swap
+    fi
+    swapon ${swapdev}
+
+    array=$(echo ${swaptmp} | cut -d'\' -f2-)
+  done
+}
+
+automatic=$(get_value automatic-installation)
+if [[ $automatic -eq 0 ]]; then
+
+  partlists=$(get_value partitions | sed 's/\"//g')
+  array_space=${partlists//;/ }
+  array=${partlists//;/|}
+
+  list=
+  for i in ${array_space[@]}; do
+    list="$list $(echo $i | cut -d: -f1)"
+  done
+  sort_list=$(echo $list | tr ' ' '\n' | sort)
+
+  for mountpoint in $sort_list; do
+    dev0=$(echo ${array#*$mountpoint:})
+    dev=$(echo ${dev0%%|*})
+
+    if echo "${dev}" | grep -q lvm; then
+        case $mountpoint in
+        'kylin-data')
+                dev=/dev/kylin-vg/data
+                ;;
+        'linux-swap')
+                dev=/dev/kylin-vg/swap
+                ;;
+        '/')
+                dev=/dev/kylin-vg/root
+                ;;
+        '/backup')
+                dev=/dev/kylin-vg/backup
+                ;;
+        *)
+                dev=/dev/kylin-vg/$mountpoint
+                ;;
+        esac
+    fi
+
+    echo "--------->>>> $mountpoint $dev0 $dev" >> ${LOG_FILE} 2>&1
+    if [[ $mountpoint == "linux-swap" ]]; then
+      continue
+    fi
+
+    if [[ $mountpoint == "kylin-data" ]]; then
+      #mkdir -p /target/data
+      #mount $dev /target/data
+      blk_uuid_data=`blkid ${dev} | awk -F " " '{print $2}' | awk -F "=" '{print $2}'`
+      echo "part-data=$dev" >> /tmp/ky-installer.cfg
+      #chmod 1777 /target/data
+      #do_bind_data
+      continue
+    fi
+    
+
+    if [[ $mountpoint == "/boot/efi" ]]; then
+      blk_uuid_efi=`blkid ${dev} | awk -F " " '{print $2}' | awk -F "=" '{print $2}'`
+      echo "part-efi=$dev" >> /tmp/ky-installer.cfg
+      continue
+    fi
+
+    if [[ $mountpoint == "/boot" ]]; then
+      blk_uuid_boot=`blkid ${dev} | awk -F " " '{print $2}' | awk -F "=" '{print $2}'`
+      echo "part-boot=$dev" >> /tmp/ky-installer.cfg
+      continue
+    fi
+
+    if [[ $mountpoint == "/" ]]; then
+      blk_uuid_root=`blkid ${dev} | awk -F " " '{print $2}' | awk -F "=" '{print $2}'`
+      echo "part-root=$dev" >> /tmp/ky-installer.cfg
+      [ -d /target ] || mkdir /target
+      mount $dev /target
+      continue
+    fi
+
+    if [[ $mountpoint == "empty" ]]; then
+      continue
+    fi
+
+    #mkdir -p /target$mountpoint
+    #mount $dev /target$mountpoint
+    
+    if [[ $mountpoint == "/backup" ]]; then
+      echo "part-backup=$dev" >> /tmp/ky-installer.cfg
+      #set_backup $dev
+    fi
+
+    if [[ $mountpoint == "/data" ]]; then
+      chmod 1777 /target$mountpoint >/dev/null
+    fi
+  done
+
+  nomount_list=$(echo ${array_space} | tr ' ' '\n' | sort | grep empty) || true
+  if [[ -n ${nomount_list} ]]; then
+	empty_num=1
+  	for mountpoint in ${nomount_list}; do
+      		dev=$(echo ${mountpoint#*:})
+		if echo "${dev}" | grep -q lvm; then
+                        dev=/dev/kylin-vg/kylin${empty_num}
+                        empty_num=$(( empty_num + 1 ))
+                fi
+     		mkdir -p /target/nomountpoint
+      		mount $dev /target/nomountpoint
+      		chmod -R 1777 /target/nomountpoint
+      		umount -l /target/nomountpoint
+      		rmdir /target/nomountpoint
+  	done
+  fi
+
+  set_swap
+fi
+
+case ${LANGUAGES} in
+        'zh_CN')
+                echo "磁盘挂载完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'en_US')
+                echo "Disk mounting completed" >>${LOG_PROGRESS_FILE}
+                ;;
+        'bo_CN')
+                echo "འཁོར་གཞོང་挂载ལེགས་གྲུབ།" >>${LOG_PROGRESS_FILE}
+                ;;
+        'zh_HK')
+                echo "磁片掛載完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'mn_MN')
+                echo "ᠰᠣᠷᠢᠨᠵᠢᠨ ᠳ᠋ᠢᠰᠺ ᠢ ᠴᠢᠷᠴᠦ ᠳᠠᠭᠤᠰᠪᠠ" >>${LOG_PROGRESS_FILE}
+                ;;
+              *)
+                echo "磁盘挂载完成" >>${LOG_PROGRESS_FILE}
+                ;;
+esac
+
+deal_squashfs() {
+  if [[ "${is_minimal}" == "true" ]]; then
+    minimal_squashfs=$(find /cdrom/casper -name '*img' | head -1)
+    # 挂载最小系统镜像
+    if [[ $minimal_squashfs =~ 'img' ]]; then
+      mount -r $minimal_squashfs /rofs
+    fi
+  elif [[ "${is_ghost}" == "true" ]]; then
+    if [[ -f /target/etc/.bootinfo ]]; then
+        cp -a /target/etc/.bootinfo /etc
+    fi
+    ghost_img=$(get_value ghost-path)
+
+    if [[ -f ${ghost_img} ]]; then
+        echo "img is file,don't to transformed"
+    else
+        dev_img=${ghost_img}
+        dev_img=${dev_img##*(} || true
+        dev_img=${dev_img%%)*} || true
+
+        process_img=${ghost_img}
+        if [[ -b ${dev_img} ]]; then
+                mkdir -p /ghost
+                umount /var/log/installer/ghost || true
+                umount "/dev/${os_disk}*"|| true
+                mount ${dev_img} /ghost
+                process_img=${process_img%(*}
+
+                ghost_img=/ghost/${process_img}
+                if [[ -f ${ghost_img} ]]; then
+                        echo "ghost镜像在磁盘跟目录"
+                else
+                        ghost_img=/ghost/ghost/${process_img}
+                fi
+        else
+                echo "您现在用的是ghost安装，移动设备暂无可用ghost镜像，请检查ghost镜像位置"
+        fi
+    fi
+
+    # 挂载 ghost 镜像
+#    if [[ ${ghost_img} =~ 'img' ]]; then
+       mkdir -p /img
+       mount -r "${ghost_img}" /img || true
+#    fi
+  fi
+}
+
+
+get_ostree_release_file_info() {
+	while read os_release_file_line
+	do
+		if [ "$os_release_file_line" = "[info]" ]; then
+			sign_position=0
+			continue
+		fi
+
+		if [ $sign_position = 0 ] && [ "$os_release_file_line" != "[info]" ]; then
+			info_version_string=$os_release_file_line
+			sign_position=1
+			continue
+		fi
+
+		if [ "$os_release_file_line" != "[metadata]" ]; then
+			mate_data_add_string="$mate_data_add_string --add-metadata-string=$os_release_file_line"
+		fi
+
+	done < "/etc/ostree-release"
+
+	info_version_string=${info_version_string#*version=}
+	os_version_name=$(echo "$info_version_string" | awk -F ":" '{print $1}')
+	ostree_branch_name=$info_version_string
+	echo "$os_version_name" >> ${LOG_FILE} 2>&1
+	echo "$info_version_string" >> ${LOG_FILE} 2>&1
+	echo "$ostree_branch_name" >> ${LOG_FILE} 2>&1
+	echo "$mate_data_add_string" >> ${LOG_FILE} 2>&1
+}
+
+case ${LANGUAGES} in
+        'zh_CN')
+                echo "正在拷贝基础文件系统..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'en_US')
+                echo "Copying basic file system..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'bo_CN')
+                echo "བཞིན་གྱི་པར་ཤོག་རྨང་གཞི་ཡིག་ཆ་མ་ལག།..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'zh_HK')
+                echo "正在拷貝基礎檔案系統..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'mn_MN')
+                echo "ᠶᠠᠭ ᠰᠠᠭᠤᠷᠢ ᠹᠠᠶᠢᠯ ᠤᠨ ᠰᠢᠰᠲ᠋ᠡᠮ ᠢ ᠺᠣᠫᠢᠳᠠᠵᠤ ᠪᠠᠶᠢᠨᠠ..." >>${LOG_PROGRESS_FILE}
+                ;;
+              *)
+                echo "正在拷贝基础文件系统..." >>${LOG_PROGRESS_FILE}
+                ;;
+esac
+
+if [[ "${is_ghost}" == "true" ]]; then
+	echo "installer-progress=3" >${INSTALLER_PROGRESS}
+	echo "installer-progress-next=75" >>${INSTALLER_PROGRESS}
+else
+	echo "installer-progress=3" >${INSTALLER_PROGRESS}
+	echo "installer-progress-next=31" >>${INSTALLER_PROGRESS}
+
+fi
+msg "正在拷贝基础文件系统..."
+# 判断使用最小系统镜像或 ghost
+deal_squashfs
+if [[ "${is_ghost}" == "true" ]]; then
+        rsync -aHAX /img/sysroot/ /target  || do_error copy
+	
+	tmp_path="/target/ostree/pkgs/ovl-*.1/etc-ovl/etc-upper/"
+        if [ -f ${tmp_path}fstab ]; then
+                rm -rf ${tmp_path}fstab
+        fi
+        tmp_path="/var/mnt/ostree/pkgs/ovl-*.0/etc-ovl/etc-upper/"
+        if [ -f ${tmp_path}fstab ]; then
+                rm -rf ${tmp_path}fstab
+        fi
+        tmp_path="/target/ostree/pkgs/ovl-*.1/etc-ovl/etc-lower/"
+        if [ -f ${tmp_path}fstab ]; then
+                rm -rf ${tmp_path}fstab
+        fi
+        tmp_path="/var/mnt/ostree/pkgs/ovl-*.0/etc-ovl/etc-lower/"
+        if [ -f ${tmp_path}fstab ]; then
+                rm -rf ${tmp_path}fstab
+        fi
+
+else
+	if [ -f /cdrom/casper/filesystem.squashfs ]; then
+		mkdir -p /target/sqfs
+		mkdir -p /target/sqfs/data
+		msg "正在处理squashfs..."
+		rsync -aHAX /cdrom/casper/filesystem.squashfs /target/sqfs/data || do_error copy
+		sync
+		msg "squashfs处理完成"
+
+		mkdir -p /target/sqfs/rofs
+		mount /target/sqfs/data/filesystem.squashfs /target/sqfs/rofs
+		rsync -aHAX /target/sqfs/rofs/sysroot/ /target || do_error copy
+		sync
+		umount /target/sqfs/rofs || echo "umount /target/sqfs/rofs failed"
+	else
+		rsync -aHAX /rofs/sysroot/ /target || do_error copy
+	fi
+	echo "installer-progress=31" >${INSTALLER_PROGRESS}
+	echo "installer-progress-next=52" >>${INSTALLER_PROGRESS}
+fi
+msg "文件系统拷贝完成"
+sync
+
+
+#if [[ "${is_ghost}" == "true" ]]; then
+#    umount "${ghost_img}" || echo "umount $ghost_img failed"
+#    umount /ghost || echo "umount /ghost failed"
+#    umount /img || echo "umount /img failed"
+#    if [[ -f /etc/.bootinfo ]]; then
+#        cp -a /etc/.bootinfo /target/etc
+#    fi
+#fi
+
+data_part=$(get_value part-data)
+efi_part=$(get_value part-efi)
+boot_part=$(get_value part-boot)
+root_part=$(get_value part-root)
+
+if [ ! -z $boot_part ]; then
+	mount "${boot_part}" "/target/boot"
+fi
+get_ostree_release_file_info
+
+# 获取根分区的UUID
+root_uuid=`lsblk -o UUID ${root_part} | grep -v "UUID"`
+cmdline_opention_argr="$root_uuid rw"
+
+deploy_hashvalue=
+if [[ "${is_ghost}" == "true" ]]; then
+	deploy_hashvalue=`cat /target/ostree/pkgs/ostree-version.info | awk -F " " '{print $2}'`
+	#deploy_hashvalue=${deploy_hashvalue%.*}
+else
+	ostree admin deploy "$ostree_branch_name" --os="$os_version_name" --sysroot=/target --karg=root="UUID=$cmdline_opention_argr" >>${LOG_FILE} 2>&1
+
+	# 将第一个部署点作为默认启动回滚点
+	ostree admin pin 0 --sysroot=/target
+	## 重新部署作为回滚点
+	ostree admin deploy "$ostree_branch_name" --retain --os="$os_version_name" --sysroot=/target --karg=root="UUID=$root_uuid" >>${LOG_FILE} 2>&1
+
+	# 保留deploy root 部署点的hash值，用于后续同步overlay数据
+	deploy_hashvalue=`ostree admin status --sysroot=/target | head -n 1 | awk -F " " '{print $2}'`
+fi
+echo "deploy_hashvalue:$deploy_hashvalue" >>${LOG_FILE} 2>&1
+echo "deploy_hashvalue_root=${deploy_hashvalue}" >> /tmp/ky-installer.cfg
+
+prefix=${deploy_hashvalue%%.1*}
+
+# 保留所有deploy backup 部署点的hash值，用于后续同步overlay数据
+# 拼接 .0
+deploy_hashvalue_backup="${prefix}.0"
+#deploy_hashvalue_backup=`ostree admin status --sysroot=/target | grep "\.0" | awk -F " " '{print $2}'`
+echo "deploy_hashvalue_backup:${deploy_hashvalue_backup}" >> ${LOG_FILE} 2>&1
+echo "deploy_hashvalue_backup=${deploy_hashvalue_backup}" >> /tmp/ky-installer.cfg
+
+[ -d /kylin-sysroot ] || mkdir /kylin-sysroot
+new_root="/kylin-sysroot"
+mount --rbind "/target/ostree/deploy/$os_version_name/deploy/$deploy_hashvalue" "$new_root"
+
+echo "new-root=${new_root}" >>/tmp/ky-installer.cfg
+echo "os_version_name=${os_version_name}" >> /tmp/ky-installer.cfg
+
+# 修改deploy root下的文件系统目录权限安装完成后需要重新修改回来
+for sysroot_dir_file in /target/ostree/deploy/$os_version_name/deploy/*; do
+    if echo $sysroot_dir_file | grep -v "origin" > /dev/null; then
+        chattr -i $sysroot_dir_file
+    fi
+done
+
+[ -d $new_root/boot ] || mkdir $new_root/boot
+if [ ! -z $boot_part ]; then
+	mount $boot_part $new_root/boot
+else
+	mount --bind /target/boot $new_root/boot
+fi
+cp -a /rofs/boot/config-* $new_root/boot/
+
+if [[ "${is_ghost}" == "true" ]]; then
+    rsync -aHAX /img/boot/ $new_root/boot
+fi
+
+if [ ! -z $efi_part ]; then
+	[ -d $new_root/boot/efi ] || mkdir $new_root/boot/efi
+	mount $efi_part  $new_root/boot/efi
+fi
+
+[ -d $new_root/data ] || mkdir $new_root/data
+mount $data_part $new_root/data
+
+if [[ "${is_ghost}" == "true" ]]; then
+    rsync -aHAX /img/data/ $new_root/data
+fi
+
+mkdir -p $new_root/{home,root}
+mkdir -p $new_root/data/{home,root,usershare}
+rsync -aHAX $new_root/root/ $new_root/data/root/
+mount --bind $new_root/data/home $new_root/home
+mount --bind $new_root/data/root $new_root/root
+chmod -R 1777 $new_root/data/usershare >/dev/null
+chmod  700 $new_root/data/root >/dev/null
+
+if [[ "${is_ghost}" != "true" ]]; then
+	# 创建overlayfs所需要的对应目录
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/etc-ovl/etc-lower
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/etc-ovl/etc-upper
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/etc-ovl/etc-tmpupper
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/etc-ovl/etc-work
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/usr-ovl/usr-lower
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/usr-ovl/usr-upper
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/usr-ovl/usr-tmpupper
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/usr-ovl/usr-work
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/var-ovl/var-lower/lib
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/var-ovl/var-upper/lib
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/var-ovl/var-tmpupper/lib
+	mkdir -p /target/ostree/pkgs/ovl-$deploy_hashvalue/var-ovl/var-work/lib
+fi
+
+# 修改var目录存储位置
+[ -d /target/var ] || mkdir /target/var
+
+if [[ "${is_ghost}" != "true" ]]; then
+	mv /target/ostree/deploy/$os_version_name/var/* /target/var/
+	rm -rf *new_root/var/*
+fi
+mount --bind /target/var $new_root/var
+
+if [[ "${is_ghost}" != "true" ]]; then
+	# 创建var目录，叠加挂载etc、var、usr目录
+	mount -t overlay overlay -o lowerdir=$new_root/etc,upperdir=/target/ostree/pkgs/ovl-$deploy_hashvalue/etc-ovl/etc-lower,workdir=/target/ostree/pkgs/ovl-$deploy_hashvalue/etc-ovl/etc-work $new_root/etc
+	mount -t overlay overlay -o lowerdir=$new_root/usr,upperdir=/target/ostree/pkgs/ovl-$deploy_hashvalue/usr-ovl/usr-lower,workdir=/target/ostree/pkgs/ovl-$deploy_hashvalue/usr-ovl/usr-work $new_root/usr
+	mount -t overlay overlay -o lowerdir=$new_root/var/lib,upperdir=/target/ostree/pkgs/ovl-$deploy_hashvalue/var-ovl/var-lower/lib,workdir=/target/ostree/pkgs/ovl-$deploy_hashvalue/var-ovl/var-work/lib $new_root/var/lib
+fi
+
+[ -d $new_root/sysroot ] || mkdir $new_root/sysroot
+mount $root_part $new_root/sysroot  
+mount --bind $new_root/boot $new_root/sysroot/boot
+
+if [ ! -z $efi_part ]; then
+	mount --bind $new_root/boot/efi $new_root/sysroot/boot/efi
+fi
+
+if [[ "${is_ghost}" == "true" ]]; then
+#    rsync -aHAX /img/boot/ $new_root/boot
+#    rsync -aHAX /img/data/ $new_root/data
+    umount "${ghost_img}" || echo "umount $ghost_img failed"
+    umount /ghost || echo "umount /ghost failed"
+    umount /img || echo "umount /img failed"
+    if [[ -f /etc/.bootinfo ]]; then
+        cp -a /etc/.bootinfo $new_root/etc
+    fi
+fi
+
+backup_part=$(get_value part-backup)
+if [[ -n $backup_part ]]; then
+	[ -d $new_root/backup ] || mkdir $new_root/backup
+	[ -d $new_root/sysroot/backup ] || mkdir $new_root/sysroot/backup
+	mount $backup_part $new_root/backup
+	mount --bind $new_root/backup $new_root/sysroot/backup
+	set_backup $backup_part $new_root
+fi
+
+# 保留当前commit与osname
+echo "$os_version_name $deploy_hashvalue" >> /target/ostree/pkgs/ostree-version.info
+
+# 加密
+if [[ "${isluks_lvm}" == "true" ]] || [[ "${tpm}" == "true" ]]; then
+  rsync /etc/crypttab $new_root/etc
+  #rsync -r /boot/.endisk $new_root/boot/
+  rm -f /target/etc/grub.d/05* || true
+  rm -f /target/etc/grub.d/06* || true
+fi
+
+#拷贝livebuild阶段保存的etc文件到部署目录中
+if [[ -d /target/etc/ ]]; then
+        cp -a /target/etc/* $new_root/etc/
+fi
+
+
+if [[ "${is_ghost}" == "true" ]]; then
+        echo "installer-progress=75" >${INSTALLER_PROGRESS}
+        echo "installer-progress-next=76" >>${INSTALLER_PROGRESS}
+else
+        echo "installer-progress=52" >${INSTALLER_PROGRESS}
+        echo "installer-progress-next=76" >>${INSTALLER_PROGRESS}
+        #拷贝kare文件到部署目录中，以便开机能看到预装的kare应用
+        msg "开始处理kare"
+	if [[ -f $new_root/sysroot/sqfs/data/filesystem.squashfs ]];then
+		mkdir -p $new_root/sysroot/sqfs/rofs
+		mount $new_root/sysroot/sqfs/data/filesystem.squashfs $new_root/sysroot/sqfs/rofs
+		
+        	msg "挂载squashfs"
+		if [[ -d $new_root/sysroot/sqfs/rofs/kare-applications ]];then
+        		msg "开始处理/kare-applications"
+			rsync -aHAX $new_root/sysroot/sqfs/rofs/kare-applications $new_root/opt/
+        		msg "处理/kare-applications完成"
+		fi
+		if [[ -d $new_root/sysroot/sqfs/rofs/opt/kare ]];then
+        		msg "开始处理/opt/kare"
+			rsync -aHAX  $new_root/sysroot/sqfs/rofs/opt/kare $new_root/opt/
+        		msg "处理/opt/kare完成"
+		fi
+        	if [[ -d $new_root/sysroot/sqfs/rofs/etc/kare ]];then
+        		msg "开始处理/etc/kare"
+                	rsync -aHAX $new_root/sysroot/sqfs/rofs/etc/kare $new_root/etc/
+        		msg "处理/etc/kare完成"
+        	fi
+        	if [[ -d $new_root/sysroot/sqfs/rofs/var/kare-shadow ]];then
+        		msg "开始处理/var/kare-shadow"
+                	rsync -aHAX $new_root/sysroot/sqfs/rofs/var/kare-shadow $new_root/var/
+        		msg "处理/var/kare-shadow"
+        	fi
+        	if [[ -d $new_root/sysroot/sqfs/rofs/opt/kare-applications ]];then
+        		msg "开始处理/opt/kare-applications"
+                	rsync -aHAX $new_root/sysroot/sqfs/rofs/opt/kare-applications $new_root/opt/
+        		msg "处理/opt/kare-applications完成"
+        	fi
+        	if [[ -d $new_root/sysroot/sqfs/rofs/opt/kaiming ]];then
+        		msg "开始处理/opt/kaiming"
+                	rsync -aHAX $new_root/sysroot/sqfs/rofs/opt/kaiming $new_root/opt/
+        		msg "处理/opt/kaiming完成"
+        	fi
+                sync
+		umount $new_root/sysroot/sqfs/rofs || echo "umount $new_root/sysroot/sqfs/rofs failed"
+		rm -rf $new_root/sysroot/sqfs/rofs || echo "rm -rf $new_root/sysroot/sqfs/rofs failed"
+		rm -f $new_root/sysroot/sqfs/data/filesystem.squashfs || echo "rm -f $new_root/sysroot/sqfs/data/filesystem.squashfs failed"
+		rm -rf $new_root/sysroot/sqfs/data || echo "rm -rf $new_root/sysroot/sqfs/data failed"
+		rm -rf $new_root/sysroot/sqfs || echo "rm -f $new_root/sysroot/sqfs failed"
+	else
+        	if [[ -d /kare-applications ]];then
+        		msg "开始处理/kare-applications"
+                	rsync -aHAX /kare-applications $new_root/opt/
+        		msg "处理/kare-applications完成"
+        	fi
+        	if [[ -d /opt/kare ]];then
+        		msg "开始处理/opt/kare"
+                	rsync -aHAX /opt/kare $new_root/opt/
+        		msg "处理/opt/kare完成"
+        	fi
+        	if [[ -d /etc/kare ]];then
+        		msg "开始处理/etc/kare"
+                	rsync -aHAX /etc/kare $new_root/etc/
+        		msg "处理/etc/kare完成"
+        	fi
+        	if [[ -d /var/kare-shadow ]];then
+        		msg "开始处理/var/kare-shadow"
+                	rsync -aHAX /var/kare-shadow $new_root/var/
+        		msg "处理/var/kare-shadow"
+        	fi
+        	if [[ -d /opt/kare-applications ]];then
+        		msg "开始处理/opt/kare-applications"
+                	rsync -aHAX /opt/kare-applications $new_root/opt/
+        		msg "处理/opt/kare-applications完成"
+        	fi
+        	if [[ -d /opt/kaiming ]];then
+        		msg "开始处理/opt/kaiming"
+                	rsync -aHAX /opt/kaiming $new_root/opt/
+        		msg "处理/opt/kaiming完成"
+        	fi
+                sync
+	fi
+	sync
+        msg "kare处理完成"
+fi
+
+# 保留data
+data_unformat=$(get_value data-unformat)
+if [[ "${data_unformat}" == "true" ]]; then
+
+	if [[ -f /tmp/etc/passwd ]]; then
+		do_user_file /tmp/etc/passwd $new_root/etc/passwd
+		
+		if [[ -f /tmp/etc/passwd- ]]; then
+    			do_user_file /tmp/etc/passwd- $new_root/etc/passwd-
+		fi
+
+		if [[ -f /tmp/etc/shadow ]]; then
+			do_user_file /tmp/etc/shadow $new_root/etc/shadow
+		fi
+		if [[ -f /tmp/etc/shadow- ]]; then
+			do_user_file /tmp/etc/shadow- $new_root/etc/shadow-
+		fi
+
+		if [[ -f /tmp/etc/group ]]; then
+			do_user_file /tmp/etc/group $new_root/etc/group
+			if [[ -f /usr/share/kylin-os-installer/user-groups.txt ]]; then
+				mkdir -p $new_root/usr/share/kylin-os-installer
+                        	cp -a  /usr/share/kylin-os-installer/user-groups.txt $new_root/usr/share/kylin-os-installer || true
+                	fi
+		fi
+		if [[ -f /tmp/etc/group- ]]; then
+			do_user_file /tmp/etc/group- $new_root/etc/group-
+		fi
+
+		if [[ -f /tmp/etc/gshadow ]]; then
+			do_user_file /tmp/etc/gshadow $new_root/etc/gshadow
+		fi
+		if [[ -f /tmp/etc/gshadow- ]]; then
+			do_user_file /tmp/etc/gshadow- $new_root/etc/gshadow-
+		fi
+		if [[ -f /tmp/etc/uid_list ]]; then
+			do_user_file /tmp/etc/uid_list $new_root/etc/uid_list
+		fi
+	fi
+        
+	if [[ -f /tmp/etc/subgid ]]; then
+                cp -a /tmp/etc/subgid* $new_root/etc
+        fi
+	if [[ -f /tmp/etc/subuid ]]; then
+                cp -a /tmp/etc/subuid* $new_root/etc
+        fi
+
+
+	if [[ -f /tmp/etc/hostname ]]; then
+     		cp -a /tmp/etc/hostname $new_root/etc
+	fi
+	if [[ -f /tmp/etc/hosts ]]; then
+     		cp -a /tmp/etc/hosts $new_root/etc
+	fi
+        if [[ -f /tmp/etc/lightdm/lightdm.conf ]]; then
+                cp -a /tmp/etc/lightdm/lightdm.conf $new_root/etc/lightdm
+        fi
+	
+	# 保留激活文件
+	if [[ -f /tmp/etc/.kyinfo ]]; then
+                cp -a /tmp/etc/.kyinfo $new_root/etc/
+        fi
+	if [[ -f /tmp/etc/LICENSE ]]; then
+                cp -a /tmp/etc/LICENSE $new_root/etc/
+        fi
+	if [[ -f /tmp/etc/.kyhwid ]]; then
+                cp -a /tmp/etc/.kyhwid $new_root/etc/
+        fi
+        if [[ -f /tmp/etc/.kyactivation ]]; then
+                cp -a /tmp/etc/.kyactivation $new_root/etc/
+        fi
+	if [[ -f /tmp/etc/.product ]]; then
+                cp -a /tmp/etc/.product $new_root/etc/
+        fi
+
+fi
+
+case ${LANGUAGES} in
+        'zh_CN')
+                echo "文件系统拷贝完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'en_US')
+                echo "File system copy completed" >>${LOG_PROGRESS_FILE}
+                ;;
+        'bo_CN')
+                echo "ཡིག་ཆ་མ་ལག་གྱི་པར་ཤོག་ལེགས་གྲུབ།" >>${LOG_PROGRESS_FILE}
+                ;;
+        'zh_HK')
+                echo "檔案系統拷貝完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'mn_MN')
+                echo "ᠹᠠᠢᠯ ᠤ᠋ᠨ ᠱᠢᠰᠲ᠋ᠧᠮ ᠦ᠋ᠨ ᠺᠣᠪᠢ ᠪᠡᠶᠡᠯᠡᠭᠳᠡᠪᠡ" >>${LOG_PROGRESS_FILE}
+                ;;
+              *)
+                echo "文件系统拷贝完成" >>${LOG_PROGRESS_FILE}
+                ;;
+esac
+
+case ${LANGUAGES} in
+        'zh_CN')
+                echo "正在配置系统..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'en_US')
+                echo "Configuring the system..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'bo_CN')
+                echo "བཞིན་བཀོད་སྒྲག་བྱེད་པའི་མ་ལག།..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'zh_HK')
+                echo "正在配寘系統..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'mn_MN')
+                echo "ᠶᠠᠭ ᠰᠢᠰᠲ᠋ᠡᠮ ᠢ ᠲᠣᠬᠢᠷᠠᠭᠤᠯᠵᠤ ᠪᠠᠶᠢᠨᠠ..." >>${LOG_PROGRESS_FILE}
+                ;;
+              *)
+                echo "正在配置系统..." >>${LOG_PROGRESS_FILE}
+                ;;
+esac
+
+[ -d $new_root/usr/share/kylin-os-installer ] || mkdir $new_root/usr/share/kylin-os-installer
+cp -ar /usr/share/kylin-os-installer/ $new_root/usr/share/kylin-os-installer/
+
+#if [[ -f /usr/share/kylin-os-installer/ky-installer.cfg ]]; then
+#        cp -a /usr/share/kylin-os-installer/ky-installer.cfg /target/usr/share/kylin-os-installer
+#fi
+
+#拷贝可选安装包
+if [[ -d /cdrom/apps-third ]]; then
+        rsync -aHA /cdrom/apps-third $new_root/opt
+
+        if cat /proc/cmdline | grep -qi automatic ;then
+                if [ "x$is_oem_mode" = "xfalse" ];then
+                        if [ -f $new_root/opt/apps-third/install.list ];then
+                                rm -f $new_root/opt/apps-third/install.list
+                        fi
+                        /usr/share/kylin-os-installer/scripts/preinstall-scan.py
+                else
+                        if cat /proc/cmdline | grep -qi auti-only ;then
+                                /usr/share/kylin-os-installer/scripts/preinstall-scan.py
+                        fi
+                fi
+        else
+                if cat /proc/cmdline | grep -qi test-mode ;then
+                        if [ "x$is_oem_mode" = "xfalse" ];then
+                                if [ -f $new_root/opt/apps-third/install.list ];then
+                                        rm -f $new_root/opt/apps-third/install.list
+                                fi
+                                /usr/share/kylin-os-installer/scripts/preinstall-scan.py
+                        else
+                                /usr/share/kylin-os-installer/scripts/preinstall-scan.py
+                        fi
+                fi
+        fi
+        
+	if [[ -f /opt/apps-third/install.list ]]; then
+                cp -a /opt/apps-third/install.list $new_root/opt/apps-third/install.list
+        fi
+fi
+
+
+#显卡测试拷贝结果
+if [ -f "/tmp/kwin-backend.config" ]; then
+    chmod 644 /tmp/kwin-backend.config
+    cp /tmp/kwin-backend.config $new_root/etc/xdg/
+fi
+
+echo "installer-progress=76" >${INSTALLER_PROGRESS}
+echo "installer-progress-next=92" >>${INSTALLER_PROGRESS}

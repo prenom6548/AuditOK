@@ -1,0 +1,1297 @@
+From: snowsi <348240162@qq.com>
+Date: Wed, 6 Dec 2023 10:02:30 +0000
+Subject: =?utf-8?b?ITQyIOaNouacuuWKqeaJiy1kYnVz5YaF5a655L+u5pS5IE1lcmdlIHB1?=
+ =?utf-8?b?bGwgcmVxdWVzdCAhNDIgZnJvbSB6aGFuZ3hpbnhpbi9vcGVua3lsaW4vbmlsZQ==?=
+
+---
+ daemons/service/data/com.kylin-os-manager.conf     |   5 +-
+ plugins/driver-controller/CMakeLists.txt           |   8 +-
+ .../driver-controller/src/drivergetfailwidget.cpp  |  64 ++++++++++
+ .../driver-controller/src/drivergetfailwidget.h    |  35 ++++++
+ .../src/driverinstallmainwidget.cpp                |  30 +++++
+ .../src/driverinstallmainwidget.h                  |  29 +++++
+ .../driver-controller/src/driverinstallwidget.cpp  |  45 +++++--
+ .../driver-controller/src/driverinstallwidget.h    |   1 -
+ .../src/driveruninstallmainwidget.cpp              |   3 +
+ .../src/driveruninstallmainwidget.h                |   2 +
+ .../src/driveruninstallwidget.cpp                  |  22 ++--
+ .../driver-controller/src/hardwareinfogetter.cpp   | 132 +++++++++++++++++----
+ plugins/driver-controller/src/hardwareinfogetter.h |   5 +
+ .../src/hardwareinfomainwidget.cpp                 |  43 +++++++
+ .../driver-controller/src/hardwareinfomainwidget.h |  30 +++++
+ .../driver-controller/src/hardwareinfowidget.cpp   |  57 ++++++---
+ plugins/driver-controller/src/img_src/image.qrc    |   2 +
+ .../driver-controller/src/include/globalsignal.h   |   6 +
+ plugins/driver-controller/src/loadingwidget.cpp    |   1 -
+ plugins/driver-controller/src/mainstackwidget.cpp  |  28 -----
+ plugins/driver-controller/src/mainstackwidget.h    |  29 -----
+ plugins/driver-controller/src/mainwidget.cpp       |   6 +
+ plugins/driver-controller/src/selectionwidget.cpp  |  15 +--
+ plugins/driver-controller/src/selectionwidget.h    |   9 +-
+ plugins/driver-controller/src/text_label.cpp       |  90 --------------
+ plugins/driver-controller/src/text_label.h         |  33 ------
+ 26 files changed, 472 insertions(+), 258 deletions(-)
+ create mode 100644 plugins/driver-controller/src/drivergetfailwidget.cpp
+ create mode 100644 plugins/driver-controller/src/drivergetfailwidget.h
+ create mode 100644 plugins/driver-controller/src/driverinstallmainwidget.cpp
+ create mode 100644 plugins/driver-controller/src/driverinstallmainwidget.h
+ create mode 100644 plugins/driver-controller/src/hardwareinfomainwidget.cpp
+ create mode 100644 plugins/driver-controller/src/hardwareinfomainwidget.h
+ delete mode 100644 plugins/driver-controller/src/mainstackwidget.cpp
+ delete mode 100644 plugins/driver-controller/src/mainstackwidget.h
+ delete mode 100644 plugins/driver-controller/src/text_label.cpp
+ delete mode 100644 plugins/driver-controller/src/text_label.h
+
+diff --git a/daemons/service/data/com.kylin-os-manager.conf b/daemons/service/data/com.kylin-os-manager.conf
+index 5437ed8..be805e4 100644
+--- a/daemons/service/data/com.kylin-os-manager.conf
++++ b/daemons/service/data/com.kylin-os-manager.conf
+@@ -8,13 +8,16 @@
+     <policy user="root">
+         <allow own="com.kylin-os-manager"/>
+         <allow send_interface="tool.tool"/>
++        <allow send_interface="datamigration.datamigration"/>
+         <allow send_interface="systemmonitor.systemmonitor"/>
+     </policy>
+     
+     <!-- Allow anyone to invoke methods on the interfaces -->
+     <policy context="default">
+-    <allow send_destination="com.kylin-os-manager"
++        <allow send_destination="com.kylin-os-manager"
+            send_interface="tool.tool"/>
++        <allow send_destination="com.kylin-os-manager"
++           send_interface="datamigration.datamigration"/>
+ 	    <allow send_destination="com.kylin-os-manager"
+            send_interface="systemmonitor.systemmonitor"/>
+         <allow send_destination="com.kylin-os-manager"
+diff --git a/plugins/driver-controller/CMakeLists.txt b/plugins/driver-controller/CMakeLists.txt
+index 2678c8e..607e390 100644
+--- a/plugins/driver-controller/CMakeLists.txt
++++ b/plugins/driver-controller/CMakeLists.txt
+@@ -57,7 +57,10 @@ set(SRCS
+         ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfo/monitorinfo.cpp
+         ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfo/keyboardinfo.cpp
+         ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfo/mouseinfo.cpp
+-
++        ${SERVICE_SUPPORT_TOP_DIR}/src/driverinstallmainwidget.cpp
++        ${SERVICE_SUPPORT_TOP_DIR}/src/drivergetfailwidget.cpp
++        ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfomainwidget.cpp
++        ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfogetfailwidget.cpp
+ )
+ 
+ set(HEADERS
+@@ -97,6 +100,9 @@ set(HEADERS
+         ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfo/monitorinfo.h
+         ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfo/keyboardinfo.h
+         ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfo/mouseinfo.h
++        ${SERVICE_SUPPORT_TOP_DIR}/src/drivergetfailwidget.h
++        ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfomainwidget.h
++        ${SERVICE_SUPPORT_TOP_DIR}/src/hardwareinfogetfailwidget.h
+ )
+ 
+ SET(UI_PICTURE ${SERVICE_SUPPORT_TOP_DIR}/src/img_src/image.qrc)
+diff --git a/plugins/driver-controller/src/drivergetfailwidget.cpp b/plugins/driver-controller/src/drivergetfailwidget.cpp
+new file mode 100644
+index 0000000..ab3a809
+--- /dev/null
++++ b/plugins/driver-controller/src/drivergetfailwidget.cpp
+@@ -0,0 +1,64 @@
++#include "drivergetfailwidget.h"
++
++#include "include/globalsignal.h"
++#include "include/common.h"
++
++DriverGetFailWidget::DriverGetFailWidget(QWidget *parent)
++        : QWidget(parent),
++          m_failIcon(new QLabel()),
++          m_failLabel(new QLabel()),
++          m_retryBtn(new QPushButton()),
++          m_iconLayout(new QHBoxLayout),
++          m_mainLayout(new QVBoxLayout()) {
++    initConnect();
++    initGUi();
++}
++
++DriverGetFailWidget::~DriverGetFailWidget() {
++
++}
++
++void DriverGetFailWidget::initConnect() {
++    connect(g_signal, &GlobalSignal::themeChangeSignal, this, &DriverGetFailWidget::themeSetting);
++    connect(m_retryBtn, &QPushButton::clicked, g_signal, &GlobalSignal::reDetectSignal);
++
++}
++
++void DriverGetFailWidget::initGUi() {
++    themeSetting();
++    m_failLabel->setText(tr("Failed to obtain driver information, please try again later."));
++    m_retryBtn->setText(tr("Retry"));
++    m_retryBtn->setFixedSize(UPDATEBTNSIZE);
++
++    m_iconLayout->addWidget(m_failIcon);
++    m_iconLayout->setContentsMargins(0, 0, 0, 0);
++    m_iconLayout->setAlignment(Qt::AlignCenter);
++
++    m_mainLayout->setContentsMargins(0, 0, 0, 0);
++    m_mainLayout->setSpacing(0);
++    m_mainLayout->setAlignment(Qt::AlignCenter);
++    m_mainLayout->addStretch();
++    m_mainLayout->addLayout(m_iconLayout);
++    m_mainLayout->addSpacing(8);
++    m_mainLayout->addWidget(m_failLabel);
++    m_mainLayout->addSpacing(24);
++    m_mainLayout->addWidget(m_retryBtn, 0, Qt::AlignCenter);
++    m_mainLayout->addStretch();
++
++    this->setLayout(m_mainLayout);
++}
++
++void DriverGetFailWidget::themeSetting() {
++    QString styleName = kdk::GsettingMonitor::getSystemTheme().toString();
++    if (styleName == "ukui-black" || styleName == "ukui-dark") {
++        QPixmap pixmap;
++        pixmap.load(":/lodingerr-dark.png");
++        pixmap = pixmap.scaled(PIXMAPSIZE, Qt::KeepAspectRatio);
++        m_failIcon->setPixmap(pixmap);
++    } else {
++        QPixmap pixmap;
++        pixmap.load(":/lodingerr-light.png");
++        pixmap = pixmap.scaled(PIXMAPSIZE, Qt::KeepAspectRatio);
++        m_failIcon->setPixmap(pixmap);
++    }
++}
+diff --git a/plugins/driver-controller/src/drivergetfailwidget.h b/plugins/driver-controller/src/drivergetfailwidget.h
+new file mode 100644
+index 0000000..3af6b68
+--- /dev/null
++++ b/plugins/driver-controller/src/drivergetfailwidget.h
+@@ -0,0 +1,35 @@
++#ifndef DRIVERGETFAILWIDGET_H
++#define DRIVERGETFAILWIDGET_H
++
++#include <QWidget>
++#include <QLabel>
++#include <QPixmap>
++#include <kysdk/applications/gsettingmonitor.h>
++#include <QVBoxLayout>
++#include <QHBoxLayout>
++#include <QPushButton>
++
++class DriverGetFailWidget : public QWidget {
++Q_OBJECT
++public:
++    DriverGetFailWidget(QWidget *parent = nullptr);
++
++    ~DriverGetFailWidget();
++
++private:
++    QLabel *m_failIcon = nullptr;
++    QLabel *m_failLabel = nullptr;
++    QPushButton *m_retryBtn = nullptr;
++    QHBoxLayout *m_iconLayout= nullptr;
++    QVBoxLayout *m_mainLayout = nullptr;
++
++    void initConnect();
++
++    void initGUi();
++
++    void themeSetting();
++
++};
++
++
++#endif //DRIVERGETFAILWIDGET_H
+diff --git a/plugins/driver-controller/src/driverinstallmainwidget.cpp b/plugins/driver-controller/src/driverinstallmainwidget.cpp
+new file mode 100644
+index 0000000..ef20ee3
+--- /dev/null
++++ b/plugins/driver-controller/src/driverinstallmainwidget.cpp
+@@ -0,0 +1,30 @@
++#include "driverinstallmainwidget.h"
++
++#include "include/globalsignal.h"
++
++DriverInstallMainWidget::DriverInstallMainWidget(QWidget *parent)
++        : QWidget(parent),
++          m_mainLayout(new QHBoxLayout()),
++          m_mainWidget(new QStackedWidget),
++          m_driverInstallWidget(new DriverInstallWidget),
++          m_failWidget(new DriverGetFailWidget) {
++    initGui();
++    initConnect();
++}
++
++void DriverInstallMainWidget::initGui() {
++    m_mainWidget->addWidget(m_driverInstallWidget);
++    m_mainWidget->addWidget(m_failWidget);
++    m_mainWidget->setCurrentWidget(m_driverInstallWidget);
++
++    m_mainLayout->setContentsMargins(0, 0, 0, 0);
++    m_mainLayout->setSpacing(0);
++    m_mainLayout->addWidget(m_mainWidget);
++    this->setLayout(m_mainLayout);
++}
++
++void DriverInstallMainWidget::initConnect() {
++
++    connect(g_signal, &GlobalSignal::updateInstallContentSucceed, [=]() { m_mainWidget->setCurrentWidget(m_driverInstallWidget); });
++    connect(g_signal, &GlobalSignal::getHwInfoFailed, [=]() { m_mainWidget->setCurrentWidget(m_failWidget); });
++}
+diff --git a/plugins/driver-controller/src/driverinstallmainwidget.h b/plugins/driver-controller/src/driverinstallmainwidget.h
+new file mode 100644
+index 0000000..81d4b26
+--- /dev/null
++++ b/plugins/driver-controller/src/driverinstallmainwidget.h
+@@ -0,0 +1,29 @@
++#ifndef DRIVERINSTALLMAINWIDGET_H
++#define DRIVERINSTALLMAINWIDGET_H
++
++#include <QWidget>
++#include <QStackedWidget>
++#include <QHBoxLayout>
++
++#include "driverinstallwidget.h"
++#include "drivergetfailwidget.h"
++
++class DriverInstallMainWidget : public QWidget {
++    Q_OBJECT
++public:
++    DriverInstallMainWidget(QWidget *parent = nullptr);
++
++private:
++    QHBoxLayout *m_mainLayout = nullptr;
++    QStackedWidget *m_mainWidget = nullptr;
++    DriverInstallWidget *m_driverInstallWidget = nullptr;
++    DriverGetFailWidget *m_failWidget = nullptr;
++
++    void initGui();
++
++    void initConnect();
++
++};
++
++
++#endif //DRIVERINSTALLMAINWIDGET_H
+diff --git a/plugins/driver-controller/src/driverinstallwidget.cpp b/plugins/driver-controller/src/driverinstallwidget.cpp
+index 3cc4d56..bb03b36 100644
+--- a/plugins/driver-controller/src/driverinstallwidget.cpp
++++ b/plugins/driver-controller/src/driverinstallwidget.cpp
+@@ -149,21 +149,25 @@ void DriverInstallWidget::initConnection() {
+ }
+ 
+ void DriverInstallWidget::setContent() {
+-    checkUpgradable();
+-
+-    addGraphicCardContent();
+-    addScannerContent();
+-    addPrinterContent();
+-    addBluetoothContent();
+-    addSoundCardContent();
+-    addNetworkCardContent();
+-    addInputHwContent();
+-    addVideoContent();
+-    getOtherContent();
+-
+-    caculateAndSetPageSize();
++    if(g_infogetter->m_getsucceed) {
++        checkUpgradable();
++
++        addGraphicCardContent();
++        addScannerContent();
++        addPrinterContent();
++        addBluetoothContent();
++        addSoundCardContent();
++        addNetworkCardContent();
++        addInputHwContent();
++        addVideoContent();
++        getOtherContent();
++
++        caculateAndSetPageSize();
++        emit g_signal->updateInstallContentSucceed();    // 由检测页面切换到安装页面
+ 
++    }
+     emit g_signal->switchInstallPage();    // 由检测页面切换到安装页面
++
+ }
+ 
+ void DriverInstallWidget::caculateAndSetPageSize() {
+@@ -211,6 +215,21 @@ void DriverInstallWidget::caculateAndSetPageSize() {
+ }
+ 
+ void DriverInstallWidget::checkUpgradable() {
++    m_installabelNum = 0; // 用于标识是否存在可安装的硬件驱动
++    m_updateabelNum = 0; // 用于标识是否存在可升级的硬件驱动
++    m_notUpdatedNum = 0; // 用于标识无需升级的设备数量
++
++    m_devList.clear();
++    for (int i = 0; i < m_installableListWidget->count(); ++i) {
++        m_installableListWidget->takeItem(i);
++    }
++    for (int i = 0; i < m_upgradableListWidget->count(); ++i) {
++        m_upgradableListWidget->takeItem(i);
++    }
++    for (int i = 0; i < m_notUpdatedListWidget->count(); ++i) {
++        m_notUpdatedListWidget->takeItem(i);
++    }
++
+     for (int i = 0; i < g_infogetter->m_graphicHardwares.length(); ++i) {
+         if (g_infogetter->m_graphicHardwares.at(i).upgradeable == true) {
+             if (g_infogetter->m_graphicHardwares.at(i).driver_now == "") {
+diff --git a/plugins/driver-controller/src/driverinstallwidget.h b/plugins/driver-controller/src/driverinstallwidget.h
+index 1bed00a..4d37c04 100644
+--- a/plugins/driver-controller/src/driverinstallwidget.h
++++ b/plugins/driver-controller/src/driverinstallwidget.h
+@@ -114,5 +114,4 @@ private slots:
+     void installMultiDriverSlot();
+ };
+ 
+-
+ #endif //DRIVERINSTALLWIDGET_H
+diff --git a/plugins/driver-controller/src/driveruninstallmainwidget.cpp b/plugins/driver-controller/src/driveruninstallmainwidget.cpp
+index cde1f34..4eae5db 100644
+--- a/plugins/driver-controller/src/driveruninstallmainwidget.cpp
++++ b/plugins/driver-controller/src/driveruninstallmainwidget.cpp
+@@ -6,6 +6,7 @@ DriverUninstallMainWidget::DriverUninstallMainWidget(QWidget *parent)
+           m_stackWidget(new QStackedWidget),
+           m_noDriverUninstallWidget(new NoDriverUninstallPage),
+           m_driverUninstallWidget(new DriverUninstallWidget),
++          m_driverGetFailWidget(new DriverGetFailWidget),
+           m_mainLayout(new QHBoxLayout) {
+     initGui();
+     initConnection();
+@@ -14,6 +15,7 @@ DriverUninstallMainWidget::DriverUninstallMainWidget(QWidget *parent)
+ void DriverUninstallMainWidget::initGui() {
+     m_stackWidget->addWidget(m_noDriverUninstallWidget);
+     m_stackWidget->addWidget(m_driverUninstallWidget);
++    m_stackWidget->addWidget(m_driverGetFailWidget);
+     m_stackWidget->setCurrentWidget(m_noDriverUninstallWidget);
+ 
+     m_mainLayout->addWidget(m_stackWidget);
+@@ -27,6 +29,7 @@ void DriverUninstallMainWidget::initConnection() {
+     connect(g_signal, &GlobalSignal::switchUninstallPage, this, &DriverUninstallMainWidget::switchToUninstallWidget);
+     connect(g_signal, &GlobalSignal::switchNoUninstallPage, this,
+             &DriverUninstallMainWidget::switchToNoDriverUnistallWidget);
++    connect(g_signal, &GlobalSignal::getHwInfoFailed, [=]() { m_stackWidget->setCurrentWidget(m_driverGetFailWidget); });
+ }
+ 
+ void DriverUninstallMainWidget::switchToUninstallWidget() {
+diff --git a/plugins/driver-controller/src/driveruninstallmainwidget.h b/plugins/driver-controller/src/driveruninstallmainwidget.h
+index 9503b5f..182c5af 100644
+--- a/plugins/driver-controller/src/driveruninstallmainwidget.h
++++ b/plugins/driver-controller/src/driveruninstallmainwidget.h
+@@ -7,6 +7,7 @@
+ 
+ #include "nodriveruninstallpage.h"
+ #include "driveruninstallwidget.h"
++#include "drivergetfailwidget.h"
+ 
+ class DriverUninstallMainWidget : public QWidget {
+     Q_OBJECT
+@@ -18,6 +19,7 @@ private:
+ 
+     NoDriverUninstallPage *m_noDriverUninstallWidget = nullptr;
+     DriverUninstallWidget *m_driverUninstallWidget = nullptr;
++    DriverGetFailWidget *m_driverGetFailWidget = nullptr;
+ 
+     QHBoxLayout *m_mainLayout = nullptr;
+ 
+diff --git a/plugins/driver-controller/src/driveruninstallwidget.cpp b/plugins/driver-controller/src/driveruninstallwidget.cpp
+index b006292..b667a61 100644
+--- a/plugins/driver-controller/src/driveruninstallwidget.cpp
++++ b/plugins/driver-controller/src/driveruninstallwidget.cpp
+@@ -69,15 +69,19 @@ void DriverUninstallWidget::initConnection() {
+ }
+ 
+ void DriverUninstallWidget::setContent() {
+-    addGraphicCardContent();
+-    addScannerContent();
+-    addPrinterContent();
+-    addInputHwContent();
+-    addVideoContent();
+-    getOtherContent();
+-
+-    if (!m_devList.isEmpty()) {
+-        emit g_signal->switchUninstallPage();
++    if(g_infogetter->m_getsucceed){
++        addGraphicCardContent();
++        addScannerContent();
++        addPrinterContent();
++        addInputHwContent();
++        addVideoContent();
++        getOtherContent();
++
++        if (!m_devList.isEmpty()) {
++            emit g_signal->switchUninstallPage();
++        }else{
++            emit g_signal->switchNoUninstallPage();
++        }
+     }
+ }
+ 
+diff --git a/plugins/driver-controller/src/hardwareinfogetter.cpp b/plugins/driver-controller/src/hardwareinfogetter.cpp
+index 4f19c7f..5f7ef9e 100644
+--- a/plugins/driver-controller/src/hardwareinfogetter.cpp
++++ b/plugins/driver-controller/src/hardwareinfogetter.cpp
+@@ -3,7 +3,8 @@
+ #include <QJsonObject>
+ #include <QJsonArray>
+ #include "include/globalsignal.h"
+-HardwareInfoGetter * HardwareInfoGetter::instance = new HardwareInfoGetter();
++
++HardwareInfoGetter *HardwareInfoGetter::instance = new HardwareInfoGetter();
+ 
+ HardwareInfoGetter::HardwareInfoGetter(QObject *parent) : QObject(parent) {
+ 
+@@ -57,7 +58,7 @@ QString HardwareInfoGetter::getInfo(DeviceType type) {
+         }
+         return result;
+     } else {
+-        return "";
++        return "get info error";
+     }
+ }
+ 
+@@ -125,9 +126,18 @@ QList<GraphicCardInfo> HardwareInfoGetter::getGraphicHardwares() {
+ 
+         graphicCardList.append(graphicCard);
+     }
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (jsonString == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++    if (m_getFlag == 9) {
+         emit g_signal->getHwInfoComplete();
++        m_getsucceed = true;
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
++        emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_graphicHardwares = graphicCardList;
+     return graphicCardList;
+@@ -136,9 +146,20 @@ QList<GraphicCardInfo> HardwareInfoGetter::getGraphicHardwares() {
+ QList<HardWareInfo> HardwareInfoGetter::getScannerHardwares() {
+     QString info = getInfo(DeviceType::SCANNER);
+     QList<HardWareInfo> hardwareList = convertJsonToHardWareList(info, DeviceType::SCANNER);
+-    m_getFlag++;
+-    if(m_getFlag==9){
++
++    if (info == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
++        emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
+         emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_scannerHardwares = hardwareList;
+     return hardwareList;
+@@ -147,9 +168,19 @@ QList<HardWareInfo> HardwareInfoGetter::getScannerHardwares() {
+ QList<HardWareInfo> HardwareInfoGetter::getPrinterHardwares() {
+     QString info = getInfo(DeviceType::PRINTER);
+     QList<HardWareInfo> hardwareList = convertJsonToHardWareList(info, DeviceType::PRINTER);
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (info == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
++        emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
+         emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_printerHardwares = hardwareList;
+     return hardwareList;
+@@ -158,9 +189,18 @@ QList<HardWareInfo> HardwareInfoGetter::getPrinterHardwares() {
+ QList<HardWareInfo> HardwareInfoGetter::getInputHardwares() {
+     QString info = getInfo(DeviceType::InputDev);
+     QList<HardWareInfo> hardwareList = convertJsonToHardWareList(info, DeviceType::InputDev);
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (info == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
+         emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
++        emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_inputHardwares = hardwareList;
+     return hardwareList;
+@@ -169,9 +209,18 @@ QList<HardWareInfo> HardwareInfoGetter::getInputHardwares() {
+ QList<HardWareInfo> HardwareInfoGetter::getVideoHardwares() {
+     QString info = getInfo(DeviceType::VideoOrAudio);
+     QList<HardWareInfo> hardwareList = convertJsonToHardWareList(info, DeviceType::VideoOrAudio);
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (info == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
++        emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
+         emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_videoHardwares = hardwareList;
+     return hardwareList;
+@@ -180,9 +229,18 @@ QList<HardWareInfo> HardwareInfoGetter::getVideoHardwares() {
+ QList<HardWareInfo> HardwareInfoGetter::getOtherHardwares() {
+     QString info = getInfo(DeviceType::Other);
+     QList<HardWareInfo> hardwareList = convertJsonToHardWareList(info, DeviceType::Other);
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (info == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
++        emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
+         emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_otherHardwares = hardwareList;
+     return hardwareList;
+@@ -326,9 +384,18 @@ QList<BluetoothInfo> HardwareInfoGetter::getBluetoothHardwares() {
+ 
+         bluetoothList.append(bluetooth);
+     }
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (jsonString == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
+         emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
++        emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_bluetoothHardwares = bluetoothList;
+     return bluetoothList;
+@@ -407,9 +474,18 @@ QList<NetworkCardInfo> HardwareInfoGetter::getNetworkHardwares() {
+ 
+         networkCardList.append(networkCard);
+     }
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (jsonString == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
++        emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
+         emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_networkCardHardwares = networkCardList;
+     return networkCardList;
+@@ -487,9 +563,18 @@ QList<SoundCardInfo> HardwareInfoGetter::getSoundcardHardwares() {
+ 
+         soundCardList.append(soundCard);
+     }
+-    m_getFlag++;
+-    if(m_getFlag==9){
++    if (jsonString == "get info error") {
++        m_getFailFlag++;
++    } else {
++        m_getFlag++;
++    }
++    if (m_getFlag == 9) {
++        m_getsucceed = true;
+         emit g_signal->getHwInfoComplete();
++    } else if ((m_getFailFlag + m_getFlag) == 9) {
++        m_getsucceed = false;
++        emit g_signal->getHwInfoComplete();
++        emit g_signal->getHwInfoFailed();
+     }
+     m_soundCardHardwares = soundCardList;
+     return soundCardList;
+@@ -562,7 +647,7 @@ QList<MemoryInfo> HardwareInfoGetter::getMemoryInfo() {
+         response = manager.call("getMemoryInfo");
+         result = response.arguments().at(0).toString();
+     }
+-    
++
+     QList<MemoryInfo> memoryinfoList;
+ 
+     QJsonDocument jsonDoc = QJsonDocument::fromJson(result.toUtf8());
+@@ -762,6 +847,11 @@ QList<MouseInfo> HardwareInfoGetter::getMouseInfo() {
+     return mouseinfoList;
+ }
+ 
++void HardwareInfoGetter::refreshFlag() {
++    m_getFlag = 0;
++    m_getFailFlag = 0;
++}
++
+ 
+ 
+ 
+diff --git a/plugins/driver-controller/src/hardwareinfogetter.h b/plugins/driver-controller/src/hardwareinfogetter.h
+index 4c1843c..e18b5db 100644
+--- a/plugins/driver-controller/src/hardwareinfogetter.h
++++ b/plugins/driver-controller/src/hardwareinfogetter.h
+@@ -34,7 +34,12 @@ public:
+     QList<KeyboardInfo> getKeyboardInfo();
+     QList<MouseInfo> getMouseInfo();
+ 
++    void refreshFlag();
++
+     int m_getFlag = 0;    // 用于记录上述设备驱动获取一共完成了多少个
++    int m_getFailFlag = 0; // 用于记录上述设备驱动获取一共失败了多少个
++    bool m_getsucceed = false;
++
+     PcInfo m_pcinfo;
+     CpuInfo m_cpuinfo;
+     QList<MemoryInfo> m_memoryinfoList;
+diff --git a/plugins/driver-controller/src/hardwareinfomainwidget.cpp b/plugins/driver-controller/src/hardwareinfomainwidget.cpp
+new file mode 100644
+index 0000000..6e8bae9
+--- /dev/null
++++ b/plugins/driver-controller/src/hardwareinfomainwidget.cpp
+@@ -0,0 +1,43 @@
++#include "hardwareinfomainwidget.h"
++
++#include "include/globalsignal.h"
++
++HardwareInfoMainWidget::HardwareInfoMainWidget(QWidget *parent)
++        : QWidget(parent),
++          m_mainLayout(new QHBoxLayout()),
++          m_mainWidget(new QStackedWidget),
++          m_hardwareInfoSrollArea(new QScrollArea()),
++          m_hardwareinfoWidget(new HardWareInfoWidget),
++          m_hardwareinfoGetFailWidget(new HardwareInfoGetFailWidget) {
++    initGui();
++    initConnect();
++}
++
++void HardwareInfoMainWidget::initGui() {
++
++    m_hardwareInfoSrollArea->setWidget(m_hardwareinfoWidget);
++    m_hardwareInfoSrollArea->setWidgetResizable(true);
++    m_hardwareInfoSrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    m_hardwareInfoSrollArea->setFrameShape(QFrame::NoFrame);
++    m_hardwareInfoSrollArea->setContentsMargins(0, 0, 0, 0);
++    m_hardwareinfoWidget->adjustSize();
++
++    m_mainWidget->addWidget(m_hardwareInfoSrollArea);
++    m_mainWidget->addWidget(m_hardwareinfoGetFailWidget);
++    m_mainWidget->setCurrentWidget(m_hardwareInfoSrollArea);
++
++    m_mainLayout->setContentsMargins(0, 0, 0, 0);
++    m_mainLayout->setSpacing(0);
++    m_mainLayout->addWidget(m_mainWidget);
++    this->setLayout(m_mainLayout);
++}
++
++void HardwareInfoMainWidget::initConnect() {
++    connect(g_signal, &GlobalSignal::getHwInfoComplete, [=]() {
++        if (g_infogetter->m_getsucceed) {
++            m_mainWidget->setCurrentWidget(m_hardwareInfoSrollArea);
++        }
++    });
++    connect(g_signal, &GlobalSignal::getHwInfoFailed,
++            [=]() { m_mainWidget->setCurrentWidget(m_hardwareinfoGetFailWidget); });
++}
+diff --git a/plugins/driver-controller/src/hardwareinfomainwidget.h b/plugins/driver-controller/src/hardwareinfomainwidget.h
+new file mode 100644
+index 0000000..2f19a0c
+--- /dev/null
++++ b/plugins/driver-controller/src/hardwareinfomainwidget.h
+@@ -0,0 +1,30 @@
++#ifndef HARDWAREINFOMAINWIDGET_H
++#define HARDWAREINFOMAINWIDGET_H
++
++#include <QWidget>
++#include <QStackedWidget>
++#include <QHBoxLayout>
++#include <QScrollArea>
++
++#include "hardwareinfowidget.h"
++#include "hardwareinfogetfailwidget.h"
++
++class HardwareInfoMainWidget : public QWidget {
++Q_OBJECT
++public:
++    HardwareInfoMainWidget(QWidget *parent = nullptr);
++
++private:
++    QHBoxLayout *m_mainLayout = nullptr;
++    QStackedWidget *m_mainWidget = nullptr;
++    HardWareInfoWidget *m_hardwareinfoWidget = nullptr;
++    HardwareInfoGetFailWidget *m_hardwareinfoGetFailWidget = nullptr;
++    QScrollArea *m_hardwareInfoSrollArea = nullptr;
++
++    void initGui();
++
++    void initConnect();
++
++};
++
++#endif //HARDWAREINFOMAINWIDGET_H
+diff --git a/plugins/driver-controller/src/hardwareinfowidget.cpp b/plugins/driver-controller/src/hardwareinfowidget.cpp
+index 013df1e..d386985 100644
+--- a/plugins/driver-controller/src/hardwareinfowidget.cpp
++++ b/plugins/driver-controller/src/hardwareinfowidget.cpp
+@@ -154,7 +154,7 @@ HardWareInfoWidget::HardWareInfoWidget(QWidget *parent)
+           m_bluetoothSpreadOutBtn(new kdk::KBorderlessButton),
+           m_bluetoothSpreadInBtn(new kdk::KBorderlessButton),
+           m_bluetoothLayout(new QHBoxLayout),
+-          m_bluetoothWidget(new QWidget){
++          m_bluetoothWidget(new QWidget) {
+     initConnection();
+     initGui();
+ }
+@@ -561,7 +561,8 @@ void HardWareInfoWidget::setHWContetnUi() {
+     m_TreeWidget->setItemWidget(rootItem7, 0, m_monitorWidget);
+ 
+     // soundCard
+-    m_soundCardIconLabel->setPixmap(QIcon::fromTheme("audio-volume-high-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
++    m_soundCardIconLabel->setPixmap(
++            QIcon::fromTheme("audio-volume-high-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_soundCardIconLabel->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+ 
+     m_soundCardTextLabel->setText(tr("Sound Card"));
+@@ -586,7 +587,7 @@ void HardWareInfoWidget::setHWContetnUi() {
+     rootItem8->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+     m_TreeWidget->addTopLevelItem(rootItem8);
+     m_TreeWidget->setItemWidget(rootItem8, 0, m_soundCardWidget);
+-    
++
+     // Keyboard
+     m_keyboardIconLabel->setPixmap(QIcon::fromTheme("input-keyboard-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_keyboardIconLabel->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+@@ -925,6 +926,10 @@ void HardWareInfoWidget::getCpuInfo() {
+ 
+ 
+ void HardWareInfoWidget::getMemoryInfo() {
++    if (g_infogetter->m_memoryinfoList.length() == 0) {
++        return;
++    }
++
+     for (int i = 0; i < g_infogetter->m_memoryinfoList.length(); ++i) {
+         kdk::KBorderlessButton *btn = new kdk::KBorderlessButton();
+         btn->setText(g_infogetter->m_memoryinfoList[i].displayname);
+@@ -1025,6 +1030,10 @@ void HardWareInfoWidget::setMemoryContent(int i) {
+ }
+ 
+ void HardWareInfoWidget::getGraphicCardInfo() {
++    if (g_infogetter->m_graphicHardwares.length() == 0) {
++        return;
++    }
++
+     for (int i = 0; i < g_infogetter->m_graphicHardwares.length(); ++i) {
+         kdk::KBorderlessButton *btn = new kdk::KBorderlessButton();
+         btn->setText(g_infogetter->m_graphicHardwares[i].model);
+@@ -1163,6 +1172,10 @@ void HardWareInfoWidget::getBaseboardInfo() {
+ }
+ 
+ void HardWareInfoWidget::getNetworkCardInfo() {
++    if (g_infogetter->m_networkCardHardwares.length() == 0) {
++        return;
++    }
++
+     for (int i = 0; i < g_infogetter->m_networkCardHardwares.length(); ++i) {
+         kdk::KBorderlessButton *btn = new kdk::KBorderlessButton();
+         btn->setText(g_infogetter->m_networkCardHardwares[i].name);
+@@ -1246,7 +1259,7 @@ void HardWareInfoWidget::setNetworkCardContent(int i) {
+     for (int j = 0; j < childNum; ++j) {
+         m_TreeWidget->topLevelItem(4)->takeChildren();
+     }
+-    if(m_TreeWidget->topLevelItem(4)->isExpanded()){
++    if (m_TreeWidget->topLevelItem(4)->isExpanded()) {
+         m_TreeWidget->setFixedHeight(m_TreeWidget->height() - (networkItemCount * TREEWIDGETITEMSIZEHINT.height()));
+     }
+ 
+@@ -1314,12 +1327,15 @@ void HardWareInfoWidget::setNetworkCardContent(int i) {
+         networkItemCount++;
+     }
+ 
+-    if(m_TreeWidget->topLevelItem(4)->isExpanded()){
++    if (m_TreeWidget->topLevelItem(4)->isExpanded()) {
+         m_TreeWidget->setFixedHeight(m_TreeWidget->height() + (networkItemCount * TREEWIDGETITEMSIZEHINT.height()));
+     }
+ }
+ 
+ void HardWareInfoWidget::getDiskCardInfo() {
++    if (g_infogetter->m_diskinfoList.length() == 0) {
++        return;
++    }
+     for (int i = 0; i < g_infogetter->m_diskinfoList.length(); ++i) {
+         kdk::KBorderlessButton *btn = new kdk::KBorderlessButton();
+         btn->setText(QString(("Disk ") + QString::number(i)));
+@@ -1370,9 +1386,9 @@ void HardWareInfoWidget::getDiskCardInfo() {
+     m_TreeWidget->setItemWidget(childItem5, 0, item5);
+ 
+     QString typestr;
+-    if(g_infogetter->m_diskinfoList[num].type == 0){
++    if (g_infogetter->m_diskinfoList[num].type == 0) {
+         typestr = "SSD";
+-    }else{
++    } else {
+         typestr = "HDD";
+     }
+     TreeItem *item6 = new TreeItem(tr("Disk Type"), typestr);
+@@ -1392,17 +1408,17 @@ void HardWareInfoWidget::setDiskContent(int i) {
+     m_diskTreeItemList[3]->setLabelText(g_infogetter->m_diskinfoList[i].name);
+     m_diskTreeItemList[4]->setLabelText(g_infogetter->m_diskinfoList[i].frimwareversion);
+     QString typestr;
+-    if(g_infogetter->m_diskinfoList[i].type == 0){
++    if (g_infogetter->m_diskinfoList[i].type == 0) {
+         typestr = "SSD";
+-    }else{
++    } else {
+         typestr = "HDD";
+     }
+     m_memoryTreeItemList[5]->setLabelText(typestr);
+ }
+ 
+ void HardWareInfoWidget::getMonitorInfo() {
+-    if(g_infogetter->m_monitorList.length() == 0){
+-        return  ;
++    if (g_infogetter->m_monitorList.length() == 0) {
++        return;
+     }
+     for (int i = 0; i < g_infogetter->m_monitorList.length(); ++i) {
+         kdk::KBorderlessButton *btn = new kdk::KBorderlessButton();
+@@ -1460,7 +1476,8 @@ void HardWareInfoWidget::getMonitorInfo() {
+     m_TreeWidget->topLevelItem(6)->addChild(childItem6);
+     m_TreeWidget->setItemWidget(childItem6, 0, item6);
+ 
+-    TreeItem *item7 = new TreeItem(tr("Main Monitor"), (g_infogetter->m_monitorList[num].is_main=="1")? tr("Yes"): tr("No"));
++    TreeItem *item7 = new TreeItem(tr("Main Monitor"),
++                                   (g_infogetter->m_monitorList[num].is_main == "1") ? tr("Yes") : tr("No"));
+     m_monitorTreeItemList.append(item7);
+     QTreeWidgetItem *childItem7 = new QTreeWidgetItem();
+     childItem7->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+@@ -1501,7 +1518,7 @@ void HardWareInfoWidget::getMonitorInfo() {
+     childItem12->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+     m_TreeWidget->topLevelItem(6)->addChild(childItem12);
+     m_TreeWidget->setItemWidget(childItem12, 0, item12);
+-    
++
+     monitorItemCount = 12;
+ }
+ 
+@@ -1512,7 +1529,7 @@ void HardWareInfoWidget::setMonitorContent(int i) {
+     m_monitorTreeItemList[3]->setLabelText(g_infogetter->m_monitorList[i].ratio);
+     m_monitorTreeItemList[4]->setLabelText(g_infogetter->m_monitorList[i].resolution);
+     m_monitorTreeItemList[5]->setLabelText(g_infogetter->m_monitorList[i].max_resolution);
+-    m_monitorTreeItemList[6]->setLabelText((g_infogetter->m_monitorList[i].is_main=="1")? tr("Yes"): tr("No"));
++    m_monitorTreeItemList[6]->setLabelText((g_infogetter->m_monitorList[i].is_main == "1") ? tr("Yes") : tr("No"));
+     m_monitorTreeItemList[7]->setLabelText(g_infogetter->m_monitorList[i].interface);
+     m_monitorTreeItemList[8]->setLabelText(g_infogetter->m_monitorList[i].visible_area);
+     m_monitorTreeItemList[9]->setLabelText(g_infogetter->m_monitorList[i].week);
+@@ -1521,6 +1538,9 @@ void HardWareInfoWidget::setMonitorContent(int i) {
+ }
+ 
+ void HardWareInfoWidget::getSoundCardInfo() {
++    if (g_infogetter->m_soundCardHardwares.length() == 0) {
++        return;
++    }
+     // 设置内容
+     m_soundCardModelLabel->setText(g_infogetter->m_soundCardHardwares[0].model);
+ 
+@@ -1558,6 +1578,9 @@ void HardWareInfoWidget::getSoundCardInfo() {
+ }
+ 
+ void HardWareInfoWidget::getKeyboardInfo() {
++    if (g_infogetter->m_keyboardInfoList.length() == 0) {
++        return;
++    }
+     for (int i = 0; i < g_infogetter->m_keyboardInfoList.length(); ++i) {
+         kdk::KBorderlessButton *btn = new kdk::KBorderlessButton();
+         btn->setText(g_infogetter->m_keyboardInfoList[i].name);
+@@ -1612,6 +1635,9 @@ void HardWareInfoWidget::setKeyboardContent(int i) {
+ }
+ 
+ void HardWareInfoWidget::getMouseInfo() {
++    if (g_infogetter->m_mouseInfoList.length() == 0) {
++        return;
++    }
+     for (int i = 0; i < g_infogetter->m_mouseInfoList.length(); ++i) {
+         kdk::KBorderlessButton *btn = new kdk::KBorderlessButton();
+         btn->setText(g_infogetter->m_mouseInfoList[i].name);
+@@ -1666,6 +1692,9 @@ void HardWareInfoWidget::setMouseContent(int i) {
+ }
+ 
+ void HardWareInfoWidget::getBluetoothInfo() {
++    if (g_infogetter->m_bluetoothHardwares.length() == 0) {
++        return;
++    }
+     // 设置内容
+     m_bluetoothModelLabel->setText(g_infogetter->m_bluetoothHardwares[0].model);
+ 
+diff --git a/plugins/driver-controller/src/img_src/image.qrc b/plugins/driver-controller/src/img_src/image.qrc
+index 934ea23..ea1c9cc 100644
+--- a/plugins/driver-controller/src/img_src/image.qrc
++++ b/plugins/driver-controller/src/img_src/image.qrc
+@@ -5,5 +5,7 @@
+         <file>nodevice.svg</file>
+         <file>nodevice_dark.svg</file>
+         <file>warn.png</file>
++        <file>lodingerr-dark.png</file>
++        <file>lodingerr-light.png</file>
+     </qresource>
+ </RCC>
+diff --git a/plugins/driver-controller/src/include/globalsignal.h b/plugins/driver-controller/src/include/globalsignal.h
+index 8d0c8ea..1eec185 100644
+--- a/plugins/driver-controller/src/include/globalsignal.h
++++ b/plugins/driver-controller/src/include/globalsignal.h
+@@ -17,6 +17,10 @@ signals:
+ 
+     void getHwInfoComplete();
+ 
++    void updateInstallContentSucceed();
++
++    void getHwInfoFailed();
++
+     void uncheckCheckBox(int num);   // num = 0 取消安装checkbox、num = 1 取消升级checkbox
+ 
+     void checkAllChildenCheckboxState(int num);  // 同上
+@@ -37,6 +41,8 @@ signals:
+ 
+     void quitEventLoop();
+ 
++    void reDetectSignal();
++
+ private:
+     explicit GlobalSignal(QObject *parent = nullptr);
+ 
+diff --git a/plugins/driver-controller/src/loadingwidget.cpp b/plugins/driver-controller/src/loadingwidget.cpp
+index 972f8e9..462cb1f 100644
+--- a/plugins/driver-controller/src/loadingwidget.cpp
++++ b/plugins/driver-controller/src/loadingwidget.cpp
+@@ -1,5 +1,4 @@
+ #include "loadingwidget.h"
+-#include "kysdk/applications/gsettingmonitor.h"
+ #include <QPixmap>
+ 
+ #include "include/globalsignal.h"
+diff --git a/plugins/driver-controller/src/mainstackwidget.cpp b/plugins/driver-controller/src/mainstackwidget.cpp
+deleted file mode 100644
+index bdd0ad2..0000000
+--- a/plugins/driver-controller/src/mainstackwidget.cpp
++++ /dev/null
+@@ -1,28 +0,0 @@
+-#include "mainstackwidget.h"
+-#include "include/common.h"
+-#include "include/globalsignal.h"
+-
+-MainStackWidget::MainStackWidget(QWidget *parent)
+-        : QStackedWidget(parent),
+-        m_selectionWidget(new SelectionWidget()),
+-        m_loadingWidget(new LoadingWidget()){
+-    initGsetting();
+-    initConnection();
+-    initGui();
+-}
+-
+-void MainStackWidget::initGsetting() {
+-    if (QGSettings::isSchemaInstalled(UKUI_THEME_GSETTING_PATH)) {
+-        m_themeData = new QGSettings(UKUI_THEME_GSETTING_PATH);
+-    }
+-}
+-
+-void MainStackWidget::initConnection() {
+-    connect(m_themeData, &QGSettings::changed, g_signal, &GlobalSignal::themeChangeSignal);
+-}
+-
+-void MainStackWidget::initGui() {
+-    this->addWidget(m_loadingWidget);
+-    this->addWidget(m_selectionWidget);
+-    this->setCurrentWidget(m_loadingWidget);
+-}
+diff --git a/plugins/driver-controller/src/mainstackwidget.h b/plugins/driver-controller/src/mainstackwidget.h
+deleted file mode 100644
+index 54212c3..0000000
+--- a/plugins/driver-controller/src/mainstackwidget.h
++++ /dev/null
+@@ -1,29 +0,0 @@
+-#ifndef MAINSTACKWIDGET_H
+-#define MAINSTACKWIDGET_H
+-
+-#include <QStackedWidget>
+-#include "QGSettings/qgsettings.h"
+-
+-#include "selectionwidget.h"
+-#include "loadingwidget.h"
+-
+-class MainStackWidget : public QStackedWidget {
+-Q_OBJECT
+-public:
+-    explicit MainStackWidget(QWidget *parent = nullptr);
+-
+-    QGSettings *m_themeData = nullptr;
+-
+-private:
+-    SelectionWidget *m_selectionWidget = nullptr;
+-    LoadingWidget *m_loadingWidget = nullptr;
+-
+-    void initGsetting();
+-
+-    void initConnection();
+-
+-    void initGui();
+-};
+-
+-
+-#endif // MAINSTACKWIDGET_H
+diff --git a/plugins/driver-controller/src/mainwidget.cpp b/plugins/driver-controller/src/mainwidget.cpp
+index a44cc93..26a304d 100644
+--- a/plugins/driver-controller/src/mainwidget.cpp
++++ b/plugins/driver-controller/src/mainwidget.cpp
+@@ -26,6 +26,12 @@ void MainWidget::initConnection() {
+     connect(g_signal, &GlobalSignal::getHwInfoComplete, m_getinfoThread, &QThread::quit);
+     connect(g_signal, &GlobalSignal::getHwInfoComplete, m_getinfoThread, &QThread::deleteLater);
+     connect(g_signal, &GlobalSignal::switchInstallPage, [=]() { m_stackWidget->setCurrentWidget(m_selectionWidget); });
++    connect(g_signal, &GlobalSignal::reDetectSignal, [=]() {
++        m_stackWidget->setCurrentWidget(m_loadingWidget);
++        g_infogetter->refreshFlag();
++        m_getinfoThread = new GetInfoThread();
++        m_getinfoThread->start();
++    });
+ }
+ 
+ void MainWidget::initGui() {
+diff --git a/plugins/driver-controller/src/selectionwidget.cpp b/plugins/driver-controller/src/selectionwidget.cpp
+index a40ab58..6d359e6 100644
+--- a/plugins/driver-controller/src/selectionwidget.cpp
++++ b/plugins/driver-controller/src/selectionwidget.cpp
+@@ -10,12 +10,11 @@ SelectionWidget::SelectionWidget(QWidget *parent) :
+         m_driverUninstallBtn(new CustomPushButton()),
+         m_btnGroup(new QButtonGroup()),
+         m_stackWidget(new QStackedWidget()),
+-        m_driverInstallWidget(new DriverInstallWidget()),
+-        m_hardwareInfoWidget(new HardWareInfoWidget()),
++        m_driverInstallWidget(new DriverInstallMainWidget()),
++        m_hardwareInfoMainWidget(new HardwareInfoMainWidget()),
+         m_driverUninstallWidget(new DriverUninstallMainWidget()),
+         m_driverInstallSrollArea(new QScrollArea()),
+         m_driverUninstallSrollArea(new QScrollArea()),
+-        m_hardwareInfoSrollArea(new QScrollArea()),
+         m_mainLayout(new QVBoxLayout()),
+         m_buttonLayout(new QHBoxLayout()) {
+     initGui();
+@@ -58,17 +57,9 @@ void SelectionWidget::initGui() {
+     m_driverUninstallSrollArea->setContentsMargins(0, 0, 0, 0);
+     m_driverUninstallWidget->adjustSize();
+ 
+-    m_hardwareInfoSrollArea->setWidget(m_hardwareInfoWidget);
+-    m_hardwareInfoSrollArea->setWidgetResizable(true);
+-    m_hardwareInfoSrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+-    m_hardwareInfoSrollArea->setFrameShape(QFrame::NoFrame);
+-    m_hardwareInfoSrollArea->setContentsMargins(0, 0, 0, 0);
+-    m_hardwareInfoWidget->adjustSize();
+-
+-
+     m_stackWidget->addWidget(m_driverInstallSrollArea);
+     m_stackWidget->addWidget(m_driverUninstallSrollArea);
+-    m_stackWidget->addWidget(m_hardwareInfoSrollArea);
++    m_stackWidget->addWidget(m_hardwareInfoMainWidget);
+ 
+     m_driverInstallBtn->setChecked(true);
+     m_stackWidget->setCurrentWidget(m_driverInstallWidget);
+diff --git a/plugins/driver-controller/src/selectionwidget.h b/plugins/driver-controller/src/selectionwidget.h
+index c550b35..37afb84 100644
+--- a/plugins/driver-controller/src/selectionwidget.h
++++ b/plugins/driver-controller/src/selectionwidget.h
+@@ -8,8 +8,8 @@
+ #include <QVBoxLayout>
+ #include <QScrollArea>
+ 
+-#include "driverinstallwidget.h"
+-#include "hardwareinfowidget.h"
++#include "driverinstallmainwidget.h"
++#include "hardwareinfomainwidget.h"
+ #include "driveruninstallmainwidget.h"
+ #include "include/custompushbutton.h"
+ 
+@@ -26,13 +26,12 @@ private:
+     QButtonGroup *m_btnGroup = nullptr;
+ 
+     QStackedWidget *m_stackWidget = nullptr;
+-    DriverInstallWidget *m_driverInstallWidget = nullptr;
++    DriverInstallMainWidget *m_driverInstallWidget = nullptr;
+     DriverUninstallMainWidget *m_driverUninstallWidget = nullptr;
+-    HardWareInfoWidget *m_hardwareInfoWidget = nullptr;
++    HardwareInfoMainWidget *m_hardwareInfoMainWidget = nullptr;
+ 
+     QScrollArea *m_driverInstallSrollArea = nullptr;
+     QScrollArea *m_driverUninstallSrollArea = nullptr;
+-    QScrollArea *m_hardwareInfoSrollArea = nullptr;
+ 
+     QVBoxLayout *m_mainLayout = nullptr;
+     QHBoxLayout *m_buttonLayout = nullptr;
+diff --git a/plugins/driver-controller/src/text_label.cpp b/plugins/driver-controller/src/text_label.cpp
+deleted file mode 100644
+index 60b819c..0000000
+--- a/plugins/driver-controller/src/text_label.cpp
++++ /dev/null
+@@ -1,90 +0,0 @@
+-#include <QDebug>
+-#include <QFont>
+-#include <QFontMetrics>
+-#include <QPainter>
+-#include <QHBoxLayout>
+-#include "kom-ukui-gsettings.h"
+-#include "text_label.h"
+-
+-/*
+- * 分为底层和上层两个 QLabel，如果使用单个 QLabel 的 paintEvent 来实现的话，无法支持 html 文本的渲染，因为 paintEvent 只能绘制简单的文本。
+- * 所以在底层的 paintEvnet 函数中获取正确的控件大小，并且设置上层的 QLabel 文本
+- */
+-
+-namespace K {
+-
+-const static int DEFAULT_PIXEL_SIZE = 14;    // 默认字号为 14 pixel size
+-
+-TextLabel::TextLabel(QWidget *parent)
+-    : QLabel(parent),
+-      internal_label_(new QLabel(this)),
+-      pixel_size_(DEFAULT_PIXEL_SIZE)
+-{
+-    auto hbox_layout = new QHBoxLayout;
+-    hbox_layout->setSpacing(0);
+-    hbox_layout->setContentsMargins(0, 0, 0, 0);
+-    hbox_layout->addWidget(internal_label_);
+-    setLayout(hbox_layout);
+-
+-    connect(kom::UkuiGsettings::getInstance(), &kom::UkuiGsettings::fontSizeChange, this, [this]() {
+-        SetPixelSize(pixel_size_);
+-    });
+-}
+-
+-TextLabel::~TextLabel() {
+-
+-}
+-
+-void TextLabel::SetText(const QString &text) {
+-    text_ = text;
+-    update();
+-}
+-
+-void TextLabel::SetPixelSize(double pixel_size) {
+-    if (pixel_size != DEFAULT_PIXEL_SIZE) {
+-        pixel_size_ = pixel_size;
+-        QFont font;
+-        font.setPointSizeF(AdaptPixelSizeToPointSize(pixel_size));
+-        internal_label_->setFont(font);
+-        update();
+-    }
+-}
+-
+-void TextLabel::HandleText(std::function<QString(QString)> handle_text_func) {
+-    handle_text_func_ = handle_text_func;
+-}
+-
+-double TextLabel::AdaptPixelSizeToPointSize(double pixel_size) {
+-    static int default_point_size = 10;
+-
+-    // pixel size 转 point size
+-    QWidget widget;
+-    double dpi = widget.logicalDpiX();
+-    if (dpi < 1)
+-        dpi = 96.0;
+-    double point_size = pixel_size * 72 / dpi;
+-
+-    // 适配 point size 到当前字号
+-    return point_size / default_point_size * kom::UkuiGsettings::getInstance()->getFontSize().toDouble();
+-}
+-
+-void TextLabel::paintEvent(QPaintEvent *event) {
+-    // 超长省略，显示 tooltip
+-    QString show_text;
+-    auto font = internal_label_->font();
+-    QFontMetrics fm(font);
+-    if (fm.width(text_) - internal_label_->width() > 0) {
+-        show_text = fm.elidedText(text_, Qt::ElideRight, internal_label_->width());
+-        internal_label_->setToolTip(text_);
+-    } else {
+-        show_text = text_;
+-        internal_label_->setToolTip("");
+-    }
+-
+-    // 处理截断后的文本
+-    if (handle_text_func_)
+-        show_text = handle_text_func_(show_text);
+-    internal_label_->setText(show_text);
+-}
+-
+-}
+diff --git a/plugins/driver-controller/src/text_label.h b/plugins/driver-controller/src/text_label.h
+deleted file mode 100644
+index 7903fcd..0000000
+--- a/plugins/driver-controller/src/text_label.h
++++ /dev/null
+@@ -1,33 +0,0 @@
+-#ifndef K_LABEL_H
+-#define K_LABEL_H
+-
+-#include <functional>
+-#include <QLabel>
+-#include <QString>
+-
+-namespace K {
+-
+-class TextLabel: public QLabel {
+-    Q_OBJECT
+-public:
+-    TextLabel(QWidget *parent = nullptr);
+-    ~TextLabel();
+-    void SetText(const QString &text);
+-    void HandleText(std::function<QString(QString)> handle_text_func);
+-    void SetPixelSize(double pixel_size);
+-
+-protected:
+-    void paintEvent(QPaintEvent *event) override;
+-
+-private:
+-    double AdaptPixelSizeToPointSize(double pixel_size);
+-
+-    QString text_;
+-    std::function<QString(QString)> handle_text_func_;
+-    QLabel *internal_label_;
+-    double pixel_size_;
+-};
+-
+-}
+-
+-#endif

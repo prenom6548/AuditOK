@@ -1,0 +1,69 @@
+#!/bin/bash
+set -e
+
+AUTOSTART_FILE="/etc/xdg/autostart/kylin-printer-applet.desktop"
+SERVICE_NAME="kylin-printer-applet"
+PROGRAM="/usr/bin/kylin-printer-applet"
+ENV_FILE="/tmp/kylin-printer-applet-env"
+
+glib-compile-schemas /usr/share/glib-2.0/schemas
+
+
+# This configuration file may exist in older versions.
+if [ -f "/etc/xdg/autostart/kylin-printer.desktop" ];then
+    rm -rf /etc/xdg/autostart/kylin-printer.desktop
+    # kill old kylin-printer program
+    OLD_PRINTER_PROGRAM="/usr/bin/kylin-printer"
+    if pgrep -f "^$OLD_PRINTER_PROGRAM" > /dev/null; then
+        echo "Killing $OLD_PRINTER_PROGRAM ..."
+        while pgrep -f "^$OLD_PRINTER_PROGRAM" > /dev/null; do
+            pkill -f "^$OLD_PRINTER_PROGRAM" > /dev/null
+            sleep 0.1
+        done
+    fi
+fi
+
+# Old version may not be able to stop the process automatically.
+if pgrep -f "^$PROGRAM" > /dev/null; then
+    echo "Killing $PROGRAM ..."
+    while pgrep -f "^$PROGRAM" > /dev/null; do
+        pkill -f "^$PROGRAM" > /dev/null
+        sleep 0.1
+    done
+fi
+
+# update autostart file
+if [ -f $AUTOSTART_FILE ];then
+    rm -rf $AUTOSTART_FILE
+fi
+
+if [ ! -f "$AUTOSTART_FILE" ]; then
+    ln -s /usr/share/kylin-printer/kylin-printer-applet.desktop $AUTOSTART_FILE
+fi
+
+if [ -f $ENV_FILE ];then
+    rm -rf $ENV_FILE
+fi
+
+# start dbus listener.
+systemctl enable kylin-printer-applet-dbus.service
+systemctl start  kylin-printer-applet-dbus.service
+
+# start printer program.
+case "$1" in
+    configure)
+        echo "start ${PROGRAM} program..."
+        /usr/share/kylin-printer/kylin-printer-applet-start
+    ;;
+esac
+
+# stop udev-add-printer program
+system_config_printer_file="/lib/udev/udev-add-printer"
+if [ -f $system_config_printer_file ];then
+    sed -i '/openlog ("udev-add-printer", 0, LOG_LPR)/,/syslog (LOG_ERR, extxt\[0\].strip ())/{
+        /^[[:space:]]*#/b       # 已注释行跳过
+        s/^/#/                  # 未注释行加 #
+    }' $system_config_printer_file
+fi
+
+exit 0

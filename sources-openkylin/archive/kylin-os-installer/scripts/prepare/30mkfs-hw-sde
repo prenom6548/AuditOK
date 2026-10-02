@@ -1,0 +1,68 @@
+#!/bin/bash
+
+set -e
+
+if ! grep 'kylin-handle-sde' /proc/cmdline; then
+	return 0
+fi
+
+if egrep -qi 'PANGU.M900' /proc/cpuinfo; then
+	if [[ ! -b /dev/sda ]] ; then
+  		return 0
+	else
+		size=$(LANG=c fdisk -l | sed -n '/sda: /p' | awk -F ': ' '{print int($2)}')
+	fi
+else
+	if [[ ! -b /dev/sde ]] ; then
+		return 0
+	else
+		size=$(LANG=c fdisk -l | sed -n '/sde: /p' | awk -F ': ' '{print int($2)}')
+	fi
+fi
+
+
+if [[ ${size} -le 600 ]]; then
+	return 0
+fi
+
+
+if egrep -qi 'PANGU.M900' /proc/cpuinfo; then
+	umount -l /dev/sda* || true
+
+	parted -s /dev/sda mktable gpt 
+	parted -s /dev/sda mkpart "DATA1" ext4 1MiB 100% 
+	umount -l /dev/sda* || true
+
+	mkfs.ext4 -Fq -L "DATA1" /dev/sda1 
+
+	mkdir -p /target/data1
+	mount /dev/sda1 /target/data1
+	chmod -R 1777 /target/data1
+	umount -l /target/data1  
+
+else
+	umount -l /dev/sde* || true
+
+	parted -s /dev/sde mktable gpt 
+	parted -s /dev/sde mkpart "DATA1" ext4 1MiB 100% 
+	umount -l /dev/sde* || true
+
+	mkfs.ext4 -Fq -L "DATA1" /dev/sde1 
+
+	mkdir -p /target/data1
+	mount /dev/sde1 /target/data1
+	chmod -R 1777 /target/data1
+	umount -l /target/data1  
+	rmdir /target/data1
+
+fi
+
+
+#if [[ -f /usr/share/kylin-os-installer/data/kylin-handle-sde.service ]]; then
+#    sudo cp -a /usr/share/kylin-os-installer/data/kylin-handle-sde.service /usr/lib/systemd/system
+#fi
+
+#if [[ -f /usr/share/kylin-os-installer/data/kylin-handle-sde ]]; then
+#    sudo cp -a /usr/share/kylin-os-installer/data/kylin-handle-sde /usr/bin
+#    sudo chmod +x /usr/bin/kylin-handle-sde 
+#fi

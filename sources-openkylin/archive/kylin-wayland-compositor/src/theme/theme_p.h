@@ -1,0 +1,144 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _THEME_P_H_
+#define _THEME_P_H_
+
+#include "theme.h"
+
+#define FALLBACK_ICON_THEME_NAME "hicolor"
+
+struct theme_button_buffer {
+    struct wl_list link;
+    struct wlr_buffer *buffer;
+    float scale;
+    int button_width;
+};
+
+struct widget_theme {
+    const char *name;
+    enum theme_type type;
+    bool builtin;
+
+    /* border color */
+    float active_border_color[4];
+    float inactive_border_color[4];
+
+    /* background color */
+    float active_bg_color[4];
+    float inactive_bg_color[4];
+
+    /* text color */
+    float active_text_color[4];
+    float inactive_text_color[4];
+
+    /* shadow color */
+    struct theme_shadow active_shadow_color;
+    struct theme_shadow inactive_shadow_color;
+    struct theme_shadow modal_active_shadow_color;
+    struct theme_shadow modal_inactive_shadow_color;
+    struct theme_shadow menu_shadow_color;
+
+    /* default accent color, may override by global */
+    float accent_color[4];
+
+    /* modal mask color */
+    float modal_mask_color[4];
+
+    /* state color */
+    struct theme_gradient normal_state_color;
+    struct theme_gradient hover_state_color;
+    struct theme_gradient click_state_color;
+
+    /**
+     * minimize, maximize, restore and close
+     * in different state: active/inactive, hover, click
+     */
+    const char *button_svg;
+    size_t button_svg_size;
+};
+
+struct global_theme {
+    /* font config */
+    char *font_name;
+    int32_t font_size;
+    /* default to -1 */
+    int32_t accent_color;
+    int32_t window_radius;
+    int32_t menu_radius;
+    int32_t opacity;
+    enum theme_type type;
+};
+
+struct theme_manager {
+    struct theme theme;
+    struct global_theme global;
+    struct widget_theme *(*load_widget_theme)(const char *name, enum theme_type type);
+
+    struct {
+        char *picture;
+        uint32_t options;
+        int32_t color; // invalid if < 0
+        struct wlr_buffer *buffer;
+    } background;
+
+    struct {
+        struct wl_signal pre_update;
+        struct wl_signal update;
+        struct wl_signal icon_update;
+        struct wl_signal background_update;
+    } events;
+
+    struct config *config;
+    struct wl_list fallback_icon;
+
+    struct icon_manager *icon;
+    struct {
+        bool (*set_icon_theme)(struct icon_manager *manager, const char *name);
+        struct icon *(*get_icon)(struct icon_manager *manager, const char *name);
+        const char *(*get_icon_name)(struct icon *icon);
+        struct wlr_buffer *(*get_icon_buffer)(struct icon *icon, int size, float scale);
+    } icon_impl;
+
+    struct server *server;
+    struct wl_listener server_ready;
+    struct wl_listener server_destroy;
+};
+
+bool theme_manager_config_init(struct theme_manager *manager);
+
+void theme_manager_read_config(struct theme_manager *manager);
+
+void theme_manager_write_config(struct theme_manager *manager);
+
+const char *theme_manager_read_icon_config(struct theme_manager *manager);
+
+void theme_manager_write_icon_config(struct theme_manager *manager, const char *name);
+
+#if 1 // HAVE_THEME_ICON
+struct icon_manager *icon_manager_create(struct theme_manager *manager);
+#else
+static __attribute__((unused)) inline struct icon_manager *
+icon_manager_create(struct theme_manager *manager)
+{
+    return NULL;
+}
+#endif
+
+#if HAVE_UKUI_THEME
+bool ukui_theme_manager_create(struct theme_manager *theme_manager);
+#else
+static __attribute__((unused)) inline bool
+ukui_theme_manager_create(struct theme_manager *theme_manager)
+{
+    return false;
+}
+#endif
+
+const char *theme_manager_read_background_config(struct theme_manager *manager, uint32_t *options,
+                                                 int32_t *color);
+
+void theme_manager_write_background_config(struct theme_manager *manager);
+
+#endif /* _THEME_P_H */

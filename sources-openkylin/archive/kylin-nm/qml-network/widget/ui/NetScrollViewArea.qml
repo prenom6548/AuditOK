@@ -1,0 +1,389 @@
+import QtQuick 2.12
+import QtQuick.Window 2.12
+import QtQuick.Controls 2.5
+import QtQuick.Layouts 1.15
+import QtQuick.Controls.Material 2.3
+import org.ukui.shortcut.network 1.0
+
+import org.ukui.quick.items 1.0 as UkuiItems
+import org.ukui.quick.platform 1.0 as Platform
+
+UkuiItems.DtThemeBackground {
+    id: root
+    backgroundColor: Platform.GlobalTheme.kContainSecondaryAlphaNormal
+    radius: Platform.GlobalTheme.kRadiusWindow
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        RowLayout {
+            id: nttop
+            width: parent.width
+            Layout.alignment: Qt.AlignTop
+            Layout.preferredHeight: 56
+
+            Item { Layout.fillWidth: true }
+        }
+
+        MenuSeparator {
+            Layout.alignment: Qt.AlignTop
+            Layout.fillWidth: true
+            height: 1
+        }
+        ScrollView {
+            visible: true
+            Layout.alignment: Qt.AlignTop
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+            clip: true
+
+            Flickable {
+                id: outerFlickable
+                anchors.fill: parent
+                contentWidth : parent.width
+                contentHeight: wlanTop.height + lanTop.height + (lanDeviceComboBox.visible ? lanDeviceComboBox.height : 0) + (lanContentArea.visible ? lanContentArea.height : 0) + (wlanDeviceComboBox.visible ? wlanDeviceComboBox.height : 0) + (wlanContentArea.visible ? wlanContentArea.height : 0) + 40
+
+                ColumnLayout {
+                    width: parent.width
+
+                    RowLayout {
+                        id : lanTop
+                        width: parent.width
+                        Layout.alignment: Qt.AlignTop
+                        visible: lanDeviceComboBox.count >= 1
+
+                        UkuiItems.DtThemeText {
+                            text: qsTr("Wired network")
+                            Layout.alignment: Qt.AlignLeft
+                            Layout.leftMargin: 24
+                        }
+
+                        UkuiItems.Icon {
+                            id: lanVisibleButton
+                            visible: KInterface.wiredMainSwitch && lanDeviceComboBox.count >= 1
+                            source: "file:///usr/share/ukui/widgets/org.ukui.shortcut.network/ukui-up-symbolic.svg"
+                            width: 16
+                            height: 16
+                            mode: UkuiItems.Icon.AutoHighlight
+                            property bool visibleState : true
+                            MouseArea {
+                                anchors.fill: lanVisibleButton
+                                hoverEnabled: true
+                                onClicked: {
+                                    lanVisibleButton.visibleState = !lanVisibleButton.visibleState;
+                                    lanVisibleButton.source = lanVisibleButton.visibleState
+                                        ? "file:///usr/share/ukui/widgets/org.ukui.shortcut.network/ukui-up-symbolic.svg"
+                                        : "file:///usr/share/ukui/widgets/org.ukui.shortcut.network/arrow-down.svg"
+                                }
+                            }
+                            Layout.preferredWidth: 16
+                        }
+
+                        Item {
+                            Layout.fillWidth: true
+                        }
+
+                        SwitchDelegate {
+                            id: lanswitchBtn
+                            checked: KInterface.wiredMainSwitch
+                            enabled: true
+                            visible: KInterface.uiCtlData.netMainSwitch
+                            onClicked: {
+                                KInterface.wiredMainSwitch = lanswitchBtn.checked
+                            }
+                            Layout.alignment: Qt.AlignRight
+                            Layout.rightMargin: 24
+                            spacing:0
+                            rightPadding: 0
+                            Layout.preferredWidth: 44
+                            Connections {
+                                target: KInterface
+                                function onUpdateWiredMainSwitch() {
+                                    lanswitchBtn.checked = KInterface.wiredMainSwitch
+                                }
+                            }
+                        }
+                    }
+
+
+
+                    Rectangle {
+                        id: lanNoWiredItem
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 60
+                        Layout.alignment: Qt.AlignTop
+                        visible: false
+                        Image {
+                            width: 16
+                            height: 16
+                            anchors.right: lanNoWiredText.left
+                            Layout.rightMargin: 5
+                            anchors.verticalCenter: parent.verticalCenter
+                            source: "file:///usr/share/ukui/widgets/org.ukui.shortcut.network/dialog-warning.svg"
+                        }
+                        UkuiItems.DtThemeText {
+                            id: lanNoWiredText
+                            anchors.leftMargin: 20
+                            anchors.verticalCenter: parent.verticalCenter
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            text: qsTr("No wired network card was detected")
+                        }
+                    }
+
+                    DeviceComboBox {
+                        id: lanDeviceComboBox
+                        width: parent.width
+                        spacing: 0
+                        model: KInterface.wiredDevList
+                        // 统一可见性逻辑：开关开启、展开状态、有多个设备时显示
+                        visible: lanswitchBtn.checked && lanVisibleButton.visibleState && (lanDeviceComboBox.count >= 2)
+                        enabled: lanDeviceComboBox.count > 0
+                        property bool ishide : (lanDeviceComboBox.count <= 1)
+                        currentConnect: lanContentArea.connectMac
+                        onCurrentTextChanged: {
+                            console.log("Wired device changed to:", lanDeviceComboBox.currentText);
+                            KInterface.getWiredDevConnList(lanDeviceComboBox.currentText);
+                        }
+                        Connections {
+                            target: KInterface
+                            function onUpdateWiredDeviceList() {
+                                // 设备列表更新后，ishide属性会自动重新计算
+                                KInterface.getWiredDevConnList(lanDeviceComboBox.currentText);
+                            }
+                        }
+                    }
+
+                    LanComponent{
+                        id: lanContentArea
+                        Layout.alignment: Qt.AlignTop
+                        interactive: false
+                        implicitHeight: lanContentArea.contentHeight
+                        width: 396 - 10
+                        Layout.leftMargin: 5
+                        Layout.rightMargin: 5
+                        // 统一可见性逻辑：开关开启、展开状态、有设备时显示
+                        visible: lanswitchBtn.checked && lanVisibleButton.visibleState && (lanDeviceComboBox.count >= 1)
+                    }
+
+                    MenuSeparator {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 16
+                        Layout.rightMargin: 16
+                        height: 1
+                        visible: (wlanDeviceComboBox.count >= 1 && lanDeviceComboBox.count >= 1)
+                    }
+
+                    RowLayout {
+                        id : wlanTop
+                        width: parent.width
+                        Layout.alignment: Qt.AlignTop
+
+                        UkuiItems.DtThemeText {
+                            text: qsTr("Wireless network")
+                            Layout.alignment: Qt.AlignLeft
+                            Layout.leftMargin: 24
+                            visible: wlanDeviceComboBox.count >= 1
+                        }
+
+                        UkuiItems.Icon {
+                            id: wlanRescanButton
+                            source: "file:///usr/share/ukui/widgets/org.ukui.shortcut.network/view-wrapped-symbolic.svg"
+                            width: 16
+                            height: 16
+                            mode: UkuiItems.Icon.AutoHighlight
+                            visible: wlanswitchBtn.checked && (wlanDeviceComboBox.count >= 1)
+
+                            MouseArea {
+                                anchors.fill: parent
+                                hoverEnabled: true
+                                onClicked: {
+                                    srotation.start()
+                                    animationTimer.start()
+                                    KInterface.rescanWirelessConn()
+                                }
+                            }
+                            Layout.preferredWidth: 16
+                        }
+
+                        RotationAnimator {
+                            id: srotation
+                            target: wlanRescanButton
+                            from: 0
+                            to: 360
+                            duration: 2000 // 旋转一圈需要的时间，单位为毫秒
+                            loops: Animation.Infinite // 无限循环
+                        }
+
+                        Timer {
+                            id: animationTimer
+                            interval: 5000 // 计时器间隔时间，单位为毫秒（1000毫秒 = 1秒）
+                            repeat: false // 是否重复计时
+                            running: false // 默认不启动计时器
+                            onTriggered: {
+                                // 这里定义计时器触发时执行的代码
+                                srotation.stop()
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
+                        SwitchDelegate {
+                            id: wlanswitchBtn
+                            checked: KInterface.wirelessSwitch
+                            enabled: (wlanDeviceComboBox.count >= 1)
+                            visible: wlanDeviceComboBox.count >= 1
+                        MouseArea {
+                            anchors.fill: parent
+                            // 阻止事件传递到SwitchDelegate内部
+                            propagateComposedEvents: false
+                            onClicked: {
+                                if (!wlanswitchBtn.enabled) {
+                                    KInterface.wirelessSwitch = false
+                                    return
+                                }
+                                // 直接修改数据源，而不是通过checked属性
+                                KInterface.wirelessSwitch = !KInterface.wirelessSwitch
+
+
+                                //console.log("Switch clicked, new state:", KInterface.wirelessSwitch)
+                            }
+                        }
+                        // 状态变化时更新UI
+                        onCheckedChanged: {
+                            wlanDeviceComboBox.visible = !wlanDeviceComboBox.ishide && checked && (wlanDeviceComboBox.count >= 2)
+                            wlanContentArea.visible = checked
+                            //console.log("State changed to:", checked)
+                        }
+                             Layout.alignment: Qt.AlignRight
+                             Layout.rightMargin: 24
+                             spacing:0
+                             rightPadding: 0
+                             Layout.preferredWidth: 44
+                            Connections {
+                                target: KInterface
+                                function onUpdateWirelessSwitch() {
+                                    wlanswitchBtn.checked = KInterface.wirelessSwitch
+                                }
+                            }
+                         }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    DeviceComboBox {
+                        id: wlanDeviceComboBox
+                        spacing: 0
+                        visible: wlanswitchBtn.checked && wlanDeviceComboBox.count > 1
+                        model: KInterface.wirelessDevList
+                        width: parent.width
+                        property bool ishide : wlanDeviceComboBox.count > 1
+                        currentConnect: wlanContentArea.connectMac
+                        onCurrentTextChanged: {
+                            console.log("Wireless device changed to:", wlanDeviceComboBox.currentText);
+                            KInterface.getWirelessDevConnList(wlanDeviceComboBox.currentText);
+                            KInterface.rebuildCurrentWirelessList();
+                        }
+                        Connections {
+                            target: KInterface
+                            function onUpdateWirelessDeviceList() {
+                                if (wlanDeviceComboBox.count <= 1) {
+                                    wlanDeviceComboBox.ishide = true
+                                    wlanDeviceComboBox.visible = false
+                                } else {
+                                    wlanDeviceComboBox.ishide = false
+                                    wlanContentArea.visible = true && wlanswitchBtn.checked
+                                    wlanDeviceComboBox.visible = true && wlanswitchBtn.checked
+                                }
+                                if (wlanDeviceComboBox.count <= 0) {
+                                    wlanDeviceComboBox.ishide = true
+                                    wlanContentArea.visible = false
+                                }
+                                KInterface.getWirelessDevConnList(wlanDeviceComboBox.currentText);
+                            }
+                        }
+
+                        Connections {
+                            target: KInterface
+                            function onChangeSelectWirelessDevice(index) {
+                                 if(wlanDeviceComboBox.currentIndex !== index) {
+                                     console.log("mqtest change device",wlanDeviceComboBox.currentIndex,index)
+                                     wlanDeviceComboBox.currentIndex = index
+                                 }
+                             }
+                        }
+                    }
+
+                    WlanComponent{
+                        id: wlanContentArea
+                        Layout.alignment: Qt.AlignBottom
+                        interactive: false
+                        implicitHeight: wlanContentArea.contentHeight
+                        width: 396 - 10
+                        Layout.leftMargin: 5
+                        Layout.rightMargin: 5
+                    }
+                }
+            }
+        }
+
+        MenuSeparator {
+            Layout.alignment: Qt.AlignBottom
+            Layout.fillWidth: true
+            Layout.bottomMargin: 1
+            height: 1
+            verticalPadding: 0
+        }
+
+        Item {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 56
+            Layout.alignment: Qt.AlignBottom
+            opacity: Theme.windowOpacity
+
+            UkuiItems.DtThemeText {
+                id: networkSettingText
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.left: parent.left
+                anchors.leftMargin: 24
+                text: qsTr("More network Settings")
+                textColor: Platform.GlobalTheme.kFontStrong
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    onClicked: {
+                        console.log("NetworkSettingArea.qml onClicked")
+                        KInterface.openNetworkSetting()
+                    }
+                    onEntered: {
+                        networkSettingText.textColor = Platform.GlobalTheme.highlightActive
+                    }
+                    onExited: {
+                        networkSettingText.textColor = Platform.GlobalTheme.kFontStrong
+                    }
+                }
+            }
+		}
+
+        Component.onCompleted: {
+            console.log("Component.onCompleted")
+            KInterface.wirelessScanState = true
+
+            /* 强制触发设备列表更新,link bug#471953 */
+            Qt.callLater(function() {
+                /* 强制发射更新信号 */
+                KInterface.updateWirelessDeviceList()
+                KInterface.updateWiredDeviceList()
+            })
+        }
+
+        Component.onDestruction: {
+            console.log("Rectangle is about to be destroyed.")
+            KInterface.wirelessScanState = false
+        }
+    }
+}
+

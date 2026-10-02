@@ -1,0 +1,132 @@
+From: shangxiaoyang <shangxiaoyang@kylinos.cn>
+Date: Mon, 20 Nov 2023 08:15:44 +0000
+Subject: =?utf-8?b?ITI3IGZpeCBkZW1hbmQgMTc2OTcxIOOAkOaVsOaNruWfi+eCueOAkQ==?=
+ =?utf-8?b?5b2V6Z+zIE1lcmdlIHB1bGwgcmVxdWVzdCAhMjcgZnJvbSDpgpPlpb0vb3Blbmt5?=
+ =?utf-8?b?bGluL25pbGU=?=
+
+---
+ kylin-recorder.pro |  3 +++
+ src/fileitem.cpp   | 14 ++++++++++++++
+ src/fileitem.h     |  1 +
+ src/mainwindow.cpp | 17 +++++++++++++++++
+ src/mainwindow.h   |  3 +--
+ 5 files changed, 36 insertions(+), 2 deletions(-)
+
+diff --git a/kylin-recorder.pro b/kylin-recorder.pro
+index 3bf2c50..d32ec17 100755
+--- a/kylin-recorder.pro
++++ b/kylin-recorder.pro
+@@ -147,3 +147,6 @@ DISTFILES += \
+ 
+ DEFINES += KY_SDK_DATE
+ PKGCONFIG += kysdk-systime
++
++CONFIG += c++11 link_pkgconfig
++PKGCONFIG += kysdk-datacollect
+diff --git a/src/fileitem.cpp b/src/fileitem.cpp
+index 0e00b4c..c607e4d 100755
+--- a/src/fileitem.cpp
++++ b/src/fileitem.cpp
+@@ -25,6 +25,7 @@
+ #include <QApplication>
+ #include <QThread>
+ #include "libkydate.h"
++#include <libkydatacollect.h>
+ 
+ FileItem::FileItem(QString fileAbsolutePath, QWidget *parent) : QStackedWidget(parent)
+ {
+@@ -213,6 +214,18 @@ void FileItem::handlePause()
+             &FileItem::stateChanged); //用的时候连接
+ }
+ 
++void FileItem::sendFlagView(){
++    KCustomProperty property[1];
++
++    property[0].key = (char *)"flagName";
++    property[0].value = (char *)"leftButton";
++
++    KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_CUSTOM);
++    kdk_dia_append_custom_property(node, property, 1);
++    kdk_dia_upload_default(node, (char *)"audio_flag_event", (char *)"fileitem");
++    kdk_dia_data_free(node);
++}
++
+ //文件列表中给播放的音频添加标记
+ void FileItem::toFlagFile()
+ {
+@@ -231,6 +244,7 @@ void FileItem::toFlagFile()
+ 
+     if (DATABASE_INSTANCE.getStatus() == DB_OP_SUCC) {
+         qDebug() << "添加成功";
++        this->sendFlagView();
+         displayFlag(m_filePath);
+     }
+ }
+diff --git a/src/fileitem.h b/src/fileitem.h
+index e606115..a000523 100755
+--- a/src/fileitem.h
++++ b/src/fileitem.h
+@@ -129,6 +129,7 @@ private:
+ 
+     void deleteFile(QString savepath);
+     void _processStart(QString cmd, QStringList arguments);
++    void sendFlagView();
+ 
+     void enterEvent(QEvent *) override;
+     void leaveEvent(QEvent *) override;
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 5a236b3..41738f1 100755
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -32,6 +32,8 @@
+ #include "tools.h"
+ #include "clipwidget.h"
+ #include "libkydate.h"
++#include <libkydatacollect.h>
++
+ #define BufferSize 35280
+ // const qint64 TIME_TRANSFORM = 1000 * 1000;              // 微秒转秒;
+ #define rectangleCount 48 //矩形条个数
+@@ -655,6 +657,18 @@ void MainWindow::removeFlagLayoutWidget()
+     m_flagList.clear();
+ }
+ 
++void MainWindow::sendFlagView(){
++    KCustomProperty property[1];
++
++    property[0].key = (char *)"flagName";
++    property[0].value = (char *)"leftButton";
++
++    KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_CUSTOM);
++    kdk_dia_append_custom_property(node, property, 1);
++    kdk_dia_upload_default(node, (char *)"audio_flag_event", (char *)"mainwindow");
++    kdk_dia_data_free(node);
++}
++
+ void MainWindow::handleInsertSlot()
+ {
+     recorderBuriedPoint(kdk::kabase::BuriedPoint::PT::KylinRecorderSign);
+@@ -664,6 +678,9 @@ void MainWindow::handleInsertSlot()
+     emit DATABASE_INSTANCE.insertDataSignal(fileInfo, m_timeStr);
+     if (DATABASE_INSTANCE.getStatus() == DB_OP_SUCC) {
+         qDebug() << "录音时插入标记成功!";
++
++        this->sendFlagView();
++
+         kdk::KBorderlessButton *flagPicBtn = new kdk::KBorderlessButton(QIcon::fromTheme("ukui-label-symbolic"), m_timeStr, this);
+         flagPicBtn->setObjectName("flag");
+         flagPicBtn->setFixedWidth(100);
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index 0b40ad0..1c5b6d8 100755
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -302,8 +302,7 @@ private:
+     void keyCEvent(); // C 剪辑录音
+     void keyOEvent(); // O 在文件夹中显示
+     void initShortcutStyle();// 处理焦点
+-
+-
++    void sendFlagView(); //上传标记埋点数据
+ 
+ signals: //主线程的信号
+ 

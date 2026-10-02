@@ -1,0 +1,399 @@
+﻿/*
+ * Copyright (C) 2019 Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/&gt;.
+ *
+ */
+
+#include "slidershow.h"
+#include "QDir"
+#include <QTimer>
+#include <QFile>
+#include <QDebug>
+#include <QTextStream>
+#include <QKeyEvent>
+#include "../PluginService/ksystemsetting_unit.h"
+#include "../PluginService/ui_unit/xrandrobject.h"
+#include "QPainter"
+#define RATIO_1 0.6
+namespace KInstaller {
+using namespace KServer;
+SlideShow::SlideShow(QWidget *parent) : QWidget(parent),
+    m_currentIndex(0)
+{
+    fileInfo();
+    initUI();
+
+    timer = new QTimer(this);
+    timer->setInterval(5000);
+
+    initAllConnect();
+    addStyleSheet();
+    start();
+    this->setFocus();
+}
+
+int SlideShow::fileInfo()
+{
+    QDir *dir = new QDir(":/data/png/slidershow/");
+    QStringList filter;
+    filter << "*.png";
+    dir->setNameFilters(filter);
+
+    QFileInfoList fileInfoList = dir->entryInfoList(filter);
+    //num =fileInfoList.count() / 2;
+    num =fileInfoList.count();
+    return num ;
+
+}
+
+QImage SlideShow::addtransterstr(QImage &image, QRect rct, QString str,QFont font,QColor color)
+{
+
+    QPainter painter(&image);
+    painter.setCompositionMode(QPainter::CompositionMode_SourceOut);
+//    QPen pen = painter.pen();
+//    pen.setColor(color);
+//    painter.setPen(pen);
+//    painter.setFont(font);
+//    painter.drawText(rct, Qt::AlignTop, str);
+    return image;
+}
+
+void SlideShow::loadSlides()
+{
+    sliderWidget = new QStackedWidget();
+    QRect rect = KServer::GetScreenRect();
+
+    for (int i = 1; i <= num; i++) {
+        Slide *slide = new Slide(this);
+         slide->setObjectName("slide_"+QString::number(i));
+//      slide->hide();
+         QString titlestr="";
+//         switch (i) {
+//            case 1:titlestr=tr("Multi platform support, suitable for mainstream CPU platforms at home and abroad.");break;
+//            case 2:titlestr=tr("Ukui desktop environment meets personalized needs.");break;
+//            case 3:titlestr=tr("The system is updated and upgraded more conveniently.");break;
+//            case 4:titlestr=tr("Security center, all-round protection of data security.");break;
+//            case 5:titlestr=tr("Software store, featured software recommendation.");break;//bug119181软件商店的介绍文字有误
+//            case 6:titlestr=tr("Provide technical support and professional after-sales service.");break;
+//         default:
+//             break;
+//         }
+
+         QString strImage;
+         QFont ft;
+         ft.setFamily(QStringLiteral("bold"));
+         ft.setBold(true);
+         if(KServer::ReadSettingIni("config", "language") == "en_US"  || KServer::ReadSettingIni("config", "language") == "mn_MN")//处理较细长字体，如英文
+         {
+             if(KServer::ReadSettingIni("config", "language") == "en_US"){
+             	strImage = QString(":/data/png/slidershow/%1e.png").arg(i);
+	     }
+	     else{
+		//bug
+             	strImage = QString(":/data/png/slidershow/%1.png").arg(i);
+	     }
+             //避免英文太长无法完全显示
+             if((rect.width() > 1400) && (rect.height() > 1000)){
+                 ft.setPointSize(14);
+             }             
+             else if((rect.width() > 1260) && (rect.height() > 890)){
+                 ft.setPointSize(12);
+             }
+             else{
+                 ft.setPointSize(10);
+             }
+         }
+         else if(KServer::ReadSettingIni("config", "language") == "bo_CN")//处理较大字体，如藏文
+         {
+             strImage = QString(":/data/png/slidershow/%1.png").arg(i);
+             //避免文字太大无法完全显示
+             if((rect.width() > 1400) && (rect.height() > 1000)){
+                 ft.setPointSize(16);
+             }
+             else if((rect.width() > 1400) && (rect.height() > 890)){
+                 ft.setPointSize(14);
+             }
+             else{
+                 ft.setPointSize(12);
+             }
+         }
+         else
+         {
+             strImage = QString(":/data/png/slidershow/%1.png").arg(i);
+
+             if((rect.width() > 1400) && (rect.height() > 1000)){
+                 ft.setPointSize(24);
+             }
+             else{
+                 ft.setPointSize(18);
+             }
+         }
+//         if(KServer::ReadSettingIni("config", "language") == "en_US"){
+//            QImage image(QString(":/data/png/slidershow/%1e.png").arg(i));
+//            image = image.scaledToHeight(rect.height() * RATIO_1, Qt::SmoothTransformation);
+//            slide->m_pLabelPng->setPixmap(QPixmap::fromImage(image));
+//            slide->m_pLabelPng->setScaledContents(true);
+//        } else {
+//            QImage image(QString(":/data/png/slidershow/%1.png").arg(i));
+//            QFont ft;
+//            ft.setFamily(QStringLiteral("bold"));
+//            ft.setBold(true);
+            QImage image(strImage);
+            image = image.scaledToHeight(rect.height() * RATIO_1, Qt::SmoothTransformation);
+            image = addtransterstr(image, QRect(120,50,840,60),titlestr,ft,QColor(255,255,255));
+            slide->m_pLabelPng->setPixmap(QPixmap::fromImage(image));
+            slide->m_pLabelPng->setScaledContents(true);
+            slide->m_pLabelText->setFont(ft);
+//            slide->m_pLabelText->setText(titlestr);
+            slide->m_pLabelText->move(120,50);
+//            slide->m_pLabelText->setFixedSize(840, 60);
+            //slide->m_pLabelText->setFixedWidth(image.width()-120);
+            slide->m_pLabelText->setFixedWidth(image.width()-240);
+            slide->m_pLabelText->setMinimumHeight(90);
+            slide->m_pLabelText->setWordWrap(true);//bug170413
+            slide->m_pLabelText->setAlignment(Qt::AlignCenter);
+//        }
+         sliderWidget->addWidget(slide);
+    }
+    translateStr();
+    sliderWidget->setCurrentIndex(m_currentIndex);
+
+}
+
+void SlideShow::updateSlides(QRect rect)
+{
+    for (int i = 1; i <= num; i++) {
+         Slide *slide=(Slide* )sliderWidget->widget(i-1);
+
+         QString strImage;
+          if(KServer::ReadSettingIni("config", "language") == "en_US"){
+                strImage = QString(":/data/png/slidershow/%1e.png").arg(i);
+         }
+         else{
+        //bug
+                strImage = QString(":/data/png/slidershow/%1.png").arg(i);
+         }
+
+            QImage image(strImage);
+            image = image.scaledToHeight(rect.height(), Qt::SmoothTransformation);
+            slide->m_pLabelPng->setPixmap(QPixmap::fromImage(image));
+            slide->m_pLabelPng->setScaledContents(true);
+    }
+}
+
+void SlideShow::initUI()
+{
+    QHBoxLayout* hlayout = new QHBoxLayout(this);
+    this->setLayout(hlayout);
+    m_prev = new QPushButton(this);
+    m_prev->setObjectName("prev");
+    m_prev->installEventFilter(this);
+
+    m_prev->setIcon(QIcon(":/data/png/slidershow/prev.svg"));
+    m_prev->setIconSize(QSize(m_prev->width()*0.6, m_prev->height()*0.6));
+    m_prev->setStyleSheet(QLatin1String("QPushButton#prev{outline: none;color: white;padding:0;width: 48px;height: 48px;background: transparent;border:none;}"
+                                        "QPushButton#prev:hover{"
+                                        "width: 48px;height: 48px;background: rgba(255, 255, 255, 0.35);border-radius: 6px;}"
+                                        " QPushButton#prev:checked{ "
+                                        " height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                        "QPushButton#prev:pressed{height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                         "QPushButton#prev:focus {border-radius: 6px;border: 2px solid #5BADFF;outline: none;}"
+                                         ));
+    hlayout->addWidget(m_prev, Qt::AlignCenter);
+    loadSlides();
+    hlayout->addWidget(sliderWidget);
+    m_next = new QPushButton(this);
+    m_next->setObjectName("next");
+    m_next->installEventFilter(this);
+    m_next->setIcon(QIcon(":/data/png/slidershow/next.svg"));
+    m_next->setIconSize(QSize(m_next->width()*0.6, m_next->height()*0.6));
+    m_next->setStyleSheet(QLatin1String("QPushButton#next{outline: none;color: white;padding:0;width: 48px;height: 48px;background: transparent;border:none;}"
+                                        "QPushButton#next:hover{"
+                                        "width: 48px;height: 48px;background: rgba(255, 255, 255, 0.35);border-radius: 6px;}"
+                                        "QPushButton#next:checked{ "
+                                        "height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                        "QPushButton#next:pressed{height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                        "QPushButton#next:focus {border-radius: 6px;border: 2px solid #5BADFF;outline: none;}"));
+    hlayout->addWidget(m_next, Qt::AlignCenter);
+    m_prev->setFocusPolicy(Qt::FocusPolicy::StrongFocus);
+    m_next->setFocusPolicy(Qt::FocusPolicy::StrongFocus);
+}
+
+void SlideShow::initAllConnect()
+{
+    connect(timer, &QTimer::timeout, this, &SlideShow::next);
+    connect(m_prev, &QPushButton::clicked, this, &SlideShow::prev);
+    connect(m_next, &QPushButton::clicked, this, &SlideShow::next);
+}
+
+void SlideShow::addStyleSheet()
+{
+    QFile file(":/data/qss/InstallingFrame.css");
+    file.open(QFile::ReadOnly);
+    QTextStream filetext(&file);
+    QString stylesheet = filetext.readAll();
+    file.close();
+
+    this->setStyleSheet(stylesheet);
+}
+
+void SlideShow::changeSlide(int index)
+{
+    if (index > 0) {
+        m_currentIndex++;
+        if (m_currentIndex > sliderWidget->count() -1)
+            m_currentIndex = 0;
+        sliderWidget->setCurrentIndex(m_currentIndex);
+
+    } else if (index < 0 ) {
+        m_currentIndex--;
+        if (m_currentIndex < 0) {
+            m_currentIndex = sliderWidget->count() - 1;
+        }
+        sliderWidget->setCurrentIndex(m_currentIndex) ;
+    }
+
+}
+
+void SlideShow::keyPressEvent(QKeyEvent *event)
+{
+    qDebug() << Q_FUNC_INFO << "keyPressEvent";
+    if(event->key() == Qt::Key_Left) {
+        prev();
+    } else if(event->key() == Qt::Key_Right) {
+        next();
+    } else if(event->key() == Qt::Key_Escape || event->key() == Qt::Key_Control) {
+        this->setFocus();
+    } else
+        QWidget::keyPressEvent(event);
+}
+
+bool SlideShow::eventFilter(QObject *watched, QEvent *event)
+{
+    if(event->type() == QEvent::KeyPress) {
+        QKeyEvent *ev = (QKeyEvent*) event;
+        switch (ev->key()) {
+        case Qt::Key_Left:
+            prev();
+            break;
+        case Qt::Key_Right:
+            next();
+            break;
+        case Qt::Key_Tab:
+            QWidget::focusNextPrevChild(true);
+            break;
+        }
+        return true;
+    }
+    if(watched==m_prev &&event->type()==QEvent::FocusIn) {
+        if(m_firstfocusget==true)
+        {
+            m_prev->setStyleSheet(QLatin1String("QPushButton#prev{color: white;padding:0;width: 48px;height: 48px;background: transparent;border:none;}"
+                                                "QPushButton#prev:hover{"
+                                                "width: 48px;height: 48px;background: rgba(255, 255, 255, 0.35);border-radius: 6px;}"
+                                                " QPushButton#prev:checked{ "
+                                                " height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                                "QPushButton#prev:pressed{height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                                "QPushButton#prev:focus {border-radius: 6px;border: 2px solid transparent;outline: none;}"));
+            m_firstfocusget=false;
+        }
+        else
+        {
+            m_prev->setStyleSheet(QLatin1String("QPushButton#prev{color: white;padding:0;width: 48px;height: 48px;background: transparent;border:none;}"
+                                                "QPushButton#prev:hover{"
+                                                "width: 48px;height: 48px;background: rgba(255, 255, 255, 0.35);border-radius: 6px;}"
+                                                " QPushButton#prev:checked{ "
+                                                " height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                                "QPushButton#prev:pressed{height: 48px;background: rgba(255, 255, 255, 0.25); border-radius: 6px;}"
+                                                "QPushButton#prev:focus {border-radius: 6px;border: 2px solid #5BADFF;outline: none;}"));
+        }
+
+    }
+    //return false;
+    return QObject::eventFilter(watched,event);
+}
+
+void SlideShow::showEvent(QShowEvent *event)
+{
+    m_firstfocusget=true;
+    m_prev->setFocus();
+    updateSlides(this->rect());//使用已经loadSlides过后适应了当前分辨率并且高度已经被压缩后的高度重新设置image大小,解决不同分辨率下设置了image确定大小后布局被其余控件压缩导致的image比例不对问题
+}
+
+void SlideShow::next()
+{
+    timer->stop();
+    changeSlide(1);
+    timer->start();
+}
+
+void SlideShow::prev()
+{
+    timer->stop();
+    changeSlide(-1);
+    timer->start();
+}
+
+void SlideShow::start()
+{
+    changeSlide(0);
+    timer->start();
+}
+
+void SlideShow::changeEvent(QEvent *event)
+{
+    if (event->type() == QEvent::LanguageChange) {
+        translateStr();
+    } else {
+        QWidget::changeEvent(event);
+    }
+}
+
+void SlideShow::translateStr()
+{
+//    if(KServer::ReadSettingIni("config", "language") != "en_US")
+//    {
+    QRect rect = KServer::GetScreenRect();
+
+        for(int i=0;i<sliderWidget->count();i++)
+        {
+            Slide* sp = qobject_cast<Slide*>(sliderWidget->widget(i));
+            if(NULL != sp)
+            {
+                QString titlestr;
+                 switch (i) {
+                    case 0:titlestr=tr("Mainstream hardware platforms");break;
+                    case 1:titlestr=tr("Innovation and stability");break;
+                    case 2:titlestr=tr("Improvement of System AI Capability");break;
+                    case 3:titlestr=tr("New Rock Architecture");break;
+                    case 4:titlestr=tr("Breakthrough in graphic display capability");break;//bug119181软件商店的介绍文字有误
+                    case 5:titlestr=tr("Desktop experience has been completely upgraded");break;
+		 default:
+                     break;
+                 }
+                 sp->m_pLabelText->setText(titlestr);
+                 if((rect.width() > 1400) && (rect.height() > 1000)){
+                     sp->m_pLabelText->move(120,50);
+                 }
+                 else {//避免低分辨率下文字覆盖图片
+                     sp->m_pLabelText->move(95,25);
+                 }
+            }
+        }
+//    }
+}
+
+}

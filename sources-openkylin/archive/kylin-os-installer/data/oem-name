@@ -1,0 +1,98 @@
+#!/bin/bash
+
+set -e
+
+do_copy_log() {
+  if [[ -f /var/log/syslog ]]; then
+  	cp /var/log/syslog /var/log/installer/
+  fi
+}
+
+delete_oem_user() {
+    if [ -f /etc/sudoers.d/oem ]; then
+    	rm -f /etc/sudoers.d/oem
+    fi
+    pkill -u 'oem' || true
+    userdel --force --remove 'oem' || true
+    if [ -d /home/oem ]; then
+        rm -rf /home/oem || true
+    fi
+    sync
+    sleep 1
+}
+
+KUID=29999
+if grep -q "oem-name is success" /var/log/installer/oem-name.log; then
+  if grep -q "oem" /etc/passwd; then
+	if [[ -d /home/oem ]]; then
+		exit 0
+	else
+		if [[ -d /var/log/installer/oemback ]]; then
+                        rsync -a /var/log/installer/oemback/  /home
+                fi
+		exit 0
+        fi
+  else
+	>/var/log/installer/oem-name.log
+  fi
+else
+  if [[ -f /var/log/installer/oem-name.log ]]; then	
+	delete_oem_user
+	KUID=$((KUID + 1))
+	mv /var/log/installer/oem-name.log /var/log/installer/oem-name-old.log
+  fi
+fi
+
+USERNAME=oem
+PASSWORD=Kylin123.
+AUTO_LOGIN=1
+# sudo 免密
+echo "oem ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers.d/oem
+
+
+OEM_NAME_LOG=/var/log/installer/oem-name.log
+echo "KUID=${KUID}" >>${OEM_NAME_LOG}
+echo "******Start oem-name******" >>${OEM_NAME_LOG}
+sync
+echo "Start useradd" >>${OEM_NAME_LOG}
+useradd -m -s /bin/bash -u ${KUID} "${USERNAME}" >>${OEM_NAME_LOG} || do_copy_log
+echo "Start usermod" >>${OEM_NAME_LOG}
+usermod -c "${USERNAME}" "${USERNAME}" >>${OEM_NAME_LOG} || do_copy_log
+echo "Start chpasswd" >>${OEM_NAME_LOG}
+echo "${USERNAME}:${PASSWORD}" | chpasswd >>${OEM_NAME_LOG} || do_copy_log
+
+echo "Start useradd group" >>${OEM_NAME_LOG}
+user_default_groups=(adm cdrom sudo dip plugdev lpadmin sambashare debian-tor libvirtd lxd)
+if egrep -qi 'PANGU.M900' /proc/cpuinfo; then
+        user_default_groups=(adm cdrom sudo dip plugdev users lpadmin sambashare debian-tor libvirtd lxd)
+fi
+for group in ${user_default_groups[*]}; do
+        adduser ${USERNAME} $group >>${OEM_NAME_LOG} || true
+done
+
+echo "Start set AUTO_LOGIN" >>${OEM_NAME_LOG}
+if [[ "${AUTO_LOGIN}" = "1" ]]; then
+        if [[ -d /etc/lightdm ]]; then
+            # Configure LightDM autologin
+            LightDMCustomFile=/etc/lightdm/lightdm.conf
+            AutologinParameters="autologin-guest=false\n\
+autologin-user=${USERNAME}\n\
+autologin-user-timeout=0"
+            if ! grep -qs '^autologin-user' ${LightDMCustomFile}; then
+                if ! grep -qs '^\[Seat:\*\]' ${LightDMCustomFile}; then
+                    echo '[Seat:*]' >>${LightDMCustomFile}
+                fi
+                sed -i "s/\[Seat:\*\]/\[SeatDefaults]\n${AutologinParameters}/" ${LightDMCustomFile}
+            # oem config scenario
+            else
+                #sed -i "s/^\(\(str  *\)\?autologin-user\)=.*$/\1=${USERNAME}/g;" /etc/lightdm/lightdm.conf
+                sed -i "s/^autologin-user=.*$/autologin-user=${USERNAME}/g" ${LightDMCustomFile}
+            fi
+        fi
+ fi
+
+echo "oem-name is success" >>${OEM_NAME_LOG}
+
+sync
+sleep 1
+

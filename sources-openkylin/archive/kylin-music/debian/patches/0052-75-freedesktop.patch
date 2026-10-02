@@ -1,0 +1,236 @@
+From: =?utf-8?b?5LqO5oGS?= <yuheng@kylinos.cn>
+Date: Wed, 3 Jul 2024 01:16:22 +0000
+Subject: =?utf-8?b?ITc1IOmAgumFjWZyZWVkZXNrdG9w5qCH5YeG5pKt5pS+5o6n5Yi25Y2P?=
+ =?utf-8?b?6K6u5o6l5Y+jIE1lcmdlIHB1bGwgcmVxdWVzdCAhNzUgZnJvbSDkuo7mgZIvb3Bl?=
+ =?utf-8?b?bmt5bGluL25pbGU=?=
+
+---
+ UI/dbusadapter.cpp |  64 +++++++++++++++++++++++++++++++
+ UI/dbusadapter.h   | 109 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 173 insertions(+)
+
+diff --git a/UI/dbusadapter.cpp b/UI/dbusadapter.cpp
+index cda0d94..531b104 100644
+--- a/UI/dbusadapter.cpp
++++ b/UI/dbusadapter.cpp
+@@ -1,3 +1,4 @@
++#include <QStringList>
+ #include "dbusadapter.h"
+ 
+ DbusAdapter::DbusAdapter(QObject *parent) : QObject(parent)
+@@ -5,6 +6,54 @@ DbusAdapter::DbusAdapter(QObject *parent) : QObject(parent)
+     QDBusConnection::sessionBus().unregisterService("org.mpris.MediaPlayer2.KylinMusic");
+     QDBusConnection::sessionBus().registerService("org.mpris.MediaPlayer2.KylinMusic");
+     QDBusConnection::sessionBus().registerObject("/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", this, QDBusConnection::ExportNonScriptableSlots);
++
++    this->setProperty("CanControl", false);
++    initMetadata();
++}
++
++void DbusAdapter::updateMetadata(const QVariantMap input)
++{
++    bool needUpdate = false;
++
++    for (auto iter = input.begin(); iter != input.end(); iter++) {
++        ;
++        if (m_metadata.find(iter.key()) != m_metadata.end() && m_metadata[iter.key()] != iter.value()) {
++            m_metadata[iter.key()] = iter.value();
++            needUpdate = true;
++        }
++    }
++    emit onMetadataChanged(m_metadata);
++}
++
++void DbusAdapter::initMetadata()
++{
++    // 表示路径
++    m_metadata.insert("mpris:trackid", 0);
++    m_metadata.insert("mpris:length", 0);
++    m_metadata.insert("mpris:artUrl", "");
++    m_metadata.insert("xesam:album", "");
++    m_metadata.insert("xesam:albumArtist", "");
++    m_metadata.insert("xesam:artist", "");
++    m_metadata.insert("xesam:asText", "");
++    m_metadata.insert("xesam:audioBPM", 0);
++    m_metadata.insert("xesam:autoRating", 0.0);
++    QStringList commont;
++    m_metadata.insert("xesam:comment", commont);
++    QStringList composer;
++    m_metadata.insert("xesam:composer", composer);
++    m_metadata.insert("xesam:contentCreated", "");
++    m_metadata.insert("xesam:discNumber", 0);
++    m_metadata.insert("xesam:firstUsed", "");
++    QStringList genre;
++    m_metadata.insert("xesam:genre", genre);
++    m_metadata.insert("xesam:lastUsed", "");
++    QStringList lyricist;
++    m_metadata.insert("xesam:lyricist", lyricist);
++    m_metadata.insert("xesam:title", "");
++    m_metadata.insert("xesam:trackNumber", 0);
++    m_metadata.insert("xesam:url", "");
++    m_metadata.insert("xesam:useCount", 0);
++    m_metadata.insert("xesam:userRating", 0.0);
+ }
+ 
+ void DbusAdapter::Stop() const
+@@ -56,3 +105,18 @@ void DbusAdapter::Exit() const
+ {
+     Widget::mutual->slotClose();
+ }
++
++void DbusAdapter::Seek(const qint64 Offset)
++{
++
++}
++
++void DbusAdapter::SetPosition(const QString &TrackId, const qint64 Position)
++{
++
++}
++
++void DbusAdapter::OpenUri(const QString &Uri)
++{
++
++}
+diff --git a/UI/dbusadapter.h b/UI/dbusadapter.h
+index 82b0d67..e4a2bfc 100644
+--- a/UI/dbusadapter.h
++++ b/UI/dbusadapter.h
+@@ -3,16 +3,106 @@
+ 
+ #include <QObject>
+ #include <QDBusConnection>
++#include <QVariantMap>
+ //#include "UIControl/player/player.h"
+ #include "mainwidget.h"
+ 
++enum Playback_Status {
++    Playing,
++    Paused,
++    Stopped
++};
++
++enum class Loop_Status {
++    None,
++    Track,
++    Playlist
++};
++
+ class DbusAdapter : public QObject
+ {
+     Q_OBJECT
+     Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2.Player")
++
++    // When this property changes, the org.freedesktop.DBus.Properties.PropertiesChanged signal is emitted with the new value.
++    Q_PROPERTY(Playback_Status PlaybackStatus READ getPlaybackStatus NOTIFY onPlayStatusChanged)
++    Q_PROPERTY(Loop_Status LoopStatus READ getLoopStatus WRITE setLoopStatus NOTIFY onLoopStatusChanged)
++    Q_PROPERTY(double Rate READ getRate WRITE setRate NOTIFY onRateChanged)
++    Q_PROPERTY(bool Shuffle READ getShuffle WRITE setShuffle NOTIFY onShuffleChanged)
++    Q_PROPERTY(QVariantMap Metadata READ getMetadata NOTIFY onMetadataChanged)
++    Q_PROPERTY(double Volume READ getVolume WRITE setVolume NOTIFY onVolumeChanged)
++    Q_PROPERTY(double MinimumRate READ getMinimumRate NOTIFY onMinimumRateChanged)
++    Q_PROPERTY(double MaximumRate READ getMaximumRate NOTIFY onMaximumRateChanged)
++    Q_PROPERTY(bool CanGoNext READ getCanGoNext NOTIFY onCanGoNextChanged)
++    Q_PROPERTY(bool CanGoPrevious READ getCanGoPrevious NOTIFY onCanGoPreviousChanged)
++    Q_PROPERTY(bool CanPlay READ getCanPlay NOTIFY onCanPlayChanged)
++    Q_PROPERTY(bool CanPause READ getCanPause NOTIFY onCanPauseChanged)
++    Q_PROPERTY(bool CanSeek READ getCanSeek NOTIFY onCanSeekChanged)
++
++    // When this property changes, the org.freedesktop.DBus.Properties.PropertiesChanged signal is NOT emitted with the new value.
++    Q_PROPERTY(long long Position READ getPosition)
++    Q_PROPERTY(bool CanControl READ getCanControl)
++
++
+ public:
+     explicit DbusAdapter(QObject *parent = nullptr);
++    void emitSeeked();
++
++public:
++    Playback_Status m_playbackStatus;
++    Playback_Status getPlaybackStatus() { return m_playbackStatus; }
++
++    Loop_Status m_loopStatus;
++    Loop_Status getLoopStatus() { return m_loopStatus; }
++    void setLoopStatus(Loop_Status s) { m_loopStatus = s; }
++
++    double m_rate;
++    double getRate() { return m_rate; }
++    void setRate(double d) { m_rate = d; }
++
++    bool m_shuffle { false };
++    bool getShuffle() { return m_shuffle; }
++    void setShuffle(bool b) { m_shuffle = b; }
+ 
++    QVariantMap m_metadata;
++    QVariantMap getMetadata() { return m_metadata; }
++    void updateMetadata(const QVariantMap input);
++
++    double m_volume;
++    double getVolume() { return m_volume; }
++    void setVolume(double b) { m_volume = b; }
++
++    long long m_position;
++    long long getPosition() { return m_position; }
++
++    double m_minimumRate;
++    double getMinimumRate() { return m_minimumRate; }
++    void setMinimumRate(double d) { m_minimumRate = d; }
++
++    double m_maximumRate;
++    double getMaximumRate() { return m_maximumRate; }
++    void setMaximumRate(double d) { m_maximumRate = d; }
++
++    bool m_canGoNext { false };
++    bool getCanGoNext() { return m_canGoNext; }
++
++    bool m_canGoPrevious { false };
++    bool getCanGoPrevious() { return m_canGoPrevious; }
++
++    bool m_canPlay { false };
++    bool getCanPlay() { return m_canPlay; }
++
++    bool m_canPause { false };
++    bool getCanPause() { return m_canPause; }
++
++    bool m_canSeek { false };
++    bool getCanSeek() { return m_canSeek; }
++
++    bool m_canControl { false };
++    bool getCanControl() { return m_canControl; }
++    void setCanControl(const bool b) { m_canControl = b; }
++
++    void initMetadata();
+ public Q_SLOTS:
+     // mpris 使用
+     void Stop() const;
+@@ -21,11 +111,30 @@ public Q_SLOTS:
+     void Pause() const;
+     void PlayPause() const;
+     void Previous() const;
++    void Seek(const qint64 Offset);
++    void SetPosition(const QString& TrackId, const long long Position);
++    void OpenUri(const QString& Uri);
++
+     void VolumeUp() const;
+     void VolumeDown() const;
+     void FullScreen() const;
+     void Exit() const;
++Q_SIGNALS:
++    void Seeked(const qint64 url);
+ 
++    void onPlayStatusChanged(Playback_Status status);
++    void onLoopStatusChanged(Loop_Status status);
++    void onRateChanged(double r);
++    void onShuffleChanged(bool b);
++    void onMetadataChanged(QVariantMap map);
++    void onVolumeChanged(double d);
++    void onMinimumRateChanged(double d);
++    void onMaximumRateChanged(double d);
++    void onCanGoNextChanged(bool b);
++    void onCanGoPreviousChanged(bool b);
++    void onCanPlayChanged(bool b);
++    void onCanPauseChanged(bool b);
++    void onCanSeekChanged(bool b);
+ 
+ };
+ 

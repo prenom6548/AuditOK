@@ -1,0 +1,164 @@
+From: =?utf-8?b?6YKT5aW9?= <denghao@kylinos.cn>
+Date: Fri, 6 Sep 2024 08:36:36 +0000
+Subject: =?utf-8?q?!83_=23I8YPGT_Merge_pull_request_!83_from_=E9=82=93?=
+ =?utf-8?q?=E5=A5=BD/openkylin/nile?=
+
+---
+ UI/tableview/tablehistory.cpp                  | 100 ++++++++++++++++++++++++-
+ UI/tableview/tablehistory.h                    |   5 ++
+ UIControl/player/coreplayer/mmediaplaylist.cpp |   2 +-
+ 3 files changed, 104 insertions(+), 3 deletions(-)
+
+diff --git a/UI/tableview/tablehistory.cpp b/UI/tableview/tablehistory.cpp
+index 53b96cb..e83fa3c 100644
+--- a/UI/tableview/tablehistory.cpp
++++ b/UI/tableview/tablehistory.cpp
+@@ -313,14 +313,110 @@ void TableHistory::showRightMenu(const QPoint &pos)
+     }
+     m_menu->exec(QCursor::pos());
+ }
++
++//加入移除列表 removeList
++void TableHistory::slotAddToRList(QString path,QString owner){
++    QStringList  pathList = m_model->getPathList(nowListName); //历史列表
++    //判断删除的歌曲是否在历史列表
++    if(pathList.contains(path)){
++        if( removeList.contains(path)){
++            removeList[path] = owner;
++        }else{
++            removeList.insert(path,owner);
++        }
++    }
++}
++//移除移除列表 removeList
++void TableHistory::slotRemoveFromRList(QString path){
++    if(removeList.contains(path)){
++        removeList.remove(path);
++    }
++}
++
++/**
++ * @brief TableHistory::playSongs 播放音乐
++ */
+ void TableHistory::playSongs()
+ {
+     int index = m_tableHistory->currentIndex().row();
+     musicDataStruct date = m_model->getItem(index);
+     QStringList pathList;
+     pathList = m_model->getPathList(nowListName);
+-    playController::getInstance().setCurPlaylist(nowListName,pathList);
+-    playController::getInstance().play(nowListName,index);
++
++    //历史列表选择播放的歌曲的路径
++    QString selectPath = m_model->getItem(index).filepath;
++
++    //选择播放歌曲是否在 removeList
++    while ( removeList.contains(selectPath) )
++    {
++        //选择播放歌曲是否在 对应歌单列表(删除时所在的歌单列表)
++        QStringList removePathList = m_model->getPathList(removeList.value(selectPath));
++        if( !removePathList.contains(selectPath)) {
++            //不在 则提示、删除、播放历史列表下一首
++            QMessageBox::information(Widget::mutual,tr("Prompt information"),tr("The file path does not exist or has been deleted"));
++            int ret = g_db->delMusicFromHistoryMusic(selectPath);
++            slotRemoveFromRList(selectPath);
++            if (ret == 0){
++                playController::getInstance().removeSongFromCurList(nowListName,index);
++                if((index+1) < pathList.size()){
++                    index = index+1;
++                }else{
++                    index = 0;
++                }
++            }
++
++        }
++        selectPath = m_model->getItem(index).filepath;
++    }
++
++    //歌曲不存在则播放歌曲列表下一首
++    QString lastListName = playController::getInstance().getPlayListName();
++    QStringList lastPathList = m_model->getPathList(lastListName);
++    int m_lastindex = lastPathList.indexOf(selectPath,0); //已删除音乐的索引
++    playController::getInstance().setCurPlaylist(lastListName,lastPathList);
++    playController::getInstance().play(lastListName,m_lastindex);
++    refreshHistoryTable();
++    return;
++
++    refreshHistoryTable();
++
++    QString filepath = pathList.at(index);
++    //将历史表对应的歌曲重新添加 实现置顶功能
++    MusicDataBase* database = MusicDataBase::getInstance();
++    database->delMusicFromHistoryMusic(filepath);
++    database->addMusicToHistoryMusic(filepath);
++    //数据模型和视图分别进行更新
++    QList<musicDataStruct> resList;
++    g_db->getSongInfoListFromHistoryMusic(resList);
++//    for(int i =0; i<resList.length();i++){
++//        qDebug()<<"reList的第"<<i<<"项是"<<resList[i].title;
++//    }
++    m_model->clear();
++    m_model->add(resList);
++    m_tableHistory->update();
++    QStringList afterUpdatePathList = m_model->getPathList(nowListName);
++    //播放歌曲
++    playController::getInstance().setCurPlaylist(nowListName,afterUpdatePathList);
++    playController::getInstance().play(nowListName,0);
++    //以下是高亮看看能不能置顶
++
++    QItemSelectionModel *model = m_tableHistory->selectionModel();
++    //获取目前点击的项index取消掉选中状态
++    QModelIndex m_firstIndex = model->model()->index(index,0);
++    QModelIndex m_lastIndex = model->model()->index(index,m_model->m_model.columnCount()-1);
++    QItemSelection m_selection(m_firstIndex,m_lastIndex);
++    model->select(m_selection,QItemSelectionModel::Deselect);
++    //将第一行设置为选中状态
++    QModelIndex firstIndex =model->model()->index(0,0);
++    qDebug()<<"m_lastIndex"<<m_lastIndex.data();
++    QModelIndex lastIndex = model->model()->index(0,m_model->m_model.columnCount()-1);
++    QItemSelection selection(firstIndex,lastIndex);
++    model->select(selection,QItemSelectionModel::Select);
++    m_tableHistory->update();
++    changeNumber();
++    initTableStyle();
++    setHighlight(0);
++
+     Q_EMIT signalHistoryPlaying();
+ }
+ void TableHistory::deleteSongs()
+diff --git a/UI/tableview/tablehistory.h b/UI/tableview/tablehistory.h
+index 613083b..ff4ed3b 100644
+--- a/UI/tableview/tablehistory.h
++++ b/UI/tableview/tablehistory.h
+@@ -36,6 +36,7 @@ public:
+     explicit TableHistory(QWidget *parent = nullptr);
+     TableBaseView *m_tableHistory = nullptr;
+     MusicListModel *m_model = nullptr;
++    QMap <QString ,QString> removeList = {{"",""}}; // 移除列表
+     void changeNumber();
+     void setHighlight(int index);
+     void initStyle();
+@@ -62,6 +63,10 @@ private Q_SLOTS:
+     void deleteSongs();
+     void playNextRowClicked();
+     void showRightMenu(const QPoint &pos);
++    void slotAddToRList(QString path,QString owner);
++    void slotRemoveFromRList(QString path);
++
++
+ private:
+     void initRightMenu();
+     QVBoxLayout *mainVLayout = nullptr;
+diff --git a/UIControl/player/coreplayer/mmediaplaylist.cpp b/UIControl/player/coreplayer/mmediaplaylist.cpp
+index 3a6e756..efecf8b 100644
+--- a/UIControl/player/coreplayer/mmediaplaylist.cpp
++++ b/UIControl/player/coreplayer/mmediaplaylist.cpp
+@@ -216,7 +216,7 @@ void MMediaPlaylist::palyFinish()
+         Q_EMIT currentIndexChanged(m_index);
+     }
+ 
+-    if(m_playbackMode = CurrentItemInLoop){
++    if(m_playbackMode == CurrentItemInLoop){
+         if(!QFileInfo::exists(QUrl(getPlayFileName()).toLocalFile()))
+             next();
+     }

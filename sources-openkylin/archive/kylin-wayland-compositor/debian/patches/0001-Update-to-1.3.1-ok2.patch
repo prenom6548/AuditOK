@@ -1,0 +1,1363 @@
+From: Morose <chenlinxiang@kylinos.cn>
+Date: Fri, 13 Dec 2024 14:32:14 +0800
+Subject: Update to 1.3.1-ok2
+
+---
+ docs/PROTOCOLS.md               |   1 +
+ include/config.h                |   2 +-
+ include/scene/scene.h           |  47 +++----
+ include/view/view.h             |   6 +-
+ po/bo_CN.po                     |   6 +-
+ po/de_DE.po                     |   6 +-
+ po/es_ES.po                     |   6 +-
+ po/fr_FR.po                     |   8 +-
+ po/kk_KZ.po                     |   6 +-
+ po/ky_KG.po                     |   6 +-
+ po/kylin-wayland-compositor.pot |  46 +++----
+ po/mn_MN.po                     |   6 +-
+ po/ug_CN.po                     |   6 +-
+ po/zh_CN.po                     |   6 +-
+ po/zh_HK.po                     |   6 +-
+ po/zh_TW.po                     |   6 +-
+ protocols/meson.build           |   1 +
+ src/config/config.c             |   6 +-
+ src/effect/transform.c          |   6 +-
+ src/input/input_p.h             |  10 ++
+ src/input/meson.build           |   1 +
+ src/input/seat.c                |   8 +-
+ src/input/selection.c           |  19 +--
+ src/input/toplevel_drag.c       | 272 ++++++++++++++++++++++++++++++++++++++++
+ src/input/transient_seat.c      |   4 +
+ src/scene/scene.c               |   3 +-
+ src/view/action.c               |   2 +-
+ src/view/ssd.c                  |   8 +-
+ src/view/view.c                 | 177 ++++++++++++++++++--------
+ src/view/view_p.h               |   1 +
+ src/view/workspace.c            |   9 +-
+ src/view/xdg_shell.c            |  10 +-
+ 32 files changed, 561 insertions(+), 146 deletions(-)
+ create mode 100644 src/input/toplevel_drag.c
+
+diff --git a/docs/PROTOCOLS.md b/docs/PROTOCOLS.md
+index 8258b2d..fd0a34e 100644
+--- a/docs/PROTOCOLS.md
++++ b/docs/PROTOCOLS.md
+@@ -45,6 +45,7 @@ wayland协议支持情况
+ | xdg_activation_v1                 |    1     |       |
+ | xdg_wm_dialog_v1                  |    1     |       |
+ | xwayland_shell_v1                 |    1     |       |
++| xdg_toplevel_drag_manager_v1      |    1     |       |
+ 
+ ### unstable
+ 
+diff --git a/include/config.h b/include/config.h
+index 958abff..269b8da 100644
+--- a/include/config.h
++++ b/include/config.h
+@@ -37,7 +37,7 @@ struct config *config_manager_add_config(const char *name, const char *bus, cons
+ 
+ void config_destroy(struct config *config);
+ 
+-void config_notify(const char *title, const char *body, const char *icon);
++void config_notify(const char *app_name, const char *summary, const char *body, const char *icon);
+ 
+ bool config_call_method(const char *service, const char *path, const char *interface,
+                         const char *method);
+diff --git a/include/scene/scene.h b/include/scene/scene.h
+index 9dd959c..b70bdbe 100644
+--- a/include/scene/scene.h
++++ b/include/scene/scene.h
+@@ -88,24 +88,28 @@ struct ky_scene_node_interface {
+     ky_scene_node_destroy_func_t destroy;
+ };
+ 
+-/* scene node props */
+-enum ky_scene_node_prop {
+-    KY_SCENE_NODE_INVALID = 0,
+-    // bit 0 ... 2, node type [1, 7]
+-    KY_SCENE_NODE_TREE = 1 << 0,
++/* scene node type */
++enum ky_scene_node_type {
++    KY_SCENE_NODE_TREE,
+     KY_SCENE_NODE_RECT,
+     KY_SCENE_NODE_BUFFER,
++};
+ 
+-    // bit 3 ... 6, node role: root, layer, workspace, toplevel, xwayland, popup, ssd,  ...
+-    KY_SCENE_NODE_ROOT = 1 << 3,
+-    KY_SCENE_NODE_LAYER,
+-    KY_SCENE_NODE_WORKSPACE,
+-    KY_SCENE_NODE_TOPLEVEL,
+-    KY_SCENE_NODE_SUBSURFACE,
+-    KY_SCENE_NODE_POPUP,
+-
+-    // bit 7, node from: external(client)
+-    KY_SCENE_NODE_EXTERNAL = 1 << 7,
++/* scene role type */
++enum ky_scene_role_type {
++    KY_SCENE_ROLE_NONE = 0,
++    KY_SCENE_ROLE_ROOT,
++    KY_SCENE_ROLE_LAYER,
++    KY_SCENE_ROLE_WORKSPACE,
++    KY_SCENE_ROLE_VIEW,
++    KY_SCENE_ROLE_XDG_TOPLEVEL,
++    KY_SCENE_ROLE_XDG_POPUP,
++    KY_SCENE_ROLE_XWAYLAND,
++    KY_SCENE_ROLE_XWAYLAND_UNMANAGED,
++    KY_SCENE_ROLE_LAYER_SHELL,
++    KY_SCENE_ROLE_DRAG_ICON,
++    KY_SCENE_ROLE_SURFACE,
++    KY_SCENE_ROLE_SUBSURFACE,
+ };
+ 
+ enum ky_scene_damage_type {
+@@ -135,14 +139,11 @@ struct ky_scene_node {
+     struct ky_scene_tree *parent;
+     struct wl_list link;
+ 
+-    union {
+-        struct {
+-            uint8_t type : 3;
+-            uint8_t role : 4;
+-            uint8_t from : 1;
+-        };
+-        uint8_t prop;
+-    };
++    enum ky_scene_node_type type;
++    struct {
++        enum ky_scene_role_type type;
++        void *data;
++    } role;
+ 
+     bool enabled;
+     bool input_bypassed;
+diff --git a/include/view/view.h b/include/view/view.h
+index 9f6ceb1..8766c55 100644
+--- a/include/view/view.h
++++ b/include/view/view.h
+@@ -135,8 +135,6 @@ struct view {
+         /* records the current output and status when it is send to output */
+         struct kywc_output *output;
+         enum kywc_tile tiled;
+-        /* restore view to layer when ... */
+-        enum layer layer;
+     } saved;
+ 
+     /* minimized geometry */
+@@ -192,6 +190,8 @@ struct view_manager *view_manager_create(struct server *server);
+ 
+ struct view_layer *view_manager_get_layer(enum layer layer, bool in_workspace);
+ 
++struct view_layer *view_manager_get_layer_by_node(struct ky_scene_node *node, bool in_workspace);
++
+ struct view *view_manager_get_activated(void);
+ 
+ void view_manager_add_activate_view_listener(struct wl_listener *listener);
+@@ -210,8 +210,6 @@ bool view_manager_get_show_activte_only(void);
+ 
+ uint32_t view_manager_get_adsorption(void);
+ 
+-struct ky_scene_tree *view_manager_get_layer_tree(struct ky_scene_node *node);
+-
+ bool view_manager_set_view_mode(const char *name);
+ 
+ struct view *view_from_kywc_view(struct kywc_view *kywc_view);
+diff --git a/po/bo_CN.po b/po/bo_CN.po
+index a415119..a31b7f4 100644
+--- a/po/bo_CN.po
++++ b/po/bo_CN.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "截རིས།"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "འཛིན་བཟུང་ཐུབ་པ་དེ་ཉར་འཛིན་བྱེད་པ་དེ།"
+ 
+diff --git a/po/de_DE.po b/po/de_DE.po
+index e308816..4a0235d 100644
+--- a/po/de_DE.po
++++ b/po/de_DE.po
+@@ -18,7 +18,11 @@ msgstr ""
+ "Content-Transfer-Encoding: 8bit\n"
+ "Plural-Forms: nplurals=2; plural=(n != 1);\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "Bildschirmfoto"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "Bildschirmfoto wurde gespeichert unter"
+ 
+diff --git a/po/es_ES.po b/po/es_ES.po
+index 35888d6..4a63e57 100644
+--- a/po/es_ES.po
++++ b/po/es_ES.po
+@@ -18,7 +18,11 @@ msgstr ""
+ "Content-Transfer-Encoding: 8bit\n"
+ "Plural-Forms: nplurals=2; plural=(n != 1);\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "Captura de pantalla"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "Captura guardada en"
+ 
+diff --git a/po/fr_FR.po b/po/fr_FR.po
+index d545716..b473eab 100644
+--- a/po/fr_FR.po
++++ b/po/fr_FR.po
+@@ -18,7 +18,11 @@ msgstr ""
+ "Content-Transfer-Encoding: 8bit\n"
+ "Plural-Forms: nplurals=2; plural=(n > 1);\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "Capture d'écran"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "Capture enregistrée à"
+ 
+@@ -52,7 +56,7 @@ msgstr "Écran"
+ 
+ #: src/view/window_menu.c:342
+ msgid "_Take Screenshot"
+-msgstr "Raccourci(_T)"
++msgstr "Faire une cap_ture d'écran"
+ 
+ #: src/view/window_menu.c:346
+ msgid "_Desktop"
+diff --git a/po/kk_KZ.po b/po/kk_KZ.po
+index d9fa2dd..d6196e5 100644
+--- a/po/kk_KZ.po
++++ b/po/kk_KZ.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "Скриншот"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "Басып алу сақталды"
+ 
+diff --git a/po/ky_KG.po b/po/ky_KG.po
+index 4a76385..c94ce1d 100644
+--- a/po/ky_KG.po
++++ b/po/ky_KG.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "скриншот алуу"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "кармалуу сакталды"
+ 
+diff --git a/po/kylin-wayland-compositor.pot b/po/kylin-wayland-compositor.pot
+index 97c5c2f..7a60ca6 100644
+--- a/po/kylin-wayland-compositor.pot
++++ b/po/kylin-wayland-compositor.pot
+@@ -9,7 +9,7 @@ msgstr ""
+ "Project-Id-Version: kylin-wayland-compositor\n"
+ "Report-Msgid-Bugs-To: \n"
+ "POT-Creation-Date: 2024-05-20 13:39+0800\n"
+-"PO-Revision-Date: 2024-08-16 10:36+0800\n"
++"PO-Revision-Date: 2024-12-12 14:40+0800\n"
+ "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+ "Language-Team: LANGUAGE <LL@li.org>\n"
+ "Language: \n"
+@@ -17,23 +17,27 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:107
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr ""
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr ""
+ 
+-#: src/view/ssd.c:266
++#: src/view/ssd.c:268
+ msgid "Minimize"
+ msgstr ""
+ 
+-#: src/view/ssd.c:267
++#: src/view/ssd.c:269
+ msgid "Maximize"
+ msgstr ""
+ 
+-#: src/view/ssd.c:268
++#: src/view/ssd.c:270
+ msgid "Restore"
+ msgstr ""
+ 
+-#: src/view/ssd.c:269
++#: src/view/ssd.c:271
+ msgid "Close"
+ msgstr ""
+ 
+@@ -49,62 +53,62 @@ msgstr ""
+ msgid "Screen"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:351
++#: src/view/window_menu.c:353
+ msgid "_Take Screenshot"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:354
++#: src/view/window_menu.c:356
+ msgid "_Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:357
++#: src/view/window_menu.c:359
+ msgid "_All Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:358
++#: src/view/window_menu.c:360
+ msgid "Add To _New Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:361
++#: src/view/window_menu.c:363
+ msgid "_Move To New Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:365
++#: src/view/window_menu.c:367
+ msgid "Ma_ximize"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:369
++#: src/view/window_menu.c:371
+ msgid "Move To _Screen"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:373
++#: src/view/window_menu.c:376
+ msgid "Mi_nimize"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:377
++#: src/view/window_menu.c:380
+ msgid "_More"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:381
++#: src/view/window_menu.c:384
+ msgid "_Move"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:383
++#: src/view/window_menu.c:386
+ msgid "_Resize"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:385
++#: src/view/window_menu.c:388
+ msgid "Keep-_Above"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:387
++#: src/view/window_menu.c:390
+ msgid "Keep-_Below"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:389
++#: src/view/window_menu.c:392
+ msgid "_Fullscreen"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:392
++#: src/view/window_menu.c:395
+ msgid "_Close"
+ msgstr ""
+diff --git a/po/mn_MN.po b/po/mn_MN.po
+index 959f185..45a44f7 100644
+--- a/po/mn_MN.po
++++ b/po/mn_MN.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "ᠵᠢᠷᠤᠭ ᠣᠭᠲᠣᠯᠬᠤ"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "ᠣᠯᠵᠠᠯᠠᠬᠤ ᠪᠥᠭᠡᠳ ᠬᠠᠳᠠᠭᠠᠯᠠᠬᠤ"
+ 
+diff --git a/po/ug_CN.po b/po/ug_CN.po
+index d172a82..8bd4971 100644
+--- a/po/ug_CN.po
++++ b/po/ug_CN.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "ئېكران رەسىمى"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "ئېكران رەسىمىنى ئېلىپ ساقلاڭ"
+ 
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+index a41cbe8..1d35e59 100644
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "截图"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "捕获已保存为"
+ 
+diff --git a/po/zh_HK.po b/po/zh_HK.po
+index da1da8e..2f7fb76 100644
+--- a/po/zh_HK.po
++++ b/po/zh_HK.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "截圖"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "捕獲已保存為"
+ 
+diff --git a/po/zh_TW.po b/po/zh_TW.po
+index 88bbf66..2197bf9 100644
+--- a/po/zh_TW.po
++++ b/po/zh_TW.po
+@@ -17,7 +17,11 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:173
++#: src/view/action.c:108
++msgid "Screenshot"
++msgstr "截圖"
++
++#: src/view/action.c:108
+ msgid "Capture saved to"
+ msgstr "捕獲已保存為"
+ 
+diff --git a/protocols/meson.build b/protocols/meson.build
+index ef4ca6f..e817745 100644
+--- a/protocols/meson.build
++++ b/protocols/meson.build
+@@ -14,6 +14,7 @@ protocols = {
+   'org-kde-kwin-idle': 'idle.xml',
+   'zwp-pointer-constraints-v1': wl_protocol_dir / 'unstable/pointer-constraints/pointer-constraints-unstable-v1.xml',
+   'ext-transient-seat-v1': wl_protocol_dir / 'staging/ext-transient-seat/ext-transient-seat-v1.xml',
++  'xdg-toplevel-drag-manager-v1': wl_protocol_dir / 'staging/xdg-toplevel-drag/xdg-toplevel-drag-v1.xml',
+ }
+ 
+ protocols += {
+diff --git a/src/config/config.c b/src/config/config.c
+index 30a0860..d842da7 100644
+--- a/src/config/config.c
++++ b/src/config/config.c
+@@ -227,7 +227,7 @@ struct config *config_manager_add_config(const char *name, const char *bus, cons
+     return config;
+ }
+ 
+-void config_notify(const char *title, const char *body, const char *icon)
++void config_notify(const char *app_name, const char *summary, const char *body, const char *icon)
+ {
+     if (!config_manager) {
+         return;
+@@ -235,8 +235,8 @@ void config_notify(const char *title, const char *body, const char *icon)
+ 
+     sd_bus_call_method_async(config_manager->bus, NULL, "org.freedesktop.Notifications",
+                              "/org/freedesktop/Notifications", "org.freedesktop.Notifications",
+-                             "Notify", NULL, NULL, "susssasa{sv}i", "kylin-wlcom", 0,
+-                             icon ? icon : "", title, body, 0, 0, 5000);
++                             "Notify", NULL, NULL, "susssasa{sv}i", app_name, 0,
++                             icon ? icon : "", summary, body, 0, 0, 5000);
+ }
+ 
+ bool config_call_method(const char *service, const char *path, const char *interface,
+diff --git a/src/effect/transform.c b/src/effect/transform.c
+index a0dadc7..70822fa 100644
+--- a/src/effect/transform.c
++++ b/src/effect/transform.c
+@@ -603,15 +603,15 @@ static void transform_handle_node_destroy(struct wl_listener *listener, void *da
+         return;
+     }
+ 
+-    struct ky_scene_tree *layer_tree = view_manager_get_layer_tree(transform->node);
+-    if (!layer_tree) {
++    struct view_layer *layer = view_manager_get_layer_by_node(transform->node, true);
++    if (!layer) {
+         kywc_log(KYWC_ERROR, "node is not in layer");
+         return;
+     }
+ 
+     struct ky_scene_node *sibing = transform->node;
+     struct ky_scene_tree *parent = sibing->parent;
+-    while (parent != layer_tree) {
++    while (parent != layer->tree) {
+         sibing = &parent->node;
+         parent = parent->node.parent;
+     }
+diff --git a/src/input/input_p.h b/src/input/input_p.h
+index 2be7136..949b937 100644
+--- a/src/input/input_p.h
++++ b/src/input/input_p.h
+@@ -235,4 +235,14 @@ kde_keystate_manager_create(struct input_manager *input_manager)
+ 
+ bool transient_seat_manager_create(struct input_manager *input_manager);
+ 
++/**
++ * xdg toplevel drag support
++ */
++
++struct wlr_data_source;
++
++bool toplevel_drag_manager_create(struct server *server);
++
++void toplevel_drag_move(struct wlr_data_source *source, int lx, int ly);
++
+ #endif /* _INPUT_P_H_ */
+diff --git a/src/input/meson.build b/src/input/meson.build
+index ed89de0..cc550c1 100644
+--- a/src/input/meson.build
++++ b/src/input/meson.build
+@@ -16,6 +16,7 @@ wlcom_sources += files(
+   'tablet.c',
+   'text_input_v1.c',
+   'text_input_v2.c',
++  'toplevel_drag.c',
+   'touch.c',
+   'transient_seat.c',
+   'seat.c',
+diff --git a/src/input/seat.c b/src/input/seat.c
+index 0fa8dfb..8efee28 100644
+--- a/src/input/seat.c
++++ b/src/input/seat.c
+@@ -395,13 +395,13 @@ void seat_focus_surface(struct seat *seat, struct wlr_surface *surface)
+     if (surface) {
+         struct wlr_keyboard *keyboard = wlr_seat_get_keyboard(wlr_seat);
+         if (keyboard) {
+-            wlr_seat_keyboard_notify_enter(wlr_seat, surface, keyboard->keycodes,
+-                                           keyboard->num_keycodes, &keyboard->modifiers);
++            wlr_seat_keyboard_enter(wlr_seat, surface, keyboard->keycodes, keyboard->num_keycodes,
++                                    &keyboard->modifiers);
+         } else {
+-            wlr_seat_keyboard_notify_enter(wlr_seat, surface, NULL, 0, NULL);
++            wlr_seat_keyboard_enter(wlr_seat, surface, NULL, 0, NULL);
+         }
+     } else {
+-        wlr_seat_keyboard_notify_clear_focus(wlr_seat);
++        wlr_seat_keyboard_clear_focus(wlr_seat);
+     }
+ 
+     tablet_set_focus(seat, surface);
+diff --git a/src/input/selection.c b/src/input/selection.c
+index df80e97..4434877 100644
+--- a/src/input/selection.c
++++ b/src/input/selection.c
+@@ -42,6 +42,7 @@ struct selection {
+     struct wl_listener request_set_selection;
+     struct wl_listener request_set_primary_selection;
+ 
++    struct wlr_drag *drag;
+     /* only one drag_icon in seat at the same time */
+     struct wlr_drag_icon *drag_icon;
+     struct ky_scene_node *icon_node;
+@@ -58,7 +59,6 @@ struct selection {
+     int clipboard_selection_pid;
+     int primary_selection_pid;
+ #endif
+-    bool dragging;
+ };
+ 
+ #if HAVE_KDE_CLIPBOARD
+@@ -255,13 +255,13 @@ static void handle_start_drag(struct wl_listener *listener, void *data)
+     struct wlr_drag *wlr_drag = data;
+     struct wlr_drag_icon *drag_icon = wlr_drag->icon;
+ 
+-    selection->dragging = true;
++    selection->drag = wlr_drag;
+     selection->drag_icon = drag_icon;
+     wl_signal_add(&wlr_drag->events.destroy, &selection->destroy_drag);
+ 
+     /* drag icon may be NULL */
+     if (!drag_icon) {
+-        kywc_log(KYWC_INFO, "Started drag but not set a drag icon");
++        kywc_log(KYWC_DEBUG, "Started drag but not set a drag icon");
+         return;
+     }
+ 
+@@ -289,7 +289,7 @@ static void handle_destroy_drag(struct wl_listener *listener, void *data)
+ {
+     struct selection *selection = wl_container_of(listener, selection, destroy_drag);
+     wl_list_remove(&selection->destroy_drag.link);
+-    selection->dragging = false;
++    selection->drag = NULL;
+ }
+ 
+ static void handle_request_set_primary_selection(struct wl_listener *listener, void *data)
+@@ -380,6 +380,7 @@ bool selection_manager_create(struct input_manager *input_manager)
+     wlr_data_device_manager_create(input_manager->server->display);
+     wlr_data_control_manager_v1_create(input_manager->server->display);
+     wlr_primary_selection_v1_device_manager_create(input_manager->server->display);
++    toplevel_drag_manager_create(input_manager->server);
+ 
+     manager->new_seat.notify = handle_new_seat;
+     wl_signal_add(&input_manager->events.new_seat, &manager->new_seat);
+@@ -392,15 +393,19 @@ bool selection_manager_create(struct input_manager *input_manager)
+ 
+ void selection_handle_cursor_move(struct seat *seat, int lx, int ly)
+ {
+-    if (!seat->selection || !seat->selection->dragging || !seat->selection->icon_node) {
++    if (!seat->selection || !seat->selection->drag) {
+         return;
+     }
+ 
+     /* update dnd icon if support */
+-    ky_scene_node_set_position(seat->selection->icon_node, lx, ly);
++    if (seat->selection->icon_node) {
++        ky_scene_node_set_position(seat->selection->icon_node, lx, ly);
++    } else {
++        toplevel_drag_move(seat->selection->drag->source, lx, ly);
++    }
+ }
+ 
+ bool selection_is_dragging(struct seat *seat)
+ {
+-    return seat->selection && seat->selection->dragging;
++    return seat->selection && seat->selection->drag;
+ }
+diff --git a/src/input/toplevel_drag.c b/src/input/toplevel_drag.c
+new file mode 100644
+index 0000000..9d6b8f9
+--- /dev/null
++++ b/src/input/toplevel_drag.c
+@@ -0,0 +1,272 @@
++// SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <stdlib.h>
++
++#include <wlr/types/wlr_data_device.h>
++#include <wlr/types/wlr_xdg_shell.h>
++
++#include <kywc/log.h>
++
++#include "xdg-toplevel-drag-v1-protocol.h"
++
++#include "input_p.h"
++#include "server.h"
++#include "view/view.h"
++
++struct toplevel_drag_manager {
++    struct wl_global *global;
++    struct wl_list drags;
++
++    struct wl_listener display_destroy;
++    struct wl_listener server_destroy;
++};
++
++struct toplevel_drag {
++    struct wl_resource *resource;
++    struct wl_list link;
++
++    struct wlr_data_source *source;
++    struct wl_listener source_destroy;
++
++    struct wlr_xdg_toplevel *toplevel;
++    struct wl_listener toplevel_unmap;
++    struct wl_listener toplevel_destroy;
++
++    int32_t off_x, off_y;
++};
++
++static struct toplevel_drag_manager *manager = NULL;
++
++static struct view *toplevel_set_input_bypassed(struct wlr_xdg_toplevel *toplevel, bool bypassed)
++{
++    if (!toplevel) {
++        return NULL;
++    }
++
++    struct view *view = view_try_from_wlr_surface(toplevel->base->surface);
++    if (!view) {
++        return NULL;
++    }
++
++    ky_scene_node_set_input_bypassed(&view->tree->node, bypassed);
++    return view;
++}
++
++static void toplevel_drag_destroy(struct toplevel_drag *drag)
++{
++    toplevel_set_input_bypassed(drag->toplevel, false);
++
++    wl_list_remove(&drag->source_destroy.link);
++    wl_list_remove(&drag->toplevel_unmap.link);
++    wl_list_remove(&drag->toplevel_destroy.link);
++    wl_list_remove(&drag->link);
++
++    free(drag);
++}
++
++static void toplevel_drag_handle_destroy(struct wl_client *client, struct wl_resource *resource)
++{
++    wl_resource_destroy(resource);
++}
++
++static void toplevel_drag_handle_attach(struct wl_client *client, struct wl_resource *resource,
++                                        struct wl_resource *toplevel, int32_t x_offset,
++                                        int32_t y_offset)
++{
++    struct toplevel_drag *drag = wl_resource_get_user_data(resource);
++    if (!drag) {
++        return;
++    }
++
++    if (drag->toplevel) {
++        wl_resource_post_error(resource, XDG_TOPLEVEL_DRAG_V1_ERROR_TOPLEVEL_ATTACHED,
++                               "valid toplevel already attached");
++        return;
++    }
++
++    drag->toplevel = wlr_xdg_toplevel_from_resource(toplevel);
++    if (!drag->toplevel) {
++        return;
++    }
++
++    wl_list_remove(&drag->toplevel_unmap.link);
++    wl_signal_add(&drag->toplevel->base->surface->events.unmap, &drag->toplevel_unmap);
++    wl_list_remove(&drag->toplevel_destroy.link);
++    wl_signal_add(&drag->toplevel->base->events.destroy, &drag->toplevel_destroy);
++
++    drag->off_x = x_offset;
++    drag->off_y = y_offset;
++}
++
++static const struct xdg_toplevel_drag_v1_interface toplevel_drag_impl = {
++    .destroy = toplevel_drag_handle_destroy,
++    .attach = toplevel_drag_handle_attach,
++};
++
++static void toplevel_drag_handle_resource_destroy(struct wl_resource *resource)
++{
++    struct toplevel_drag *drag = wl_resource_get_user_data(resource);
++    if (drag) {
++        toplevel_drag_destroy(drag);
++    }
++}
++
++static void toplevel_drag_handle_source_destroy(struct wl_listener *listener, void *data)
++{
++    struct toplevel_drag *drag = wl_container_of(listener, drag, source_destroy);
++    wl_resource_set_user_data(drag->resource, NULL);
++    toplevel_drag_destroy(drag);
++}
++
++static void toplevel_drag_reset_toplevel(struct toplevel_drag *drag)
++{
++    wl_list_remove(&drag->toplevel_unmap.link);
++    wl_list_remove(&drag->toplevel_destroy.link);
++    wl_list_init(&drag->toplevel_unmap.link);
++    wl_list_init(&drag->toplevel_destroy.link);
++
++    toplevel_set_input_bypassed(drag->toplevel, false);
++    drag->toplevel = NULL;
++}
++
++static void toplevel_drag_handle_toplevel_unmap(struct wl_listener *listener, void *data)
++{
++    struct toplevel_drag *drag = wl_container_of(listener, drag, toplevel_unmap);
++    toplevel_drag_reset_toplevel(drag);
++}
++
++static void toplevel_drag_handle_toplevel_destroy(struct wl_listener *listener, void *data)
++{
++    struct toplevel_drag *drag = wl_container_of(listener, drag, toplevel_destroy);
++    toplevel_drag_reset_toplevel(drag);
++}
++
++static void manager_handle_get_toplevel_drag(struct wl_client *client, struct wl_resource *resource,
++                                             uint32_t id, struct wl_resource *data_source)
++{
++    // trick to get wlr_data_source as wlr_client_data_source is private
++    struct wlr_data_source *source = wl_resource_get_user_data(data_source);
++    if (!source) {
++        wl_client_post_implementation_error(client, "invalid data source");
++        return;
++    }
++
++    struct toplevel_drag *drag = calloc(1, sizeof(*drag));
++    if (!drag) {
++        wl_client_post_no_memory(client);
++        return;
++    }
++
++    int version = wl_resource_get_version(resource);
++    drag->resource = wl_resource_create(client, &xdg_toplevel_drag_v1_interface, version, id);
++    if (!drag->resource) {
++        free(drag);
++        wl_client_post_no_memory(client);
++        return;
++    }
++
++    wl_list_insert(&manager->drags, &drag->link);
++    wl_resource_set_implementation(drag->resource, &toplevel_drag_impl, drag,
++                                   toplevel_drag_handle_resource_destroy);
++
++    drag->source = source;
++    drag->source_destroy.notify = toplevel_drag_handle_source_destroy;
++    wl_signal_add(&source->events.destroy, &drag->source_destroy);
++
++    drag->toplevel_unmap.notify = toplevel_drag_handle_toplevel_unmap;
++    wl_list_init(&drag->toplevel_unmap.link);
++    drag->toplevel_destroy.notify = toplevel_drag_handle_toplevel_destroy;
++    wl_list_init(&drag->toplevel_destroy.link);
++}
++
++static void manager_handle_destroy(struct wl_client *client, struct wl_resource *resource)
++{
++    wl_resource_destroy(resource);
++}
++
++static const struct xdg_toplevel_drag_manager_v1_interface toplevel_drag_manager_impl = {
++    .destroy = manager_handle_destroy,
++    .get_xdg_toplevel_drag = manager_handle_get_toplevel_drag,
++};
++
++static void toplevel_drag_manager_bind(struct wl_client *client, void *data, uint32_t version,
++                                       uint32_t id)
++{
++    struct wl_resource *resource =
++        wl_resource_create(client, &xdg_toplevel_drag_manager_v1_interface, version, id);
++    if (!resource) {
++        wl_client_post_no_memory(client);
++        return;
++    }
++
++    wl_resource_set_implementation(resource, &toplevel_drag_manager_impl, manager, NULL);
++}
++
++static void handle_server_destroy(struct wl_listener *listener, void *data)
++{
++    wl_list_remove(&manager->server_destroy.link);
++    free(manager);
++    manager = NULL;
++}
++
++static void handle_display_destroy(struct wl_listener *listener, void *data)
++{
++    wl_list_remove(&manager->display_destroy.link);
++    wl_global_destroy(manager->global);
++}
++
++bool toplevel_drag_manager_create(struct server *server)
++{
++    manager = calloc(1, sizeof(*manager));
++    if (!manager) {
++        return false;
++    }
++
++    manager->global = wl_global_create(server->display, &xdg_toplevel_drag_manager_v1_interface, 1,
++                                       manager, toplevel_drag_manager_bind);
++    if (!manager->global) {
++        kywc_log(KYWC_WARN, "xdg_toplevel_drag_manager_v1 create failed");
++        free(manager);
++        manager = NULL;
++        return false;
++    }
++
++    wl_list_init(&manager->drags);
++
++    manager->server_destroy.notify = handle_server_destroy;
++    server_add_destroy_listener(server, &manager->server_destroy);
++    manager->display_destroy.notify = handle_display_destroy;
++    wl_display_add_destroy_listener(server->display, &manager->display_destroy);
++
++    return true;
++}
++
++static struct toplevel_drag *toplevel_drag_from_data_source(struct wlr_data_source *source)
++{
++    struct toplevel_drag *drag;
++    wl_list_for_each(drag, &manager->drags, link) {
++        if (drag->source == source) {
++            return drag;
++        }
++    }
++    return NULL;
++}
++
++void toplevel_drag_move(struct wlr_data_source *source, int lx, int ly)
++{
++    if (!manager || !source) {
++        return;
++    }
++
++    struct toplevel_drag *drag = toplevel_drag_from_data_source(source);
++    if (!drag || !drag->toplevel) {
++        return;
++    }
++
++    struct view *view = toplevel_set_input_bypassed(drag->toplevel, true);
++    if (view) {
++        view_do_move(view, lx - drag->off_x, ly - drag->off_y);
++    }
++}
+diff --git a/src/input/transient_seat.c b/src/input/transient_seat.c
+index 4af92c0..7123a03 100644
+--- a/src/input/transient_seat.c
++++ b/src/input/transient_seat.c
+@@ -1,3 +1,7 @@
++// SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
+ #include <stdio.h>
+ #include <stdlib.h>
+ 
+diff --git a/src/scene/scene.c b/src/scene/scene.c
+index dc380ad..fa3ccdf 100644
+--- a/src/scene/scene.c
++++ b/src/scene/scene.c
+@@ -350,7 +350,8 @@ struct ky_scene *ky_scene_create(void)
+     }
+ 
+     ky_scene_tree_init(&scene->tree, NULL);
+-    scene->tree.node.role = KY_SCENE_NODE_ROOT;
++    scene->tree.node.role.type = KY_SCENE_ROLE_ROOT;
++    scene->tree.node.role.data = scene;
+ 
+     scene->tree_destroy = scene->tree.node.impl.destroy;
+     scene->tree.node.impl.destroy = scene_destroy;
+diff --git a/src/view/action.c b/src/view/action.c
+index ca8ee6f..3184dae 100644
+--- a/src/view/action.c
++++ b/src/view/action.c
+@@ -105,7 +105,7 @@ static int handle_capture(void *data)
+ #else
+ static void capture_done(const char *path, void *data)
+ {
+-    config_notify(tr("Capture saved to"), path, "kylin-screenshot");
++    config_notify(tr("Screenshot"), tr("Capture saved to"), path, "kylin-screenshot");
+     free(data);
+ }
+ 
+diff --git a/src/view/ssd.c b/src/view/ssd.c
+index dcac6d9..c18ddc7 100644
+--- a/src/view/ssd.c
++++ b/src/view/ssd.c
+@@ -479,6 +479,10 @@ static void ssd_click(struct seat *seat, struct ky_scene_node *node, uint32_t bu
+         ssd_tooltip_show(seat, part, false);
+     }
+ 
++    /* active current view */
++    kywc_view_activate(kywc_view);
++    seat_focus_surface(seat, view->surface);
++
+     if (CLICK_STATE_DOUBLE == state) {
+         if (button != BTN_LEFT) {
+             return;
+@@ -553,10 +557,6 @@ static void ssd_click(struct seat *seat, struct ky_scene_node *node, uint32_t bu
+     if (edges != KYWC_EDGE_NONE && pressed && button == BTN_LEFT) {
+         window_begin_resize(view, edges, seat);
+     }
+-
+-    /* active current view */
+-    kywc_view_activate(kywc_view);
+-    seat_focus_surface(seat, view->surface);
+ }
+ 
+ static struct ky_scene_node *ssd_get_root(void *data)
+diff --git a/src/view/view.c b/src/view/view.c
+index 057410f..b250da1 100644
+--- a/src/view/view.c
++++ b/src/view/view.c
+@@ -50,6 +50,18 @@ struct view_layer *view_manager_get_layer(enum layer layer, bool in_workspace)
+     }
+ }
+ 
++struct view_layer *view_manager_get_layer_by_node(struct ky_scene_node *node, bool in_workspace)
++{
++    struct ky_scene_tree *tree = node->parent;
++
++    while (tree && (!in_workspace || tree->node.role.type != KY_SCENE_ROLE_WORKSPACE) &&
++           tree->node.role.type != KY_SCENE_ROLE_LAYER) {
++        tree = tree->node.parent;
++    }
++
++    return tree->node.role.data;
++}
++
+ static void view_update_output(struct view *view)
+ {
+     int lx = 0, ly = 0;
+@@ -832,6 +844,46 @@ void view_add_all_workspace(struct view *view)
+     view->show_in_all_workspaces = true;
+ }
+ 
++static void view_set_layer_in_workspace(struct view *view, enum layer layer)
++{
++    if (!view || !view->current_proxy) {
++        return;
++    }
++    struct view_layer *view_layer = NULL;
++    if (layer == LAYER_ACTIVE) {
++        view_layer = view_manager_get_layer(LAYER_ACTIVE, false);
++        ky_scene_node_reparent(&view->tree->node, view_layer->tree);
++        return;
++    }
++    struct view_proxy *proxy;
++    wl_list_for_each(proxy, &view->view_proxies, view_link) {
++        view_layer = workspace_layer(proxy->workspace, layer);
++        if (!view_layer) {
++            continue;
++        }
++        ky_scene_node_reparent(&proxy->tree->node, view_layer->tree);
++    }
++}
++
++static void view_follow_parent_layer(struct view *view, struct view *parent)
++{
++    struct view_layer *layer = view_manager_get_layer_by_node(&parent->tree->node, false);
++    if (!layer) {
++        return;
++    }
++
++    if (view->current_proxy && parent->current_proxy) {
++        view_set_layer_in_workspace(view, layer->layer);
++    } else if (view->current_proxy && !parent->current_proxy) {
++        view_unset_workspace(view, layer);
++    } else if (!view->current_proxy && parent->current_proxy) {
++        view_add_workspace(view, parent->current_proxy->workspace);
++        view_set_layer_in_workspace(view, layer->layer);
++    } else {
++        ky_scene_node_reparent(&view->tree->node, layer->tree);
++    }
++}
++
+ void view_set_parent(struct view *view, struct view *parent)
+ {
+     if (view->parent == parent) {
+@@ -841,17 +893,7 @@ void view_set_parent(struct view *view, struct view *parent)
+     wl_list_remove(&view->parent_link);
+     if (parent) {
+         wl_list_insert(&parent->children, &view->parent_link);
+-
+-        view->saved.layer = parent->saved.layer;
+-        struct ky_scene_tree *layer_tree = view_manager_get_layer_tree(&parent->tree->node);
+-        if (wl_list_empty(&view->view_proxies)) {
+-            ky_scene_node_reparent(&view->tree->node, layer_tree);
+-        } else {
+-            struct view_proxy *view_proxy;
+-            wl_list_for_each(view_proxy, &view->view_proxies, view_link) {
+-                ky_scene_node_reparent(&view_proxy->tree->node, layer_tree);
+-            }
+-        }
++        view_follow_parent_layer(view, parent);
+     } else {
+         wl_list_init(&view->parent_link);
+     }
+@@ -1009,6 +1051,22 @@ static void view_set_activated(struct view *view, bool activated)
+     wl_signal_emit_mutable(&view_manager->events.activate_view, view_manager->activated.view);
+ }
+ 
++static struct view *view_find_fullscreen_ancestor(struct view *view)
++{
++    if (!view || !view->parent) {
++        return NULL;
++    }
++
++    struct view *ancestor = NULL;
++    while (view->parent) {
++        if (view->parent->base.fullscreen) {
++            ancestor = view->parent;
++        }
++        view = view->parent;
++    }
++    return ancestor;
++}
++
+ void view_do_activate(struct view *view)
+ {
+     if (view && !view_is_activatable(view)) {
+@@ -1026,6 +1084,14 @@ void view_do_activate(struct view *view)
+         if (view) {
+             view_set_activated(view, true);
+         }
++    } else if (view) {
++        struct view *ancestor = view_find_fullscreen_ancestor(view);
++        if (!ancestor) {
++            ancestor = view;
++        }
++        if (ancestor->base.fullscreen) {
++            view_reparent_fullscreen(ancestor, true);
++        }
+     }
+ 
+     if (!view) {
+@@ -1038,6 +1104,27 @@ void view_do_activate(struct view *view)
+     }
+ }
+ 
++static void view_hide_fullscreen_view_in_empty_workspace(void)
++{
++    struct workspace *workspace = workspace_manager_get_current();
++    struct view *view = view_manager->activated.view;
++    if (!view) {
++        return;
++    }
++
++    struct view *ancestor = view_find_fullscreen_ancestor(view);
++    if (!ancestor) {
++        ancestor = view;
++    }
++    if (ancestor->base.fullscreen) {
++        struct view_proxy *view_proxy = view_proxy_by_workspace(ancestor, workspace);
++        if (!view_proxy) {
++            view_reparent_fullscreen(ancestor, false);
++            view_set_activated(ancestor, false);
++        }
++    }
++}
++
+ void view_activate_topmost(void)
+ {
+     struct view *view = view_manager_get_global_authentication();
+@@ -1057,21 +1144,11 @@ void view_activate_topmost(void)
+         }
+         view_do_activate(view);
+         seat_focus_surface(input_manager_get_default_seat(), view->surface);
+-        if (view->base.fullscreen) {
+-            view_reparent_fullscreen(view, true);
+-        }
+         return;
+     }
+ 
+     /* workaround to hide fullscreen view when no view in workspace */
+-    view = view_manager->activated.view;
+-    if (view && view->base.fullscreen) {
+-        view_proxy = view_proxy_by_workspace(view, workspace);
+-        if (!view_proxy) {
+-            view_reparent_fullscreen(view, false);
+-            view_set_activated(view, false);
+-        }
+-    }
++    view_hide_fullscreen_view_in_empty_workspace();
+ }
+ 
+ void view_raise_to_top(struct view *view, bool find_parent)
+@@ -1258,22 +1335,16 @@ void kywc_view_toggle_maximized(struct kywc_view *kywc_view)
+ 
+ static void view_reparent_fullscreen(struct view *view, bool active)
+ {
+-    struct kywc_view *kywc_view = &view->base;
+-    struct view_proxy *view_proxy = NULL;
+     struct view_layer *layer = NULL;
+     if (active) {
+-        view->saved.layer = kywc_view->kept_above
+-                                ? LAYER_ABOVE
+-                                : (kywc_view->kept_below ? LAYER_BELOW : LAYER_NORMAL);
+         layer = view_manager_get_layer(LAYER_ACTIVE, false);
+-    }
+-
+-    wl_list_for_each(view_proxy, &view->view_proxies, view_link) {
+-        if (!active) {
+-            /* restore fullscreen view to workspace */
+-            layer = workspace_layer(view_proxy->workspace, view->saved.layer);
++        if (layer->tree == view->tree->node.parent) {
++            ky_scene_node_raise_to_top(&view->tree->node);
++        } else {
++            ky_scene_node_reparent(&view->tree->node, layer->tree);
+         }
+-        ky_scene_node_reparent(&view_proxy->tree->node, layer->tree);
++    } else if (view->current_proxy) {
++        ky_scene_node_reparent(&view->tree->node, view->current_proxy->tree);
+     }
+ 
+     struct view *child;
+@@ -1798,18 +1869,6 @@ uint32_t view_manager_get_adsorption(void)
+     return view_manager->state.view_adsorption;
+ }
+ 
+-struct ky_scene_tree *view_manager_get_layer_tree(struct ky_scene_node *node)
+-{
+-    struct ky_scene_tree *tree = node->parent;
+-
+-    while (tree && tree->node.role != KY_SCENE_NODE_WORKSPACE &&
+-           tree->node.role != KY_SCENE_NODE_LAYER) {
+-        tree = tree->node.parent;
+-    }
+-
+-    return tree;
+-}
+-
+ void view_manager_set_global_authentication(struct view *view)
+ {
+     view_manager->global_authentication_view = view;
+@@ -1820,6 +1879,16 @@ struct view *view_manager_get_global_authentication(void)
+     return view_manager->global_authentication_view;
+ }
+ 
++static void handle_server_ready(struct wl_listener *listener, void *data)
++{
++    if (!view_manager->mode) {
++        view_manager->mode = view_manager_mode_from_name("stack_mode");
++    }
++    if (view_manager->mode->impl->view_mode_enter) {
++        view_manager->mode->impl->view_mode_enter();
++    }
++}
++
+ static void handle_server_destroy(struct wl_listener *listener, void *data)
+ {
+     wl_list_remove(&view_manager->server_destroy.link);
+@@ -1918,6 +1987,11 @@ bool view_manager_set_view_mode(const char *name)
+         return true;
+     }
+ 
++    if (!view_manager->server->ready) {
++        view_manager->mode = view_mode;
++        return true;
++    }
++
+     if (view_manager->mode && view_manager->mode->impl->view_mode_leave) {
+         view_manager->mode->impl->view_mode_leave();
+     }
+@@ -2019,6 +2093,8 @@ struct view_manager *view_manager_create(struct server *server)
+     theme_manager_add_icon_update_listener(&view_manager->theme_icon_update);
+     view_manager->server_terminate.notify = handle_server_terminate;
+     wl_signal_add(&server->events.terminate, &view_manager->server_terminate);
++    view_manager->server_ready.notify = handle_server_ready;
++    wl_signal_add(&server->events.ready, &view_manager->server_ready);
+     view_manager->server_destroy.notify = handle_server_destroy;
+     server_add_destroy_listener(server, &view_manager->server_destroy);
+ 
+@@ -2029,7 +2105,8 @@ struct view_manager *view_manager_create(struct server *server)
+     for (int layer = LAYER_FIRST; layer < LAYER_NUMBER; layer++) {
+         view_manager->layers[layer].layer = layer;
+         view_manager->layers[layer].tree = ky_scene_tree_create(&server->scene->tree);
+-        view_manager->layers[layer].tree->node.role = KY_SCENE_NODE_LAYER;
++        view_manager->layers[layer].tree->node.role.type = KY_SCENE_ROLE_LAYER;
++        view_manager->layers[layer].tree->node.role.data = &view_manager->layers[layer];
+     }
+ 
+     view_manager_modes_register(view_manager);
+@@ -2039,12 +2116,6 @@ struct view_manager *view_manager_create(struct server *server)
+     view_manager->state.view_adsorption = VIEW_ADSORPTION_ALL;
+     view_read_config(view_manager);
+ 
+-    if (!view_manager->mode) {
+-        view_manager->mode = view_manager_mode_from_name("stack_mode");
+-    }
+-    if (view_manager->mode->impl->view_mode_enter) {
+-        view_manager->mode->impl->view_mode_enter();
+-    }
+     workspace_manager_create(view_manager);
+     decoration_manager_create(view_manager);
+     server_decoration_manager_create(view_manager);
+diff --git a/src/view/view_p.h b/src/view/view_p.h
+index 645b754..14d2ed9 100644
+--- a/src/view/view_p.h
++++ b/src/view/view_p.h
+@@ -79,6 +79,7 @@ struct view_manager {
+     struct wl_listener theme_icon_update;
+     struct wl_listener new_xdg_surface;
+     struct wl_listener server_terminate;
++    struct wl_listener server_ready;
+     struct wl_listener server_destroy;
+ 
+     bool show_desktop_enabled;
+diff --git a/src/view/workspace.c b/src/view/workspace.c
+index 89c322b..9e49118 100644
+--- a/src/view/workspace.c
++++ b/src/view/workspace.c
+@@ -287,13 +287,16 @@ struct workspace *workspace_create(const char *name, uint32_t position)
+     struct view_layer *layers = workspace_manager->view_manager->layers;
+     workspace->layers[0].layer = LAYER_BELOW;
+     workspace->layers[0].tree = ky_scene_tree_create(layers[LAYER_BELOW].tree);
+-    workspace->layers[0].tree->node.role = KY_SCENE_NODE_WORKSPACE;
++    workspace->layers[0].tree->node.role.type = KY_SCENE_ROLE_WORKSPACE;
++    workspace->layers[0].tree->node.role.data = &workspace->layers[0];
+     workspace->layers[1].layer = LAYER_NORMAL;
+     workspace->layers[1].tree = ky_scene_tree_create(layers[LAYER_NORMAL].tree);
+-    workspace->layers[1].tree->node.role = KY_SCENE_NODE_WORKSPACE;
++    workspace->layers[1].tree->node.role.type = KY_SCENE_ROLE_WORKSPACE;
++    workspace->layers[1].tree->node.role.data = &workspace->layers[1];
+     workspace->layers[2].layer = LAYER_ABOVE;
+     workspace->layers[2].tree = ky_scene_tree_create(layers[LAYER_ABOVE].tree);
+-    workspace->layers[2].tree->node.role = KY_SCENE_NODE_WORKSPACE;
++    workspace->layers[2].tree->node.role.type = KY_SCENE_ROLE_WORKSPACE;
++    workspace->layers[2].tree->node.role.data = &workspace->layers[2];
+     workspace_set_enabled(workspace, false);
+ 
+     /* insert to workspace manager workspaces */
+diff --git a/src/view/xdg_shell.c b/src/view/xdg_shell.c
+index 36832b8..2c0965f 100644
+--- a/src/view/xdg_shell.c
++++ b/src/view/xdg_shell.c
+@@ -259,16 +259,14 @@ static void xdg_view_handle_commit(struct wl_listener *listener, void *data)
+ static void xdg_view_handle_new_popup(struct wl_listener *listener, void *data)
+ {
+     struct xdg_view *xdg_view = wl_container_of(listener, xdg_view, new_popup);
++    struct view *view = &xdg_view->view;
+     struct wlr_xdg_popup *wlr_xdg_popup = data;
+ 
+-    struct kywc_view *kywc_view = &xdg_view->view.base;
+-    enum layer layer = LAYER_POPUP;
+-    if (kywc_view->role == KYWC_VIEW_ROLE_LOGOUT || kywc_view->role == KYWC_VIEW_ROLE_SCREENLOCK) {
+-        layer = LAYER_SCREEN_LOCK_NOTIFICATION;
+-    }
++    struct view_layer *view_layer = view_manager_get_layer_by_node(&view->tree->node, false);
++    enum layer layer = view_layer->layer > LAYER_POPUP ? view_layer->layer : LAYER_POPUP;
+     struct view_layer *popup_layer = view_manager_get_layer(layer, false);
+     xdg_popup_create(wlr_xdg_popup, xdg_view->view.surface_tree, popup_layer,
+-                     kywc_view->role == KYWC_VIEW_ROLE_PANEL);
++                     view->base.role == KYWC_VIEW_ROLE_PANEL);
+ }
+ 
+ static void xdg_view_handle_request_move(struct wl_listener *listener, void *data)

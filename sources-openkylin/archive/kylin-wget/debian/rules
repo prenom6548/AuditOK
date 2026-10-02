@@ -1,0 +1,29 @@
+#!/usr/bin/make -f
+%:
+	dh $@
+
+override_dh_auto_build:
+	# Launchpad/sbuild：默认 HOME 常为 /sbuild-nonexistent 且不可写，Cargo 无法创建 ~/.cargo。
+	# 使用构建目录内可写路径作为 CARGO_HOME（等价于同事建议的 HOME=/tmp/...，但更局部、可清理）。
+	mkdir -p "$(CURDIR)/debian/cargo-home"
+	# Cargo 源：仓库根 .cargo/config.toml（随 orig 进 LaunchPad）
+	cd rust && CARGO_HOME="$(CURDIR)/debian/cargo-home" cargo build --release --locked
+
+override_dh_auto_clean:
+	# Source package build (3.0 quilt) must not include cargo build artifacts.
+	# Do not call `cargo clean` here: build env cargo might be older and unable
+	# to parse unsupported Cargo.toml / Cargo.lock from newer toolchains.
+	# Removing `rust/target` is sufficient.
+	rm -rf rust/target
+	rm -rf debian/cargo-home
+	# Also remove local release artifacts that must not be shipped in source package.
+	rm -rf dist
+
+override_dh_auto_install:
+	# Install the built binary into the expected debian/<package>/... tree.
+	mkdir -p debian/kylin-wget/usr/bin
+	# 将我们的二进制安装到 /usr/bin/wget，作为真正的命令入口。
+	install -m 0755 rust/target/release/wget debian/kylin-wget/usr/bin/wget
+	mkdir -p debian/kylin-wget/usr/share/doc/kylin-wget
+	install -m 0644 README.md debian/kylin-wget/usr/share/doc/kylin-wget/README.md
+

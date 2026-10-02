@@ -1,0 +1,598 @@
+From: snowsi <348240162@qq.com>
+Date: Mon, 29 Jan 2024 08:45:10 +0000
+Subject: =?utf-8?b?ITU3IOS/ruWkjempseWKqOeuoeeQhuW3peWFt1VJ6ZSZ6K+vIE1lcmdl?=
+ =?utf-8?b?IHB1bGwgcmVxdWVzdCAhNTcgZnJvbSDojIPmmLHovrAvb3Blbmt5bGluL25pbGU=?=
+
+---
+ plugins/driver-controller/CMakeLists.txt           |   2 +-
+ .../src/database/drivermanagerdatabase.h           |   6 +-
+ plugins/driver-controller/src/deviceitem.cpp       |   2 +-
+ .../driver-controller/src/drivergetfailwidget.h    |   2 +-
+ .../driver-controller/src/driverinstallwidget.cpp  | 105 +++++++++++++--------
+ .../src/hardwareinfo/hardwareInfogetter.cpp        |   1 +
+ .../src/hardwareinfo/hardwareinfo.h                |   1 +
+ .../src/hardwareinfogetfailwidget.h                |   2 +-
+ .../driver-controller/src/hardwareinfogetter.cpp   |   2 +
+ .../driver-controller/src/hardwareinfowidget.cpp   |   2 +-
+ plugins/driver-controller/src/hardwareinfowidget.h |   2 +-
+ .../src/hotplug/hotplugclient.cpp                  |   1 +
+ .../src/include/custom_push_button.cpp             |  69 --------------
+ .../src/include/custom_push_button.h               |  27 ------
+ .../src/include/custompushbutton.cpp               |  10 +-
+ .../src/include/custompushbutton.h                 |   2 +-
+ plugins/driver-controller/src/loadingwidget.h      |   2 +-
+ .../src/nodriveruninstallpage.cpp                  |   2 +-
+ plugins/driver-controller/src/uninstallitem.cpp    |   2 +-
+ 19 files changed, 90 insertions(+), 152 deletions(-)
+ delete mode 100644 plugins/driver-controller/src/include/custom_push_button.cpp
+ delete mode 100644 plugins/driver-controller/src/include/custom_push_button.h
+
+diff --git a/plugins/driver-controller/CMakeLists.txt b/plugins/driver-controller/CMakeLists.txt
+index 0d69434..4076ed0 100644
+--- a/plugins/driver-controller/CMakeLists.txt
++++ b/plugins/driver-controller/CMakeLists.txt
+@@ -128,7 +128,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE kom)
+ target_include_directories(${PROJECT_NAME} PRIVATE ${TOP_DIR}/interface)
+ target_include_directories(${PROJECT_NAME} PRIVATE ${TOP_DIR}/3rdparty/kyplugin)
+ 
+-target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets Qt5::Core Qt5::DBus)
++target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets Qt5::Core Qt5::DBus Qt5::Sql)
+ 
+ find_package(PkgConfig REQUIRED)
+ pkg_check_modules(QGSETTINGS REQUIRED IMPORTED_TARGET gsettings-qt)
+diff --git a/plugins/driver-controller/src/database/drivermanagerdatabase.h b/plugins/driver-controller/src/database/drivermanagerdatabase.h
+index 8020e2a..fad76c7 100644
+--- a/plugins/driver-controller/src/database/drivermanagerdatabase.h
++++ b/plugins/driver-controller/src/database/drivermanagerdatabase.h
+@@ -2,9 +2,9 @@
+ #define DRIVERMANAGERDATABASE_H
+ 
+ #include <QObject>
+-#include <QtSql/QSqlDatabase>
+-#include <QtSql/QSqlQuery>
+-#include <QtSql/QSqlError>
++#include <QSqlDatabase>
++#include <QSqlQuery>
++#include <QSqlError>
+ #include "../hardwareinfo/hardwareinfo.h"
+ 
+ enum DB_RETURN_STATUS {          //数据库操作结果返回表
+diff --git a/plugins/driver-controller/src/deviceitem.cpp b/plugins/driver-controller/src/deviceitem.cpp
+index 9f1dac4..b9ad552 100644
+--- a/plugins/driver-controller/src/deviceitem.cpp
++++ b/plugins/driver-controller/src/deviceitem.cpp
+@@ -1,7 +1,7 @@
+ #include "deviceitem.h"
+ #include <QVersionNumber>
+ #include <QDebug>
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ #include "include/common.h"
+ #include "include/globalsignal.h"
+ 
+diff --git a/plugins/driver-controller/src/drivergetfailwidget.h b/plugins/driver-controller/src/drivergetfailwidget.h
+index 3af6b68..f531005 100644
+--- a/plugins/driver-controller/src/drivergetfailwidget.h
++++ b/plugins/driver-controller/src/drivergetfailwidget.h
+@@ -4,7 +4,7 @@
+ #include <QWidget>
+ #include <QLabel>
+ #include <QPixmap>
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ #include <QVBoxLayout>
+ #include <QHBoxLayout>
+ #include <QPushButton>
+diff --git a/plugins/driver-controller/src/driverinstallwidget.cpp b/plugins/driver-controller/src/driverinstallwidget.cpp
+index 1cfdf87..71496d5 100644
+--- a/plugins/driver-controller/src/driverinstallwidget.cpp
++++ b/plugins/driver-controller/src/driverinstallwidget.cpp
+@@ -1,6 +1,6 @@
+ #include "driverinstallwidget.h"
+ #include <QPushButton>
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ #include <QVersionNumber>
+ #include "include/globalsignal.h"
+ #include "include/common.h"
+@@ -305,6 +305,9 @@ void DriverInstallWidget::checkUpgradable() {
+     }
+ 
+     for (int i = 0; i < g_infogetter->m_scannerHardwares.length(); ++i) {
++        if (g_infogetter->m_scannerHardwares.at(i).isOnline == false) {
++            continue;
++        }
+         if (g_infogetter->m_scannerHardwares.at(i).upgradeable == true) {
+             if (g_infogetter->m_scannerHardwares.at(i).driver_now == "") {
+                 m_installabelNum++;
+@@ -319,6 +322,9 @@ void DriverInstallWidget::checkUpgradable() {
+     }
+ 
+     for (int i = 0; i < g_infogetter->m_printerHardwares.length(); ++i) {
++        if (g_infogetter->m_printerHardwares.at(i).isOnline == false) {
++            continue;
++        }
+         if (g_infogetter->m_printerHardwares.at(i).upgradeable == true) {
+             if (g_infogetter->m_printerHardwares.at(i).driver_now == "") {
+                 m_installabelNum++;
+@@ -481,6 +487,9 @@ void DriverInstallWidget::addGraphicCardContent() {
+ 
+ void DriverInstallWidget::addScannerContent() {
+     for (int i = 0; i < g_infogetter->m_scannerHardwares.length(); ++i) {
++        if (!g_infogetter->m_scannerHardwares.at(i).isOnline) {
++            continue;
++        }
+         if (g_infogetter->m_scannerHardwares.at(i).upgradeable &&
+             g_infogetter->m_scannerHardwares.at(i).driver_now == "") {
+             if (!m_devList.contains(g_infogetter->m_scannerHardwares.at(i).model)) {
+@@ -536,6 +545,9 @@ void DriverInstallWidget::addScannerContent() {
+ 
+ void DriverInstallWidget::addPrinterContent() {
+     for (int i = 0; i < g_infogetter->m_printerHardwares.length(); ++i) {
++        if (!g_infogetter->m_printerHardwares.at(i).isOnline) {
++            continue;
++        }
+         if (g_infogetter->m_printerHardwares.at(i).upgradeable &&
+             g_infogetter->m_printerHardwares.at(i).driver_now == "") {
+             if (!m_devList.contains(g_infogetter->m_printerHardwares.at(i).model)) {
+@@ -1003,52 +1015,58 @@ void DriverInstallWidget::addNewInstallabelItemSlot(HardWareInfo hardWareInfo) {
+         }
+     }
+     //如果该设备USB在线则在可安装中加入该设备，否则无需加入
+-    if(dev_exist_flag){
++    if (dev_exist_flag) {
+         m_installabelNum++;
+         m_notUpdatedNum--;
+         caculateAndSetPageSize();
+-        
++
+         HardWareInfo hwinfo;
+         // 加入可安装列表
+         switch (hardWareInfo.type) {
+             case DeviceType::PRINTER:
+                 for (int i = 0; i < g_infogetter->m_printerHardwares.length(); ++i) {
+-                    if (g_infogetter->m_printerHardwares.at(i).PID == hardWareInfo.PID && g_infogetter->m_printerHardwares.at(i).VID == hardWareInfo.VID){
++                    if (g_infogetter->m_printerHardwares.at(i).PID == hardWareInfo.PID &&
++                        g_infogetter->m_printerHardwares.at(i).VID == hardWareInfo.VID) {
+                         hwinfo = g_infogetter->m_printerHardwares.at(i);
+                     }
+                 }
+                 break;
+             case DeviceType::SCANNER:
+                 for (int i = 0; i < g_infogetter->m_scannerHardwares.length(); ++i) {
+-                    if (g_infogetter->m_scannerHardwares.at(i).PID == hardWareInfo.PID && g_infogetter->m_scannerHardwares.at(i).VID == hardWareInfo.VID){
++                    if (g_infogetter->m_scannerHardwares.at(i).PID == hardWareInfo.PID &&
++                        g_infogetter->m_scannerHardwares.at(i).VID == hardWareInfo.VID) {
+                         hwinfo = g_infogetter->m_scannerHardwares.at(i);
+                     }
+                 }
+                 break;
+             case DeviceType::GraphicCard:
+                 for (int i = 0; i < g_infogetter->m_graphicHardwares.length(); ++i) {
+-                    if (g_infogetter->m_graphicHardwares.at(i).PID == hardWareInfo.PID && g_infogetter->m_graphicHardwares.at(i).VID == hardWareInfo.VID){
++                    if (g_infogetter->m_graphicHardwares.at(i).PID == hardWareInfo.PID &&
++                        g_infogetter->m_graphicHardwares.at(i).VID == hardWareInfo.VID) {
+                         hwinfo = g_infogetter->m_graphicHardwares.at(i);
+                     }
+                 }
+                 break;
+             case DeviceType::InputDev:
+                 for (int i = 0; i < g_infogetter->m_inputHardwares.length(); ++i) {
+-                    if (g_infogetter->m_inputHardwares.at(i).PID == hardWareInfo.PID && g_infogetter->m_inputHardwares.at(i).VID == hardWareInfo.VID){
++                    if (g_infogetter->m_inputHardwares.at(i).PID == hardWareInfo.PID &&
++                        g_infogetter->m_inputHardwares.at(i).VID == hardWareInfo.VID) {
+                         hwinfo = g_infogetter->m_inputHardwares.at(i);
+                     }
+                 }
+                 break;
+             case DeviceType::VideoOrAudio:
+                 for (int i = 0; i < g_infogetter->m_videoHardwares.length(); ++i) {
+-                    if (g_infogetter->m_videoHardwares.at(i).PID == hardWareInfo.PID && g_infogetter->m_videoHardwares.at(i).VID == hardWareInfo.VID){
++                    if (g_infogetter->m_videoHardwares.at(i).PID == hardWareInfo.PID &&
++                        g_infogetter->m_videoHardwares.at(i).VID == hardWareInfo.VID) {
+                         hwinfo = g_infogetter->m_videoHardwares.at(i);
+                     }
+                 }
+                 break;
+             case DeviceType::Other:
+                 for (int i = 0; i < g_infogetter->m_otherHardwares.length(); ++i) {
+-                    if (g_infogetter->m_otherHardwares.at(i).PID == hardWareInfo.PID && g_infogetter->m_otherHardwares.at(i).VID == hardWareInfo.VID){
++                    if (g_infogetter->m_otherHardwares.at(i).PID == hardWareInfo.PID &&
++                        g_infogetter->m_otherHardwares.at(i).VID == hardWareInfo.VID) {
+                         hwinfo = g_infogetter->m_otherHardwares.at(i);
+                     }
+                 }
+@@ -1279,53 +1297,64 @@ void DriverInstallWidget::addItemSlot(QList<HardWareInfo> hwInfo) {
+     if (hwInfo.at(0).upgradeable == true && hwInfo.at(0).driver_now == "") {
+         // 在可安装栏添加
+         m_installabelNum++;
+-        m_devList.append(hwInfo.at(0).model);
+-        m_item = new DeviceItem(hwInfo.at(0));
+-        QListWidgetItem *aItem = new QListWidgetItem(m_installableListWidget);
+-        aItem->setSizeHint(QSize(0, ITEMHEIGET));
+-        m_installableListWidget->addItem(aItem);
+-        m_installableListWidget->setItemWidget(aItem, m_item);
+-        caculateAndSetPageSize();
++        if (!m_devList.contains(hwInfo.at(0).model)) {
++            m_devList.append(hwInfo.at(0).model);
++            m_item = new DeviceItem(hwInfo.at(0));
++            QListWidgetItem *aItem = new QListWidgetItem(m_installableListWidget);
++            aItem->setSizeHint(QSize(0, ITEMHEIGET));
++            m_installableListWidget->addItem(aItem);
++            m_installableListWidget->setItemWidget(aItem, m_item);
++            caculateAndSetPageSize();
++        }
+         return;
+     }
+ 
+     if (hwInfo.at(0).upgradeable == true && hwInfo.at(0).driver_now != "") {
+         // 在可升级栏添加
+         m_updateabelNum++;
+-        m_devList.append(hwInfo.at(0).model);
+-        m_item = new DeviceItem(hwInfo.at(0));
+-        QListWidgetItem *aItem = new QListWidgetItem(m_upgradableListWidget);
+-        aItem->setSizeHint(QSize(0, ITEMHEIGET));
+-        m_upgradableListWidget->addItem(aItem);
+-        m_upgradableListWidget->setItemWidget(aItem, m_item);
+-        caculateAndSetPageSize();
++        if (!m_devList.contains(hwInfo.at(0).model)) {
++            m_devList.append(hwInfo.at(0).model);
++            m_item = new DeviceItem(hwInfo.at(0));
++            QListWidgetItem *aItem = new QListWidgetItem(m_upgradableListWidget);
++            aItem->setSizeHint(QSize(0, ITEMHEIGET));
++            m_upgradableListWidget->addItem(aItem);
++            m_upgradableListWidget->setItemWidget(aItem, m_item);
++            caculateAndSetPageSize();
++        }
+         return;
+     }
+ 
+     if (hwInfo.at(0).upgradeable == false && hwInfo.at(0).driver_now != "") {
+         // 在已安装栏添加
+         m_notUpdatedNum++;
+-        m_devList.append(hwInfo.at(0).model);
+-        m_item = new DeviceItem(hwInfo.at(0));
+-        QListWidgetItem *aItem = new QListWidgetItem(m_notUpdatedListWidget);
+-        aItem->setSizeHint(QSize(0, ITEMHEIGET));
+-        m_notUpdatedListWidget->addItem(aItem);
+-        m_notUpdatedListWidget->setItemWidget(aItem, m_item);
+-        caculateAndSetPageSize();
++        if (!m_devList.contains(hwInfo.at(0).model)) {
++            m_devList.append(hwInfo.at(0).model);
++            m_item = new DeviceItem(hwInfo.at(0));
++            QListWidgetItem *aItem = new QListWidgetItem(m_notUpdatedListWidget);
++            aItem->setSizeHint(QSize(0, ITEMHEIGET));
++            m_notUpdatedListWidget->addItem(aItem);
++            m_notUpdatedListWidget->setItemWidget(aItem, m_item);
++            caculateAndSetPageSize();
++        }
+         return;
+     }
+ 
+     if (hwInfo.at(0).upgradeable == false && hwInfo.at(0).driver_now == "") {
+         // 在无可安装驱动栏添加
+         m_notFindDriverNum++;
+-        m_devList.append(hwInfo.at(0).model);
+-        hwInfo[0].type = DeviceType::Other;
+-        m_item = new DeviceItem(hwInfo.at(0));
+-        QListWidgetItem *aItem = new QListWidgetItem(m_notFindDriverListWidget);
+-        aItem->setSizeHint(QSize(0, ITEMHEIGET));
+-        m_notFindDriverListWidget->addItem(aItem);
+-        m_notFindDriverListWidget->setItemWidget(aItem, m_item);
+-        caculateAndSetPageSize();
++        if (!m_devList.contains(hwInfo.at(0).model)) {
++            m_devList.append(hwInfo.at(0).model);
++            if (hwInfo[0].type != DeviceType::NONE) {
++            } else {
++                hwInfo[0].type = DeviceType::Other;
++            }
++            m_item = new DeviceItem(hwInfo.at(0));
++            QListWidgetItem *aItem = new QListWidgetItem(m_notFindDriverListWidget);
++            aItem->setSizeHint(QSize(0, ITEMHEIGET));
++            m_notFindDriverListWidget->addItem(aItem);
++            m_notFindDriverListWidget->setItemWidget(aItem, m_item);
++            caculateAndSetPageSize();
++        }
+         return;
+     }
+ }
+diff --git a/plugins/driver-controller/src/hardwareinfo/hardwareInfogetter.cpp b/plugins/driver-controller/src/hardwareinfo/hardwareInfogetter.cpp
+index ab74fed..517009b 100644
+--- a/plugins/driver-controller/src/hardwareinfo/hardwareInfogetter.cpp
++++ b/plugins/driver-controller/src/hardwareinfo/hardwareInfogetter.cpp
+@@ -183,6 +183,7 @@ QList<HardWareInfo> HardwareInfoGetter::convertJsonToHardWareList(const QString
+         hardwareInfo.VID = hardwareJson["VID"].toString();
+         hardwareInfo.PID = hardwareJson["PID"].toString();
+         hardwareInfo.upgradeable = hardwareJson["upgradeable"].toBool();
++        hardwareInfo.isOnline = hardwareJson["isOnline"].toBool();
+ 
+         QJsonArray driverArray = hardwareJson["driverNameList"].toArray();
+         QList<DriverInfo> driverList;
+diff --git a/plugins/driver-controller/src/hardwareinfo/hardwareinfo.h b/plugins/driver-controller/src/hardwareinfo/hardwareinfo.h
+index 48a5a92..c489079 100755
+--- a/plugins/driver-controller/src/hardwareinfo/hardwareinfo.h
++++ b/plugins/driver-controller/src/hardwareinfo/hardwareinfo.h
+@@ -42,6 +42,7 @@ public:
+     QString VID{QString()}; // usb vid
+     QString PID{QString()}; // usb pid
+     bool upgradeable = false;
++    bool isOnline = true;
+ };
+ extern QString hardWareInfoPrint(const HardWareInfo&);
+ extern QDebug operator<<(QDebug debug, const HardWareInfo&);
+diff --git a/plugins/driver-controller/src/hardwareinfogetfailwidget.h b/plugins/driver-controller/src/hardwareinfogetfailwidget.h
+index e525462..99a8a92 100644
+--- a/plugins/driver-controller/src/hardwareinfogetfailwidget.h
++++ b/plugins/driver-controller/src/hardwareinfogetfailwidget.h
+@@ -4,7 +4,7 @@
+ #include <QWidget>
+ #include <QLabel>
+ #include <QPixmap>
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ #include <QVBoxLayout>
+ #include <QHBoxLayout>
+ #include <QPushButton>
+diff --git a/plugins/driver-controller/src/hardwareinfogetter.cpp b/plugins/driver-controller/src/hardwareinfogetter.cpp
+index b3ee046..c6b67ab 100644
+--- a/plugins/driver-controller/src/hardwareinfogetter.cpp
++++ b/plugins/driver-controller/src/hardwareinfogetter.cpp
+@@ -4,6 +4,7 @@
+ #include <QJsonArray>
+ 
+ #include "include/globalsignal.h"
++#include "include/common.h"
+ #include "kom-buriedpoint.h"
+ 
+ HardwareInfoGetter *HardwareInfoGetter::instance = new HardwareInfoGetter();
+@@ -291,6 +292,7 @@ QList<HardWareInfo> HardwareInfoGetter::convertJsonToHardWareList(const QString
+         hardwareInfo.VID = hardwareJson["VID"].toString();
+         hardwareInfo.PID = hardwareJson["PID"].toString();
+         hardwareInfo.upgradeable = hardwareJson["upgradeable"].toBool();
++        hardwareInfo.isOnline = hardwareJson["isOnline"].toBool();
+ 
+         QJsonArray driverArray = hardwareJson["driverNameList"].toArray();
+ 
+diff --git a/plugins/driver-controller/src/hardwareinfowidget.cpp b/plugins/driver-controller/src/hardwareinfowidget.cpp
+index eaca042..2eaa569 100644
+--- a/plugins/driver-controller/src/hardwareinfowidget.cpp
++++ b/plugins/driver-controller/src/hardwareinfowidget.cpp
+@@ -1,7 +1,7 @@
+ #include "hardwareinfowidget.h"
+ #include <QDebug>
+ #include <QIcon>
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ #include <QAbstractItemView>
+ 
+ #include "include/common.h"
+diff --git a/plugins/driver-controller/src/hardwareinfowidget.h b/plugins/driver-controller/src/hardwareinfowidget.h
+index 1e1ddcf..43b1c02 100644
+--- a/plugins/driver-controller/src/hardwareinfowidget.h
++++ b/plugins/driver-controller/src/hardwareinfowidget.h
+@@ -8,7 +8,7 @@
+ #include <QTreeWidget>
+ #include <QHeaderView>
+ #include <QStackedWidget>
+-#include <kysdk/applications/kborderlessbutton.h>
++#include <kborderlessbutton.h>
+ 
+ #include "hardwareinfogetter.h"
+ #include "hardwareinfo/pcinfo.h"
+diff --git a/plugins/driver-controller/src/hotplug/hotplugclient.cpp b/plugins/driver-controller/src/hotplug/hotplugclient.cpp
+index 50688c0..03f7adb 100644
+--- a/plugins/driver-controller/src/hotplug/hotplugclient.cpp
++++ b/plugins/driver-controller/src/hotplug/hotplugclient.cpp
+@@ -61,6 +61,7 @@ QList<HardWareInfo> HotplugClient::convertJsonToHardWareList(const QString &json
+         hardwareInfo.VID = hardwareJson["VID"].toString();
+         hardwareInfo.PID = hardwareJson["PID"].toString();
+         hardwareInfo.upgradeable = hardwareJson["upgradeable"].toBool();
++        hardwareInfo.isOnline = hardwareJson["isOnline"].toBool();
+ 
+         QJsonArray driverArray = hardwareJson["driverNameList"].toArray();
+ 
+diff --git a/plugins/driver-controller/src/include/custom_push_button.cpp b/plugins/driver-controller/src/include/custom_push_button.cpp
+deleted file mode 100644
+index 3801dc1..0000000
+--- a/plugins/driver-controller/src/include/custom_push_button.cpp
++++ /dev/null
+@@ -1,69 +0,0 @@
+-#include "custom_push_button.h"
+-#include <QDebug>
+-
+-CustomPushButton::CustomPushButton(QWidget *parent)
+-    : QPushButton(parent)
+-{
+-
+-}
+-
+-CustomPushButton::CustomPushButton(QString &text, QWidget *parent)
+-    : QPushButton(parent), m_fullText(text)
+-{
+-
+-}
+-
+-void CustomPushButton::setText(const QString &text)
+-{
+-    setFullText(text);
+-}
+-
+-void CustomPushButton::setFullText(const QString &text)
+-{
+-    m_fullText = text;
+-    update();
+-}
+-
+-void CustomPushButton::setTextLimitShrink(const QString &text, int width)
+-{
+-    this->setMinimumWidth(qMin(this->fontMetrics().width(text), width));
+-    setFullText(text);
+-}
+-
+-void CustomPushButton::setTextLimitExpand(const QString &text)
+-{
+-    int textWidth = this->fontMetrics().width(text);
+-    this->setMaximumWidth(textWidth);
+-    setFullText(text);
+-}
+-
+-QString CustomPushButton::fullText() const
+-{
+-    return m_fullText;
+-}
+-
+-void CustomPushButton::paintEvent(QPaintEvent *event)
+-{
+-    QPushButton::paintEvent(event);
+-    elideText();
+-}
+-
+-void CustomPushButton::elideText()
+-{
+-    int margin = 32;
+-    QFontMetrics fm = this->fontMetrics();
+-    int dif = fm.width(m_fullText) + margin - this->width() ;
+-    if (dif > 0) {
+-        QString showText = fm.elidedText(m_fullText, Qt::ElideRight, this->width() - margin);
+-        QPushButton::setText(showText);
+-        if (showText != m_fullText) {
+-            QString str = m_fullText;
+-            this->setToolTip(str);
+-        } else {
+-            this->setToolTip("");
+-        }
+-    } else {
+-        QPushButton::setText(m_fullText);
+-        this->setToolTip("");
+-    }
+-}
+diff --git a/plugins/driver-controller/src/include/custom_push_button.h b/plugins/driver-controller/src/include/custom_push_button.h
+deleted file mode 100644
+index 3b1e6ff..0000000
+--- a/plugins/driver-controller/src/include/custom_push_button.h
++++ /dev/null
+@@ -1,27 +0,0 @@
+-#ifndef CUSTOM_PUSH_BUTTON_H
+-#define CUSTOM_PUSH_BUTTON_H
+-
+-#include <kpushbutton.h>
+-#include <QString>
+-
+-class CustomPushButton : public QPushButton
+-{
+-    Q_OBJECT
+-public:
+-    explicit CustomPushButton(QWidget *parent=0);
+-    explicit CustomPushButton(QString &text, QWidget *parent=0);
+-
+-    void setText(const QString &text);
+-    void setFullText(const QString &text);
+-    void setTextLimitShrink(const QString &text, int width);
+-    void setTextLimitExpand(const QString &text);
+-    QString fullText() const;
+-protected:
+-    void paintEvent(QPaintEvent *);
+-
+-private:
+-    void elideText();
+-private:
+-    QString m_fullText;
+-};
+-#endif // CUSTOM_PUSH_BUTTON_H
+diff --git a/plugins/driver-controller/src/include/custompushbutton.cpp b/plugins/driver-controller/src/include/custompushbutton.cpp
+index 7ebfe5a..f9348d3 100644
+--- a/plugins/driver-controller/src/include/custompushbutton.cpp
++++ b/plugins/driver-controller/src/include/custompushbutton.cpp
+@@ -2,13 +2,13 @@
+ #include <QDebug>
+ 
+ CustomPushButton::CustomPushButton(QWidget *parent)
+-    : kdk::KPushButton(parent)
++    : QPushButton(parent)
+ {
+ 
+ }
+ 
+ CustomPushButton::CustomPushButton(QString &text, QWidget *parent)
+-    : kdk::KPushButton(parent), m_fullText(text)
++    : QPushButton(parent), m_fullText(text)
+ {
+ 
+ }
+@@ -44,7 +44,7 @@ QString CustomPushButton::fullText() const
+ 
+ void CustomPushButton::paintEvent(QPaintEvent *event)
+ {
+-    kdk::KPushButton::paintEvent(event);
++    QPushButton::paintEvent(event);
+     elideText();
+ }
+ 
+@@ -55,7 +55,7 @@ void CustomPushButton::elideText()
+     int dif = fm.width(m_fullText) + margin - this->width() ;
+     if (dif > 0) {
+         QString showText = fm.elidedText(m_fullText, Qt::ElideRight, this->width() - margin);
+-        kdk::KPushButton::setText(showText);
++        QPushButton::setText(showText);
+         if (showText != m_fullText) {
+             QString str = m_fullText;
+             this->setToolTip(str);
+@@ -63,7 +63,7 @@ void CustomPushButton::elideText()
+             this->setToolTip("");
+         }
+     } else {
+-        kdk::KPushButton::setText(m_fullText);
++        QPushButton::setText(m_fullText);
+         this->setToolTip("");
+     }
+ }
+diff --git a/plugins/driver-controller/src/include/custompushbutton.h b/plugins/driver-controller/src/include/custompushbutton.h
+index e1d3f0b..d04a561 100644
+--- a/plugins/driver-controller/src/include/custompushbutton.h
++++ b/plugins/driver-controller/src/include/custompushbutton.h
+@@ -4,7 +4,7 @@
+ #include <kpushbutton.h>
+ #include <QString>
+ 
+-class CustomPushButton : public kdk::KPushButton
++class CustomPushButton : public QPushButton
+ {
+     Q_OBJECT
+ public:
+diff --git a/plugins/driver-controller/src/loadingwidget.h b/plugins/driver-controller/src/loadingwidget.h
+index f703052..31257f2 100644
+--- a/plugins/driver-controller/src/loadingwidget.h
++++ b/plugins/driver-controller/src/loadingwidget.h
+@@ -4,7 +4,7 @@
+ #include <QWidget>
+ #include <QLabel>
+ #include <QPixmap>
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ #include <QVBoxLayout>
+ #include <QHBoxLayout>
+ 
+diff --git a/plugins/driver-controller/src/nodriveruninstallpage.cpp b/plugins/driver-controller/src/nodriveruninstallpage.cpp
+index 34adea3..905db3b 100644
+--- a/plugins/driver-controller/src/nodriveruninstallpage.cpp
++++ b/plugins/driver-controller/src/nodriveruninstallpage.cpp
+@@ -1,5 +1,5 @@
+ #include "nodriveruninstallpage.h"
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ #include "include/common.h"
+ 
+ NoDriverUninstallPage::NoDriverUninstallPage(QWidget *parent)
+diff --git a/plugins/driver-controller/src/uninstallitem.cpp b/plugins/driver-controller/src/uninstallitem.cpp
+index 870dc62..8fa4b8f 100644
+--- a/plugins/driver-controller/src/uninstallitem.cpp
++++ b/plugins/driver-controller/src/uninstallitem.cpp
+@@ -2,7 +2,7 @@
+ 
+ #include <QDebug>
+ #include <QVersionNumber>
+-#include <kysdk/applications/gsettingmonitor.h>
++#include <gsettingmonitor.h>
+ 
+ #include "include/common.h"
+ #include "include/globalsignal.h"

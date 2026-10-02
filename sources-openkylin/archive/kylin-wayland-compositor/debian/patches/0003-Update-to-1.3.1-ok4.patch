@@ -1,0 +1,1030 @@
+From: Morose <chenlinxiang@kylinos.cn>
+Date: Tue, 14 Jan 2025 10:28:23 +0800
+Subject: Update to 1.3.1-ok4
+
+---
+ data/meson.build                   |   3 +-
+ data/udev-rules/90-backlight.rules |   4 -
+ include/kywc/output.h              |   1 -
+ include/output.h                   |   2 +
+ include/util/sysfs.h               |  15 ----
+ include/view/view.h                |   2 +
+ meson.build                        |   6 ++
+ meson_options.txt                  |  18 +++-
+ src/effect/magic_lamp.c            | 180 ++++++++++++++++++-------------------
+ src/input/touch.c                  |  15 ++--
+ src/output/brightness.c            | 165 ----------------------------------
+ src/output/gamma.c                 |  14 ++-
+ src/output/meson.build             |   1 -
+ src/output/output.c                |  24 +----
+ src/output/output_p.h              |   8 --
+ src/theme/theme_p.h                |   4 +-
+ src/util/meson.build               |   1 -
+ src/view/interactive.c             |  12 ++-
+ src/view/view_p.h                  |   2 -
+ src/view/window_menu.c             |  31 -------
+ src/xwayland/unmanaged.c           |   6 ++
+ 21 files changed, 155 insertions(+), 359 deletions(-)
+ delete mode 100644 data/udev-rules/90-backlight.rules
+ delete mode 100644 include/util/sysfs.h
+ delete mode 100644 src/output/brightness.c
+
+diff --git a/data/meson.build b/data/meson.build
+index 264d7f0..ec3a233 100644
+--- a/data/meson.build
++++ b/data/meson.build
+@@ -1,6 +1,5 @@
+-udev_backlight = files('udev-rules/90-backlight.rules')
+ udev_framebuffer = files('udev-rules/90-framebuffer.rules')
+-install_data(udev_backlight, udev_framebuffer, install_dir: '/usr/lib/udev/rules.d') 
++install_data(udev_framebuffer, install_dir: '/usr/lib/udev/rules.d')
+ 
+ session = files('kylin-wlcom.desktop')
+ install_data(session, install_dir: '/usr/share/wayland-sessions')
+diff --git a/data/udev-rules/90-backlight.rules b/data/udev-rules/90-backlight.rules
+deleted file mode 100644
+index ab23749..0000000
+--- a/data/udev-rules/90-backlight.rules
++++ /dev/null
+@@ -1,4 +0,0 @@
+-ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chgrp video /sys/class/backlight/%k/brightness"
+-ACTION=="add", SUBSYSTEM=="backlight", RUN+="/bin/chmod o+w /sys/class/backlight/%k/brightness"
+-ACTION=="add", SUBSYSTEM=="leds", RUN+="/bin/chgrp video /sys/class/leds/%k/brightness"
+-ACTION=="add", SUBSYSTEM=="leds", RUN+="/bin/chmod o+w /sys/class/leds/%k/brightness"
+diff --git a/include/kywc/output.h b/include/kywc/output.h
+index cd13683..696d247 100644
+--- a/include/kywc/output.h
++++ b/include/kywc/output.h
+@@ -50,7 +50,6 @@ struct kywc_output_mode {
+ struct kywc_output_prop {
+     bool is_virtual;
+     bool is_fbdev;
+-    bool brightness_support;
+     size_t gamma_size;
+     uint32_t capabilities;
+     int32_t phys_width, phys_height;          // mm
+diff --git a/include/output.h b/include/output.h
+index bd8a5e5..70e3da3 100644
+--- a/include/output.h
++++ b/include/output.h
+@@ -99,6 +99,8 @@ void output_manager_update_scale(float scale);
+ 
+ bool output_set_colortemp(struct kywc_output *kywc_output, uint32_t color_temp);
+ 
++bool output_set_brightness(struct kywc_output *kywc_output, uint32_t brightness);
++
+ void colortemp_get_rgb(float *rgb, uint32_t color_temp);
+ 
+ void output_manager_add_output_pending_state(struct output *output,
+diff --git a/include/util/sysfs.h b/include/util/sysfs.h
+deleted file mode 100644
+index 4cc4850..0000000
+--- a/include/util/sysfs.h
++++ /dev/null
+@@ -1,15 +0,0 @@
+-// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+-//
+-// SPDX-License-Identifier: GPL-1.0-or-later
+-
+-#ifndef _UTIL_SYSFS_H_
+-#define _UTIL_SYSFS_H_
+-
+-#include <stdbool.h>
+-#include <stdint.h>
+-
+-bool sysfs_read_uint64(const char *filename, uint64_t *val);
+-
+-bool sysfs_write_uint64(const char *filename, uint64_t val);
+-
+-#endif /* _UTIL_SYSFS_H_ */
+diff --git a/include/view/view.h b/include/view/view.h
+index 7c3735e..cb87886 100644
+--- a/include/view/view.h
++++ b/include/view/view.h
+@@ -293,4 +293,6 @@ void view_raise_to_top(struct view *view, bool find_parent);
+ 
+ void view_set_focus(struct view *view, struct seat *seat);
+ 
++void view_activate_topmost(void);
++
+ #endif /* _VIEW_H_ */
+diff --git a/meson.build b/meson.build
+index 17c02f0..275b199 100644
+--- a/meson.build
++++ b/meson.build
+@@ -131,6 +131,8 @@ have_ukui_window_management = get_option('ukui_window_management')
+ have_ukui_output = get_option('ukui_output')
+ have_ukui_blur = get_option('ukui_blur')
+ have_ukui_view_mode = get_option('ukui_view_mode')
++extra_icon_path = get_option('extra_icon_path')
++extra_apps_path = get_option('extra_apps_path')
+ 
+ add_project_arguments([
+   '-DHAVE_LIBUNWIND=@0@'.format(unwind.found().to_int()),
+@@ -156,6 +158,8 @@ add_project_arguments([
+   '-DHAVE_UKUI_OUTPUT=@0@'.format(have_ukui_output.to_int()),
+   '-DHAVE_UKUI_BLUR=@0@'.format(have_ukui_blur.to_int()),
+   '-DHAVE_UKUI_VIEW_MODE=@0@'.format(have_ukui_view_mode.to_int()),
++  '-DEXTRA_ICON_PATH="@0@"'.format(extra_icon_path),
++  '-DEXTRA_APPS_PATH="@0@"'.format(extra_apps_path),
+ ], language: 'c')
+ 
+ msgfmt = find_program('msgfmt', required: get_option('nls'))
+@@ -218,6 +222,8 @@ summary({
+   'ukui_output': have_ukui_output,
+   'ukui_blur': have_ukui_blur,
+   'ukui_view_mode': have_ukui_view_mode,
++  'extra_icon_path': extra_icon_path,
++  'extra_apps_path': extra_apps_path,
+   },
+   section: 'Configuration', bool_yn: true)
+ 
+diff --git a/meson_options.txt b/meson_options.txt
+index 3eb67ad..c995342 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -150,14 +150,28 @@ option('ukui_output',
+ 
+ option('ukui_blur',
+        type: 'boolean',
+-       value: true, description: 'Enable ukui blur protocol support')
++       value: true,
++       description: 'Enable ukui blur protocol support'
++)
+ 
+ option('tracy',
+        type: 'boolean',
+-       value: false, description: 'Enable tracy profiler')
++       value: false,
++       description: 'Enable tracy profiler'
++)
+ 
+ option('ukui_view_mode',
+        type: 'boolean',
+        value: true,
+        description: 'Enable ukui view mode dbus support'
+ )
++
++option('extra_icon_path',
++       type: 'string',
++       description: 'Add extra icon path'
++)
++
++option('extra_apps_path',
++       type: 'string',
++       description: 'Add extra apps path'
++)
+diff --git a/src/effect/magic_lamp.c b/src/effect/magic_lamp.c
+index 2974324..fde072b 100644
+--- a/src/effect/magic_lamp.c
++++ b/src/effect/magic_lamp.c
+@@ -59,6 +59,11 @@ static struct magic_lamp_gl_shader {
+ struct magic_lamp_entry {
+     struct effect_entity *effect_entity;
+     struct view *window_view;
++    // mesh
++    uint32_t subquads_size;
++    quad *subquads;
++    uint32_t vertices_size;
++    struct vertex *vertices;
+     // animate
+     bool reversed;
+     enum spout_location spout_location;
+@@ -83,6 +88,7 @@ struct magic_lamp_effect {
+     struct animation *animation;
+     uint32_t animate_duration;
+     uint32_t subdiv_count;
++    uint32_t subdiv_count2;
+ };
+ 
+ static struct magic_lamp_effect *magic_lamp_effect = NULL;
+@@ -92,10 +98,8 @@ static inline float lerp(float a, float b, float t)
+     return (1.f - t) * a + t * b;
+ }
+ 
+-static quad *subdivide_quad(quad quad0, uint32_t x, uint32_t y)
++static void subdivide_quad(quad quad0, uint32_t x, uint32_t y, quad *quads)
+ {
+-    quad *quads = malloc(x * y * sizeof(struct vertex) * 4);
+-
+     float step_x = 1.f / x;
+     float step_y = 1.f / y;
+     for (uint32_t i = 0; i < x; i++) {
+@@ -137,12 +141,10 @@ static quad *subdivide_quad(quad quad0, uint32_t x, uint32_t y)
+             (*sub_quad)[2].y = lerp(top2y, bottom2y, v2);
+         }
+     }
+-
+-    return quads;
+ }
+ 
+ // https://invent.kde.org/plasma/kwin/-/blob/Plasma/5.27/src/effects/magiclamp/magiclamp.cpp#L206
+-static void calculate_progress(quad *subquads, uint32_t subdiv_count, float progress,
++static void calculate_progress(quad *subquads, uint32_t subquads_size, float progress,
+                                enum spout_location spout_location, float spout_x, float spout_y,
+                                float spout_width, float spout_height, float window_x,
+                                float window_y, float window_width, float window_height)
+@@ -164,7 +166,7 @@ static void calculate_progress(quad *subquads, uint32_t subdiv_count, float prog
+         const float height_cube = window_height * window_height * window_height;
+         const float min_y = spout_y + spout_height;
+ 
+-        for (uint32_t i = 0; i < subdiv_count; i++) {
++        for (uint32_t i = 0; i < subquads_size; i++) {
+             quad *subquad = &subquads[i];
+             if ((*subquad)[0].y != last_quad[0].y || (*subquad)[2].y != last_quad[2].y) {
+                 factor = window_height - (*subquad)[0].y + (*subquad)[0].y * progress;
+@@ -212,7 +214,7 @@ static void calculate_progress(quad *subquads, uint32_t subdiv_count, float prog
+         const float height_cube = window_height * window_height * window_height;
+         const float max_y = spout_y;
+ 
+-        for (uint32_t i = 0; i < subdiv_count; i++) {
++        for (uint32_t i = 0; i < subquads_size; i++) {
+             quad *subquad = &subquads[i];
+             if ((*subquad)[0].y != last_quad[0].y || (*subquad)[2].y != last_quad[2].y) {
+                 factor = (*subquad)[0].y + (window_height - (*subquad)[0].y) * progress;
+@@ -253,7 +255,7 @@ static void calculate_progress(quad *subquads, uint32_t subdiv_count, float prog
+         const float width_cube = window_width * window_width * window_width;
+         const float min_x = spout_x + spout_width;
+ 
+-        for (uint32_t i = 0; i < subdiv_count; i++) {
++        for (uint32_t i = 0; i < subquads_size; i++) {
+             quad *subquad = &subquads[i];
+             if ((*subquad)[0].x != last_quad[0].x || (*subquad)[1].x != last_quad[1].x) {
+                 factor = window_width - (*subquad)[0].x + (*subquad)[0].x * progress;
+@@ -301,7 +303,7 @@ static void calculate_progress(quad *subquads, uint32_t subdiv_count, float prog
+         const float width_cube = window_width * window_width * window_width;
+         const float max_x = spout_x;
+ 
+-        for (uint32_t i = 0; i < subdiv_count; i++) {
++        for (uint32_t i = 0; i < subquads_size; i++) {
+             quad *subquad = &subquads[i];
+             if ((*subquad)[0].x != last_quad[0].x || (*subquad)[1].x != last_quad[1].x) {
+                 factor = (*subquad)[0].x + (window_width - (*subquad)[0].x) * progress;
+@@ -340,15 +342,14 @@ static void calculate_progress(quad *subquads, uint32_t subdiv_count, float prog
+     }
+ }
+ 
+-static void compute_boundbox(struct magic_lamp_entry *entry, quad *subquads, uint32_t subdiv_count,
+-                             struct ky_scene_render_target *target)
++static void compute_boundbox(struct magic_lamp_entry *entry, struct ky_scene_output *output)
+ {
+     float min_x = FLT_MAX;
+     float min_y = FLT_MAX;
+     float max_x = FLT_MIN;
+     float max_y = FLT_MIN;
+-    for (uint32_t i = 0; i < subdiv_count; i++) {
+-        quad *subquad = &subquads[i];
++    for (uint32_t i = 0; i < entry->subquads_size; i++) {
++        quad *subquad = &entry->subquads[i];
+         for (uint32_t j = 0; j < 4; j++) {
+             min_x = MIN(min_x, (*subquad)[j].x);
+             min_y = MIN(min_y, (*subquad)[j].y);
+@@ -364,8 +365,8 @@ static void compute_boundbox(struct magic_lamp_entry *entry, quad *subquads, uin
+     entry->bbox.height = MAX(1, ceilf(max_y) - entry->bbox.y);
+ 
+     // use logic coordinates for damage
+-    entry->bbox.x += target->output->x;
+-    entry->bbox.y += target->output->y;
++    entry->bbox.x += output->x;
++    entry->bbox.y += output->y;
+ }
+ 
+ static void create_opengl_shader(struct wlr_renderer *renderer)
+@@ -436,6 +437,8 @@ static void entity_destroy(struct effect_entity *entity)
+         wl_list_remove(&entry->thumbnail_destroy.link);
+         thumbnail_destroy(entry->thumbnail);
+     }
++    free(entry->vertices);
++    free(entry->subquads);
+ 
+     free(entry);
+ }
+@@ -474,7 +477,7 @@ static bool node_push_damage(struct effect_entity *entity, struct ky_scene_node
+     return false;
+ }
+ 
+-static bool frame_render_begin(struct effect_entity *entity, struct ky_scene_render_target *target)
++static bool frame_render_pre(struct effect_entity *entity, struct ky_scene_output *scene_output)
+ {
+     struct magic_lamp_entry *entry = entity->user_data;
+     if (!entry) {
+@@ -485,111 +488,102 @@ static bool frame_render_begin(struct effect_entity *entity, struct ky_scene_ren
+     uint32_t diff_time = current_time_msec() - entry->start_time;
+     if (diff_time > magic_lamp_effect->animate_duration) {
+         effect_entity_destroy(entry->effect_entity);
+-    } else {
+-        float percent = diff_time / (float)magic_lamp_effect->animate_duration;
+-        entry->progress = animation_value(magic_lamp_effect->animation, percent);
+-        if (entry->reversed) {
+-            entry->progress = 1.f - entry->progress;
+-        }
+-    }
+-
+-    return true;
+-}
+-
+-static bool node_render(struct effect_entity *entity, int lx, int ly,
+-                        struct ky_scene_render_target *target)
+-{
+-    struct magic_lamp_entry *entry = entity->user_data;
+-    if (!entry) {
+         return true;
+     }
+-
+-    if (!entry->thumbnail_texture && !wlr_texture_is_opengl(entry->thumbnail_texture)) {
+-        return true;
++    float percent = diff_time / (float)magic_lamp_effect->animate_duration;
++    entry->progress = animation_value(magic_lamp_effect->animation, percent);
++    if (entry->reversed) {
++        entry->progress = 1.f - entry->progress;
+     }
+ 
+-    // In the case of extending the secondary screen
+-    // the x-coordinate value is too large causing spout positional deviation
+-    // the current output of the view use local coordinates
+-    float spout_x = entry->spout_x - target->output->x;
+-    float spout_y = entry->spout_y - target->output->y;
+-    float window_x = entry->window_x - target->output->x;
+-    float window_y = entry->window_y - target->output->y;
++    /**
++     * In the case of extending the secondary screen
++     * the x-coordinate value is too large causing spout positional deviation
++     * the current output of the view use local coordinates
++     */
++    float spout_x = entry->spout_x - scene_output->x;
++    float spout_y = entry->spout_y - scene_output->y;
++    float window_x = entry->window_x - scene_output->x;
++    float window_y = entry->window_y - scene_output->y;
+ 
+     // subdivide window quad
+     uint32_t subdiv_count = magic_lamp_effect->subdiv_count;
++    uint32_t subdiv_count2 = magic_lamp_effect->subdiv_count2;
+     quad window_quad = { { window_x, window_y, 0.0f, 0.0f },
+                          { window_x + entry->window_width, window_y, 1.0f, 0.0f },
+                          { window_x + entry->window_width, window_y + entry->window_height, 1.0f,
+                            1.0f },
+                          { window_x, window_y + entry->window_height, 0.0f, 1.0f } };
+-    quad *subquads = NULL;
+     switch (entry->spout_location) {
+     case SPOUT_LOCATION_BOTTOM:
+     case SPOUT_LOCATION_TOP:
+-        subquads = subdivide_quad(window_quad, 1, subdiv_count);
++        subdivide_quad(window_quad, subdiv_count2, subdiv_count, entry->subquads);
+         break;
+     case SPOUT_LOCATION_LEFT:
+     case SPOUT_LOCATION_RIGHT:
+-        subquads = subdivide_quad(window_quad, subdiv_count, 1);
++        subdivide_quad(window_quad, subdiv_count, subdiv_count2, entry->subquads);
+         break;
+     }
+ 
+     // correct x position when x too large
+     if (entry->spout_location == SPOUT_LOCATION_TOP ||
+         entry->spout_location == SPOUT_LOCATION_BOTTOM) {
+-        spout_x += (spout_x - (window_x + entry->window_width * 0.5f)) * 0.04f;
++        float x = spout_x - (window_x + entry->window_width * 0.5f);
++        x = x * 10.f / entry->window_width;
++        float value = -0.00063 * x * x * x + 0.05373 * x * x - 1.44803 * x + 7.61226;
++        spout_x -= value;
+     }
+ 
+     // calculate progress. modify quad vertex
+-    calculate_progress(subquads, subdiv_count, entry->progress, entry->spout_location, spout_x,
+-                       spout_y, entry->spout_width, entry->spout_height, window_x, window_y,
+-                       entry->window_width, entry->window_height);
++    calculate_progress(entry->subquads, entry->subquads_size, entry->progress,
++                       entry->spout_location, spout_x, spout_y, entry->spout_width,
++                       entry->spout_height, window_x, window_y, entry->window_width,
++                       entry->window_height);
+ 
+     // compute boundbox for damage region
+-    compute_boundbox(entry, subquads, subdiv_count, target);
++    compute_boundbox(entry, scene_output);
++
++    // triangulate
++    uint32_t vtx_count = 0;
++    for (uint32_t i = 0; i < entry->subquads_size; i++) {
++        quad *subquad = &entry->subquads[i];
++        entry->vertices[vtx_count++] = (*subquad)[0];
++        entry->vertices[vtx_count++] = (*subquad)[2];
++        entry->vertices[vtx_count++] = (*subquad)[1];
++        entry->vertices[vtx_count++] = (*subquad)[0];
++        entry->vertices[vtx_count++] = (*subquad)[3];
++        entry->vertices[vtx_count++] = (*subquad)[2];
++    }
+ 
+-    // subquads grid to triangle strip
+-    const uint32_t vertices_count = subdiv_count * 4;
+-    struct vertex vertices[vertices_count];
+-    switch (entry->spout_location) {
+-    case SPOUT_LOCATION_BOTTOM:
+-    case SPOUT_LOCATION_TOP:
+-        for (uint32_t i = 0; i < subdiv_count; i++) {
+-            quad *subquad = &subquads[i];
+-            vertices[i * 4 + 0] = (*subquad)[0];
+-            vertices[i * 4 + 1] = (*subquad)[3];
+-            vertices[i * 4 + 2] = (*subquad)[1];
+-            vertices[i * 4 + 3] = (*subquad)[2];
+-        }
+-        break;
+-    case SPOUT_LOCATION_LEFT:
+-    case SPOUT_LOCATION_RIGHT:
+-        for (uint32_t i = 0; i < subdiv_count; i++) {
+-            quad *subquad = &subquads[i];
+-            vertices[i * 4 + 0] = (*subquad)[0];
+-            vertices[i * 4 + 1] = (*subquad)[1];
+-            vertices[i * 4 + 2] = (*subquad)[3];
+-            vertices[i * 4 + 3] = (*subquad)[2];
+-        }
+-        break;
++    effect_entity_push_damage(entity, KY_SCENE_DAMAGE_BOTH);
++    return true;
++}
++
++static bool node_render(struct effect_entity *entity, int lx, int ly,
++                        struct ky_scene_render_target *target)
++{
++    struct magic_lamp_entry *entry = entity->user_data;
++    if (!entry) {
++        return true;
++    }
++
++    if (!entry->thumbnail_texture && !wlr_texture_is_opengl(entry->thumbnail_texture)) {
++        return true;
+     }
+-    free(subquads);
+ 
+-    // render
+     struct ky_mat3 logic2ndc;
+     ky_mat3_logic_to_ndc(&logic2ndc, target->logical.width, target->logical.height,
+                          target->transform);
+ 
+     struct ky_opengl_texture *ky_tex = ky_opengl_texture_from_wlr_texture(entry->thumbnail_texture);
+ 
++    GLfloat *verts = (GLfloat *)entry->vertices;
+     glUseProgram(gl_shader.program);
+     glEnableVertexAttribArray(gl_shader.in_position);
+-    glVertexAttribPointer(gl_shader.in_position, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+-                          vertices);
++    glVertexAttribPointer(gl_shader.in_position, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), verts);
+     glEnableVertexAttribArray(gl_shader.in_texcoord);
+     glVertexAttribPointer(gl_shader.in_texcoord, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+-                          (char *)vertices + 2 * sizeof(float));
++                          verts + 2);
+     glUniformMatrix3fv(gl_shader.logic2ndc, 1, GL_FALSE, logic2ndc.matrix);
+     glActiveTexture(GL_TEXTURE0);
+     glBindTexture(GL_TEXTURE_2D, ky_tex->tex);
+@@ -597,7 +591,7 @@ static bool node_render(struct effect_entity *entity, int lx, int ly,
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+-    glDrawArrays(GL_TRIANGLE_STRIP, 0, vertices_count);
++    glDrawArrays(GL_TRIANGLES, 0, entry->vertices_size);
+ 
+     glUseProgram(0);
+     glDisableVertexAttribArray(gl_shader.in_position);
+@@ -609,19 +603,7 @@ static bool node_render(struct effect_entity *entity, int lx, int ly,
+ 
+ static bool frame_render_post(struct effect_entity *entity, struct ky_scene_render_target *target)
+ {
+-    // add damage to trigger render event
+-    struct magic_lamp_entry *entry = entity->user_data;
+-    if (!entry) {
+-        return true;
+-    }
+-
+-    pixman_region32_t region;
+-    pixman_region32_init_rect(&region, entry->bbox.x, entry->bbox.y, entry->bbox.width,
+-                              entry->bbox.height);
+-    struct ky_scene *scene = magic_lamp_effect->manager->server->scene;
+-    ky_scene_add_damage(scene, &region);
+-    pixman_region32_fini(&region);
+-
++    effect_entity_push_damage(entity, KY_SCENE_DAMAGE_BOTH);
+     return true;
+ }
+ 
+@@ -639,7 +621,7 @@ static const struct effect_interface effect_impl = {
+     .entity_bounding_box = entity_bounding_box,
+     .node_push_damage = node_push_damage,
+     .node_render = node_render,
+-    .frame_render_begin = frame_render_begin,
++    .frame_render_pre = frame_render_pre,
+     .frame_render_post = frame_render_post,
+     .configure = handle_effect_configure,
+ };
+@@ -669,6 +651,7 @@ bool magic_lamp_effect_create(struct effect_manager *manager)
+     magic_lamp_effect->animation = animation_manager_get(ANIMATION_TYPE_LINER);
+     magic_lamp_effect->animate_duration = 250;
+     magic_lamp_effect->subdiv_count = 40;
++    magic_lamp_effect->subdiv_count2 = 10;
+ 
+     return true;
+ }
+@@ -724,6 +707,13 @@ bool view_add_magic_lamp_effect(struct view *view)
+     entity->user_data = entry;
+     entry->effect_entity = entity;
+     entry->window_view = view;
++
++    // alloc buffer
++    entry->subquads_size = magic_lamp_effect->subdiv_count * magic_lamp_effect->subdiv_count2;
++    entry->subquads = malloc(entry->subquads_size * sizeof(quad));
++    entry->vertices_size = entry->subquads_size * 6;
++    entry->vertices = malloc(entry->vertices_size * sizeof(struct vertex));
++
+     wl_list_init(&entry->thumbnail_update.link);
+     wl_list_init(&entry->thumbnail_destroy.link);
+ 
+diff --git a/src/input/touch.c b/src/input/touch.c
+index 15e2483..66963c2 100644
+--- a/src/input/touch.c
++++ b/src/input/touch.c
+@@ -680,11 +680,16 @@ void touch_handle_motion(struct wlr_touch_motion_event *event, bool handle)
+ 
+     /* if motion out of point->surface */
+     if (surface != point->surface) {
+-        int lx, ly;
+-        struct ky_scene_buffer *scene_buffer = ky_scene_buffer_try_from_surface(point->surface);
+-        ky_scene_node_coords(&scene_buffer->node, &lx, &ly);
+-        sx = seat->cursor->lx - lx;
+-        sy = seat->cursor->ly - ly;
++        if (!selection_is_dragging(seat)) {
++            int lx, ly;
++            struct ky_scene_buffer *scene_buffer = ky_scene_buffer_try_from_surface(point->surface);
++            ky_scene_node_coords(&scene_buffer->node, &lx, &ly);
++            sx = seat->cursor->lx - lx;
++            sy = seat->cursor->ly - ly;
++        } else if (surface) {
++            wlr_seat_touch_point_focus(seat->wlr_seat, surface, event->time_msec, event->touch_id,
++                                       sx, sy);
++        }
+     }
+ 
+     if (xwayland_check_client(wl_resource_get_client(point->surface->resource))) {
+diff --git a/src/output/brightness.c b/src/output/brightness.c
+deleted file mode 100644
+index 38a0e62..0000000
+--- a/src/output/brightness.c
++++ /dev/null
+@@ -1,165 +0,0 @@
+-// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+-//
+-// SPDX-License-Identifier: GPL-1.0-or-later
+-
+-#define _POSIX_C_SOURCE 200809L
+-#include <dirent.h>
+-#include <stdio.h>
+-#include <stdlib.h>
+-#include <sys/stat.h>
+-
+-#include <kywc/log.h>
+-
+-#include "output_p.h"
+-#include "util/sysfs.h"
+-
+-#define MAX_NAME 512
+-#define BRIGHTNESS_CLAMP(val) ((val) > 100 ? 100 : (val))
+-
+-bool output_support_brightness(struct output *output)
+-{
+-    if (!strncmp(output->base.name, "LVDS", 4) || !strncmp(output->base.name, "eDP", 3)) {
+-        return true;
+-    }
+-
+-    return false;
+-}
+-
+-static bool get_backlight_path(const char *path, char **path_name)
+-{
+-    bool ret = false;
+-
+-    struct stat stat_buf;
+-    lstat(path, &stat_buf);
+-    if (!S_ISDIR(stat_buf.st_mode)) {
+-        return false;
+-    }
+-    DIR *dir;
+-    if ((dir = opendir(path)) == NULL) {
+-        kywc_log(KYWC_ERROR, "Can't open %s", path);
+-        return false;
+-    }
+-
+-    struct dirent *dirp;
+-    while ((dirp = readdir(dir)) != NULL) {
+-        if (strcmp(".", dirp->d_name) == 0 || strcmp("..", dirp->d_name) == 0) {
+-            continue;
+-        }
+-
+-        char fpath[MAX_NAME] = { 0x00 };
+-        sprintf(fpath, "%s/%s", path, dirp->d_name);
+-
+-        struct stat stat_buf;
+-        lstat(fpath, &stat_buf);
+-        if (!S_ISREG(stat_buf.st_mode)) {
+-            ret = true;
+-            *path_name = strdup(fpath);
+-            break;
+-        }
+-    }
+-    closedir(dir);
+-
+-    return ret;
+-}
+-
+-static bool get_backlight_info(char **ddir, uint64_t *cur_brightness, uint64_t *max_brightness)
+-{
+-    char *dir = NULL;
+-    bool dret = get_backlight_path("/sys/class/backlight", &dir);
+-    if (!dret || !dir) {
+-        return false;
+-    }
+-
+-    *ddir = dir;
+-    char file_name[MAX_NAME] = { 0x00 };
+-
+-    // TODO: fix multiple outputs support brightness match dev name
+-    sprintf(file_name, "%s/brightness", dir);
+-
+-    bool ret = sysfs_read_uint64(file_name, cur_brightness);
+-    if (!ret) {
+-        return false;
+-    }
+-
+-    memset(file_name, 0, MAX_NAME);
+-    sprintf(file_name, "%s/max_brightness", dir);
+-
+-    return sysfs_read_uint64(file_name, max_brightness);
+-
+-    return false;
+-}
+-
+-bool output_set_backlight(uint32_t value)
+-{
+-    char *ddir = NULL;
+-    uint64_t cur_brightness = 0;
+-    uint64_t max_brightness = 0;
+-    bool ret = get_backlight_info(&ddir, &cur_brightness, &max_brightness);
+-    if (!ret) {
+-        kywc_log(KYWC_ERROR, "cannot get the sysfs information");
+-        return false;
+-    }
+-
+-    char file_name[MAX_NAME] = { 0x00 };
+-    // TODO: fix multiple outputs support brightness match dev name
+-    sprintf(file_name, "%s/brightness", ddir);
+-
+-    double temp = (double)max_brightness * (double)value / 100.0;
+-    uint64_t brightness = temp;
+-    if (brightness + 1 <= temp + 0.5) {
+-        brightness += 1;
+-    }
+-
+-    ret = sysfs_write_uint64(file_name, brightness);
+-    if (ddir) {
+-        free(ddir);
+-    }
+-
+-    kywc_log(KYWC_DEBUG, "%s-set: %lu", file_name, brightness);
+-
+-    return ret;
+-}
+-
+-static bool brightness_get(uint32_t *brightness)
+-{
+-    char *ddir = NULL;
+-    uint64_t cur_brightness = 0;
+-    uint64_t max_brightness = 0;
+-
+-    bool ret = get_backlight_info(&ddir, &cur_brightness, &max_brightness);
+-    if (!ret) {
+-        kywc_log(KYWC_ERROR, "cannot get the sysfs information");
+-        if (ddir) {
+-            free(ddir);
+-        }
+-        return false;
+-    }
+-
+-    *brightness = (cur_brightness * 100) / max_brightness;
+-    kywc_log(KYWC_DEBUG, "%s-get: %u", ddir, *brightness);
+-
+-    free(ddir);
+-
+-    return true;
+-}
+-
+-bool output_get_backlight(struct kywc_output *kywc_output, uint32_t *brightness)
+-{
+-    if (!kywc_output->prop.brightness_support) {
+-        return false;
+-    }
+-
+-    return brightness_get(brightness);
+-}
+-
+-bool output_set_brightness(struct kywc_output *kywc_output, uint32_t brightness)
+-{
+-    if (!kywc_output->state.enabled) {
+-        return false;
+-    }
+-
+-    struct kywc_output_state state = kywc_output->state;
+-    state.brightness = BRIGHTNESS_CLAMP(brightness);
+-    kywc_output_set_state(kywc_output, &state);
+-    return true;
+-}
+diff --git a/src/output/gamma.c b/src/output/gamma.c
+index 495c11b..046125a 100644
+--- a/src/output/gamma.c
++++ b/src/output/gamma.c
+@@ -10,6 +10,7 @@
+ #include "output_p.h"
+ 
+ #define COLORTEMP_CLAMP(val) ((val) < 1000 ? 1000 : ((val) > 25000 ? 25000 : (val)))
++#define BRIGHTNESS_CLAMP(val) ((val) > 100 ? 100 : (val))
+ 
+ /**
+  * From Redshift project:
+@@ -332,13 +333,20 @@ bool output_set_colortemp(struct kywc_output *kywc_output, uint32_t color_temp)
+         return false;
+     }
+ 
+-    if (kywc_output->prop.gamma_size <= 1) {
+-        kywc_log(KYWC_DEBUG, "Could not get gamma ramp size for CRTC on graphics card");
++    struct kywc_output_state state = kywc_output->state;
++    state.color_temp = COLORTEMP_CLAMP(color_temp);
++    kywc_output_set_state(kywc_output, &state);
++    return true;
++}
++
++bool output_set_brightness(struct kywc_output *kywc_output, uint32_t brightness)
++{
++    if (!kywc_output->state.enabled) {
+         return false;
+     }
+ 
+     struct kywc_output_state state = kywc_output->state;
+-    state.color_temp = COLORTEMP_CLAMP(color_temp);
++    state.brightness = BRIGHTNESS_CLAMP(brightness);
+     kywc_output_set_state(kywc_output, &state);
+     return true;
+ }
+diff --git a/src/output/meson.build b/src/output/meson.build
+index 3aea7e2..db28550 100644
+--- a/src/output/meson.build
++++ b/src/output/meson.build
+@@ -1,5 +1,4 @@
+ wlcom_sources += files(
+-  'brightness.c',
+   'gamma.c',
+   'config.c',
+   'layout.c',
+diff --git a/src/output/output.c b/src/output/output.c
+index 9790ecd..d6f9313 100644
+--- a/src/output/output.c
++++ b/src/output/output.c
+@@ -203,7 +203,6 @@ static void output_get_prop(struct output *output, struct kywc_output_prop *prop
+     prop->desc = wlr_output->description;
+     prop->is_virtual = wlr_output_is_headless(wlr_output);
+     prop->is_fbdev = wlr_output_is_fbdev(wlr_output);
+-    prop->brightness_support = output_support_brightness(output);
+     prop->gamma_size = wlr_output_get_gamma_size(wlr_output);
+ 
+     prop->capabilities = KYWC_OUTPUT_CAPABILITY_POWER;
+@@ -253,10 +252,7 @@ static void output_get_state(struct output *output, struct kywc_output_state *st
+         state->lx = state->ly = -1;
+     }
+ 
+-    struct kywc_output *kywc_output = &output->base;
+-    if (!output_get_backlight(kywc_output, &state->brightness)) {
+-        state->brightness = output->brightness;
+-    }
++    state->brightness = output->brightness;
+     state->color_temp = output->color_temp;
+     state->vrr_policy = output->vrr_policy;
+ }
+@@ -1162,8 +1158,7 @@ static bool output_gamma_changed(struct output *output, const struct kywc_output
+ {
+     struct kywc_output_state *current_state = &output->base.state;
+     return current_state->color_temp != state->color_temp ||
+-           (!output->base.prop.brightness_support &&
+-            current_state->brightness != state->brightness);
++           current_state->brightness != state->brightness;
+ }
+ 
+ static bool output_compare_state(struct output *output, const struct kywc_output_state *state)
+@@ -1195,8 +1190,7 @@ bool output_state_attempt_gamma(struct output *output, struct wlr_output_state *
+         return false;
+     }
+ 
+-    uint32_t brightness =
+-        output->base.prop.brightness_support ? 100 : output->base.state.brightness;
++    uint32_t brightness = output->base.state.brightness;
+     uint32_t color_temp = output->base.state.color_temp;
+ 
+     output_set_gamma_lut(output->wlr_output, output->base.prop.gamma_size, state, color_temp,
+@@ -1285,9 +1279,7 @@ static bool output_set_state(struct output *output, struct kywc_output_state *st
+     output->base.prop.gamma_size = wlr_output_get_gamma_size(wlr_output);
+     /* gamma settings for brightness and color temperature */
+     output->color_temp = state->color_temp;
+-    if (!output->base.prop.brightness_support) {
+-        output->brightness = state->brightness;
+-    }
++    output->brightness = state->brightness;
+ 
+     output->vrr_policy = state->vrr_policy;
+ 
+@@ -1303,14 +1295,6 @@ static bool output_set_state(struct output *output, struct kywc_output_state *st
+         }
+     }
+ 
+-    /* set brightness of backlight */
+-    uint32_t brightness;
+-    if (enabled && output_get_backlight(&output->base, &brightness)) {
+-        if (brightness != state->brightness) {
+-            output_set_backlight(state->brightness);
+-        }
+-    }
+-
+     /* if output disabled, skip output_layout_add */
+     if (!state->enabled) {
+         ky_scene_output_destroy(output->scene_output);
+diff --git a/src/output/output_p.h b/src/output/output_p.h
+index 86ced8b..2a02add 100644
+--- a/src/output/output_p.h
++++ b/src/output/output_p.h
+@@ -50,14 +50,6 @@ bool output_read_config(struct output *output, struct kywc_output_state *state);
+ 
+ void output_write_config(struct output *output);
+ 
+-bool output_support_brightness(struct output *output);
+-
+-bool output_set_backlight(uint32_t value);
+-
+-bool output_get_backlight(struct kywc_output *kywc_output, uint32_t *brightness);
+-
+-bool output_set_brightness(struct kywc_output *kywc_output, uint32_t brightness);
+-
+ struct wlr_output_state;
+ void output_set_gamma_lut(struct wlr_output *wlr_output, size_t gamma_size,
+                           struct wlr_output_state *wlr_state, uint32_t color_temp,
+diff --git a/src/theme/theme_p.h b/src/theme/theme_p.h
+index 052667a..5f7ca73 100644
+--- a/src/theme/theme_p.h
++++ b/src/theme/theme_p.h
+@@ -7,10 +7,10 @@
+ 
+ #include "theme.h"
+ 
+-#define ICONPATH "~/.icons:~/.local/share/icons:/usr/share/icons"
++#define ICONPATH "~/.icons:~/.local/share/icons:/usr/share/icons:" EXTRA_ICON_PATH
+ #define APPPATH                                                                                    \
+     "~/.local/share/applications:/usr/local/share/applications:/usr/share/applications:/etc/xdg/"  \
+-    "autostart"
++    "autostart:" EXTRA_APPS_PATH
+ #define PIXMAPPATH "/usr/share/pixmaps"
+ 
+ #define DEFAULT_ICON_THEME_NAME "hicolor"
+diff --git a/src/util/meson.build b/src/util/meson.build
+index 57d5d78..37e75fa 100644
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -15,7 +15,6 @@ wlcom_sources += files(
+   'quirks.c',
+   'region.c',
+   'spawn.c',
+-  'sysfs.c',
+   'time.c',
+   'wayland.c',
+ )
+diff --git a/src/view/interactive.c b/src/view/interactive.c
+index e820d2d..5ff0bd6 100644
+--- a/src/view/interactive.c
++++ b/src/view/interactive.c
+@@ -535,12 +535,17 @@ void window_move_constraints(struct kywc_view *kywc_view, struct output *output,
+     }
+ }
+ 
+-static void interactive_process_move(struct interactive_grab *grab, double x, double y)
++static bool interactive_process_move(struct interactive_grab *grab, double x, double y)
+ {
+     struct kywc_view *kywc_view = &grab->view->base;
+     struct kywc_box *geometry = &kywc_view->geometry;
+ 
+     if (kywc_view->maximized || kywc_view->tiled) {
++        /* add move filter */
++        if (!grab->ongoing && fabs(grab->cursor_x - x) < VIEW_MOVE_STEP &&
++            fabs(grab->cursor_y - y) < VIEW_MOVE_STEP) {
++            return false;
++        }
+         struct kywc_box *saved = &grab->view->saved.geometry;
+         double frac = (x - geometry->x) / geometry->width;
+         saved->x = x - frac * saved->width;
+@@ -574,6 +579,7 @@ static void interactive_process_move(struct interactive_grab *grab, double x, do
+     }
+ 
+     interactive_move_show_snap_box(grab, x, y);
++    return true;
+ }
+ 
+ static void interactive_resize_constraints(struct interactive_grab *grab, struct kywc_box *box)
+@@ -879,11 +885,13 @@ static bool pointer_grab_motion(struct seat_pointer_grab *pointer_grab, uint32_t
+     grab->output = input_current_output(grab->seat);
+ 
+     if (grab->mode == INTERACTIVE_MODE_MOVE) {
++        if (!interactive_process_move(grab, lx, ly)) {
++            return true;
++        }
+         /* set moving cursor image if moving */
+         if (!grab->ongoing) {
+             cursor_set_image(grab->seat->cursor, CURSOR_MOVE);
+         }
+-        interactive_process_move(grab, lx, ly);
+     } else if (grab->mode == INTERACTIVE_MODE_RESIZE) {
+         interactive_process_resize(grab, lx, ly);
+     }
+diff --git a/src/view/view_p.h b/src/view/view_p.h
+index 14ee609..db0f1d5 100644
+--- a/src/view/view_p.h
++++ b/src/view/view_p.h
+@@ -115,8 +115,6 @@ bool xdg_shell_init(struct view_manager *view_manager);
+ 
+ bool decoration_manager_create(struct view_manager *view_manager);
+ 
+-void view_activate_topmost(void);
+-
+ void view_proxy_destroy(struct view_proxy *view_proxy);
+ 
+ void view_set_current_proxy(struct view *view, struct view_proxy *view_proxy);
+diff --git a/src/view/window_menu.c b/src/view/window_menu.c
+index 5352fe3..9ef428f 100644
+--- a/src/view/window_menu.c
++++ b/src/view/window_menu.c
+@@ -41,7 +41,6 @@ struct window_menu {
+ 
+     struct menu *desktop;
+     struct desktop_item add_items[MAX_WORKSPACES];
+-    struct desktop_item move_items[MAX_WORKSPACES];
+     struct menu_item *add_to;
+     struct menu_item *move_to;
+ 
+@@ -149,13 +148,6 @@ static bool add_desktop_action(struct menu_item *item, uint32_t key, void *data)
+     return true;
+ }
+ 
+-static bool move_desktop_action(struct menu_item *item, uint32_t key, void *data)
+-{
+-    struct desktop_item *desktop = data;
+-    view_set_workspace(desktop->window_menu->view, desktop->workspace);
+-    return true;
+-}
+-
+ static void window_menu_update_desktop_item(struct window_menu *window_menu)
+ {
+     uint32_t count = workspace_manager_get_count();
+@@ -204,29 +196,6 @@ static void window_menu_update_desktop(struct window_menu *window_menu)
+         menu_item_set_checked(desktop->item, true);
+     }
+ 
+-    for (uint32_t i = 0; i < MAX_WORKSPACES; i++) {
+-        desktop = &window_menu->move_items[i];
+-        if (i >= count) {
+-            if (desktop->item) {
+-                menu_item_set_enabled(desktop->item, false);
+-            }
+-            continue;
+-        }
+-
+-        snprintf(name, 256, "%s %d", tr("Move To Desktop"), i + 1);
+-        if (!desktop->item) {
+-            desktop->item =
+-                menu_add_item(window_menu->desktop, name, 0, move_desktop_action, desktop);
+-        } else {
+-            menu_item_update_text(desktop->item, name);
+-        }
+-        menu_item_set_enabled(desktop->item, true);
+-        menu_item_set_separator(desktop->item, i == 0);
+-        menu_item_lower_to_bottom(desktop->item);
+-        desktop->window_menu = window_menu;
+-        desktop->workspace = workspace_by_position(i);
+-    }
+-
+     window_menu_update_desktop_item(window_menu);
+ }
+ 
+diff --git a/src/xwayland/unmanaged.c b/src/xwayland/unmanaged.c
+index 0f1c303..1437235 100644
+--- a/src/xwayland/unmanaged.c
++++ b/src/xwayland/unmanaged.c
+@@ -282,6 +282,12 @@ static void unmanaged_handle_unmap(struct wl_listener *listener, void *data)
+     if (unmanaged->surface_node) {
+         ky_scene_node_set_enabled(unmanaged->surface_node, false);
+     }
++
++    struct wlr_surface *wlr_surface = unmanaged->wlr_xwayland_surface->surface;
++    wlr_seat = unmanaged->xwayland->wlr_xwayland->seat;
++    if (wlr_seat && wlr_seat->keyboard_state.focused_surface == wlr_surface) {
++        view_activate_topmost();
++    }
+ }
+ 
+ static void unmanaged_handle_node_destroy(struct wl_listener *listener, void *data)

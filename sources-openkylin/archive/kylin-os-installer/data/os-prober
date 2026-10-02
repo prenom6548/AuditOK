@@ -1,0 +1,350 @@
+#!/bin/bash
+mkdir -p /var/log/installer
+echo "start os-prober" >/var/log/installer/os-prober.log
+
+is_efi() {
+    if type archdetect >/dev/null 2>&1; then
+        archdetect=$(archdetect)
+    else
+        archdetect=unknown/generic
+    fi
+    arch=${archdetect%/*}
+    sub=${archdetect#*/}
+    ret=true
+    case "$arch" in
+        alpha|sw64)
+            ret=true;;
+        amd64|i386)
+            case "$sub" in
+                mac|efi)
+                ret=true;;
+                *)
+                ret=false;;
+            esac;;
+        arm|armhf|armel)
+            ret=false;;
+        arm64)
+            ret=true;;
+        mips64el)
+            case "$sub" in
+                efi)
+                ret=true;;
+                *)
+                ret=false;;
+            esac;;
+        mips|mipsel)
+            ret=false;;
+        *)
+            ret=true;;
+    esac
+
+    # 华为 990 设置为 efi
+    if egrep -qi 'kirin.?9[09]0' /proc/cpuinfo; then
+        ret=true
+    fi
+
+    echo $ret
+}
+
+get_is_990_9a0() {
+    ret=false
+    # 匹配 kirin 990 5g, kirin990, kirin 9006c
+    if egrep -qi 'kirin.?9[09]0' /proc/cpuinfo; then
+        ret=true
+    fi
+    if egrep -qi 'PANGU.M900' /proc/cpuinfo; then
+        ret=true
+    fi
+
+    echo $ret
+}
+
+
+is_990_9a0=$(get_is_990_9a0)
+
+disk_label_check_efi() {
+    os_disk=$1
+    disk=$1
+    is_nvme=$(echo "${os_disk}" | grep "nvme")
+    if [[ -n ${is_nvme} ]]; then
+        os_disk_one=${os_disk}p
+    else
+        os_disk_one=${os_disk}
+    fi
+    os_disk="/dev/${os_disk}"
+    os_partition_dev=$(lsblk -o KNAME,LABEL ${os_disk} | grep ${os_disk_one})
+    os_partition_dev_list=$(echo "${os_partition_dev}" | grep ${os_disk_one}| awk '{print $1}')
+    n=0
+
+    for i in ${os_partition_dev_list}
+    do
+        os_partition_label=$(echo "${os_partition_dev}" | grep $i | awk '{print $2}')
+        case "${os_partition_label}" in
+        ESP)
+                n=`expr $n + 1`
+                echo "${disk} efi /dev/$i" >>/var/log/installer/os-prober.log
+                ;;
+        SYSBOOT)
+                echo "${disk} boot /dev/$i" >>/var/log/installer/os-prober.log
+                ;;
+        SYSROOT)
+                mount /dev/$i /mnt
+                cp -a /mnt/etc/fstab /tmp
+
+		is_ostree=false
+                tmp_path="/var/mnt/ostree/pkgs/ovl-*.1/etc-ovl/etc-lower/"
+                if [ ! -d ${tmp_path} ]; then
+                        tmp_path="/var/mnt/ostree/pkgs/ovl-*.0/etc-ovl/etc-lower/"
+                fi
+                if [ -f ${tmp_path}fstab ]; then
+                        cp -a ${tmp_path}fstab /tmp
+                        is_ostree=true
+                fi
+
+                tmp_path="/var/mnt/ostree/pkgs/ovl-*.1/etc-ovl/etc-upper/"
+                if [ ! -d ${tmp_path} ]; then
+                        tmp_path="/var/mnt/ostree/pkgs/ovl-*.0/etc-ovl/etc-upper/"
+                fi
+                if [ -f ${tmp_path}fstab ]; then
+                        cp -a ${tmp_path}fstab /tmp
+                        is_ostree=true
+                fi
+
+
+                if [[ "${is_990_9a0}" == "true" ]]; then
+                        KYLIN_ID=$(grep -r KYLIN_RELEASE_ID= /mnt/etc/os-release)
+                        KYLIN_ID=${KYLIN_ID#*=}
+                        case ${KYLIN_ID} in
+                        '"2303"')
+                                n=`expr $n + 1`
+                                echo "${disk} root /dev/$i" >>/var/log/installer/os-prober.log
+                                ;;
+                        '"2309"')
+                                n=`expr $n + 1`
+                                echo "${disk} root /dev/$i" >>/var/log/installer/os-prober.log
+                                ;;
+         		*)
+                                data_bind=$(cat /tmp/fstab | grep -i "/data/home" | grep "bind") || true
+                		if [[ -n ${data_bind} ]]; then
+					n=`expr $n + 1`
+                                	echo "${disk} root /dev/$i" >>/var/log/installer/os-prober.log
+				fi
+                		;;
+                        esac
+                else
+                	if [[ ${is_ostree} == "false" ]]; then
+				echo "ostree=false" >>/var/log/installer/os-prober.log
+			else
+                        	n=`expr $n + 1`
+                        	echo "${disk} root /dev/$i" >>/var/log/installer/os-prober.log
+			fi
+                fi
+		
+		#检查磁盘原有系统是否存在单独的系统数据盘
+                if [[ ${is_ostree} == "false" ]]; then
+                        test_data=
+                        test_data=$(cat /tmp/fstab | grep -i "LABEL=DATA"| grep -v -i UUID | awk '{print $2}') || true
+                        if [[ -n ${test_data} ]]; then
+                                test_data=$(echo "${test_data}" | grep -v ${os_disk} ) || true
+                                if [[ -e ${test_data} ]]; then
+                                        n=`expr $n + 1`
+                                        echo "${disk} data ${test_data}" >>/var/log/installer/os-prober.log
+                                fi
+                        else
+                                test_data=$(cat /tmp/fstab | grep -A 1 -i "LABEL=DATA"| grep -v -i "LABEL=DATA" | awk '{print $1}') || true
+                                test_data=$(echo "${test_data}" | grep -v ${os_disk} ) || true
+                                if [[ -e ${test_data} ]]; then
+                                        n=`expr $n + 1`
+                                        echo "${disk} data ${test_data}" >>/var/log/installer/os-prober.log
+                                fi
+                        fi
+                else
+                        test_data=
+                        data_uuid=
+                        data_uuid=$(cat /tmp/fstab | grep -i "/data " | awk '{print $1}') || true
+                        if [[ -n ${data_uuid} ]]; then
+                                data_uuid=${data_uuid#*=}
+                                test_data=$(lsblk -o NAME,UUID | grep ${data_uuid} | awk '{print $1}')
+                                test_data=${test_data##*─}
+                                test_data="/dev/${test_data}"
+                                test_data=$(echo "${test_data}" | grep -v ${os_disk} ) || true
+                                if [[ -e ${test_data} ]]; then
+                                        n=`expr $n + 1`
+                                        echo "${disk} data ${test_data}" >>/var/log/installer/os-prober.log
+                                fi
+                        fi
+                fi
+
+
+                umount /mnt
+                ;;
+        KYLIN-BACKUP)
+                echo "${disk} backup /dev/$i" >>/var/log/installer/os-prober.log
+                ;;
+        DATA)
+                n=`expr $n + 1`
+                echo "${disk} data /dev/$i" >>/var/log/installer/os-prober.log
+		echo kylin-data=/dev/$i >>/var/log/installer/os-prober.log
+                ;;
+        SWAP)
+                echo "${disk} swap /dev/$i" >>/var/log/installer/os-prober.log
+                ;;
+
+         *)
+                if [[ -n ${os_partition_label} ]]; then
+                	echo "${disk} ${os_partition_label} /dev/$i" >>/var/log/installer/os-prober.log
+		fi
+                ;;
+        esac
+    done
+    if egrep -qi '3A5000' /proc/cpuinfo; then
+        swap_partition=$(disk -l /dev/nvme0n1 | grep swap | awk '{print $1}')
+        echo "${disk} swap ${swap_partition}" >>/var/log/installer/os-prober.log
+    fi
+    if [[ $n == 3 ]]; then
+        echo "${os_disk} can be installed by save history data" >>/var/log/installer/os-prober.log
+        echo "save-data=${os_disk}" >>/var/log/installer/os-prober.log
+    fi
+
+}
+
+disk_label_check_legacy() {
+    os_disk=$1
+    disk=$1
+    is_nvme=$(echo "${os_disk}" | grep "nvme")
+    if [[ -n ${is_nvme} ]]; then
+        os_disk_one=${os_disk}p
+    else
+        os_disk_one=${os_disk}
+    fi
+    os_disk="/dev/${os_disk}"
+    os_partition_dev=$(lsblk -o KNAME,LABEL ${os_disk} | grep ${os_disk_one})
+    os_partition_dev_list=$(echo "${os_partition_dev}" | grep ${os_disk_one}| awk '{print $1}')
+
+    n=0
+    for i in ${os_partition_dev_list}
+    do
+        os_partition_label=$(echo "${os_partition_dev}" | grep $i | awk '{print $2}')
+        case "${os_partition_label}" in
+        SYSBOOT)
+                n=`expr $n + 1`
+                echo "${disk} boot /dev/$i" >>/var/log/installer/os-prober.log
+                ;;
+        SYSROOT)
+                mount /dev/$i /mnt
+                cp -a /mnt/etc/fstab /tmp
+
+		is_ostree=false
+                tmp_path="/var/mnt/ostree/pkgs/ovl-*.1/etc-ovl/etc-lower/"
+                if [ ! -d ${tmp_path} ]; then
+                        tmp_path="/var/mnt/ostree/pkgs/ovl-*.0/etc-ovl/etc-lower/"
+                fi
+                if [ -f ${tmp_path}fstab ]; then
+                        cp -a ${tmp_path}fstab /tmp
+                        is_ostree=true
+                fi
+
+                tmp_path="/var/mnt/ostree/pkgs/ovl-*.1/etc-ovl/etc-upper/"
+                if [ ! -d ${tmp_path} ]; then
+                        tmp_path="/var/mnt/ostree/pkgs/ovl-*.0/etc-ovl/etc-upper/"
+                fi
+                if [ -f ${tmp_path}fstab ]; then
+                        cp -a ${tmp_path}fstab /tmp
+                        is_ostree=true
+                fi
+
+                n=`expr $n + 1`
+                echo "${disk} root /dev/$i" >>/var/log/installer/os-prober.log
+
+		#检查磁盘原有系统是否存在单独的系统数据盘
+                if [[ ${is_ostree} == "false" ]]; then
+                        test_data=
+                        test_data=$(cat /tmp/fstab | grep -i "LABEL=DATA"| grep -v -i UUID | awk '{print $2}') || true
+                        if [[ -n ${test_data} ]]; then
+                                test_data=$(echo "${test_data}" | grep -v ${os_disk} ) || true
+                                if [[ -e ${test_data} ]]; then
+                                        n=`expr $n + 1`
+                                        echo "${disk} data ${test_data}" >>/var/log/installer/os-prober.log
+                                fi
+                        else
+                                test_data=$(cat /tmp/fstab | grep -A 1 -i "LABEL=DATA"| grep -v -i "LABEL=DATA" | awk '{print $1}') || true
+                                test_data=$(echo "${test_data}" | grep -v ${os_disk} ) || true
+                                if [[ -e ${test_data} ]]; then
+                                        n=`expr $n + 1`
+                                        echo "${disk} data ${test_data}" >>/var/log/installer/os-prober.log
+                                fi
+                        fi
+                else
+                        test_data=
+                        data_uuid=
+                        data_uuid=$(cat /tmp/fstab | grep -i "/data " | awk '{print $1}') || true
+                        if [[ -n ${data_uuid} ]]; then
+                                data_uuid=${data_uuid#*=}
+                                test_data=$(lsblk -o NAME,UUID | grep ${data_uuid} | awk '{print $1}')
+                                test_data=${test_data##*─}
+                                test_data="/dev/${test_data}"
+                                test_data=$(echo "${test_data}" | grep -v ${os_disk} ) || true
+                                if [[ -e ${test_data} ]]; then
+                                        n=`expr $n + 1`
+                                        echo "${disk} data ${test_data}" >>/var/log/installer/os-prober.log
+                                fi
+                        fi
+                fi
+
+
+                umount /mnt
+                ;;
+        KYLIN-BACKUP)
+                echo "${disk} backup /dev/$i" >>/var/log/installer/os-prober.log
+                ;;
+        DATA)
+                n=`expr $n + 1`
+                echo "${disk} data /dev/$i" >>/var/log/installer/os-prober.log
+		echo kylin-data=/dev/$i >>/var/log/installer/os-prober.log
+                ;;
+        SWAP)
+                echo "${disk} swap /dev/$i" >>/var/log/installer/os-prober.log
+                ;;
+
+         *)
+                if [[ -n ${os_partition_label} ]]; then
+                	echo "${disk} ${os_partition_label} /dev/$i" >>/var/log/installer/os-prober.log
+		fi
+                ;;
+        esac
+    done
+    
+    if egrep -qi '3A5000' /proc/cpuinfo; then
+        swap_partition=$(disk -l /dev/nvme0n1 | grep swap | awk '{print $1}')
+        echo "${disk} swap ${swap_partition}" >>/var/log/installer/os-prober.log
+    fi
+
+    if [[ $n == 3 ]]; then
+        echo "${os_disk} can be installed by save history data" >>/var/log/installer/os-prober.log
+        echo "save-data=${os_disk}" >>/var/log/installer/os-prober.log
+    fi
+}
+
+    os_disk_list=$(lsblk -d | grep -v NAME | grep -v loop | grep -v sr | awk '{print $1}')
+    is_efi=$(is_efi)
+    for os_disk in ${os_disk_list}
+    do
+   	disk_remove=$(readlink /sys/block/${os_disk} | grep usb)|| true
+    	if [ -n "${disk_remove}" ]; then
+        	    echo "${os_disk} is usb disk" >>/var/log/installer/os-prober.log
+    	else
+		    echo "os_disk=${os_disk}" >>/var/log/installer/os-prober.log
+		    if [[ ${is_efi} == true ]]; then
+	            	disk_label_check_efi ${os_disk}
+	    	    else
+	            	disk_label_check_legacy ${os_disk}
+	            fi
+        fi
+     done
+     
+     systemd-detect-virt
+     if [ $? -eq 0 ]; then
+         echo "virtual-machine=true" >>/var/log/installer/os-prober.log
+     fi
+
+

@@ -1,0 +1,76 @@
+#!/bin/bash
+
+set -e
+
+oem_mode=
+if grep -q 'test-mode' /proc/cmdline; then
+    oem_mode="oem-automatic"
+else
+    oem_mode="oem"
+fi
+
+if grep -q 'auti-only=true' /var/log/installer/ky-installer.cfg; then
+    oem_mode="oem-automatic"
+fi
+
+#if [[ -f /ostree/pkgs/mm.lock ]]; then
+#    rm -r /ostree/pkgs/mm.lock
+#fi
+
+cp -a /usr/share/applications/kylin-os-installer.desktop /etc/xdg/autostart
+sed -i "/Exec/d" /etc/xdg/autostart/kylin-os-installer.desktop
+echo "Exec=/usr/bin/kylin-os-installer-${oem_mode}" >>/etc/xdg/autostart/kylin-os-installer.desktop
+
+if [[ -f /etc/xdg/autostart/oem-qc.desktop ]]; then
+      rm -f /etc/xdg/autostart/oem-qc.desktop
+fi
+
+if [[ -f /etc/xdg/autostart/oem-unlock.desktop ]]; then
+        rm -f /etc/xdg/autostart/oem-unlock.desktop
+fi
+if [[ -f /var/log/installer/oem-unlock ]]; then
+        rm -f /var/log/installer/oem-unlock
+fi
+
+if [[ -d /usr/share/oem-test ]]; then
+	rm -rf  /usr/share/oem-test 
+fi
+
+#还原出厂备份中的审核模式
+#if grep -q 'Mode=maintain' /ostree/pkgs/system-ovl.conf; then
+#        sed -i  's/'"Mode=maintain"'/'"Mode=normal"'/' /ostree/pkgs/system-ovl.conf
+#fi
+#if grep -q 'NextMode=maintain' /ostree/pkgs/system-ovl.conf; then
+#        sed -i  's/'"NextMode=maintain"'/'"NextMode=normal"'/' /ostree/pkgs/system-ovl.conf
+#fi
+
+v_file="/ostree/pkgs/ostree-version.info"
+if [ -e ${v_file} ]; then
+	deploy_hashvalue=`cat ${v_file} | awk -F " " '{print $2}'`
+	deploy_ovl_root=/ostree/pkgs/ovl-$deploy_hashvalue
+	if [[ -f $deploy_ovl_root/etc-ovl/etc-lower/xdg/autostart/oem-qc.desktop ]]; then
+        	rm -f $deploy_ovl_root/etc-ovl/etc-lower/xdg/autostart/oem-qc.desktop
+  	fi
+  	if [[ -f $deploy_ovl_root/etc-ovl/etc-lower/xdg/autostart/oem-unlock.desktop ]]; then
+        	rm -f $deploy_ovl_root/etc-ovl/etc-lower/xdg/autostart/oem-unlock.desktop
+  	fi
+	
+	if [[ -d $deploy_ovl_root/usr-ovl/usr-lower/share/oem-test ]]; then
+       		rm -rf  $deploy_ovl_root/usr-ovl/usr-lower/share/oem-test 
+  	fi
+	
+	if [[ -f $deploy_ovl_root/usr-ovl/usr-lower/share/applications/kylin-os-installer.desktop ]]; then
+        	cp -a $deploy_ovl_root/usr-ovl/usr-lower/share/applications/kylin-os-installer.desktop $deploy_ovl_root/etc-ovl/etc-lower/xdg/autostart/
+        	sed -i "/Exec/d" $deploy_ovl_root/etc-ovl/etc-lower/xdg/autostart/kylin-os-installer.desktop
+        	echo "Exec=/usr/bin/kylin-os-installer-${oem_mode}" >>$deploy_ovl_root/etc-ovl/etc-lower/xdg/autostart/kylin-os-installer.desktop
+	fi
+
+fi
+
+
+if [[ -d /home/oem ]]; then
+        mkdir -p /var/log/installer/oemback
+	rsync -a /home/oem /var/log/installer/oemback
+fi
+
+

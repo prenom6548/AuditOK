@@ -1,0 +1,2195 @@
+From: snowsi <348240162@qq.com>
+Date: Mon, 24 Aug 2026 09:44:48 +0000
+Subject: =?utf-8?b?ITEzMSBmaXg6ICNJSzhURTIg44CQ5Li76KaB44CR44CQ566h5a6244CR?=
+ =?utf-8?b?6L+Q57u06LCD6K+V55qE5bel5YW35LiL6L295ZCO6YeN5paw5omT5byA566h5a62?=
+ =?utf-8?b?77yM5LuN54S25pi+56S65LiL6L295oyJ6ZKu?=
+
+Merge pull request !131 from snowsi/openkylin/huanghe
+---
+ kom/kom-utils.cpp                                  | 35 ++++++++++
+ kom/kom-utils.h                                    |  4 ++
+ plugins/tool_box/app_item.cpp                      | 74 ++++------------------
+ plugins/tool_box/app_item.h                        |  1 -
+ treasure-chest/network-bandwidth-test/main.cpp     |  7 ++
+ .../komt-network-bandwidth-test_bo_CN.ts           |  8 +++
+ .../translations/komt-network-bandwidth-test_kk.ts | 34 ++++++----
+ .../translations/komt-network-bandwidth-test_ky.ts | 34 ++++++----
+ .../translations/komt-network-bandwidth-test_mn.ts |  8 +++
+ .../translations/komt-network-bandwidth-test_ug.ts | 34 ++++++----
+ .../komt-network-bandwidth-test_zh_CN.ts           |  8 +++
+ .../komt-network-bandwidth-test_zh_HK.ts           |  8 +++
+ treasure-chest/network-iputils-arping/main.cpp     |  7 ++
+ .../komt-network-iputils-arping_bo_CN.ts           |  8 +++
+ .../translations/komt-network-iputils-arping_kk.ts |  8 +++
+ .../translations/komt-network-iputils-arping_ky.ts |  8 +++
+ .../translations/komt-network-iputils-arping_mn.ts |  8 +++
+ .../translations/komt-network-iputils-arping_ug.ts |  8 +++
+ .../komt-network-iputils-arping_zh_CN.ts           |  8 +++
+ .../komt-network-iputils-arping_zh_HK.ts           |  8 +++
+ treasure-chest/network-route-track/main.cpp        |  7 ++
+ .../translations/komt-network-route-track_bo_CN.ts | 20 ++++--
+ .../translations/komt-network-route-track_kk.ts    | 16 +++--
+ .../translations/komt-network-route-track_ky.ts    | 16 +++--
+ .../translations/komt-network-route-track_mn.ts    | 20 ++++--
+ .../translations/komt-network-route-track_ug.ts    | 16 +++--
+ .../translations/komt-network-route-track_zh_CN.ts |  8 +++
+ .../translations/komt-network-route-track_zh_HK.ts | 20 ++++--
+ treasure-chest/network-telnet/main.cpp             |  7 ++
+ .../translations/komt-network-telnet_bo_CN.ts      |  8 +++
+ .../translations/komt-network-telnet_kk.ts         | 28 +++++---
+ .../translations/komt-network-telnet_ky.ts         | 28 +++++---
+ .../translations/komt-network-telnet_mn.ts         |  8 +++
+ .../translations/komt-network-telnet_ug.ts         | 28 +++++---
+ .../translations/komt-network-telnet_zh_CN.ts      |  8 +++
+ .../translations/komt-network-telnet_zh_HK.ts      |  8 +++
+ treasure-chest/tcpdump/main.cpp                    |  7 ++
+ .../translations/komt-packet-capture_bo_CN.ts      | 46 ++++++++------
+ .../tcpdump/translations/komt-packet-capture_kk.ts | 46 ++++++++------
+ .../tcpdump/translations/komt-packet-capture_ky.ts | 46 ++++++++------
+ .../tcpdump/translations/komt-packet-capture_mn.ts | 46 ++++++++------
+ .../tcpdump/translations/komt-packet-capture_ug.ts | 46 ++++++++------
+ .../translations/komt-packet-capture_zh_CN.ts      | 12 +++-
+ .../translations/komt-packet-capture_zh_HK.ts      | 46 ++++++++------
+ 44 files changed, 581 insertions(+), 278 deletions(-)
+
+diff --git a/kom/kom-utils.cpp b/kom/kom-utils.cpp
+index c94267c..2fdc3b6 100644
+--- a/kom/kom-utils.cpp
++++ b/kom/kom-utils.cpp
+@@ -13,7 +13,10 @@
+ #include <QJsonObject>
+ #include <QProcess>
+ #include <QGuiApplication>
++#include <QDBusConnection>
++#include <QDBusMessage>
+ #include <libkylog.h>
++#include <libkypackages.h>
+ #include <windowmanager/windowmanager.h>
+ #include <singleapplication.h>
+ #include "kom-ukui-gsettings.h"
+@@ -322,4 +325,36 @@ void KomUtils::SetWaylandActivationWindow(kdk::QtSingleApplication &app) {
+     }
+ }
+ 
++bool KomUtils::IsPackageInstalled(const QString &package_name) {
++#ifdef V11_ENVIRONMENT
++    std::string name = package_name.toStdString();
++    return (kdk_package_is_installed(name.c_str(), NULL) == 0);
++#else
++    QProcess process;
++    process.setProgram("dpkg");
++    QList<QString> args{"-l", package_name};
++    process.setArguments(args);
++    process.start();
++    process.waitForFinished();
++
++    auto output = QString::fromLocal8Bit(process.readAll());
++    auto lines = output.split('\n');
++    lines.removeAll("");
++    if (lines.empty()) {
++        return false;
++    }
++
++    auto last_line = lines.back().trimmed();
++    auto fields = last_line.split(' ');
++    fields.removeAll("");
++    if (fields.size() < 2) {
++        return false;
++    }
++
++    auto name = fields.at(1);
++
++    return name == package_name;
++#endif
++}
++
+ }
+diff --git a/kom/kom-utils.h b/kom/kom-utils.h
+index f54811d..1ade472 100644
+--- a/kom/kom-utils.h
++++ b/kom/kom-utils.h
+@@ -48,6 +48,10 @@ public:
+      * @note 应该在 QtSingleApplication 实例化后，主界面实例化前调用
+      */
+     static void SetWaylandActivationWindow(kdk::QtSingleApplication &app);
++    /**
++     * @brief 判断是否已经安装指定的 deb 包
++     */
++    static bool IsPackageInstalled(const QString &package_name);
+ };
+ 
+ }
+diff --git a/plugins/tool_box/app_item.cpp b/plugins/tool_box/app_item.cpp
+index 356d478..244fec9 100644
+--- a/plugins/tool_box/app_item.cpp
++++ b/plugins/tool_box/app_item.cpp
+@@ -24,6 +24,7 @@
+ #include "frame.h"
+ #include "user_experience_dialog.h"
+ #include "kom_buriedpoint.h"
++#include "kom-utils.h"
+ #include "installer.h"
+ #include "defines.h"
+ 
+@@ -306,53 +307,9 @@ QString AppItem::GetToolName()
+     return name_label_->text();
+ }
+ 
+-bool AppItem::IsPackageInstalled(const QString &package_name) const {
+-#ifdef V11_ENVIRONMENT
+-    auto message = QDBusMessage::createMethodCall("com.kylin.UpgradeStrategies", "/com/kylin/UpgradeStrategies", "com.kylin.UpgradeStrategies.interface", "PackageInstallStatus");
+-    message.setArguments({package_name, ""});
+-    auto reply = QDBusConnection::systemBus().call(message);
+-    if (reply.type() == QDBusMessage::MessageType::ErrorMessage) {
+-        qCritical() << "[app item][is package installed]: dbus interface return fail (" << reply.errorMessage() << ")";
+-        return false;
+-    }
+-    auto values = reply.arguments();
+-    if (values.isEmpty()) {
+-        qCritical() << "[app item][is package installed]: dbus interface return value is empty";
+-        return false;
+-    }
+-
+-    return values.first().toInt() == 0;
+-#else
+-    QProcess process;
+-    process.setProgram("dpkg");
+-    QList<QString> args{"-l", package_name};
+-    process.setArguments(args);
+-    process.start();
+-    process.waitForFinished();
+-
+-    auto output = QString::fromLocal8Bit(process.readAll());
+-    auto lines = output.split('\n');
+-    lines.removeAll("");
+-    if (lines.empty()) {
+-        return false;
+-    }
+-
+-    auto last_line = lines.back().trimmed();
+-    auto fields = last_line.split(' ');
+-    fields.removeAll("");
+-    if (fields.size() < 2) {
+-        return false;
+-    }
+-
+-    auto name = fields.at(1);
+-
+-    return name == package_name;
+-#endif
+-}
+-
+ bool AppItem::IsDependPackageInstalled() const {
+     for (const auto &package: depend_packages_) {
+-        if (!IsPackageInstalled(package)) {
++        if (!kom::KomUtils::IsPackageInstalled(package)) {
+             return false;
+         }
+     }
+@@ -399,9 +356,6 @@ void AppItem::mouseReleaseEvent(QMouseEvent *event) {
+         case DependPackageState::kUnknow:
+             QMessageBox::information(nullptr, "", tr("Getting installation package status, please try again later"));
+             return;
+-        case DependPackageState::kNotInstalled:
+-            QMessageBox::information(nullptr, "", tr("Please proceed with installation first"));
+-            return;
+         default:
+             break;
+     }
+@@ -418,6 +372,16 @@ void AppItem::mouseReleaseEvent(QMouseEvent *event) {
+ }
+ 
+ void AppItem::StartExecApp() {
++    auto ok = IsDependPackageInstalled();
++    if (!ok) {
++        depend_packages_state_ = DependPackageState::kNotInstalled;
++        Q_EMIT sig_DataSync(SyncType::kDependPackageState, false);
++        QMessageBox::information(this, "", tr("Please proceed with installation first"));
++        return;
++    } else {
++        depend_packages_state_ = DependPackageState::kInstalled;
++    }
++
+     if (exec_.empty()) {
+         qCritical() << "Start tool box app fail: exec is empty.";
+         QMessageBox::critical(nullptr, "", tr("No application detected"));
+@@ -438,13 +402,6 @@ void AppItem::StartExecApp() {
+     auto reply = QDBusConnection::sessionBus().call(message);
+     if (reply.type() == QDBusMessage::ErrorMessage) {
+         qCritical() << "Start tool box exec app " << exec_ << " fail.";
+-
+-        auto ok = IsDependPackageInstalled();
+-        if (!ok) {
+-            depend_packages_state_ = DependPackageState::kNotInstalled;
+-            Q_EMIT sig_DataSync(SyncType::kDependPackageState, false);
+-            QMessageBox::information(this, "", tr("Please proceed with installation first"));
+-        }
+     } else {
+         kom::BuriedPoint::uploadMessage(kom::BuriedPoint::BuriedPointPage::kToolBox,
+                                         kom::BuriedPoint::EventCode::kStartApplication,
+@@ -466,13 +423,6 @@ void AppItem::StartExecApp() {
+                                         {{"appStartPath", exec_.front()}});
+     } else {
+         qCritical() << "Start tool box exec app " << exec_ << " fail.";
+-
+-        auto ok = IsDependPackageInstalled();
+-        if (!ok) {
+-            depend_packages_state_ = DependPackageState::kNotInstalled;
+-            Q_EMIT sig_DataSync(SyncType::kDependPackageState, false);
+-            QMessageBox::information(this, "", tr("Please proceed with installation first"));
+-        }
+     }
+ #endif
+ }
+diff --git a/plugins/tool_box/app_item.h b/plugins/tool_box/app_item.h
+index 13086d9..bd968b3 100644
+--- a/plugins/tool_box/app_item.h
++++ b/plugins/tool_box/app_item.h
+@@ -83,7 +83,6 @@ private Q_SLOTS:
+     void on_DBusAppFinished(QString uuid, QString data);
+ 
+ private:
+-    bool IsPackageInstalled(const QString &package_name) const;
+     void InstallStatusChanged(qint32 progress, QString info, QString detail) const;
+     bool IsDependPackageInstalled() const;
+     void InstallFinish(bool ok, QStringList package_list, QString error_result, QString error_reason);
+diff --git a/treasure-chest/network-bandwidth-test/main.cpp b/treasure-chest/network-bandwidth-test/main.cpp
+index 95fd6b7..030a96e 100644
+--- a/treasure-chest/network-bandwidth-test/main.cpp
++++ b/treasure-chest/network-bandwidth-test/main.cpp
+@@ -3,6 +3,7 @@
+ #include <QLocale>
+ #include <QLibraryInfo>
+ #include <QDebug>
++#include <QMessageBox>
+ #include <singleapplication.h>
+ #include "kom-utils.h"
+ #include "mainwindow.h"
+@@ -36,6 +37,12 @@ int main(int argc, char *argv[]) {
+         qCritical() << "Load sdk translation file fail";
+     }
+ 
++    if (!kom::KomUtils::IsPackageInstalled(QStringLiteral("iperf"))) {
++        qCritical() << "The dependency package is not installed, Please install it through kylin os manager first.";
++        QMessageBox::information(nullptr, "", QObject::tr("Please go to Kylin OS Manager to complete the installation, then try again."));
++        return -1;
++    }
++
+     kom::KomUtils::SetWaylandActivationWindow(app);
+ 
+     networkbt::MainWindow mainwindow;
+diff --git a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_bo_CN.ts b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_bo_CN.ts
+index adc1465..e7d2c27 100644
+--- a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_bo_CN.ts
++++ b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_bo_CN.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkbt::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_kk.ts b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_kk.ts
+index efc193d..a4c7995 100644
+--- a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_kk.ts
++++ b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_kk.ts
+@@ -1,20 +1,28 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="kk">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkbt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="25"/>
++        <location filename="../mainwindow.cpp" line="24"/>
+         <source>Network BandWidth Test Tool</source>
+         <translation>تور بەلبەۋ كەڭدىگىن سىناۋ قۇرالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="30"/>
++        <location filename="../mainwindow.cpp" line="31"/>
+         <source>server</source>
+         <translation>قىزىمەت وتەۋ اسبابى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="31"/>
++        <location filename="../mainwindow.cpp" line="33"/>
+         <source>client</source>
+         <translation>قاريدار</translation>
+     </message>
+@@ -22,27 +30,27 @@
+ <context>
+     <name>networkbt::PageClient</name>
+     <message>
+-        <location filename="../pageclient.cpp" line="26"/>
++        <location filename="../pageclient.cpp" line="30"/>
+         <source>IP</source>
+         <translation>IP</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="27"/>
++        <location filename="../pageclient.cpp" line="31"/>
+         <source>Port</source>
+         <translation>اۋٸز</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="28"/>
++        <location filename="../pageclient.cpp" line="32"/>
+         <source>Agreement</source>
+         <translation>كەلىسىم</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="29"/>
++        <location filename="../pageclient.cpp" line="33"/>
+         <source>Connect</source>
+         <translation>اۋلاۋ</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="30"/>
++        <location filename="../pageclient.cpp" line="34"/>
+         <source>Stop</source>
+         <translation>توقتات</translation>
+     </message>
+@@ -50,27 +58,27 @@
+ <context>
+     <name>networkbt::PageServer</name>
+     <message>
+-        <location filename="../pageserver.cpp" line="25"/>
++        <location filename="../pageserver.cpp" line="29"/>
+         <source>bind failed: Permission denied</source>
+         <translation>بايلاۋ جەڭىلىپ قالدى: ماقۇلداۋ رەت قىلىندى</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="28"/>
++        <location filename="../pageserver.cpp" line="32"/>
+         <source>Start</source>
+         <translation>باستاۋ</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="29"/>
++        <location filename="../pageserver.cpp" line="33"/>
+         <source>Stop</source>
+         <translation>توقتات</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="30"/>
++        <location filename="../pageserver.cpp" line="34"/>
+         <source>Port</source>
+         <translation>اۋٸز</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="31"/>
++        <location filename="../pageserver.cpp" line="35"/>
+         <source>Agreement</source>
+         <translation>كەلىسىم</translation>
+     </message>
+diff --git a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ky.ts b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ky.ts
+index 87f1d29..fd00172 100644
+--- a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ky.ts
++++ b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ky.ts
+@@ -1,20 +1,28 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ky">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkbt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="25"/>
++        <location filename="../mainwindow.cpp" line="24"/>
+         <source>Network BandWidth Test Tool</source>
+         <translation>تور  قۇر گەڭدىگىن  سىنوو  قۇرالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="30"/>
++        <location filename="../mainwindow.cpp" line="31"/>
+         <source>server</source>
+         <translation>مۇلازىمەتىر</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="31"/>
++        <location filename="../mainwindow.cpp" line="33"/>
+         <source>client</source>
+         <translation>سووداگەر ، جولووچۇ</translation>
+     </message>
+@@ -22,27 +30,27 @@
+ <context>
+     <name>networkbt::PageClient</name>
+     <message>
+-        <location filename="../pageclient.cpp" line="26"/>
++        <location filename="../pageclient.cpp" line="30"/>
+         <source>IP</source>
+         <translation>IP دايىن وردۇ</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="27"/>
++        <location filename="../pageclient.cpp" line="31"/>
+         <source>Port</source>
+         <translation>ووزۇ</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="28"/>
++        <location filename="../pageclient.cpp" line="32"/>
+         <source>Agreement</source>
+         <translation>گەلىشىم</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="29"/>
++        <location filename="../pageclient.cpp" line="33"/>
+         <source>Connect</source>
+         <translation>ۇلانۇۇ</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="30"/>
++        <location filename="../pageclient.cpp" line="34"/>
+         <source>Stop</source>
+         <translation>توقتوت.</translation>
+     </message>
+@@ -50,27 +58,27 @@
+ <context>
+     <name>networkbt::PageServer</name>
+     <message>
+-        <location filename="../pageserver.cpp" line="25"/>
++        <location filename="../pageserver.cpp" line="29"/>
+         <source>bind failed: Permission denied</source>
+         <translation>بايلوو جەڭىلۉۉ بولدۇ : ۇرۇقسات  قاتار اتقارىلدى</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="28"/>
++        <location filename="../pageserver.cpp" line="32"/>
+         <source>Start</source>
+         <translation>باشتوو</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="29"/>
++        <location filename="../pageserver.cpp" line="33"/>
+         <source>Stop</source>
+         <translation>توقتوت.</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="30"/>
++        <location filename="../pageserver.cpp" line="34"/>
+         <source>Port</source>
+         <translation>ووزۇ</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="31"/>
++        <location filename="../pageserver.cpp" line="35"/>
+         <source>Agreement</source>
+         <translation>گەلىشىم</translation>
+     </message>
+diff --git a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_mn.ts b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_mn.ts
+index dcc2aee..cf11974 100644
+--- a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_mn.ts
++++ b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_mn.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkbt::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ug.ts b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ug.ts
+index f11f09b..35103c1 100644
+--- a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ug.ts
++++ b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_ug.ts
+@@ -1,20 +1,28 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ug">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkbt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="25"/>
++        <location filename="../mainwindow.cpp" line="24"/>
+         <source>Network BandWidth Test Tool</source>
+         <translation>تور بەلباغ كەڭلىكىنى سىناش قورالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="30"/>
++        <location filename="../mainwindow.cpp" line="31"/>
+         <source>server</source>
+         <translation>مۇلازىمىتېر</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="31"/>
++        <location filename="../mainwindow.cpp" line="33"/>
+         <source>client</source>
+         <translation>خېرىدار</translation>
+     </message>
+@@ -22,27 +30,27 @@
+ <context>
+     <name>networkbt::PageClient</name>
+     <message>
+-        <location filename="../pageclient.cpp" line="26"/>
++        <location filename="../pageclient.cpp" line="30"/>
+         <source>IP</source>
+         <translation>IP ئادرېسى</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="27"/>
++        <location filename="../pageclient.cpp" line="31"/>
+         <source>Port</source>
+         <translation>پورت</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="28"/>
++        <location filename="../pageclient.cpp" line="32"/>
+         <source>Agreement</source>
+         <translation>كېلىشىم</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="29"/>
++        <location filename="../pageclient.cpp" line="33"/>
+         <source>Connect</source>
+         <translation>ئۇلىنىش</translation>
+     </message>
+     <message>
+-        <location filename="../pageclient.cpp" line="30"/>
++        <location filename="../pageclient.cpp" line="34"/>
+         <source>Stop</source>
+         <translation>توختات</translation>
+     </message>
+@@ -50,27 +58,27 @@
+ <context>
+     <name>networkbt::PageServer</name>
+     <message>
+-        <location filename="../pageserver.cpp" line="25"/>
++        <location filename="../pageserver.cpp" line="29"/>
+         <source>bind failed: Permission denied</source>
+         <translation>باغلاش مەغلۇپ بولدى: ئىجازەت رەت قىلىندى</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="28"/>
++        <location filename="../pageserver.cpp" line="32"/>
+         <source>Start</source>
+         <translation>يىغىشنى باشلاش</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="29"/>
++        <location filename="../pageserver.cpp" line="33"/>
+         <source>Stop</source>
+         <translation>توختات</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="30"/>
++        <location filename="../pageserver.cpp" line="34"/>
+         <source>Port</source>
+         <translation>پورت</translation>
+     </message>
+     <message>
+-        <location filename="../pageserver.cpp" line="31"/>
++        <location filename="../pageserver.cpp" line="35"/>
+         <source>Agreement</source>
+         <translation>كېلىشىم</translation>
+     </message>
+diff --git a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_CN.ts b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_CN.ts
+index 9a2b332..7aa8c91 100644
+--- a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_CN.ts
++++ b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_CN.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation>请先前往“麒麟管家”完成安装，然后重试。</translation>
++    </message>
++</context>
+ <context>
+     <name>networkbt::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_HK.ts b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_HK.ts
+index ceaf2c5..10c29e8 100644
+--- a/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_HK.ts
++++ b/treasure-chest/network-bandwidth-test/translations/komt-network-bandwidth-test_zh_HK.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkbt::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-iputils-arping/main.cpp b/treasure-chest/network-iputils-arping/main.cpp
+index a0f7a84..37f728a 100644
+--- a/treasure-chest/network-iputils-arping/main.cpp
++++ b/treasure-chest/network-iputils-arping/main.cpp
+@@ -3,6 +3,7 @@
+ #include <QLocale>
+ #include <QLibraryInfo>
+ #include <QDebug>
++#include <QMessageBox>
+ #include <singleapplication.h>
+ #include "kom-utils.h"
+ #include "mainwindow.h"
+@@ -36,6 +37,12 @@ int main(int argc, char *argv[]) {
+         qCritical() << "Load sdk translation file fail";
+     }
+ 
++    if (!kom::KomUtils::IsPackageInstalled(QStringLiteral("iputils-arping"))) {
++        qCritical() << "The dependency package is not installed, Please install it through kylin os manager first.";
++        QMessageBox::information(nullptr, "", QObject::tr("Please go to Kylin OS Manager to complete the installation, then try again."));
++        return -1;
++    }
++
+     kom::KomUtils::SetWaylandActivationWindow(app);
+ 
+     networkipa::MainWindow mainwindow;
+diff --git a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_bo_CN.ts b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_bo_CN.ts
+index 65a91d7..94a3f47 100644
+--- a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_bo_CN.ts
++++ b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_bo_CN.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkipa::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_kk.ts b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_kk.ts
+index 9250e5c..5c160af 100644
+--- a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_kk.ts
++++ b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_kk.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="kk">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkipa::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ky.ts b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ky.ts
+index cd01a37..dc210e9 100644
+--- a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ky.ts
++++ b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ky.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ky">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkipa::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_mn.ts b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_mn.ts
+index 1bf6c32..6ee4049 100644
+--- a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_mn.ts
++++ b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_mn.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkipa::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ug.ts b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ug.ts
+index 1680046..5d31fae 100644
+--- a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ug.ts
++++ b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_ug.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ug">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkipa::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_CN.ts b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_CN.ts
+index 08f9a7a..539bed2 100644
+--- a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_CN.ts
++++ b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_CN.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation>请先前往“麒麟管家”完成安装，然后重试。</translation>
++    </message>
++</context>
+ <context>
+     <name>networkipa::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_HK.ts b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_HK.ts
+index c50249e..c0cab26 100644
+--- a/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_HK.ts
++++ b/treasure-chest/network-iputils-arping/translations/komt-network-iputils-arping_zh_HK.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkipa::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-route-track/main.cpp b/treasure-chest/network-route-track/main.cpp
+index b808194..61cd288 100644
+--- a/treasure-chest/network-route-track/main.cpp
++++ b/treasure-chest/network-route-track/main.cpp
+@@ -3,6 +3,7 @@
+ #include <QLocale>
+ #include <QLibraryInfo>
+ #include <QDebug>
++#include <QMessageBox>
+ #include <singleapplication.h>
+ #include "kom-utils.h"
+ #include "mainwindow.h"
+@@ -36,6 +37,12 @@ int main(int argc, char *argv[]) {
+         qCritical() << "Load sdk translation file fail";
+     }
+ 
++    if (!kom::KomUtils::IsPackageInstalled(QStringLiteral("traceroute"))) {
++        qCritical() << "The dependency package is not installed, Please install it through kylin os manager first.";
++        QMessageBox::information(nullptr, "", QObject::tr("Please go to Kylin OS Manager to complete the installation, then try again."));
++        return -1;
++    }
++
+     kom::KomUtils::SetWaylandActivationWindow(app);
+ 
+     networkrt::MainWindow mainwindow;
+diff --git a/treasure-chest/network-route-track/translations/komt-network-route-track_bo_CN.ts b/treasure-chest/network-route-track/translations/komt-network-route-track_bo_CN.ts
+index 524118c..5d4c537 100644
+--- a/treasure-chest/network-route-track/translations/komt-network-route-track_bo_CN.ts
++++ b/treasure-chest/network-route-track/translations/komt-network-route-track_bo_CN.ts
+@@ -1,25 +1,33 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkrt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="23"/>
+-        <source>network-route-track</source>
+-        <translation>དྲ་རྒྱའི་རྗེས་སྙེག་པ།</translation>
++        <location filename="../mainwindow.cpp" line="27"/>
++        <source>Network Routing Tracking Tool</source>
++        <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="34"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Start</source>
+         <translation>འགོ་ཚུགས་པ་རེད།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="39"/>
+         <source>Stop</source>
+         <translation>མཇུག་བསྒྲིལ་</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>IP/domain name</source>
+         <translation>IPས་གནས་སམ་ཁོངས་མིང་།</translation>
+     </message>
+diff --git a/treasure-chest/network-route-track/translations/komt-network-route-track_kk.ts b/treasure-chest/network-route-track/translations/komt-network-route-track_kk.ts
+index b406ab7..b6b91f7 100644
+--- a/treasure-chest/network-route-track/translations/komt-network-route-track_kk.ts
++++ b/treasure-chest/network-route-track/translations/komt-network-route-track_kk.ts
+@@ -1,25 +1,33 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="kk">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkrt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="23"/>
++        <location filename="../mainwindow.cpp" line="27"/>
+         <source>Network Routing Tracking Tool</source>
+         <translation>تور جولىن ٴىز قورعاۋ قۇرالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="34"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Start</source>
+         <translation>باستاۋ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="39"/>
+         <source>Stop</source>
+         <translation>توقتات</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>IP/domain name</source>
+         <translation>IP/كولەم مى</translation>
+     </message>
+diff --git a/treasure-chest/network-route-track/translations/komt-network-route-track_ky.ts b/treasure-chest/network-route-track/translations/komt-network-route-track_ky.ts
+index a4853d9..04367fe 100644
+--- a/treasure-chest/network-route-track/translations/komt-network-route-track_ky.ts
++++ b/treasure-chest/network-route-track/translations/komt-network-route-track_ky.ts
+@@ -1,25 +1,33 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ky">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkrt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="23"/>
++        <location filename="../mainwindow.cpp" line="27"/>
+         <source>Network Routing Tracking Tool</source>
+         <translation>تور  جولۇن ئىز  قۇبالاش  قۇرالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="34"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Start</source>
+         <translation>باشتوو</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="39"/>
+         <source>Stop</source>
+         <translation>توقتوت.</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>IP/domain name</source>
+         <translation>IP/گۅۅلۅم  ناامى</translation>
+     </message>
+diff --git a/treasure-chest/network-route-track/translations/komt-network-route-track_mn.ts b/treasure-chest/network-route-track/translations/komt-network-route-track_mn.ts
+index 2e2c92c..1d7c3f9 100644
+--- a/treasure-chest/network-route-track/translations/komt-network-route-track_mn.ts
++++ b/treasure-chest/network-route-track/translations/komt-network-route-track_mn.ts
+@@ -1,25 +1,33 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkrt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="23"/>
+-        <source>network-route-track</source>
+-        <translation>ᠲᠣᠣᠷ ᠰᠦᠯᠵᠢᠶᠡᠨ ᠮᠥᠷᠳᠡᠨ᠎ᠡ ᠃</translation>
++        <location filename="../mainwindow.cpp" line="27"/>
++        <source>Network Routing Tracking Tool</source>
++        <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="34"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Start</source>
+         <translation>ᠡᠬᠢᠯᠡᠪᠡ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="39"/>
+         <source>Stop</source>
+         <translation>ᠵᠣᠭᠰᠣᠨ᠎ᠠ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>IP/domain name</source>
+         <translation>ᠬᠠᠶᠢᠭ ᠪᠤᠶᠤ ᠨᠤᠲᠤᠭ ᠤᠨ ᠨᠡᠷ᠎ᠡ ᠃</translation>
+     </message>
+diff --git a/treasure-chest/network-route-track/translations/komt-network-route-track_ug.ts b/treasure-chest/network-route-track/translations/komt-network-route-track_ug.ts
+index a7aad4a..178324a 100644
+--- a/treasure-chest/network-route-track/translations/komt-network-route-track_ug.ts
++++ b/treasure-chest/network-route-track/translations/komt-network-route-track_ug.ts
+@@ -1,25 +1,33 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ug">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkrt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="23"/>
++        <location filename="../mainwindow.cpp" line="27"/>
+         <source>Network Routing Tracking Tool</source>
+         <translation>تور يولىنى ئىز قوغلاش قورالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="34"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Start</source>
+         <translation>يىغىشنى باشلاش</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="39"/>
+         <source>Stop</source>
+         <translation>توختات</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>IP/domain name</source>
+         <translation>IP/دائىرە نامى</translation>
+     </message>
+diff --git a/treasure-chest/network-route-track/translations/komt-network-route-track_zh_CN.ts b/treasure-chest/network-route-track/translations/komt-network-route-track_zh_CN.ts
+index 6b775c5..4452353 100644
+--- a/treasure-chest/network-route-track/translations/komt-network-route-track_zh_CN.ts
++++ b/treasure-chest/network-route-track/translations/komt-network-route-track_zh_CN.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation>请先前往“麒麟管家”完成安装，然后重试。</translation>
++    </message>
++</context>
+ <context>
+     <name>networkrt::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-route-track/translations/komt-network-route-track_zh_HK.ts b/treasure-chest/network-route-track/translations/komt-network-route-track_zh_HK.ts
+index 380e1eb..8569f05 100644
+--- a/treasure-chest/network-route-track/translations/komt-network-route-track_zh_HK.ts
++++ b/treasure-chest/network-route-track/translations/komt-network-route-track_zh_HK.ts
+@@ -1,25 +1,33 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="42"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networkrt::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="23"/>
+-        <source>network-route-track</source>
+-        <translation>網絡路由跟蹤工具</translation>
++        <location filename="../mainwindow.cpp" line="27"/>
++        <source>Network Routing Tracking Tool</source>
++        <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="34"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Start</source>
+         <translation>開始</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="39"/>
+         <source>Stop</source>
+         <translation>停止</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>IP/domain name</source>
+         <translation>IP 地址或域名</translation>
+     </message>
+diff --git a/treasure-chest/network-telnet/main.cpp b/treasure-chest/network-telnet/main.cpp
+index f918257..4d06ec1 100644
+--- a/treasure-chest/network-telnet/main.cpp
++++ b/treasure-chest/network-telnet/main.cpp
+@@ -3,6 +3,7 @@
+ #include <QLocale>
+ #include <QLibraryInfo>
+ #include <QDebug>
++#include <QMessageBox>
+ #include <singleapplication.h>
+ #include "kom-utils.h"
+ #include "mainwindow.h"
+@@ -33,6 +34,12 @@ int main(int argc, char *argv[]) {
+         qCritical() << "Load sdk translation file fail";
+     }
+ 
++    if (!kom::KomUtils::IsPackageInstalled(QStringLiteral("telnet"))) {
++        qCritical() << "The dependency package is not installed, Please install it through kylin os manager first.";
++        QMessageBox::information(nullptr, "", QObject::tr("Please go to Kylin OS Manager to complete the installation, then try again."));
++        return -1;
++    }
++
+     kom::KomUtils::SetWaylandActivationWindow(app);
+ 
+ 	networktelnet::MainWindow mainwindow;
+diff --git a/treasure-chest/network-telnet/translations/komt-network-telnet_bo_CN.ts b/treasure-chest/network-telnet/translations/komt-network-telnet_bo_CN.ts
+index d8747c6..de3b664 100644
+--- a/treasure-chest/network-telnet/translations/komt-network-telnet_bo_CN.ts
++++ b/treasure-chest/network-telnet/translations/komt-network-telnet_bo_CN.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="39"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networktelnet::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-telnet/translations/komt-network-telnet_kk.ts b/treasure-chest/network-telnet/translations/komt-network-telnet_kk.ts
+index 8300e0b..13c9532 100644
+--- a/treasure-chest/network-telnet/translations/komt-network-telnet_kk.ts
++++ b/treasure-chest/network-telnet/translations/komt-network-telnet_kk.ts
+@@ -1,45 +1,53 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="kk">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="39"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networktelnet::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Test</source>
+         <translation>سىناۋ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Testing</source>
+         <translation>سىناق</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="28"/>
+-        <source>network-telnet</source>
+-        <translation>تەلنەت تورى</translation>
++        <location filename="../mainwindow.cpp" line="32"/>
++        <source>Network Connectivity Detection Tool</source>
++        <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>IP/domain name</source>
+         <translation>IP/كولەم مى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Port</source>
+         <translation>اۋٸز</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="47"/>
+         <source>Connection successful!</source>
+         <translation>جالعانۋ ناتيجەلى قالدى!</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="44"/>
++        <location filename="../mainwindow.cpp" line="48"/>
+         <source>Connection failed!</source>
+         <translation>جالعانۋ جەڭىلىپ قالدى!</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="45"/>
++        <location filename="../mainwindow.cpp" line="49"/>
+         <source>OK</source>
+         <translation>ماقۇل</translation>
+     </message>
+diff --git a/treasure-chest/network-telnet/translations/komt-network-telnet_ky.ts b/treasure-chest/network-telnet/translations/komt-network-telnet_ky.ts
+index 47d5a16..6a20ec0 100644
+--- a/treasure-chest/network-telnet/translations/komt-network-telnet_ky.ts
++++ b/treasure-chest/network-telnet/translations/komt-network-telnet_ky.ts
+@@ -1,45 +1,53 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ky">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="39"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networktelnet::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Test</source>
+         <translation>سىناق</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Testing</source>
+         <translation>سىناپ جاتات</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="28"/>
+-        <source>network-telnet</source>
+-        <translation>تەلنەت تورۇ</translation>
++        <location filename="../mainwindow.cpp" line="32"/>
++        <source>Network Connectivity Detection Tool</source>
++        <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>IP/domain name</source>
+         <translation>IP/گۅۅلۅم  ناامى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Port</source>
+         <translation>ووزۇ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="47"/>
+         <source>Connection successful!</source>
+         <translation>ۇلانۇۇ جەڭىشتۉۉ بولدۇ !</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="44"/>
++        <location filename="../mainwindow.cpp" line="48"/>
+         <source>Connection failed!</source>
+         <translation>ۇلانۇۇ جەڭىلۉۉ بولدۇ !</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="45"/>
++        <location filename="../mainwindow.cpp" line="49"/>
+         <source>OK</source>
+         <translation>بەكىتۉۉ</translation>
+     </message>
+diff --git a/treasure-chest/network-telnet/translations/komt-network-telnet_mn.ts b/treasure-chest/network-telnet/translations/komt-network-telnet_mn.ts
+index b788f05..b23bdb5 100644
+--- a/treasure-chest/network-telnet/translations/komt-network-telnet_mn.ts
++++ b/treasure-chest/network-telnet/translations/komt-network-telnet_mn.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="39"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networktelnet::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-telnet/translations/komt-network-telnet_ug.ts b/treasure-chest/network-telnet/translations/komt-network-telnet_ug.ts
+index 6585dcd..d58923f 100644
+--- a/treasure-chest/network-telnet/translations/komt-network-telnet_ug.ts
++++ b/treasure-chest/network-telnet/translations/komt-network-telnet_ug.ts
+@@ -1,45 +1,53 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="ug">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="39"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networktelnet::MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Test</source>
+         <translation>سىناش</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Testing</source>
+         <translation>سىناۋاتىدۇ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="28"/>
+-        <source>network-telnet</source>
+-        <translation>تېلنېت تورى</translation>
++        <location filename="../mainwindow.cpp" line="32"/>
++        <source>Network Connectivity Detection Tool</source>
++        <translation type="unfinished"></translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>IP/domain name</source>
+         <translation>IP/دائىرە نامى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Port</source>
+         <translation>ئېغىز</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="47"/>
+         <source>Connection successful!</source>
+         <translation>ئۇلىنىش مۇۋەپپەقىيەتلىك بولدى!</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="44"/>
++        <location filename="../mainwindow.cpp" line="48"/>
+         <source>Connection failed!</source>
+         <translation>ئۇلىنىش مەغلۇپ بولدى!</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="45"/>
++        <location filename="../mainwindow.cpp" line="49"/>
+         <source>OK</source>
+         <translation>جەزملەشتۈرۈش</translation>
+     </message>
+diff --git a/treasure-chest/network-telnet/translations/komt-network-telnet_zh_CN.ts b/treasure-chest/network-telnet/translations/komt-network-telnet_zh_CN.ts
+index 9e0c352..1e9e876 100644
+--- a/treasure-chest/network-telnet/translations/komt-network-telnet_zh_CN.ts
++++ b/treasure-chest/network-telnet/translations/komt-network-telnet_zh_CN.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="39"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation>请先前往“麒麟管家”完成安装，然后重试。</translation>
++    </message>
++</context>
+ <context>
+     <name>networktelnet::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/network-telnet/translations/komt-network-telnet_zh_HK.ts b/treasure-chest/network-telnet/translations/komt-network-telnet_zh_HK.ts
+index 17b1acd..bf731ed 100644
+--- a/treasure-chest/network-telnet/translations/komt-network-telnet_zh_HK.ts
++++ b/treasure-chest/network-telnet/translations/komt-network-telnet_zh_HK.ts
+@@ -1,6 +1,14 @@
+ <?xml version="1.0" encoding="utf-8"?>
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="39"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ <context>
+     <name>networktelnet::MainWindow</name>
+     <message>
+diff --git a/treasure-chest/tcpdump/main.cpp b/treasure-chest/tcpdump/main.cpp
+index 5abb4a1..037ac37 100644
+--- a/treasure-chest/tcpdump/main.cpp
++++ b/treasure-chest/tcpdump/main.cpp
+@@ -2,6 +2,7 @@
+ #include <QLibraryInfo>
+ #include <QTranslator>
+ #include <QDebug>
++#include <QMessageBox>
+ #include <singleapplication.h>
+ #include "kom-utils.h"
+ #include "mainwindow.h"
+@@ -35,6 +36,12 @@ int main(int argc, char *argv[]) {
+         qCritical() << "Load sdk translation file fail";
+     }
+ 
++    if (!kom::KomUtils::IsPackageInstalled(QStringLiteral("tcpdump"))) {
++        qCritical() << "The dependency package is not installed, Please install it through kylin os manager first.";
++        QMessageBox::information(nullptr, "", QObject::tr("Please go to Kylin OS Manager to complete the installation, then try again."));
++        return -1;
++    }
++
+     kom::KomUtils::SetWaylandActivationWindow(app);
+ 
+     MainWindow main_window;
+diff --git a/treasure-chest/tcpdump/translations/komt-packet-capture_bo_CN.ts b/treasure-chest/tcpdump/translations/komt-packet-capture_bo_CN.ts
+index 4deb910..ecce6fc 100644
+--- a/treasure-chest/tcpdump/translations/komt-packet-capture_bo_CN.ts
++++ b/treasure-chest/tcpdump/translations/komt-packet-capture_bo_CN.ts
+@@ -4,87 +4,95 @@
+ <context>
+     <name>MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Kylin Packet Capture Tool</source>
+         <translation>དྲ་རྒྱའི་གྲངས་གཞི་འགན་ལེན་གྱིས་ཡོ་བྱད་ལེན་པ་རེད།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="41"/>
+         <source>Network card</source>
+         <translation>དྲ་བྱང་།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>Protocol</source>
+         <translation>གྲོས་མཐུན།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Port</source>
+         <translation>ཁ་བཤད་པ།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Port filter</source>
+         <translation>ཁ་འཚག་རྒྱག་པ།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>Host</source>
+         <translation>གནམ་གྲུ་གཙོ་བོ།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Host filter</source>
+         <translation>འཕྲུལ་འཁོར་གཙོ་བོ་འཚག་པ།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="54"/>
++        <location filename="../mainwindow.cpp" line="57"/>
+         <source>Please enter the name of the network card</source>
+         <translation>དྲ་བྱང་ནང་འཇུག་བྱེད་རོགས།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="56"/>
++        <location filename="../mainwindow.cpp" line="59"/>
+         <source>Please enter the host address</source>
+         <translation>ཁྱེད་ཀྱིས་འཕྲུལ་འཁོར་གཙོ་བོ་ནང་འཇུག་གནང་རོགས།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="62"/>
+-        <location filename="../mainwindow.cpp" line="77"/>
+-        <location filename="../mainwindow.cpp" line="92"/>
++        <location filename="../mainwindow.cpp" line="65"/>
++        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="95"/>
+         <source>Unspecified</source>
+         <translation>དམིགས་འཛུགས་མི་བྱེད།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="79"/>
++        <location filename="../mainwindow.cpp" line="82"/>
+         <source>Destination port</source>
+         <translation>དམིགས་ཡུལ་ནི་ཁ་བཤད་དོན་ལ་</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="83"/>
+         <source>Source port</source>
+         <translation>འབྱུང་ཁུངས་སྣེ་འདྲེན་བྱེད་པ།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="94"/>
++        <location filename="../mainwindow.cpp" line="97"/>
+         <source>Destination host</source>
+         <translation>དམིགས་ཡུལ་གཙོ་བོ་ཡིན།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="95"/>
++        <location filename="../mainwindow.cpp" line="98"/>
+         <source>Source host</source>
+         <translation>འབྱུང་ཁུངས་གཙོ་བོ།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="125"/>
+-        <location filename="../mainwindow.cpp" line="159"/>
++        <location filename="../mainwindow.cpp" line="128"/>
++        <location filename="../mainwindow.cpp" line="173"/>
+         <source>Start packet capture</source>
+         <translation>འགན་གཙང་ལེན་བྱེད་འགོ་འཛུགས་དགོས།</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="156"/>
++        <location filename="../mainwindow.cpp" line="170"/>
+         <source>Stop packet capture</source>
+         <translation>དམ་འཛིན་ཁུག་མ་མཇུག་བསྒྲི</translation>
+     </message>
+ </context>
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="41"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ </TS>
+diff --git a/treasure-chest/tcpdump/translations/komt-packet-capture_kk.ts b/treasure-chest/tcpdump/translations/komt-packet-capture_kk.ts
+index 3c9bf16..8fc2fd5 100644
+--- a/treasure-chest/tcpdump/translations/komt-packet-capture_kk.ts
++++ b/treasure-chest/tcpdump/translations/komt-packet-capture_kk.ts
+@@ -4,87 +4,95 @@
+ <context>
+     <name>MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Kylin Packet Capture Tool</source>
+         <translation>Kylin بوقشا ۇستاۋ قۇرالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="41"/>
+         <source>Network card</source>
+         <translation>تور كارتاسى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>Protocol</source>
+         <translation>كەلىسىم</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Port</source>
+         <translation>اۋٸز</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Port filter</source>
+         <translation>اۋٸز سۇزگىش</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>Host</source>
+         <translation>ماشينا</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Host filter</source>
+         <translation>باس كومپيۋتەر سۇزگىش</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="54"/>
++        <location filename="../mainwindow.cpp" line="57"/>
+         <source>Please enter the name of the network card</source>
+         <translation>تور كرارتوشكاسىنىڭ ەسىمىن كىرگىزىڭىز</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="56"/>
++        <location filename="../mainwindow.cpp" line="59"/>
+         <source>Please enter the host address</source>
+         <translation>حوست ٵدٸرىستٸ كىرگىزىڭىز</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="62"/>
+-        <location filename="../mainwindow.cpp" line="77"/>
+-        <location filename="../mainwindow.cpp" line="92"/>
++        <location filename="../mainwindow.cpp" line="65"/>
++        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="95"/>
+         <source>Unspecified</source>
+         <translation>انىق بولماعان</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="79"/>
++        <location filename="../mainwindow.cpp" line="82"/>
+         <source>Destination port</source>
+         <translation>حۇجاتتاعى نىسانا اۋٸزٸ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="83"/>
+         <source>Source port</source>
+         <translation>قاينار اۋٸزٸ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="94"/>
++        <location filename="../mainwindow.cpp" line="97"/>
+         <source>Destination host</source>
+         <translation>حۇجاتتاعى نىسانا حوست</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="95"/>
++        <location filename="../mainwindow.cpp" line="98"/>
+         <source>Source host</source>
+         <translation>قاينار حوست</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="125"/>
+-        <location filename="../mainwindow.cpp" line="159"/>
++        <location filename="../mainwindow.cpp" line="128"/>
++        <location filename="../mainwindow.cpp" line="173"/>
+         <source>Start packet capture</source>
+         <translation>بوقشا جالعاستى باستاۋ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="156"/>
++        <location filename="../mainwindow.cpp" line="170"/>
+         <source>Stop packet capture</source>
+         <translation>بوقشا جالعاستى توقتاتۋ</translation>
+     </message>
+ </context>
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="41"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ </TS>
+diff --git a/treasure-chest/tcpdump/translations/komt-packet-capture_ky.ts b/treasure-chest/tcpdump/translations/komt-packet-capture_ky.ts
+index e525965..11fff26 100644
+--- a/treasure-chest/tcpdump/translations/komt-packet-capture_ky.ts
++++ b/treasure-chest/tcpdump/translations/komt-packet-capture_ky.ts
+@@ -4,87 +4,95 @@
+ <context>
+     <name>MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Kylin Packet Capture Tool</source>
+         <translation>Kylin بوقچو تۇقتۇۇ قۇرالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="41"/>
+         <source>Network card</source>
+         <translation>تور  كارتوچكاسى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>Protocol</source>
+         <translation>كەلىشىم نااما</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Port</source>
+         <translation>ووزۇ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Port filter</source>
+         <translation>ووز سۉزگۉچ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>Host</source>
+         <translation>ماشىنا</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Host filter</source>
+         <translation>باش  كومپىيۇتەر سۉزگۉچ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="54"/>
++        <location filename="../mainwindow.cpp" line="57"/>
+         <source>Please enter the name of the network card</source>
+         <translation>تور  كارتاسىنىن اتىن كىرگىزىڭ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="56"/>
++        <location filename="../mainwindow.cpp" line="59"/>
+         <source>Please enter the host address</source>
+         <translation>ساھىپخاننىڭ دايىن وردۇن كىرگىزىڭ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="62"/>
+-        <location filename="../mainwindow.cpp" line="77"/>
+-        <location filename="../mainwindow.cpp" line="92"/>
++        <location filename="../mainwindow.cpp" line="65"/>
++        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="95"/>
+         <source>Unspecified</source>
+         <translation>انىق بولبوعون</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="79"/>
++        <location filename="../mainwindow.cpp" line="82"/>
+         <source>Destination port</source>
+         <translation>نىشان ووزۇ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="83"/>
+         <source>Source port</source>
+         <translation>كەلۉۉ جەر جانى  ووزۇ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="94"/>
++        <location filename="../mainwindow.cpp" line="97"/>
+         <source>Destination host</source>
+         <translation>نىشان ساھىبى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="95"/>
++        <location filename="../mainwindow.cpp" line="98"/>
+         <source>Source host</source>
+         <translation>كەلۉۉ جەر جانى  ساھىبى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="125"/>
+-        <location filename="../mainwindow.cpp" line="159"/>
++        <location filename="../mainwindow.cpp" line="128"/>
++        <location filename="../mainwindow.cpp" line="173"/>
+         <source>Start packet capture</source>
+         <translation>بوقچو تۇتانىشى باشتوو</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="156"/>
++        <location filename="../mainwindow.cpp" line="170"/>
+         <source>Stop packet capture</source>
+         <translation>بوقچو تۇتانىشى توقتوتۇۇ</translation>
+     </message>
+ </context>
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="41"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ </TS>
+diff --git a/treasure-chest/tcpdump/translations/komt-packet-capture_mn.ts b/treasure-chest/tcpdump/translations/komt-packet-capture_mn.ts
+index 754edfc..4b10054 100644
+--- a/treasure-chest/tcpdump/translations/komt-packet-capture_mn.ts
++++ b/treasure-chest/tcpdump/translations/komt-packet-capture_mn.ts
+@@ -4,87 +4,95 @@
+ <context>
+     <name>MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Kylin Packet Capture Tool</source>
+         <translation>ᠰᠦᠯᠵᠢᠶᠡᠨ ᠦ ᠲᠣᠭ᠎ᠠ ᠪᠠᠷᠢᠮᠲᠠ ᠶᠢ ᠳᠠᠭᠠᠭᠠᠴᠢᠯᠠᠨ ᠪᠠᠭᠠᠵᠢ ᠶᠢ ᠠᠳᠬᠤᠨ᠎ᠠ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="41"/>
+         <source>Network card</source>
+         <translation>ᠰᠦᠯᠵᠢᠶᠡᠨ ᠺᠠᠯᠼ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>Protocol</source>
+         <translation>ᠬᠡᠯᠡᠯᠴᠡᠭᠡᠷ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Port</source>
+         <translation>ᠦᠵᠦᠭᠦᠷ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Port filter</source>
+         <translation>ᠦᠵᠦᠭᠦᠷ ᠦᠨ ᠠᠮᠠᠨ ᠳᠤ ᠱᠦᠭᠦᠨ᠎ᠡ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>Host</source>
+         <translation>ᠭᠣᠣᠯ ᠮᠠᠰᠢᠨ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Host filter</source>
+         <translation>ᠭᠣᠣᠯ ᠮᠠᠰᠢᠨ ᠱᠦᠭᠦᠨ᠎ᠡ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="54"/>
++        <location filename="../mainwindow.cpp" line="57"/>
+         <source>Please enter the name of the network card</source>
+         <translation>ᠰᠦᠯᠵᠢᠶᠡᠨ ᠦ ᠺᠠᠷᠲ᠋ ᠤᠨ ᠨᠡᠷ᠎ᠡ ᠶᠢ ᠣᠷᠣᠭᠤᠯᠵᠤ ᠢᠷᠡᠭᠡᠷᠡᠢ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="56"/>
++        <location filename="../mainwindow.cpp" line="59"/>
+         <source>Please enter the host address</source>
+         <translation>ᠭᠣᠣᠯ ᠮᠠᠰᠢᠨ ᠣᠷᠣᠭᠤᠯᠵᠤ ᠥᠭ᠍ᠭᠥᠭᠡᠷᠡᠢ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="62"/>
+-        <location filename="../mainwindow.cpp" line="77"/>
+-        <location filename="../mainwindow.cpp" line="92"/>
++        <location filename="../mainwindow.cpp" line="65"/>
++        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="95"/>
+         <source>Unspecified</source>
+         <translation>ᠵᠢᠭᠠᠨ ᠲᠣᠭᠲᠠᠭᠠᠬᠤ ᠦᠭᠡᠢ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="79"/>
++        <location filename="../mainwindow.cpp" line="82"/>
+         <source>Destination port</source>
+         <translation>ᠵᠣᠷᠢᠯᠭ᠎ᠠ ᠶᠢᠨ ᠦᠵᠦᠭᠦᠷ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="83"/>
+         <source>Source port</source>
+         <translation>ᠢᠷᠡᠯᠲᠡ ᠶᠢᠨ ᠦᠵᠦᠭᠦᠷ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="94"/>
++        <location filename="../mainwindow.cpp" line="97"/>
+         <source>Destination host</source>
+         <translation>ᠵᠣᠷᠢᠯᠭ᠎ᠠ ᠶᠢᠨ ᠭᠣᠣᠯ ᠮᠠᠰᠢᠨ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="95"/>
++        <location filename="../mainwindow.cpp" line="98"/>
+         <source>Source host</source>
+         <translation>ᠢᠷᠡᠯᠲᠡ ᠶᠢᠨ ᠭᠣᠣᠯ ᠮᠠᠰᠢᠨ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="125"/>
+-        <location filename="../mainwindow.cpp" line="159"/>
++        <location filename="../mainwindow.cpp" line="128"/>
++        <location filename="../mainwindow.cpp" line="173"/>
+         <source>Start packet capture</source>
+         <translation>ᠪᠣᠭᠴᠣ ᠪᠠᠨ ᠠᠳᠬᠤᠵᠤ ᠡᠬᠢᠯᠡᠪᠡ ᠃</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="156"/>
++        <location filename="../mainwindow.cpp" line="170"/>
+         <source>Stop packet capture</source>
+         <translation>ᠪᠣᠭᠴᠣ ᠪᠠᠨ ᠲᠡᠭᠦᠰᠬᠡᠬᠦ</translation>
+     </message>
+ </context>
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="41"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ </TS>
+diff --git a/treasure-chest/tcpdump/translations/komt-packet-capture_ug.ts b/treasure-chest/tcpdump/translations/komt-packet-capture_ug.ts
+index ef4384e..2d12245 100644
+--- a/treasure-chest/tcpdump/translations/komt-packet-capture_ug.ts
++++ b/treasure-chest/tcpdump/translations/komt-packet-capture_ug.ts
+@@ -4,87 +4,95 @@
+ <context>
+     <name>MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Kylin Packet Capture Tool</source>
+         <translation>Kylin بوغچا تۇتۇش قورالى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="41"/>
+         <source>Network card</source>
+         <translation>تور كارتىسى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>Protocol</source>
+         <translation>كېلىشىمنامە</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Port</source>
+         <translation>ئېغىز</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Port filter</source>
+         <translation>ئېغىز سۈزگۈچ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>Host</source>
+         <translation>ماشىنا</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Host filter</source>
+         <translation>باش كومپيۇتېر سۈزگۈچ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="54"/>
++        <location filename="../mainwindow.cpp" line="57"/>
+         <source>Please enter the name of the network card</source>
+         <translation>تور كارتىسىنىڭ ئىسمىنى كىرگۈزۈڭ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="56"/>
++        <location filename="../mainwindow.cpp" line="59"/>
+         <source>Please enter the host address</source>
+         <translation>ساھىپخاننىڭ ئادرېسىنى كىرگۈزۈڭ</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="62"/>
+-        <location filename="../mainwindow.cpp" line="77"/>
+-        <location filename="../mainwindow.cpp" line="92"/>
++        <location filename="../mainwindow.cpp" line="65"/>
++        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="95"/>
+         <source>Unspecified</source>
+         <translation>بېكىتىلمىگەن</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="79"/>
++        <location filename="../mainwindow.cpp" line="82"/>
+         <source>Destination port</source>
+         <translation>نىشان ئېغىزى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="83"/>
+         <source>Source port</source>
+         <translation>مەنبە ئېغىزى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="94"/>
++        <location filename="../mainwindow.cpp" line="97"/>
+         <source>Destination host</source>
+         <translation>نىشان ساھىبى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="95"/>
++        <location filename="../mainwindow.cpp" line="98"/>
+         <source>Source host</source>
+         <translation>مەنبە ساھىبى</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="125"/>
+-        <location filename="../mainwindow.cpp" line="159"/>
++        <location filename="../mainwindow.cpp" line="128"/>
++        <location filename="../mainwindow.cpp" line="173"/>
+         <source>Start packet capture</source>
+         <translation>بوغچا تۇتۇشنى باشلاش</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="156"/>
++        <location filename="../mainwindow.cpp" line="170"/>
+         <source>Stop packet capture</source>
+         <translation>بوغچا تۇتۇشنى توختىتىش</translation>
+     </message>
+ </context>
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="41"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ </TS>
+diff --git a/treasure-chest/tcpdump/translations/komt-packet-capture_zh_CN.ts b/treasure-chest/tcpdump/translations/komt-packet-capture_zh_CN.ts
+index 82569ea..34ded14 100644
+--- a/treasure-chest/tcpdump/translations/komt-packet-capture_zh_CN.ts
++++ b/treasure-chest/tcpdump/translations/komt-packet-capture_zh_CN.ts
+@@ -77,14 +77,22 @@
+     </message>
+     <message>
+         <location filename="../mainwindow.cpp" line="128"/>
+-        <location filename="../mainwindow.cpp" line="168"/>
++        <location filename="../mainwindow.cpp" line="173"/>
+         <source>Start packet capture</source>
+         <translation>开始抓包</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="165"/>
++        <location filename="../mainwindow.cpp" line="170"/>
+         <source>Stop packet capture</source>
+         <translation>结束抓包</translation>
+     </message>
+ </context>
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="41"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation>请先前往“麒麟管家”完成安装，然后重试。</translation>
++    </message>
++</context>
+ </TS>
+diff --git a/treasure-chest/tcpdump/translations/komt-packet-capture_zh_HK.ts b/treasure-chest/tcpdump/translations/komt-packet-capture_zh_HK.ts
+index 990220b..8cb5bca 100644
+--- a/treasure-chest/tcpdump/translations/komt-packet-capture_zh_HK.ts
++++ b/treasure-chest/tcpdump/translations/komt-packet-capture_zh_HK.ts
+@@ -4,87 +4,95 @@
+ <context>
+     <name>MainWindow</name>
+     <message>
+-        <location filename="../mainwindow.cpp" line="35"/>
++        <location filename="../mainwindow.cpp" line="38"/>
+         <source>Kylin Packet Capture Tool</source>
+         <translation>網絡數據包抓取工具</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="38"/>
++        <location filename="../mainwindow.cpp" line="41"/>
+         <source>Network card</source>
+         <translation>網卡</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="39"/>
++        <location filename="../mainwindow.cpp" line="42"/>
+         <source>Protocol</source>
+         <translation>協議</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="40"/>
++        <location filename="../mainwindow.cpp" line="43"/>
+         <source>Port</source>
+         <translation>端口</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="41"/>
++        <location filename="../mainwindow.cpp" line="44"/>
+         <source>Port filter</source>
+         <translation>端口過濾</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="42"/>
++        <location filename="../mainwindow.cpp" line="45"/>
+         <source>Host</source>
+         <translation>主機</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="43"/>
++        <location filename="../mainwindow.cpp" line="46"/>
+         <source>Host filter</source>
+         <translation>主機過濾</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="54"/>
++        <location filename="../mainwindow.cpp" line="57"/>
+         <source>Please enter the name of the network card</source>
+         <translation>請輸入網卡名</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="56"/>
++        <location filename="../mainwindow.cpp" line="59"/>
+         <source>Please enter the host address</source>
+         <translation>請輸入主機</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="62"/>
+-        <location filename="../mainwindow.cpp" line="77"/>
+-        <location filename="../mainwindow.cpp" line="92"/>
++        <location filename="../mainwindow.cpp" line="65"/>
++        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="95"/>
+         <source>Unspecified</source>
+         <translation>不指定</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="79"/>
++        <location filename="../mainwindow.cpp" line="82"/>
+         <source>Destination port</source>
+         <translation>目的端口</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="80"/>
++        <location filename="../mainwindow.cpp" line="83"/>
+         <source>Source port</source>
+         <translation>來源端口</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="94"/>
++        <location filename="../mainwindow.cpp" line="97"/>
+         <source>Destination host</source>
+         <translation>目的主機</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="95"/>
++        <location filename="../mainwindow.cpp" line="98"/>
+         <source>Source host</source>
+         <translation>來源主機</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="125"/>
+-        <location filename="../mainwindow.cpp" line="159"/>
++        <location filename="../mainwindow.cpp" line="128"/>
++        <location filename="../mainwindow.cpp" line="173"/>
+         <source>Start packet capture</source>
+         <translation>開始抓包</translation>
+     </message>
+     <message>
+-        <location filename="../mainwindow.cpp" line="156"/>
++        <location filename="../mainwindow.cpp" line="170"/>
+         <source>Stop packet capture</source>
+         <translation>結束抓包</translation>
+     </message>
+ </context>
++<context>
++    <name>QObject</name>
++    <message>
++        <location filename="../main.cpp" line="41"/>
++        <source>Please go to Kylin OS Manager to complete the installation, then try again.</source>
++        <translation type="unfinished"></translation>
++    </message>
++</context>
+ </TS>

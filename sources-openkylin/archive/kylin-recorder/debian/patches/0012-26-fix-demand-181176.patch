@@ -1,0 +1,331 @@
+From: =?utf-8?b?6YKT5aW9?= <denghao@kylinos.cn>
+Date: Thu, 16 Nov 2023 10:01:59 +0000
+Subject: =?utf-8?q?!26_fix_demand_181176_Merge_pull_request_!26_from_?=
+ =?utf-8?q?=E9=82=93=E5=A5=BD/openkylin/nile?=
+
+---
+ kylin-recorder.pro |  3 +++
+ src/clipwidget.cpp |  1 +
+ src/fileitem.cpp   | 65 ++++++++++++++++++++++++++++++++++++++++++++++++++----
+ src/fileitem.h     | 20 +++++++++++------
+ src/mainwindow.cpp | 21 ++++++++++++++++--
+ src/mainwindow.h   |  4 +++-
+ src/mythread.cpp   |  6 +++--
+ src/mythread.h     |  6 +++--
+ 8 files changed, 108 insertions(+), 18 deletions(-)
+
+diff --git a/kylin-recorder.pro b/kylin-recorder.pro
+index bba5f3f..3bf2c50 100755
+--- a/kylin-recorder.pro
++++ b/kylin-recorder.pro
+@@ -144,3 +144,6 @@ DISTFILES += \
+     translations/kylin-recorder_zh_CN.qm \
+     translations/kylin-recorder_zh_CN.ts \
+     translations/qt_zh_CN.qm
++
++DEFINES += KY_SDK_DATE
++PKGCONFIG += kysdk-systime
+diff --git a/src/clipwidget.cpp b/src/clipwidget.cpp
+index 7fb4f3a..2dc3ec8 100755
+--- a/src/clipwidget.cpp
++++ b/src/clipwidget.cpp
+@@ -3,6 +3,7 @@
+ #include "tools.h"
+ #include "mainwindow.h"
+ #include <QFileInfo>
++#include "libkydate.h"
+ 
+ #define MIN(x, y) (x) < (y) ? (x) : (y)
+ #define MAX(x, y) (x) > (y) ? (x) : (y)
+diff --git a/src/fileitem.cpp b/src/fileitem.cpp
+index b0df296..0e00b4c 100755
+--- a/src/fileitem.cpp
++++ b/src/fileitem.cpp
+@@ -24,6 +24,7 @@
+ #include "audiofileprocess.h"
+ #include <QApplication>
+ #include <QThread>
++#include "libkydate.h"
+ 
+ FileItem::FileItem(QString fileAbsolutePath, QWidget *parent) : QStackedWidget(parent)
+ {
+@@ -115,8 +116,32 @@ void FileItem::initItemWid()
+ 
+     connect(MainWindow::mutual, &MainWindow::resizeSignals, this, &FileItem::resizedSlots);
+     connect(MainWindow::mutual, &MainWindow::deviceModeChangedSignals, this, &FileItem::repaintClipWidgetSlots);
++
++    QDBusConnection::sessionBus().connect("com.kylin.kysdk.DateServer",
++                                          "/com/kylin/kysdk/Date",
++                                          "com.kylin.kysdk.DateInterface",
++                                          "LongDateSignal",
++                                          this,
++                                          SLOT(updateDateFormat(QString)));
++
++
++}
++
++void FileItem::updateDateFormat(QString dateFormat)
++{
++    Q_UNUSED(dateFormat)
++    tm timeFormat;
++    timeFormat.tm_year = m_recordTime.date().year();
++    timeFormat.tm_mon = m_recordTime.date().month();
++    timeFormat.tm_mday = m_recordTime.date().day();
++    QString d = kdk_system_shortformat_transform(&timeFormat);
++    QString date;
++    date = d.append(" ").append(m_recordTime.toString("hh:mm:ss"));
++
++    m_startRecordTimeLabel->setText(date);
+ }
+ 
++
+ int FileItem::getInternalMoveTime()
+ {
+     QFile file(m_filePath);
+@@ -411,10 +436,21 @@ void FileItem::themeStyle(QString themeColor)
+     }
+ }
+ 
+-void FileItem::setName_Time_Length(QString nameStr, QString timeStr, QString lengthStr)
++//void FileItem::setName_Time_Length(QString nameStr, QString timeStr, QString lengthStr)
++void FileItem::setName_Time_Length(QString nameStr, QDateTime recordTime, QString lengthStr)
+ {
++    m_recordTime = recordTime;
++    tm timeFormat;
++    timeFormat.tm_year = recordTime.date().year();
++    timeFormat.tm_mon = recordTime.date().month();
++    timeFormat.tm_mday = recordTime.date().day();
++    QString d = kdk_system_shortformat_transform(&timeFormat);
++    QString date;
++    date = d.append(" ").append(recordTime.toString("hh:mm:ss"));
++
++    m_startRecordTimeLabel->setText(date);
+     m_recordFileNameLabel->setText(nameStr);
+-    m_startRecordTimeLabel->setText(timeStr);
++    //m_startRecordTimeLabel->setText(timeStr);
+     m_timelengthLabel->setText(lengthStr);
+ }
+ 
+@@ -487,14 +523,35 @@ void FileItem::updateListDisplay(QString filePath)
+     delete MainWindow::mutual->m_list->takeItem(MainWindow::mutual->m_list->count() - 1 - x); //删除操作
+     qDebug() << "文件名:" << filePath << "所在列表的索引:" << x;
+     QFileInfo info(filePath);
+-    emit addListItemSignal(filePath, info.created().toString("yyyy-MM-dd hh:mm:ss"));
++    //emit addListItemSignal(filePath, info.created().toString("yyyy-MM-dd hh:mm:ss"));
++
++    tm *timeFormat = new tm();
++    QDateTime dateTime = QDateTime::currentDateTime();
++    timeFormat->tm_year = dateTime.date().year();
++    timeFormat->tm_mon = dateTime.date().month();
++    timeFormat->tm_mday = dateTime.date().day();
++    QString d = kdk_system_shortformat_transform(timeFormat);
++    QString date;
++    date = d.append(" hh:mm:ss");
++    emit addListItemSignal(filePath, dateTime);
+ }
+ 
+ void FileItem::addListDisplay(QString filePath)
+ {
+     qDebug() << "文件名:" << filePath;
+     QFileInfo info(filePath);
+-    emit addListItemSignal(filePath, info.created().toString("yyyy-MM-dd hh:mm:ss"));
++    //emit addListItemSignal(filePath, info.created().toString("yyyy-MM-dd hh:mm:ss"));
++    tm *timeFormat = new tm();
++    QDateTime dateTime = QDateTime::currentDateTime();
++    timeFormat->tm_year = dateTime.date().year();
++    timeFormat->tm_mon = dateTime.date().month();
++    timeFormat->tm_mday = dateTime.date().day();
++    QString d = kdk_system_shortformat_transform(timeFormat);
++    QString date;
++    date = d.append(" hh:mm:ss");
++    emit addListItemSignal(filePath, info.created());
++
++
+ }
+ 
+ void FileItem::cancel()
+diff --git a/src/fileitem.h b/src/fileitem.h
+index 10d5ffa..e606115 100755
+--- a/src/fileitem.h
++++ b/src/fileitem.h
+@@ -59,11 +59,15 @@ public:
+ 
+ public:
+     int m_movePos = 0; //每隔毫秒数所移动位置
+-    void setName_Time_Length(QString nameStr, QString timeStr, QString lengthStr);
++    //void setName_Time_Length(QString nameStr, QString timeStr, QString lengthStr);
++    void setName_Time_Length(QString nameStr, QDateTime recordTime, QString lengthStr);
+     QString getfilePath();
+     bool m_mouseState = false; // 用来判断当前鼠标是否在控件中
+     bool m_playRecorder = false; //当前是否在播放
+     bool m_pauseState = false;  // 用来判断当前是否是暂停状态
++    QLabel *m_startRecordTimeLabel = nullptr; //录音时间标签
++    MyLabel *m_recordFileNameLabel = nullptr; //录音文件名
++
+ 
+ private:
+     QString m_filePath; //录音存储的文件路径
+@@ -73,8 +77,6 @@ private:
+     QWidget *m_splitLineWidget = nullptr;     //分割线wid
+     QVBoxLayout *m_splitLineLayout = nullptr; //分割线layout
+     CustomSlider *m_playSlider = nullptr;     //播放划块条
+-    MyLabel *m_recordFileNameLabel = nullptr; //录音文件名
+-    QLabel *m_startRecordTimeLabel = nullptr; //录音时间标签
+     QLabel *m_timelengthLabel = nullptr;      //时间长度标签
+     QLabel *m_seatLabel = nullptr;            //占位标签
+     QString m_itemThemeColor;                 //主题颜色串
+@@ -112,6 +114,8 @@ private:
+ 
+     RenameWidget *m_renameWidget = nullptr;
+ 
++    QDateTime m_recordTime;
++
+     void initItemWid();       //初始化ItemWid
+     void setItemWid();        //设置ItemWid的界面
+     void initThemeGsetting(); //配置文件初始化主题
+@@ -150,24 +154,26 @@ private slots:
+ 
+     void rightClickedMenuRequest(); //右击弹出Menu菜单选择另存为和打开文件位置
+     void actionSaveasSlot();        //另存为
+-//    void actionOpenFolderSlot();    //打开文件所在位置
++    //void actionOpenFolderSlot();    //打开文件所在位置
+     void actionRenameSlot();
+     void actionEmptyListSlot();
+ 
+-//    void toClipPage(); //切换至剪裁窗口
++    //void toClipPage(); //切换至剪裁窗口
+     void cancel();     //取消剪辑
+     void finish();     //剪辑完成
+     void updateListDisplay(QString filePath);
+     void addListDisplay(QString filePath);
+-//    void toFlagFile();
++    //void toFlagFile();
+     void updateLabelNameSlots(QString newfilepath);
+     void delAudioFile();
+     void resizedSlots(bool m_ismax);
+     void repaintClipWidgetSlots();
++    void updateDateFormat(QString dateFormat);
+ 
+ signals:
+     void startdelete(QStringList path);
+-    void addListItemSignal(QString addfilePath, QString addTime);
++    //void addListItemSignal(QString addfilePath, QString addTime);
++    void addListItemSignal(QString addfilePath, QDateTime addTime);
+     void currentPos_PlaySignal(int);
+     void updateName(QString name);
+ };
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index e4b6728..5a236b3 100755
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -31,6 +31,7 @@
+ #include <kysdk/applications/ukuistylehelper/ukuistylehelper.h>
+ #include "tools.h"
+ #include "clipwidget.h"
++#include "libkydate.h"
+ #define BufferSize 35280
+ // const qint64 TIME_TRANSFORM = 1000 * 1000;              // 微秒转秒;
+ #define rectangleCount 48 //矩形条个数
+@@ -1668,14 +1669,30 @@ void MainWindow::updateGsetting_ListWidget() //初始化时配置文件刷新出
+             qDebug () << "File is not exist...";
+             continue;
+         }
+-        slotListItemAdd(files.at(i),times.at(i));
++        //slotListItemAdd(files.at(i),times.at(i));
++        tm *timeFormat = new tm();
++        QDateTime dateTime = QDateTime::fromString(times.at(i), "yyyy-MM-dd hh:mm:ss");
++        timeFormat->tm_year = dateTime.date().year();
++        timeFormat->tm_mon = dateTime.date().month();
++        timeFormat->tm_mday = dateTime.date().day();
++
++        timeFormat->tm_hour = dateTime.time().hour();
++        timeFormat->tm_min = dateTime.time().minute();
++        timeFormat->tm_sec = dateTime.time().second();
++
++        QString d = kdk_system_shortformat_transform(timeFormat);
++        d.append(" ").append(dateTime.time().toString("hh:mm:ss"));
++
++        slotListItemAdd(files.at(i), dateTime);
++
+         fileCount ++ ;
+     }
+     qDebug() << fileCount;
+     isFileNull(fileCount);
+ }
+ 
+-void MainWindow::slotListItemAdd(QString fileAbsolutePath, QString recordTime)
++//void MainWindow::slotListItemAdd(QString fileAbsolutePath, QString recordTime)
++void MainWindow::slotListItemAdd(QString fileAbsolutePath, QDateTime recordTime)
+ {
+     QFileInfo fileinfo(fileAbsolutePath);
+     m_filePathList << fileinfo.filePath();
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index 992d78f..0b40ad0 100755
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -89,6 +89,7 @@
+ #include <kborderlessbutton.h>
+ #include <kabase/buried_point.hpp>
+ #include <kpushbutton.h>
++#include "libkydate.h"
+ 
+ #define INIT_MAINWINDOW_RECTANGLE_COUNT 130 //用于初始化矩形条个数
+ #define MAX_FLAG_NUM 6
+@@ -343,7 +344,8 @@ public slots:
+     void maxShow();
+     void closeWindow();
+     void handlingSlot();
+-    void slotListItemAdd(QString fileName, QString recordTime);
++    //void slotListItemAdd(QString fileName, QString recordTime);
++    void slotListItemAdd(QString fileName, QDateTime recordTime);
+     void onPrepareForSleep(bool isSleep);     // S3  S4策略
+     void onPrepareForShutdown(bool Shutdown); // S3  S4策略
+     void inputDevice_get(QString str);
+diff --git a/src/mythread.cpp b/src/mythread.cpp
+index 0d758b3..32bd494 100755
+--- a/src/mythread.cpp
++++ b/src/mythread.cpp
+@@ -191,7 +191,8 @@ QString MyThread::pathSetting()
+         qDebug() << "Create new folder :" << defaultStr;
+     }
+     fileName = QDateTime::currentDateTime().toString("yyyyMMddhhmmss");
+-    recordTime = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
++    //recordTime = QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss");
++    recordTime = QDateTime::currentDateTime();
+     if (recordData->get("path").toString() == "") {
+         qDebug() <<"GSetting 第二次读空，有大问题";
+         if (recordData->get("type").toInt() == 1) // mp3
+@@ -334,7 +335,8 @@ void MyThread::stopBtnPressed() //停止录音
+         isRecordStart = false;
+         int num = toConvertWAV(absolutionPath, endFileName.toLocal8Bit().data());
+         if (num >= 0) {
+-            emit DATABASE_INSTANCE.addRecordSignal(endFileName, recordTime);
++            //emit DATABASE_INSTANCE.addRecordSignal(endFileName, recordTime);
++            emit DATABASE_INSTANCE.addRecordSignal(endFileName, QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss"));
+             emit listItemAddSignal(endFileName, recordTime);
+             qDebug() << "保存成功";
+         }
+diff --git a/src/mythread.h b/src/mythread.h
+index 667b36c..48892b2 100755
+--- a/src/mythread.h
++++ b/src/mythread.h
+@@ -97,7 +97,8 @@ public:
+ 
+     QString absolutionPath; // raw存放的绝对路径
+     QString outputFileName; //输出的文件名
+-    QString recordTime;
++    //QString recordTime;
++    QDateTime recordTime;
+     QString rawFileName; // raw临时文件名
+ 
+     //    QTimer *tipTimer = nullptr;//延时执行process
+@@ -115,7 +116,8 @@ signals:
+     void recordPaint(int);
+     void stopRecord();
+     void changeVoicePicture();
+-    void listItemAddSignal(QString fileName, QString recordTime); //更新检测到的音频振幅值到配置文件
++    //void listItemAddSignal(QString fileName, QString recordTime); //更新检测到的音频振幅值到配置文件
++    void listItemAddSignal(QString fileName, QDateTime recordTime);
+     void handling(bool isOk);
+ 
+ private:

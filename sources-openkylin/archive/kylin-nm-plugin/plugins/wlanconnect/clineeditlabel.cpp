@@ -1,0 +1,190 @@
+﻿/*
+ * Copyright (C) 2019 Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/&gt;.
+ *
+ */
+
+#include "clineeditlabel.h"
+#include <QEvent>
+#include <QMouseEvent>
+#include <QToolTip>
+#include <QDebug>
+#include <QScrollBar>
+#include <QStyle>
+namespace KInstaller {
+
+CLineEditLabel::CLineEditLabel(QString strName, QIcon icon, QWidget *parent) : QWidget(parent)
+  ,m_flag(true)
+  ,leadingPng("")
+  ,bltoopTip(false)
+  ,w(nullptr)
+  ,m_strName("")
+{
+    m_strName = strName;
+    leadingPng = icon;
+    initUI();
+    setFocusPolicy(Qt::StrongFocus);
+
+//    this->installEventFilter(this);
+}
+
+void CLineEditLabel::initUI()
+{
+    layout = new QVBoxLayout;
+    m_lineEdit = new QLineEdit();
+    m_lineEdit->setContextMenuPolicy(Qt::ContextMenuPolicy::NoContextMenu);
+    m_lineEdit->setTextMargins(10, 0, 0, 0);
+    m_lineEdit->setObjectName("lineEdit");
+//    m_lineEdit->setStyleSheet("padding-left: 8px;");
+////    edit->setMinimumWidth(300);
+////    m_lineEdit->setMinimumHeight(16);
+    m_lineEdit->setPlaceholderText(m_strName);
+    m_lineEdit->setContextMenuPolicy(Qt::ContextMenuPolicy::NoContextMenu);
+
+//    QAction *edit_action = new QAction(m_lineEdit);
+//    edit_action->setIcon(leadingPng);
+//    edit_action->setToolTip(tr("ddddddddd"));
+//    m_lineEdit->addAction(edit_action, QLineEdit::LeadingPosition);
+    layout->addWidget(m_lineEdit);
+}
+
+void CLineEditLabel::initAllConnect()
+{
+    connect(action, &QAction::triggered, this, &CLineEditLabel::changeCodePng);
+}
+
+void CLineEditLabel::setTrailingPng(QIcon icon)
+{
+    action = new QAction(m_lineEdit);
+    action->setIcon(icon);
+    m_lineEdit->addAction(action, QLineEdit::TrailingPosition);
+    initAllConnect();
+}
+
+void CLineEditLabel::changeCodePng()
+{
+    m_flag = !m_flag;
+    if(!m_flag) {
+        action->setIcon(QIcon(":/res/svg/plaincode.svg"));
+        m_lineEdit->setEchoMode(QLineEdit::Normal);
+    } else {
+        action->setIcon(QIcon(":/res/svg/code.svg"));
+        m_lineEdit->setEchoMode(QLineEdit::Password);
+    }
+}
+
+void CLineEditLabel::setPlaceholderText(QString str)
+{
+    m_lineEdit->setPlaceholderText(str);
+    //手动设置提示字体颜色 bug293741
+    QPalette pale = m_lineEdit->palette();
+    pale.setColor(QPalette::PlaceholderText, QColor("#cccccc"));
+    m_lineEdit->setPalette(pale);
+}
+
+CustomLineEdit::CustomLineEdit(QString strName, QIcon icon, QWidget *parent):QLineEdit(parent)
+  ,m_flag(true)
+  ,leadingPng("")
+  ,bltoopTip(false)
+  ,w(nullptr)
+  ,m_strName("")
+{
+    this->setPlaceholderText(m_strName);
+    this->setContextMenuPolicy(Qt::ContextMenuPolicy::NoContextMenu);
+    this->setTextMargins(10,0,10,0);
+}
+CustomLineEdit::~CustomLineEdit()
+{
+
+}
+void CustomLineEdit::setTrailingPng(QIcon icon)
+{
+    int height=sizeHint().height();
+    int butSize=sizeHint().height()-5;
+    m_button=new QToolButton(this);
+    m_button->setFocusPolicy(Qt::NoFocus);
+    m_button->setIcon(icon);
+    m_button->setCursor(Qt::PointingHandCursor);
+    m_button->setStyleSheet("QToolButton{border:none;padding:2px;}");
+    m_button->setFixedSize(butSize,butSize);
+    int frameWidth=this->style()->pixelMetric(QStyle::PM_DefaultFrameWidth);
+    setStyleSheet(QString("QLineEdit{padding-right:%1px}").arg(butSize));
+    setMinimumHeight(height);
+    connect(m_button, &QToolButton::clicked, this, &CustomLineEdit::changeCodePng);
+}
+
+void CustomLineEdit::setPlaceholderText2(QString str)
+{
+    this->setPlaceholderText(str);
+    //手动设置提示字体颜色 bug293741
+    QPalette pale = this->palette();
+    pale.setColor(QPalette::PlaceholderText, QColor("#cccccc"));
+    this->setPalette(pale);
+}
+
+void CustomLineEdit::resizeEvent(QResizeEvent *event)
+{
+    int frameWidth=this->style()->pixelMetric(QStyle::PM_DefaultFrameWidth);
+    if(m_button!=nullptr)
+    {
+        m_button->move(width()-m_button->width()-10,height()/2-m_button->height()/2);
+    }
+
+    int w=width();
+    int h=height();
+}
+
+void CustomLineEdit::changeCodePng()
+{
+    m_flag = !m_flag;
+    if(!m_flag) {
+        m_button->setIcon(QIcon(":/res/svg/plaincode.svg"));
+        this->setEchoMode(QLineEdit::Normal);
+    } else {
+        m_button->setIcon(QIcon(":/res/svg/code.svg"));
+        this->setEchoMode(QLineEdit::Password);
+    }
+}
+
+//void CLineEditLabel::mousePressEvent(QMouseEvent *event)
+//{
+//    if(event->button() == Qt::LeftButton) {
+//        if(bltoopTip) {
+//            emit signalToolTip();
+//        }
+//    }
+//}
+
+//bool CLineEditLabel::eventFilter(QObject *watched, QEvent *event)
+//{
+////    if( watched->objectName() == "lineEdit" ) {
+//        if( event->type() == QEvent::MouseButtonPress ) {
+//        //由于我需要传递参数，但是监控的便签有2个，所以要找到指定的qlineedit
+////            QLineEdit *point = this->findChild<QLineEdit *>( watched->objectName() );
+//        //处理鼠标点击事件
+////            key->show();
+//            if(bltoopTip) {
+//                emit signalToolTip();
+//            }
+
+//            return true;
+//        } else {
+//            return false;
+//        }
+////    }
+//    return QWidget::eventFilter(watched,event);
+//}
+
+}

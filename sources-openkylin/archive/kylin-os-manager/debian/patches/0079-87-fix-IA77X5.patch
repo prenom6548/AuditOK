@@ -1,0 +1,63 @@
+From: snowsi <348240162@qq.com>
+Date: Mon, 15 Jul 2024 10:00:31 +0000
+Subject: =?utf-8?b?ITg3IGZpeDogI0lBNzdYNSDjgJDpupLpup/nrqHlrrbjgJHjgJDph40=?=
+ =?utf-8?b?6KaB44CR5Y246L295Lyg5Lmm44CB55yL5Zu+5ZCO77yM6YCJ5oup5o2i5py65Yqp?=
+ =?utf-8?b?5omLLeW6lOeUqOi/geenu+atpOW6lOeUqO+8jOmHjeWQr+WQjuaXoOaViCIgTWVy?=
+ =?utf-8?b?Z2UgcHVsbCByZXF1ZXN0ICE4NyBmcm9tIHNub3dzaS9vcGVua3lsaW4vbmlsZQ==?=
+
+---
+ daemons/service/dbus.cpp | 25 ++++++++++++++++++++-----
+ 1 file changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/daemons/service/dbus.cpp b/daemons/service/dbus.cpp
+index f9c5fde..5a26c34 100644
+--- a/daemons/service/dbus.cpp
++++ b/daemons/service/dbus.cpp
+@@ -1317,12 +1317,11 @@ qDebug() << "++ configUseData ++";
+     }
+ }
+ 
+-void DataMigration::configAppData()
+-{
++void DataMigration::configAppData() {
+     // 读取被选中的desktop列表中的每个desktop文件的内容
+     QFile file(m_appListFile);
+     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+-        qDebug() << "Failed to open file!";
++        qCritical() << "Failed to open file!";
+         return;
+     }
+ 
+@@ -1334,8 +1333,25 @@ void DataMigration::configAppData()
+     QString DesktopGroup = "Desktop Entry";
+     while (!in.atEnd()) {
+         QString line = in.readLine();
++
++        // 拷贝 desktop 文件, 如果存在则覆盖
++        auto old_path = QString("%1%2").arg(filePath, line);
++        auto new_path = QString("%1/%2").arg("/usr/share/applications", line);
++        if (QFile::exists(new_path)) {
++            if (!QFile::remove(new_path)) {
++                qCritical() << "Config app data remove exist file fail: " << new_path;
++            } else {
++                qInfo() << "Config app data remove exist file success: " << new_path;
++            }
++        }
++        if (!QFile::copy(old_path, new_path)) {
++            qCritical() << "Config app data copy file fail: " << old_path << " ---> " << new_path;
++        } else {
++            qInfo() << "Config app data copy file success: " << old_path << " ---> " << new_path;
++        }
++
++        // 拷贝图标
+         QSettings desktopFileSetting(filePath + line, QSettings::IniFormat);
+-        // QSettings desktopFileSetting(iconPath + line, QSettings::IniFormat);
+         desktopFileSetting.setIniCodec(QTextCodec::codecForName("UTF-8"));
+         desktopFileSetting.beginGroup(DesktopGroup);
+         QString Icon = desktopFileSetting.value("Icon").toString();
+@@ -1411,5 +1427,4 @@ void DataMigration::startKare()
+     process.start("bash", opt);
+     process.waitForStarted();
+     process.waitForFinished();
+-
+ }

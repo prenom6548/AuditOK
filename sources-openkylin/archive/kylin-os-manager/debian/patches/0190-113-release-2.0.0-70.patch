@@ -1,0 +1,72 @@
+From: snowsi <348240162@qq.com>
+Date: Thu, 21 Aug 2025 03:42:31 +0000
+Subject: !113 release 2.0.0-70 Merge pull request !113 from
+ snowsi/openkylin/nile-sp2
+
+---
+ src/application/mainwindow.cpp | 27 ++++++++++++++++-----------
+ 1 file changed, 16 insertions(+), 11 deletions(-)
+
+diff --git a/src/application/mainwindow.cpp b/src/application/mainwindow.cpp
+index c8c114a..1375709 100644
+--- a/src/application/mainwindow.cpp
++++ b/src/application/mainwindow.cpp
+@@ -32,6 +32,8 @@
+ #include <QApplication>
+ #include <QTranslator>
+ #include <QProcess>
++#include <QMutex>
++#include <QMutexLocker>
+ 
+ #include <knavigationbar.h>
+ #include <usermanual.h>
+@@ -50,8 +52,9 @@
+ 
+ // 共享状态变量
+ static struct {
+-    std::atomic<bool> kydoctor_is_running;
+-    QString           kydoctor_use_mark;
++    bool    kydoctor_is_running;
++    QString kydoctor_use_mark;
++    QMutex  kydoctor_mutex;
+ } g_share_state;
+ 
+ extern CommandLineArgument g_commandLineArgument;
+@@ -102,14 +105,15 @@ static void pluginCallback(const char *funcName, ...)
+ 
+         va_end(args);
+ 
+-        bool expected{false};
+-        if (g_share_state.kydoctor_is_running.compare_exchange_strong(expected, true)) {
+-            qInfo() << "kydoctor apply use success: use mark -> " << QString(mark);
+-            *ok = true;
+-            g_share_state.kydoctor_use_mark = QString(mark);
+-        } else {
+-            qInfo() << "kydoctor apply use fail: current useing mark -> " << g_share_state.kydoctor_use_mark;
++        QMutexLocker locker(&g_share_state.kydoctor_mutex);
++        if (g_share_state.kydoctor_is_running) {
+             *ok = false;
++            qInfo() << "kydoctor apply use fail: current useing mark -> " << g_share_state.kydoctor_use_mark;
++        } else {
++            g_share_state.kydoctor_is_running = true;
++            g_share_state.kydoctor_use_mark = QString(mark);
++            *ok = true;
++            qInfo() << "kydoctor apply use success: use mark -> " << QString(mark);
+         }
+ 
+         return;
+@@ -122,11 +126,12 @@ static void pluginCallback(const char *funcName, ...)
+ 
+         va_end(args);
+ 
++        QMutexLocker locker(&g_share_state.kydoctor_mutex);
++
+         if (g_share_state.kydoctor_use_mark != QString(mark)) {
+             qWarning() << "kydoctor release mark and use mark are inconsistent";
+         }
+-
+-        g_share_state.kydoctor_is_running.store(false);
++        g_share_state.kydoctor_is_running = false;
+ 
+         qInfo() << "kydoctor release success: release mark -> " << QString(mark);
+ 

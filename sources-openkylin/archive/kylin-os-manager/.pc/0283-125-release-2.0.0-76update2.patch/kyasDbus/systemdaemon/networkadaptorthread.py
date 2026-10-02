@@ -1,0 +1,436 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+
+### BEGIN LICENSE
+ # Copyright (C) 2021 KylinSoft Co., Ltd.
+ #
+ # Authors:
+ #  Yang Min yangmin@kylinos.cn
+ #
+ # This program is free software; you can redistribute it and/or modify
+ # it under the terms of the GNU General Public License as published by
+ # the Free Software Foundation, either version 3 of the License, or
+ # (at your option) any later version.
+ #
+ # This program is distributed in the hope that it will be useful,
+ # but WITHOUT ANY WARRANTY; without even the implied warranty of
+ # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ # GNU General Public License for more details.
+ #
+ # You should have received a copy of the GNU General Public License
+ # along with this program.  If not, see <http://www.gnu.org/licenses/>.
+### END LICENSE
+
+
+import sys
+import os
+
+import json
+import subprocess
+import copy
+import utils
+import time
+
+from pprint import pprint
+
+from kajsondef import *
+from kathread import *
+from utils import *
+
+NetAdaptor_Product=         "Product"
+NetAdaptor_Manufacturer=    "Vendor"
+NetAdaptor_Type=            "Description"
+NetAdaptor_Version=         "Version"
+NetAdaptor_Businfo=         "Bus Info"
+NetAdaptor_Capabilities=    "Capabilities"
+NetAdaptor_Driver=          "Driver"
+NetAdaptor_Logicalname=     "Logical Name"
+NetAdaptor_Serial=          "Serial"
+NetAdaptor_IRQ=             "IRQ"
+NetAdaptor_Memory=          "Memory"
+NetAdaptor_Width=           "Width"
+NetAdaptor_Clock=           "Clock"
+NetAdaptor_Broadcast=       "Broadcast"
+NetAdaptor_Firmware=        "Firmware"
+NetAdaptor_IP=              "IP"
+NetAdaptor_Link=            "Link"
+NetAdaptor_Port=            "Port"
+NetAdaptor_Capacity=        "Capacity"
+NetAdaptor_Physicalid=      "Physical ID"
+NetAdaptor_Size=            "Size"
+NetAdaptor_Multicast=       "Multicast"
+NetAdaptor_Autonegotiation= "Autonegotiation"
+NetAdaptor_Latency=         "Latency"
+NetAdaptor_Mask=            "subnet_mask"
+NetAdaptor_Txdata=          "send_bytes"
+NetAdaptor_Rxdata=          "recv_bytes"
+NetAdaptor_Mtu=             "mtu"
+
+class NetworkAdaptor():
+
+    def __init__(self, cmdtool):
+        self.cmdTool = cmdtool
+        pass
+
+    def getNetworkAdaptorInfo(self):
+        summary = {"list":[]}
+
+        self.cmdTool.loadInfoFromLshw(True)
+        networkAdaptorList = copy.deepcopy(self.cmdTool.lshwNetworkList)
+        for usbNetwork in self.cmdTool.lshwUsbList :
+            if "capabilities" in usbNetwork and "Bluetooth".lower() not in usbNetwork["capabilities"].lower() and \
+                ("Wireless".lower() in usbNetwork["capabilities"].lower() or "Ethernet".lower() in usbNetwork["capabilities"].lower()) :
+                networkAdaptorList.append(usbNetwork)
+        adaptorList = self.cmdTool.loadInfoFromHwinfo("--network")["list"]
+        ifconfigList = self.cmdTool.loadNetworkInfoFromIfconfig()
+        length = len(networkAdaptorList)
+        for i in range(length) :
+            if "bus info" in networkAdaptorList[i] :
+                words = networkAdaptorList[i]["bus info"].split("@")
+                if len(words) != 2 :
+                    continue
+                key = words[1].strip()
+                #key = key.replace(".","" in mapInfo 
+                for mapInfo in adaptorList :
+                    if "SysFS Device Link" in mapInfo :
+                        if key not in mapInfo["SysFS Device Link"] :
+                            continue
+                        networkAdaptorList[i].update(mapInfo)
+            if "logical name" in networkAdaptorList[i] :
+                for mapInfo in ifconfigList :
+                    if "NetName" in mapInfo and mapInfo["NetName"] == networkAdaptorList[i]["logical name"]:
+                        networkAdaptorList[i].update(mapInfo)
+                        break
+
+
+        index = 0
+        for mapInfo in networkAdaptorList :
+            if len(mapInfo) > 0 :
+                ## 过滤 ‘dummy’名称网卡
+                if "logical name" in mapInfo and "dummy" in mapInfo["logical name"] :
+                    continue
+                summary["list"].append({})
+                ##名称
+                if "product" in mapInfo :
+                    summary["list"][index][NetAdaptor_Product] = mapInfo["product"]
+                elif "bus info" in mapInfo:
+                    if "usb" in mapInfo["bus info"] and "NetMac" in mapInfo:
+                        # usb网卡用mac去检索hwinfo --usb
+                        usbNetMac = mapInfo["NetMac"]
+                        usbNetList = self.cmdTool.loadInfoFromHwinfo("--usb")["list"]
+                        for usbItem in usbNetList:
+                            if "HW Address" in usbItem:
+                                if usbNetMac == usbItem["HW Address"]:
+                                    summary["list"][index][NetAdaptor_Product] = usbItem["Device"]
+                                    break
+
+                ##制造商
+                if "Vendor" in mapInfo :
+                    hwVendor = mapInfo["Vendor"].split("\"")
+                    if len(hwVendor) > 1 :
+                        summary["list"][index][NetAdaptor_Manufacturer] = hwVendor[1]
+                    else :
+                        summary["list"][index][NetAdaptor_Manufacturer] = mapInfo["Vendor"]
+                elif "bus info" in mapInfo:
+                    if "usb" in mapInfo["bus info"] and "NetMac" in mapInfo:
+                        # usb网卡用mac去检索hwinfo --usb
+                        usbNetMac = mapInfo["NetMac"]
+                        usbNetList = self.cmdTool.loadInfoFromHwinfo("--usb")["list"]
+                        for usbItem in usbNetList:
+                            if "HW Address" in usbItem:
+                                if usbNetMac == usbItem["HW Address"]:
+                                    summary["list"][index][NetAdaptor_Manufacturer] = usbItem["Vendor"]
+                                    break
+
+                if "SubVendor" in mapInfo :
+                    hwVendor = mapInfo["SubVendor"].split("\"")
+                    if len(hwVendor) > 1 :
+                        summary["list"][index][NetAdaptor_Manufacturer] = hwVendor[1]
+                    else :
+                        summary["list"][index][NetAdaptor_Manufacturer] = mapInfo["SubVendor"]
+                if "vendor" in mapInfo :
+                    summary["list"][index][NetAdaptor_Manufacturer] = mapInfo["vendor"]
+
+                ##类型
+                if "description" in mapInfo :
+                    if "Serial controller" ==  mapInfo["description"]:
+                        continue
+                    summary["list"][index][NetAdaptor_Type] = mapInfo["description"]
+
+                ##版本
+                if "version" in mapInfo :
+                    summary["list"][index][NetAdaptor_Version] = mapInfo["version"]
+
+                ##物理地址
+                if "serial" in mapInfo :
+                    summary["list"][index][NetAdaptor_Serial] = mapInfo["serial"]
+                elif "logical name" in mapInfo:
+                    virNet = mapInfo["logical name"]
+                    hwinfoList = self.cmdTool.loadInfoFromHwinfo("--network")["list"]
+                    for hwItem in hwinfoList:
+                        if "Device File" in hwItem and "HW Address" in hwItem:
+                            if virNet == hwItem["Device File"]:
+                                summary["list"][index][NetAdaptor_Serial] = hwItem["HW Address"]
+                                break
+
+                ##总线信息
+                if "bus info" in mapInfo :
+                    summary["list"][index][NetAdaptor_Businfo] = mapInfo["bus info"]
+
+                ##功能
+                if "capabilities" in mapInfo :
+                    summary["list"][index][NetAdaptor_Capabilities] = mapInfo["capabilities"]
+
+                ##逻辑名称
+                if "logical name" in mapInfo :
+                    summary["list"][index][NetAdaptor_Logicalname] = mapInfo["logical name"]
+
+                ##速度
+                if "size" in mapInfo :
+                    summary["list"][index][NetAdaptor_Size] = mapInfo["size"]
+
+                ##位宽
+                if "width" in mapInfo :
+                    summary["list"][index][NetAdaptor_Width] = mapInfo["width"]
+
+                ##容量
+                if "capacity" in mapInfo :
+                    summary["list"][index][NetAdaptor_Capacity] = mapInfo["capacity"]
+
+                ##物理ID
+                if "physical id" in mapInfo :
+                    summary["list"][index][NetAdaptor_Physicalid] = mapInfo["physical id"]
+
+                ##时钟频率
+                if "clock" in mapInfo :
+                    summary["list"][index][NetAdaptor_Clock] = mapInfo["clock"]
+
+                ##中断
+                if "irq" in mapInfo :
+                    summary["list"][index][NetAdaptor_IRQ] = mapInfo["irq"]
+
+                ##内存
+                if "memory" in mapInfo :
+                    summary["list"][index][NetAdaptor_Memory] = mapInfo["memory"]
+
+                ##驱动
+                if "driver" in mapInfo :
+                    summary["list"][index][NetAdaptor_Driver] = mapInfo["driver"]
+
+                ##自动协商
+                if "autonegotiation" in mapInfo :
+                    summary["list"][index][NetAdaptor_Autonegotiation] = mapInfo["autonegotiation"]
+
+                ##广播
+                if "broadcast" in mapInfo :
+                    summary["list"][index][NetAdaptor_Broadcast] = mapInfo["broadcast"]
+
+                ##固件
+                if "firmware" in mapInfo :
+                    summary["list"][index][NetAdaptor_Firmware] = mapInfo["firmware"]
+
+                ##IP
+                if "NetIp" in mapInfo :
+                    summary["list"][index][NetAdaptor_IP] = mapInfo["NetIp"]
+
+                ##延迟
+                if "latency" in mapInfo :
+                    summary["list"][index][NetAdaptor_Latency] = mapInfo["latency"]
+
+                ##连接
+                if "link" in mapInfo :
+                    summary["list"][index][NetAdaptor_Link] = mapInfo["link"]
+
+                ##组播
+                if "multicast" in mapInfo :
+                    summary["list"][index][NetAdaptor_Multicast] = mapInfo["multicast"]
+
+                ##端口
+                if "port" in mapInfo :
+                    summary["list"][index][NetAdaptor_Port] = mapInfo["port"]
+
+                ##子网掩码
+                if "NetMask" in mapInfo :
+                    summary["list"][index][NetAdaptor_Mask] = mapInfo["NetMask"]
+
+                ##发送数据
+                if "NetTxData" in mapInfo :
+                    summary["list"][index][NetAdaptor_Txdata] = mapInfo["NetTxData"]
+
+                ##接收数据
+                if "NetRxData" in mapInfo :
+                    summary["list"][index][NetAdaptor_Rxdata] = mapInfo["NetRxData"]
+
+                ##MTU
+                if "NetMTU" in mapInfo :
+                    summary["list"][index][NetAdaptor_Mtu] = mapInfo["NetMTU"]
+
+                ##华为内置网卡做特殊处理（制造商、型号、驱动）,规避方案
+                if Judgment_PANGUW() and "Vendor" not in mapInfo and "vendor"  not in mapInfo and "product"  not in mapInfo and "driver"  not in mapInfo:
+                    if not os.path.exists("/sys/hisys/wal/bt_wifi_device_info") :
+                       break;
+                    else:
+                       # 获取WiFi的制造商和型号
+                       args = ["cat","/sys/hisys/wal/bt_wifi_device_info"]
+                       pipe = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                       output = pipe.stdout.readlines()
+
+                       for i in range(len(output)):
+                        if "WiFi" in str(bytes.decode(output[i],"utf-8","ignore")):
+                         product = str(bytes.decode(output[i+1],"utf-8","ignore")).split(":")[-1].strip()
+                         vendor = str(bytes.decode(output[i+3],"utf-8","ignore")).split(":")[-1].strip()
+                         summary["list"][index][NetAdaptor_Product] =product
+                         summary["list"][index][NetAdaptor_Manufacturer] = vendor
+                         break
+
+                       args = ["ls","/sys/module/plat_1105/drivers/","| grep sdio"]
+                       pipe = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                       output = pipe.stdout.readlines()
+                       for i in range(len(output)):
+                        if "sdio" in str(bytes.decode(output[i],"utf-8","ignore")):
+                         driver = str(bytes.decode(output[i],"utf-8","ignore")).split(":")[-1].strip()
+                         summary["list"][index][NetAdaptor_Driver] = driver
+                         break
+
+                index += 1                
+        module = "networkCard"
+        if "list" in summary:
+            status = KAConfig.getInstance().execute(module,summary["list"])
+            if "invisible" == status:
+                # summary["list"] = []
+                return ""
+        return json.dumps(summary)
+
+    #概要信息
+    def getOutline(self) :
+        if "" == self.getNetworkAdaptorInfo():
+            return ""
+        outLine = self.getNetworkAdaptorInfo()
+        outLineObj = json.loads(outLine)
+        outLine = ""
+        if len(outLineObj) > 0 and "list" in outLineObj :
+            nIndex = 0
+            for info in outLineObj["list"] :
+                if NetAdaptor_Product in info and len(info[NetAdaptor_Product]) > 0:
+                    if nIndex == 0 :
+                        outLine += info[NetAdaptor_Product]
+                    else :
+                        outLine += " / " + info[NetAdaptor_Product]
+                elif NetAdaptor_Type in info :
+                    if nIndex == 0 :
+                        outLine += info[NetAdaptor_Type]
+                    else :
+                        outLine += " / " + info[NetAdaptor_Type]
+                nIndex = nIndex + 1
+        return outLine
+
+#     #禁用网卡设备
+#     def disableNetCard(self, strProductAndPath) :
+#         print(strProductAndPath)
+#         # try:
+#         if("|" in strProductAndPath):
+#             strProduct,pciPath = strProductAndPath.split("|")
+#             sysPciPath = "/sys/devices/pci0000:00/"
+#             if Judgment_SW():
+#                 if not os.path.exists("/sys/devices/pci0000:02/"+pciPath+"/remove") :
+#                     return False
+#             else:
+#                 if not os.path.exists(sysPciPath+pciPath+"/remove") :
+#                     return False
+#             youkerConfigDir = "/etc/youker-assistant"
+#             if os.path.exists(youkerConfigDir):
+#                 pass
+#             else:
+#                 os.mkdir(youkerConfigDir)
+#             #写文件
+#             if Judgment_SW():
+#                 with open(youkerConfigDir+"/"+"netCard", "w+") as file:
+#                     file.write(strProduct + "|" + pciPath)
+#                 if validate_command(pciPath):
+#                     device_path = "/sys/devices/pci0000:02/"+pciPath+"/remove";
+#                     with open(device_path, "w") as file:
+#                         file.write("1")
+#             else:
+#                 with open(youkerConfigDir+"/"+"netCard", "w+") as file:
+#                     file.write(strProduct + "|" + pciPath)
+#                 #保存设备名称和pci写到文件中    设备名称+pci地址    而且要做区分
+#                 if validate_command(pciPath):
+#                     device_path = sysPciPath+pciPath+"/remove";
+#                     with open(device_path, "w") as file:
+#                         file.write("1")
+
+#         # except Exception as e:
+#         #     print(e)   
+#         return True
+    
+#     #启用网卡设备
+#     def enableNetCard(self, productAndPci) :
+#         print('------------------------------------')
+
+#         print(productAndPci)
+#         configFile = "/etc/youker-assistant/netCard"
+#         sysPciRescanPath = "/sys/bus/pci/rescan"
+#         youkerConfigDir = "/etc/youker-assistant"
+#         if not os.path.exists(sysPciRescanPath) or not os.path.exists(configFile)  :
+#             return False
+#         # 去除禁用信息
+#         allData = []
+#         with open(configFile,'r')as fd:
+#             print(fd.readlines)
+#         #with open(configFile,'r') as fd:
+#         file = open(configFile,'r')
+#         allInfo = file.readlines()
+#         print(allInfo)
+#         print('====================')
+#         for info in allInfo:
+#             #info = fd.readline()
+#             if '' != info:
+#                 if productAndPci in info:
+#                     pass
+#                 else:
+#                     allData.append(info)
+#         fw = open(configFile, 'w')
+#         fw.writelines(allData)
+#         fw.close()
+#         # os.popen('sed -i "s/%s//g" %s'%(productAndPci,configFile))
+# #       os.popen('echo 1 > %s'%(sysPciRescanPath))
+#         subprocess.Popen("echo 1 > %s"%(sysPciRescanPath), shell=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+#         # 扫描当前所有需要禁用的设备
+#         disableList = ["netCard","soundCard"]
+#         commands = []
+#         for item in disableList:
+#             print('-----------------disableList-------------------')
+#             print(os.path.exists(youkerConfigDir + "/" + item))
+#             print(youkerConfigDir + "/" + item)
+#             if os.path.exists(youkerConfigDir + "/" + item):
+#                 with open(youkerConfigDir + "/" + item, "r" ,encoding="utf-8") as file:
+#                     allLines = file.readlines()
+#                     for line in set(allLines):
+#                         line = line.strip()
+#                         print(line)
+#                         if "|" in line :
+#                             sysPciPath = "/sys/devices/pci0000:00/"
+#                             if Judgment_SW():
+#                                 sysPciPath = "/sys/devices/pci0000:02/"
+#                             strProduct,pciPath = line.strip().split("|")
+#                             count = 0
+#                             while True and count < 30 :
+#                                 if os.path.exists(sysPciPath+pciPath.strip()+"/remove"):
+#                                     break
+#                                 time.sleep(1)
+#                                 count += 1
+#                             if not os.path.exists(sysPciPath+pciPath.strip()+"/remove") :
+#                                 return False
+#                             print('echo 1 > %s'%(sysPciPath+pciPath.strip()+"/remove"))
+#                             commands.append("echo 1 > %s"%(sysPciPath+pciPath.strip()+"/remove"))
+#         # 遍历命令列表，并逐一执行
+#         for cmd in commands: subprocess.call(cmd, shell=True)
+#         return True
+
+if __name__ == "__main__":
+    cmdTool = KACmdTool()
+    cmdTool.loadInfoFromLshw()
+    cc = NetworkAdaptor(cmdTool)
+    pprint(cc.getNetworkAdaptorInfo())
+    #cc.disableNetCard("enp0s31f6|0000:00:1f.6")
+    #cc.enableNetCard("enp0s31f6|0000:00:1f.6")

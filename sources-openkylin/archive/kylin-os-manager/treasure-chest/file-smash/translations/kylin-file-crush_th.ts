@@ -1,0 +1,229 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="th">
+<context>
+    <name>AlertDialog</name>
+    <message>
+        <location filename="../alertdialog.ui" line="14"/>
+        <source>Form</source>
+        <translation>แบบฟอร์ม</translation>
+    </message>
+</context>
+<context>
+    <name>Divider</name>
+    <message>
+        <location filename="../shreddialog.cpp" line="977"/>
+        <source>Click the “+” button or directly drag and drop files here</source>
+        <translation>คลิกปุ่ม &quot;+&quot; หรือลากและวางไฟล์ตรงนี้โดยตรง</translation>
+    </message>
+</context>
+<context>
+    <name>KAddDialog</name>
+    <message>
+        <source>Are you sure to start crushing?</source>
+        <translation type="obsolete">是否确定开始粉碎？</translation>
+    </message>
+    <message>
+        <source>Crushed files cannot be recovered!</source>
+        <translation type="obsolete">粉碎的文件将不可恢复！</translation>
+    </message>
+    <message>
+        <source>sure</source>
+        <translation type="obsolete">确定</translation>
+    </message>
+    <message>
+        <source>cancle</source>
+        <translation type="obsolete">取消</translation>
+    </message>
+</context>
+<context>
+    <name>KAlertDialog</name>
+    <message>
+        <location filename="../kalertdialog.cpp" line="47"/>
+        <source>The file you selected is a directory or does not have permissions, cannot be shredded!</source>
+        <translation>ไฟล์ที่คุณเลือกเป็นไดเรกทอรีหรือไม่มีสิทธิ์ ไม่สามารถทำลายได้!</translation>
+    </message>
+    <message>
+        <location filename="../kalertdialog.cpp" line="50"/>
+        <source>sure</source>
+        <translation>ตกลง</translation>
+    </message>
+</context>
+<context>
+    <name>KSureDialog</name>
+    <message>
+        <location filename="../ksuredialog.cpp" line="48"/>
+        <source>Are you sure to start crushing?</source>
+        <translation>คุณแน่ใจหรือไม่ที่จะเริ่มทำลายไฟล์?</translation>
+    </message>
+    <message>
+        <location filename="../ksuredialog.cpp" line="54"/>
+        <source>Crushed files cannot be recovered!</source>
+        <translation>ไฟล์ที่ถูกทำลายแล้วไม่สามารถกู้คืนได้!</translation>
+    </message>
+    <message>
+        <location filename="../ksuredialog.cpp" line="62"/>
+        <source>sure</source>
+        <translation>ตกลง</translation>
+    </message>
+    <message>
+        <location filename="../ksuredialog.cpp" line="70"/>
+        <source>cancle</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>ShredDialog</name>
+    <message>
+        <source>FileShredder</source>
+        <translation type="vanished">文件粉碎机</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="38"/>
+        <location filename="../shreddialog.cpp" line="39"/>
+        <source>File Crush</source>
+        <translation>การทำลายไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="65"/>
+        <location filename="../shreddialog.cpp" line="815"/>
+        <source>File shredding, please wait a moment</source>
+        <translation>กำลังทำลายไฟล์ กรุณารอสักครู่</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="113"/>
+        <source>No file selected to be shredded</source>
+        <translation>ไม่มีไฟล์ที่เลือกเพื่อทำลาย</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="131"/>
+        <source>select all</source>
+        <translation>เลือกทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="227"/>
+        <source>File Name</source>
+        <translation>ชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="227"/>
+        <source>File Path</source>
+        <translation>ชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="394"/>
+        <source>Loading file information... </source>
+        <translation>กำลังโหลดข้อมูลไฟล์... </translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="577"/>
+        <source>Completely crush files or folders that cannot be deleted</source>
+        <translation>ทำลายไฟล์หรือโฟลเดอร์ที่ลบไม่ได้อย่างสมบูรณ์</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="578"/>
+        <source>Shred File</source>
+        <translation>ทำลายไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="579"/>
+        <source>Deselect</source>
+        <translation>ยกเลิกการเลือก</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="580"/>
+        <source>Add File</source>
+        <translation>เพิ่มไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="581"/>
+        <source>Note:File shredding cannot be cancelled, please exercise caution!</source>
+        <translation>หมายเหตุ: การทำลายไฟล์ไม่สามารถยกเลิกได้ กรุณาระมัดระวัง!</translation>
+    </message>
+    <message>
+        <source>Select file</source>
+        <translation type="vanished">选择文件</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="835"/>
+        <source> </source>
+        <translation> </translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="835"/>
+        <source> File shredding failed</source>
+        <translation> การทำลายไฟล์ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="837"/>
+        <location filename="../shreddialog.cpp" line="840"/>
+        <source>cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="838"/>
+        <location filename="../shreddialog.cpp" line="843"/>
+        <source>view info</source>
+        <translation>ดูข้อมูล</translation>
+    </message>
+    <message>
+        <source>All Files(*)</source>
+        <translation type="vanished">所有文件(*)</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="781"/>
+        <source>File shredding completed</source>
+        <translation>การทำลายไฟล์เสร็จสิ้น</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="834"/>
+        <source>error</source>
+        <translation>ข้อผิดพลาด</translation>
+    </message>
+    <message>
+        <source>File shredding failed</source>
+        <translation type="vanished">文件粉碎失败！</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="858"/>
+        <source>Please select the file to shred!</source>
+        <translation>กรุณาเลือกไฟล์ที่จะทำลาย!</translation>
+    </message>
+    <message>
+        <location filename="../shreddialog.cpp" line="886"/>
+        <source>Please select the file to cacel!</source>
+        <translation>กรุณาเลือกไฟล์ที่จะยกเลิก!</translation>
+    </message>
+</context>
+<context>
+    <name>ShredFailInfoDialog</name>
+    <message>
+        <location filename="../shredfailinfodialog.cpp" line="22"/>
+        <source>cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../shredfailinfodialog.cpp" line="100"/>
+        <source>File Name</source>
+        <translation>ชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../shredfailinfodialog.cpp" line="100"/>
+        <source>File Path</source>
+        <translation>เส้นทางไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>ShredManager</name>
+    <message>
+        <location filename="../shredmanager.cpp" line="49"/>
+        <source>Shred Manager</source>
+        <translation>ตัวจัดการการทำลาย</translation>
+    </message>
+    <message>
+        <location filename="../shredmanager.cpp" line="54"/>
+        <source>Delete files makes it unable to recover</source>
+        <translation>การลบไฟล์ทำให้ไม่สามารถกู้คืนได้</translation>
+    </message>
+</context>
+</TS>

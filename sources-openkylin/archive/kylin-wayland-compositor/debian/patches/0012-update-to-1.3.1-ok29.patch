@@ -1,0 +1,4603 @@
+From: Morose <chenlinxiang@kylinos.cn>
+Date: Wed, 5 Aug 2026 09:08:50 +0800
+Subject: update to 1.3.1-ok29
+
+Signed-off-by: Morose <chenlinxiang@kylinos.cn>
+---
+ examples/gui/meson.build         |  10 +-
+ include/input/seat.h             |   3 +-
+ include/kywc/binding.h           |   2 +
+ include/util/dbus.h              |   5 +-
+ po/POTFILES.in                   |   1 +
+ po/kylin-wayland-compositor.pot  |  84 +++++---
+ po/zh_CN.po                      |  90 +++++---
+ protocols/meson.build            |   1 +
+ src/effect/stream.c              |  46 +++--
+ src/effect/touch_click.c         |   2 +-
+ src/effect/touch_trail.c         |   7 +-
+ src/input/binding.c              |  18 +-
+ src/input/global_gestures.c      | 354 +++++++++++++++++++++++++++++++-
+ src/input/global_shortcuts.c     |  61 +++---
+ src/input/input.c                |  11 +-
+ src/input/keyboard.c             |   2 +-
+ src/input/seat.c                 |  16 +-
+ src/input/touch.c                |  16 +-
+ src/render/opengl/pass.c         |  23 ++-
+ src/render/pixman/pass.c         | 187 +++++++++++++++++
+ src/util/dbus.c                  |  12 +-
+ src/view/killer.c                | 311 ++++++++++++++++++++++++++++
+ src/view/meson.build             |   1 +
+ src/view/view.c                  |   2 +-
+ src/view/view_p.h                |   2 +
+ src/xwayland/meson.build         |   6 +-
+ tools/magnifier/magnifier.cpp    |   5 +-
+ tools/magnifier/meson.build      |  34 ++-
+ tools/meson.build                |   3 +-
+ tools/wldialog/DialogSocket.json | 432 +++++++++++++++++++++++++++++++++++++++
+ tools/wldialog/DynamicModel.cpp  | 128 ++++++++++++
+ tools/wldialog/DynamicModel.h    |  39 ++++
+ tools/wldialog/Gsettings.cpp     | 137 +++++++++++++
+ tools/wldialog/Gsettings.h       |  62 ++++++
+ tools/wldialog/Main.cpp          | 260 +++++++++++++++++++++++
+ tools/wldialog/MainWindow.cpp    | 411 +++++++++++++++++++++++++++++++++++++
+ tools/wldialog/MainWindow.h      | 145 +++++++++++++
+ tools/wldialog/MainWindow.qml    | 257 +++++++++++++++++++++++
+ tools/wldialog/NodeDelegate.qml  | 111 ++++++++++
+ tools/wldialog/Resources.qrc     |   6 +
+ tools/wldialog/WaylandClient.cpp |  78 +++++++
+ tools/wldialog/WaylandClient.h   |  45 ++++
+ tools/wldialog/XdgDialog.cpp     |  47 +++++
+ tools/wldialog/XdgDialog.h       |  24 +++
+ tools/wldialog/XdgForeign.cpp    |  84 ++++++++
+ tools/wldialog/XdgForeign.h      |  32 +++
+ tools/wldialog/meson.build       |  60 ++++++
+ 47 files changed, 3510 insertions(+), 163 deletions(-)
+ create mode 100644 src/view/killer.c
+ create mode 100644 tools/wldialog/DialogSocket.json
+ create mode 100644 tools/wldialog/DynamicModel.cpp
+ create mode 100644 tools/wldialog/DynamicModel.h
+ create mode 100644 tools/wldialog/Gsettings.cpp
+ create mode 100644 tools/wldialog/Gsettings.h
+ create mode 100644 tools/wldialog/Main.cpp
+ create mode 100644 tools/wldialog/MainWindow.cpp
+ create mode 100644 tools/wldialog/MainWindow.h
+ create mode 100644 tools/wldialog/MainWindow.qml
+ create mode 100644 tools/wldialog/NodeDelegate.qml
+ create mode 100644 tools/wldialog/Resources.qrc
+ create mode 100644 tools/wldialog/WaylandClient.cpp
+ create mode 100644 tools/wldialog/WaylandClient.h
+ create mode 100644 tools/wldialog/XdgDialog.cpp
+ create mode 100644 tools/wldialog/XdgDialog.h
+ create mode 100644 tools/wldialog/XdgForeign.cpp
+ create mode 100644 tools/wldialog/XdgForeign.h
+ create mode 100644 tools/wldialog/meson.build
+
+diff --git a/examples/gui/meson.build b/examples/gui/meson.build
+index 9c3a4d9..aec54be 100644
+--- a/examples/gui/meson.build
++++ b/examples/gui/meson.build
+@@ -19,13 +19,9 @@ egl = dependency('egl')
+ glesv2 = dependency('glesv2')
+ libdrm = dependency('libdrm')
+ 
+-rcc = find_program('rcc')
+-# Preprocess the .qrc file using the rcc command and generate a C++ source file
+-resources_file = custom_target(
+-  'resources',
+-  input : 'qml.qrc',
+-  output : 'resources.cpp',
+-  command : [rcc, '-name', 'resources', '-o', '@OUTPUT@', '@INPUT@']
++resources_file = qt5.preprocess(
++  qresources: ['qml.qrc'],
++  dependencies: qt5dep,
+ )
+ 
+ generated_files = qt5.preprocess(
+diff --git a/include/input/seat.h b/include/input/seat.h
+index 017751d..b39df4f 100644
+--- a/include/input/seat.h
++++ b/include/input/seat.h
+@@ -98,6 +98,7 @@ struct seat {
+ 
+     /* shortcuts inhibitors */
+     struct wl_list keyboard_shortcuts_inhibitors; // struct keyboard_shortcuts_inhibitor.link
++    struct seat_keyboard_shortcuts_inhibitor *activated_inhibitor;
+ 
+     struct scene *scene;
+     struct wlr_output_layout *layout;
+@@ -164,8 +165,6 @@ void seat_notify_leave(struct seat *seat, struct wlr_surface *surface);
+ 
+ void seat_focus_surface(struct seat *seat, struct wlr_surface *surface);
+ 
+-bool seat_is_keyboard_shortcuts_inhibited(struct seat *seat);
+-
+ bool seat_is_dragging(struct seat *seat);
+ 
+ void seat_feed_pointer_motion(struct seat *seat, double x, double y, bool absolute);
+diff --git a/include/kywc/binding.h b/include/kywc/binding.h
+index 3f3fdd9..fc9101b 100644
+--- a/include/kywc/binding.h
++++ b/include/kywc/binding.h
+@@ -145,6 +145,8 @@ bool kywc_gesture_binding_check(enum gesture_type type, enum gesture_device devi
+ 
+ enum gesture_edge kywc_gesture_binding_check_edge(enum gesture_device device);
+ 
++void kywc_gesture_binding_block(struct gesture_binding *binding, bool block);
++
+ /**
+  * keysym bindings
+  */
+diff --git a/include/util/dbus.h b/include/util/dbus.h
+index 8566cd9..508bcfa 100644
+--- a/include/util/dbus.h
++++ b/include/util/dbus.h
+@@ -42,7 +42,10 @@ bool dbus_call_system_methodv(const char *service, const char *path, const char
+ 
+ void dbus_notify(const char *name, const char *summary, const char *body, const char *icon);
+ 
+-int dbus_add_match(const char *match, sd_bus_message_handler_t callback, void *data);
++bool dbus_add_match(const char *match, sd_bus_message_handler_t callback, void *data);
++
++bool dbus_add_match_slot(sd_bus_slot **slot, const char *match, sd_bus_message_handler_t callback,
++                         void *data);
+ 
+ bool dbus_match_signal(const char *sender, const char *path, const char *interface,
+                        const char *member, sd_bus_message_handler_t callback, void *data);
+diff --git a/po/POTFILES.in b/po/POTFILES.in
+index ab983af..b6cc06d 100644
+--- a/po/POTFILES.in
++++ b/po/POTFILES.in
+@@ -1,3 +1,4 @@
+ src/view/action.c
+ src/view/ssd.c
+ src/view/window_menu.c
++src/view/killer.c
+\ No newline at end of file
+diff --git a/po/kylin-wayland-compositor.pot b/po/kylin-wayland-compositor.pot
+index 7a60ca6..9ab6aff 100644
+--- a/po/kylin-wayland-compositor.pot
++++ b/po/kylin-wayland-compositor.pot
+@@ -8,8 +8,8 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: kylin-wayland-compositor\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2024-05-20 13:39+0800\n"
+-"PO-Revision-Date: 2024-12-12 14:40+0800\n"
++"POT-Creation-Date: 2026-07-08 16:57+0800\n"
++"PO-Revision-Date: 2026-07-27 15:25+0800\n"
+ "Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+ "Language-Team: LANGUAGE <LL@li.org>\n"
+ "Language: \n"
+@@ -17,98 +17,120 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:108
++#: src/view/action.c:116
+ msgid "Screenshot"
+ msgstr ""
+ 
+-#: src/view/action.c:108
++#: src/view/action.c:116
+ msgid "Capture saved to"
+ msgstr ""
+ 
+-#: src/view/ssd.c:268
++#: src/view/ssd.c:305
+ msgid "Minimize"
+ msgstr ""
+ 
+-#: src/view/ssd.c:269
++#: src/view/ssd.c:306
+ msgid "Maximize"
+ msgstr ""
+ 
+-#: src/view/ssd.c:270
++#: src/view/ssd.c:307
+ msgid "Restore"
+ msgstr ""
+ 
+-#: src/view/ssd.c:271
++#: src/view/ssd.c:308
+ msgid "Close"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:186
++#: src/view/window_menu.c:181
+ msgid "Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:216
+-msgid "Move To Desktop"
+-msgstr ""
+-
+-#: src/view/window_menu.c:250
++#: src/view/window_menu.c:223
+ msgid "Screen"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:353
++#: src/view/window_menu.c:330
+ msgid "_Take Screenshot"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:356
++#: src/view/window_menu.c:333
+ msgid "_Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:359
++#: src/view/window_menu.c:335
+ msgid "_All Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:360
++#: src/view/window_menu.c:336
+ msgid "Add To _New Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:363
++#: src/view/window_menu.c:339
+ msgid "_Move To New Desktop"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:367
++#: src/view/window_menu.c:343
+ msgid "Ma_ximize"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:371
++#: src/view/window_menu.c:347
+ msgid "Move To _Screen"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:376
++#: src/view/window_menu.c:350
+ msgid "Mi_nimize"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:380
++#: src/view/window_menu.c:354
+ msgid "_More"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:384
++#: src/view/window_menu.c:357
+ msgid "_Move"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:386
++#: src/view/window_menu.c:359
+ msgid "_Resize"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:388
++#: src/view/window_menu.c:361
+ msgid "Keep-_Above"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:390
++#: src/view/window_menu.c:363
+ msgid "Keep-_Below"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:392
+-msgid "_Fullscreen"
++#: src/view/window_menu.c:366
++msgid "_Close"
+ msgstr ""
+ 
+-#: src/view/window_menu.c:395
+-msgid "_Close"
++#: src/view/killer.c:130
++msgid "Program exception responding"
++msgstr ""
++
++#: src/view/killer.c:136
++#, c-format
++msgid ""
++"Program exception responding(process number: %d). Do you want to force the "
++"app to close?"
++msgstr ""
++
++#: src/view/killer.c:141
++#, c-format
++msgid ""
++"%s Program exception responding(process number: %d). Do you want to force "
++"the app to close?"
++msgstr ""
++
++#: src/view/killer.c:150
++msgid "Note:Closing the app may loss all unsaved data."
++msgstr ""
++
++#: src/view/killer.c:157
++msgid "Force Close"
++msgstr ""
++
++#: src/view/killer.c:158
++msgid "Wait"
+ msgstr ""
+diff --git a/po/zh_CN.po b/po/zh_CN.po
+index 1d35e59..1b41386 100644
+--- a/po/zh_CN.po
++++ b/po/zh_CN.po
+@@ -8,7 +8,7 @@ msgid ""
+ msgstr ""
+ "Project-Id-Version: kylin-wayland-compositor\n"
+ "Report-Msgid-Bugs-To: \n"
+-"POT-Creation-Date: 2024-05-20 13:39+0800\n"
++"POT-Creation-Date: 2026-07-08 16:57+0800\n"
+ "PO-Revision-Date: 2024-08-16 09:56+0800\n"
+ "Last-Translator: Automatically generated\n"
+ "Language-Team: Chinese Simplified\n"
+@@ -17,98 +17,126 @@ msgstr ""
+ "Content-Type: text/plain; charset=UTF-8\n"
+ "Content-Transfer-Encoding: 8bit\n"
+ 
+-#: src/view/action.c:108
++#: src/view/action.c:116
+ msgid "Screenshot"
+ msgstr "截图"
+ 
+-#: src/view/action.c:108
++#: src/view/action.c:116
+ msgid "Capture saved to"
+ msgstr "捕获已保存为"
+ 
+-#: src/view/ssd.c:248
++#: src/view/ssd.c:305
+ msgid "Minimize"
+ msgstr "最小化"
+ 
+-#: src/view/ssd.c:249
++#: src/view/ssd.c:306
+ msgid "Maximize"
+ msgstr "最大化"
+ 
+-#: src/view/ssd.c:250
++#: src/view/ssd.c:307
+ msgid "Restore"
+ msgstr "还原"
+ 
+-#: src/view/ssd.c:251
++#: src/view/ssd.c:308
+ msgid "Close"
+ msgstr "关闭"
+ 
+-#: src/view/window_menu.c:184
++#: src/view/window_menu.c:181
+ msgid "Desktop"
+ msgstr "桌面"
+ 
+-#: src/view/window_menu.c:214
+-msgid "Move To Desktop"
+-msgstr "移动到桌面"
+-
+-#: src/view/window_menu.c:248
++#: src/view/window_menu.c:223
+ msgid "Screen"
+ msgstr "屏幕"
+ 
+-#: src/view/window_menu.c:342
++#: src/view/window_menu.c:330
+ msgid "_Take Screenshot"
+ msgstr "截图(_T)"
+ 
+-#: src/view/window_menu.c:346
++#: src/view/window_menu.c:333
+ msgid "_Desktop"
+ msgstr "桌面(_D)"
+ 
+-#: src/view/window_menu.c:348
++#: src/view/window_menu.c:335
+ msgid "_All Desktop"
+ msgstr "全部桌面(_A)"
+ 
+-#: src/view/window_menu.c:350
++#: src/view/window_menu.c:336
+ msgid "Add To _New Desktop"
+ msgstr "添加到新桌面(_N)"
+ 
+-#: src/view/window_menu.c:353
++#: src/view/window_menu.c:339
+ msgid "_Move To New Desktop"
+ msgstr "移动到新桌面(_M)"
+ 
+-#: src/view/window_menu.c:356
++#: src/view/window_menu.c:343
+ msgid "Ma_ximize"
+ msgstr "最大化(_X)"
+ 
+-#: src/view/window_menu.c:360
++#: src/view/window_menu.c:347
+ msgid "Move To _Screen"
+ msgstr "移动到屏幕(_S)"
+ 
+-#: src/view/window_menu.c:363
++#: src/view/window_menu.c:350
+ msgid "Mi_nimize"
+ msgstr "最小化(_N)"
+ 
+-#: src/view/window_menu.c:367
++#: src/view/window_menu.c:354
+ msgid "_More"
+ msgstr "更多操作(_M)"
+ 
+-#: src/view/window_menu.c:369
++#: src/view/window_menu.c:357
+ msgid "_Move"
+ msgstr "移动(_M)"
+ 
+-#: src/view/window_menu.c:370
++#: src/view/window_menu.c:359
+ msgid "_Resize"
+ msgstr "调整大小(_R)"
+ 
+-#: src/view/window_menu.c:371
++#: src/view/window_menu.c:361
+ msgid "Keep-_Above"
+ msgstr "置于顶层(_A)"
+ 
+-#: src/view/window_menu.c:373
++#: src/view/window_menu.c:363
+ msgid "Keep-_Below"
+ msgstr "置于底层(_B)"
+ 
+-#: src/view/window_menu.c:375
+-msgid "_Fullscreen"
+-msgstr "全屏(_F)"
+-
+-#: src/view/window_menu.c:378
++#: src/view/window_menu.c:366
+ msgid "_Close"
+ msgstr "关闭(_C)"
++
++#: src/view/killer.c:130
++msgid "Program exception responding"
++msgstr "程序异常无响应"
++
++#: src/view/killer.c:136
++#, c-format
++msgid ""
++"Program exception responding(process number: %d). Do you want to force the "
++"app to close?"
++msgstr "程序异常无响应(进程号: %d)。是否强制关闭该应用？"
++
++#: src/view/killer.c:141
++#, c-format
++msgid ""
++"%s Program exception responding(process number: %d). Do you want to force "
++"the app to close?"
++msgstr "%s 程序异常无响应(进程号: %d)。是否强制关闭该应用？"
++
++#: src/view/killer.c:150
++msgid "Note:Closing the app may loss all unsaved data."
++msgstr "注意：关闭应用程序将会导致未保存的数据丢失。"
++
++#: src/view/killer.c:157
++msgid "Force Close"
++msgstr "强制关闭"
++
++#: src/view/killer.c:158
++msgid "Wait"
++msgstr "等待"
++
++#~ msgid "Move To Desktop"
++#~ msgstr "移动到桌面"
++
++#~ msgid "_Fullscreen"
++#~ msgstr "全屏(_F)"
+diff --git a/protocols/meson.build b/protocols/meson.build
+index 7af8319..2e501ec 100644
+--- a/protocols/meson.build
++++ b/protocols/meson.build
+@@ -22,6 +22,7 @@ protocols = {
+   'security-context-v1': wl_protocol_dir / 'staging/security-context/security-context-v1.xml',
+   'linux-dmabuf-v1': wl_protocol_dir / 'stable/linux-dmabuf/linux-dmabuf-v1.xml',
+   'wp_presentation': wl_protocol_dir / 'stable/presentation-time/presentation-time.xml',
++  'xdg-foreign-unstable-v2': wl_protocol_dir / 'unstable/xdg-foreign/xdg-foreign-unstable-v2.xml',
+ }
+ 
+ protocols += {
+diff --git a/src/effect/stream.c b/src/effect/stream.c
+index f5c0cde..71ea39c 100644
+--- a/src/effect/stream.c
++++ b/src/effect/stream.c
+@@ -604,13 +604,11 @@ static const struct pw_stream_events stream_events = {
+     .process = handle_process,
+ };
+ 
+-static void stream_init(struct stream *stream, const struct stream_interface *impl, void *data)
++static bool stream_create_and_connect(struct stream *stream)
+ {
+     char name[] = "kywc-stream-XXXXXX";
+     kywc_identifier_rand_generate(name, 0);
+ 
+-    stream->max_framerate = CLAMP(stream->max_framerate, 30, 60);
+-
+     stream->stream = pw_stream_new(manager->context->core, name,
+                                    pw_properties_new(PW_KEY_MEDIA_CLASS, "Video/Source", NULL));
+     pw_stream_add_listener(stream->stream, &stream->stream_listener, &stream_events, stream);
+@@ -621,14 +619,12 @@ static void stream_init(struct stream *stream, const struct stream_interface *im
+     uint32_t n_params = stream_build_formats(stream, &b, params, 0);
+ 
+     // use PW_STREAM_FLAG_DRIVER mode
+-    pw_stream_connect(stream->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
+-                      PW_STREAM_FLAG_ALLOC_BUFFERS | PW_STREAM_FLAG_DRIVER, params, n_params);
+-
+-    stream->impl = impl;
+-    stream->user_data = data;
+-    wl_list_insert(&manager->streams, &stream->link);
++    bool success = pw_stream_connect(stream->stream, PW_DIRECTION_OUTPUT, PW_ID_ANY,
++                                     PW_STREAM_FLAG_ALLOC_BUFFERS | PW_STREAM_FLAG_DRIVER, params,
++                                     n_params) == 0;
+ 
+-    kywc_log(KYWC_INFO, "Stream %s created", name);
++    kywc_log(KYWC_INFO, "Stream %s create %s", name, success ? "succeed" : "failed");
++    return success;
+ }
+ 
+ static void stream_handle_capture_update(struct capture *capture, struct wlr_buffer *buffer,
+@@ -668,7 +664,7 @@ static void stream_handle_capature_client(struct capture *capture, struct client
+                                           void *data)
+ {
+     struct stream *stream = data;
+-    if (stream->impl->client) {
++    if (stream->impl && stream->impl->client) {
+         stream->impl->client(stream, client, stream->user_data);
+     }
+ }
+@@ -692,6 +688,9 @@ struct stream *stream_create_for_output(struct output *output, uint32_t options,
+         return NULL;
+     }
+ 
++    stream->impl = impl;
++    stream->user_data = data;
++
+     uint32_t capture_options =
+         options & STREAM_NEED_CURSOR ? CAPTURE_NEED_CURSOR : CAPTURE_NEED_NONE;
+     stream->capture = capture_create_from_output(output, capture_options, &capture_impl, stream);
+@@ -702,9 +701,15 @@ struct stream *stream_create_for_output(struct output *output, uint32_t options,
+ 
+     capture_mark_wants_update(stream->capture, false, false);
+     capture_get_buffer_size(stream->capture, &stream->width, &stream->height);
+-    stream->max_framerate = output->base.state.refresh / 1000;
++    stream->max_framerate = CLAMP(output->base.state.refresh / 1000, 30, 60);
+ 
+-    stream_init(stream, impl, data);
++    if (!stream_create_and_connect(stream)) {
++        capture_destroy(stream->capture);
++        free(stream);
++        return NULL;
++    }
++
++    wl_list_insert(&manager->streams, &stream->link);
+ 
+     return stream;
+ }
+@@ -746,7 +751,7 @@ static void stream_handle_thumbnail_client(struct thumbnail *thumbnail, struct c
+                                            void *data)
+ {
+     struct stream *stream = data;
+-    if (stream->impl->client) {
++    if (stream->impl && stream->impl->client) {
+         stream->impl->client(stream, client, stream->user_data);
+     }
+ }
+@@ -770,6 +775,9 @@ struct stream *stream_create_for_view(struct view *view, uint32_t options,
+         return NULL;
+     }
+ 
++    stream->impl = impl;
++    stream->user_data = data;
++
+     uint32_t thumbnail_options =
+         THUMBNAIL_DISABLE_SHADOW | THUMBNAIL_DISABLE_ROUND_CORNER | THUMBNAIL_ENABLE_SECURITY;
+     stream->thumbnail =
+@@ -781,9 +789,15 @@ struct stream *stream_create_for_view(struct view *view, uint32_t options,
+ 
+     thumbnail_mark_wants_update(stream->thumbnail, false, false);
+     thumbnail_get_buffer_size(stream->thumbnail, &stream->width, &stream->height);
+-    stream->max_framerate = view->output->state.refresh / 1000;
++    stream->max_framerate = CLAMP(view->output->state.refresh / 1000, 30, 60);
+ 
+-    stream_init(stream, impl, data);
++    if (!stream_create_and_connect(stream)) {
++        thumbnail_destroy(stream->thumbnail);
++        free(stream);
++        return NULL;
++    }
++
++    wl_list_insert(&manager->streams, &stream->link);
+ 
+     return stream;
+ }
+diff --git a/src/effect/touch_click.c b/src/effect/touch_click.c
+index 27f0063..df28f06 100644
+--- a/src/effect/touch_click.c
++++ b/src/effect/touch_click.c
+@@ -142,7 +142,7 @@ bool touch_click_effect_create(struct effect_manager *manager)
+     options.end_attenuation = 0.8f;
+ 
+     effect->base =
+-        tap_ripple_effect_create(manager, &options, &effect_impl, "touch_click", 100, true, effect);
++        tap_ripple_effect_create(manager, &options, &effect_impl, "touch_click", 100, false, effect);
+     if (!effect->base) {
+         free(effect);
+         return false;
+diff --git a/src/effect/touch_trail.c b/src/effect/touch_trail.c
+index 417a108..7ce9b53 100644
+--- a/src/effect/touch_trail.c
++++ b/src/effect/touch_trail.c
+@@ -47,9 +47,12 @@ static void handle_touch_motion(struct wl_listener *listener, void *data)
+ {
+     struct wlr_touch_motion_event *event = data;
+     struct seat_touch *seat_touch = wl_container_of(listener, seat_touch, touch_motion);
++    struct touch_trail_effect *effect = seat_touch->effect;
++
+     int32_t lx = roundf(seat_touch->seat->cursor->lx);
+     int32_t ly = roundf(seat_touch->seat->cursor->ly);
+-    trail_effect_trail_add_point(seat_touch->effect->base, event->touch_id, lx, ly);
++    trail_effect_add_trail(effect->base, event->touch_id, lx, ly);
++    trail_effect_trail_add_point(effect->base, event->touch_id, lx, ly);
+ }
+ 
+ static void seat_touch_destroy(struct seat_touch *seat_touch)
+@@ -150,7 +153,7 @@ bool touch_trail_effect_create(struct effect_manager *manager)
+     options.color[2] = 0.4f;
+     options.color[3] = 0.4f;
+     options.thickness = 8.0f;
+-    options.life_time = 80;
++    options.life_time = 100;
+ 
+     effect->base =
+         trail_effect_create(manager, &options, &effect_impl, "touch_trail", 100, false, effect);
+diff --git a/src/input/binding.c b/src/input/binding.c
+index 0dd2cc4..5f37157 100644
+--- a/src/input/binding.c
++++ b/src/input/binding.c
+@@ -48,6 +48,7 @@ struct keysyms_binding {
+ struct gesture_binding {
+     struct wl_list link;
+ 
++    uint32_t nblocks;
+     enum gesture_type type;
+     enum gesture_device device;
+     enum gesture_direction direction;
+@@ -989,6 +990,9 @@ bool bindings_handle_gesture_binding(struct gesture_state *gesture_state)
+         if (!binding->enabled) {
+             continue;
+         }
++        if (binding->nblocks && binding != gesture_state->active_binding) {
++            continue;
++        }
+         if (gesture_state->device != binding->device) {
+             continue;
+         }
+@@ -1094,7 +1098,7 @@ bool kywc_gesture_binding_check(enum gesture_type type, enum gesture_device devi
+     struct gesture_binding *binding;
+     wl_list_for_each(binding, &bindings->gesture_bindings, link) {
+         if (binding->type == type && binding->device == device && binding->fingers == fingers) {
+-            return binding->enabled;
++            return binding->enabled && !binding->nblocks;
+         }
+     }
+     return false;
+@@ -1105,13 +1109,23 @@ enum gesture_edge kywc_gesture_binding_check_edge(enum gesture_device device)
+     enum gesture_edge edges = GESTURE_EDGE_NONE;
+     struct gesture_binding *binding;
+     wl_list_for_each(binding, &bindings->gesture_bindings, link) {
+-        if (binding->enabled && binding->device == device) {
++        if (binding->enabled && !binding->nblocks && binding->device == device) {
+             edges |= binding->edge;
+         }
+     }
+     return edges;
+ }
+ 
++void kywc_gesture_binding_block(struct gesture_binding *binding, bool block)
++{
++    if (block) {
++        binding->nblocks++;
++    } else {
++        assert(binding->nblocks > 0);
++        binding->nblocks--;
++    }
++}
++
+ void kywc_key_binding_for_each(binding_iterator_func_t iterator)
+ {
+     for (size_t i = 0; i < KEY_BINDING_TYPE_NUM; ++i) {
+diff --git a/src/input/global_gestures.c b/src/input/global_gestures.c
+index a69653f..64b503e 100644
+--- a/src/input/global_gestures.c
++++ b/src/input/global_gestures.c
+@@ -12,6 +12,7 @@
+ #include "input/input.h"
+ #include "server.h"
+ #include "util/dbus.h"
++#include "util/string.h"
+ 
+ static const char *service_path = "/com/kylin/Wlcom/GlobalGestures";
+ static const char *service_iface = "com.kylin.Wlcom.GlobalGestures";
+@@ -38,10 +39,26 @@ struct gesture {
+     struct wl_list link;
+ };
+ 
++struct gesture_block {
++    uint32_t id;
++
++    struct wl_list link;
++};
++
++struct gesture_block_owner {
++    const char *owner;
++    uint32_t blocked_devices;
++    struct sd_bus_slot *watcher;
++
++    struct wl_list gestures; // gesture_block
++    struct wl_list link;
++};
++
+ static struct gestures_manager {
+     struct config *config;
+ 
+     struct wl_list gestures;
++    struct wl_list block_owners;
+ 
+     struct wl_listener server_start;
+     struct wl_listener server_destroy;
+@@ -65,6 +82,172 @@ static struct gesture *gesture_by_id(uint32_t id)
+     return NULL;
+ }
+ 
++static enum gesture_device gesture_device_by_id(uint32_t id)
++{
++    return (id >> 20) & 0x0F;
++}
++
++static bool gesture_device_is_valid(enum gesture_device device)
++{
++    return device != GESTURE_DEVICE_NONE && !(device & (device - 1));
++}
++
++static struct gesture_block_owner *gesture_block_owner_get(const char *owner)
++{
++    struct gesture_block_owner *block_owner;
++    wl_list_for_each(block_owner, &manager->block_owners, link) {
++        if (strcmp(block_owner->owner, owner) == 0) {
++            return block_owner;
++        }
++    }
++
++    return NULL;
++}
++
++static struct gesture_block *gesture_block_find(struct gesture_block_owner *block_owner,
++                                                uint32_t id)
++{
++    struct gesture_block *gesture_block;
++    wl_list_for_each(gesture_block, &block_owner->gestures, link) {
++        if (gesture_block->id == id) {
++            return gesture_block;
++        }
++    }
++
++    return NULL;
++}
++
++static bool gesture_block_exists(struct gesture_block_owner *block_owner, uint32_t id)
++{
++    return gesture_block_find(block_owner, id) != NULL;
++}
++
++static struct gesture_block *gesture_block_get_or_create(struct gesture_block_owner *block_owner,
++                                                         uint32_t id)
++{
++    struct gesture_block *gesture_block = gesture_block_find(block_owner, id);
++    if (gesture_block) {
++        return gesture_block;
++    }
++
++    gesture_block = calloc(1, sizeof(*gesture_block));
++    if (!gesture_block) {
++        return NULL;
++    }
++
++    gesture_block->id = id;
++    wl_list_insert(&block_owner->gestures, &gesture_block->link);
++
++    return gesture_block;
++}
++
++static bool gesture_blocked_by_owner(struct gesture_block_owner *block_owner, uint32_t gesture_id)
++{
++    enum gesture_device device = gesture_device_by_id(gesture_id);
++    return (gesture_device_is_valid(device) && (block_owner->blocked_devices & device)) ||
++           gesture_block_exists(block_owner, gesture_id);
++}
++
++static void gesture_binding_update_owner_block(struct gesture *gesture, bool old_blocked,
++                                               bool new_blocked)
++{
++    if (!gesture || !gesture->binding || old_blocked == new_blocked) {
++        return;
++    }
++
++    kywc_gesture_binding_block(gesture->binding, new_blocked);
++}
++
++static void gesture_block_owner_destroy(struct gesture_block_owner *block_owner)
++{
++    struct gesture *gesture;
++    wl_list_for_each(gesture, &manager->gestures, link) {
++        bool old_blocked = gesture_blocked_by_owner(block_owner, gesture->id);
++        gesture_binding_update_owner_block(gesture, old_blocked, false);
++    }
++
++    struct gesture_block *gesture_block, *tmp;
++    wl_list_for_each_safe(gesture_block, tmp, &block_owner->gestures, link) {
++        wl_list_remove(&gesture_block->link);
++        free(gesture_block);
++    }
++
++    if (block_owner->watcher) {
++        sd_bus_slot_unref(block_owner->watcher);
++    }
++
++    wl_list_remove(&block_owner->link);
++    free((void *)block_owner->owner);
++    free(block_owner);
++}
++
++static int gesture_block_owner_handle_lost(sd_bus_message *m, void *userdata,
++                                           sd_bus_error *ret_error)
++{
++    const char *new_owner = NULL;
++    CK(sd_bus_message_skip(m, "ss"));
++    CK(sd_bus_message_read(m, "s", &new_owner));
++    if (!new_owner || *new_owner) {
++        return 0;
++    }
++
++    struct gesture_block_owner *block_owner = userdata;
++    gesture_block_owner_destroy(block_owner);
++
++    return 0;
++}
++
++static struct gesture_block_owner *gesture_block_owner_get_or_create(const char *owner)
++{
++    struct gesture_block_owner *block_owner = gesture_block_owner_get(owner);
++    if (block_owner) {
++        return block_owner;
++    }
++
++    block_owner = calloc(1, sizeof(*block_owner));
++    if (!block_owner) {
++        return NULL;
++    }
++
++    block_owner->owner = strdup(owner);
++    if (!block_owner->owner) {
++        free(block_owner);
++        return NULL;
++    }
++
++    char *match_rule = string_create("sender='org.freedesktop.DBus',"
++                                     "type='signal',"
++                                     "interface='org.freedesktop.DBus',"
++                                     "member='NameOwnerChanged',"
++                                     "path='/org/freedesktop/DBus',"
++                                     "arg0='%s'",
++                                     block_owner->owner);
++    if (!match_rule) {
++        free((void *)block_owner->owner);
++        free(block_owner);
++        return NULL;
++    }
++
++    if (!dbus_add_match_slot(&block_owner->watcher, match_rule, gesture_block_owner_handle_lost,
++                             block_owner)) {
++        free(match_rule);
++        free((void *)block_owner->owner);
++        free(block_owner);
++        return NULL;
++    }
++    free(match_rule);
++
++    wl_list_init(&block_owner->gestures);
++    wl_list_insert(&manager->block_owners, &block_owner->link);
++
++    return block_owner;
++}
++
++static bool gesture_block_owner_is_unused(struct gesture_block_owner *block_owner)
++{
++    return block_owner && !block_owner->blocked_devices && wl_list_empty(&block_owner->gestures);
++}
++
+ static bool system_gesture_write_config(struct gesture *gesture)
+ {
+     if (!manager || !manager->config || !manager->config->json || !gesture) {
+@@ -255,10 +438,161 @@ static int reset_gestures(sd_bus_message *m, void *userdata, sd_bus_error *ret_e
+     return sd_bus_reply_method_return(m, NULL);
+ }
+ 
++static bool gesture_block_owner_set_device_block(struct gesture_block_owner *block_owner,
++                                                 enum gesture_device device, bool block)
++{
++    if (!gesture_device_is_valid(device)) {
++        return false;
++    }
++
++    bool old_device_blocked = block_owner->blocked_devices & device;
++    if (old_device_blocked == block) {
++        return false;
++    }
++
++    if (block) {
++        block_owner->blocked_devices |= device;
++    } else {
++        block_owner->blocked_devices &= ~device;
++    }
++
++    struct gesture *gesture;
++    wl_list_for_each(gesture, &manager->gestures, link) {
++        if (gesture_device_by_id(gesture->id) != device) {
++            continue;
++        }
++
++        bool has_gesture_block = gesture_block_exists(block_owner, gesture->id);
++        bool old_blocked = old_device_blocked || has_gesture_block;
++        bool new_blocked = block || has_gesture_block;
++        gesture_binding_update_owner_block(gesture, old_blocked, new_blocked);
++    }
++
++    return true;
++}
++
++static bool gesture_block_owner_set_gesture_block(struct gesture_block_owner *block_owner,
++                                                  uint32_t gesture_id, bool block)
++{
++    struct gesture *gesture = gesture_by_id(gesture_id);
++    if (!gesture || !gesture->binding) {
++        return false;
++    }
++
++    enum gesture_device device = gesture_device_by_id(gesture_id);
++    bool device_blocked =
++        gesture_device_is_valid(device) && (block_owner->blocked_devices & device);
++    struct gesture_block *gesture_block = gesture_block_find(block_owner, gesture_id);
++    bool old_gesture_blocked = gesture_block != NULL;
++    if (old_gesture_blocked == block) {
++        return false;
++    }
++
++    bool old_blocked = device_blocked || old_gesture_blocked;
++    if (block) {
++        gesture_block = gesture_block_get_or_create(block_owner, gesture_id);
++        if (!gesture_block) {
++            return false;
++        }
++    } else {
++        wl_list_remove(&gesture_block->link);
++        free(gesture_block);
++    }
++
++    bool new_blocked = device_blocked || block;
++    gesture_binding_update_owner_block(gesture, old_blocked, new_blocked);
++
++    return true;
++}
++
++static int block_gestures_by_device(sd_bus_message *m, struct gesture_block_owner *block_owner,
++                                    uint32_t *ret_count)
++{
++    CK(sd_bus_message_enter_container(m, 'a', "{ub}"));
++    while (!sd_bus_message_at_end(m, 0)) {
++        uint32_t device_id;
++        int block;
++
++        CK(sd_bus_message_enter_container(m, 'e', "ub"));
++        CK(sd_bus_message_read(m, "ub", &device_id, &block));
++        enum gesture_device device = device_id;
++        if (gesture_block_owner_set_device_block(block_owner, device, block)) {
++            (*ret_count)++;
++        }
++        CK(sd_bus_message_exit_container(m));
++    }
++    CK(sd_bus_message_exit_container(m));
++
++    return 0;
++}
++
++static int block_gestures_by_gesture(sd_bus_message *m, struct gesture_block_owner *block_owner,
++                                     uint32_t *ret_count)
++{
++    CK(sd_bus_message_enter_container(m, 'a', "{ub}"));
++    while (!sd_bus_message_at_end(m, 0)) {
++        uint32_t gesture_id;
++        int block;
++
++        CK(sd_bus_message_enter_container(m, 'e', "ub"));
++        CK(sd_bus_message_read(m, "ub", &gesture_id, &block));
++        if (gesture_block_owner_set_gesture_block(block_owner, gesture_id, block)) {
++            (*ret_count)++;
++        }
++        CK(sd_bus_message_exit_container(m));
++    }
++    CK(sd_bus_message_exit_container(m));
++
++    return 0;
++}
++
++static int block_gestures(sd_bus_message *m, void *userdata, sd_bus_error *ret_error)
++{
++    uint32_t ret_count = 0;
++    const char *sender = sd_bus_message_get_sender(m);
++    if (!sender) {
++        return sd_bus_reply_method_return(m, "u", ret_count);
++    }
++
++    struct gesture_block_owner *block_owner = gesture_block_owner_get_or_create(sender);
++    if (!block_owner) {
++        return sd_bus_reply_method_return(m, "u", ret_count);
++    }
++
++    CK(sd_bus_message_enter_container(m, 'a', "{sv}"));
++    while (!sd_bus_message_at_end(m, 0)) {
++        const char *key = NULL;
++
++        CK(sd_bus_message_enter_container(m, 'e', "sv"));
++        CK(sd_bus_message_read(m, "s", &key));
++
++        if (strcmp(key, "devices") == 0) {
++            CK(sd_bus_message_enter_container(m, 'v', "a{ub}"));
++            CK(block_gestures_by_device(m, block_owner, &ret_count));
++            CK(sd_bus_message_exit_container(m));
++        } else if (strcmp(key, "gestures") == 0) {
++            CK(sd_bus_message_enter_container(m, 'v', "a{ub}"));
++            CK(block_gestures_by_gesture(m, block_owner, &ret_count));
++            CK(sd_bus_message_exit_container(m));
++        } else {
++            CK(sd_bus_message_skip(m, "v"));
++        }
++
++        CK(sd_bus_message_exit_container(m));
++    }
++    CK(sd_bus_message_exit_container(m));
++
++    if (gesture_block_owner_is_unused(block_owner)) {
++        gesture_block_owner_destroy(block_owner);
++    }
++    return sd_bus_reply_method_return(m, "u", ret_count);
++}
++
+ static const sd_bus_vtable gesture_vtable[] = {
+     SD_BUS_VTABLE_START(0),
+     SD_BUS_METHOD("ListGestures", "", "a{uv}", list_gestures, 0),
+     SD_BUS_METHOD("ConfigureGestures", "a{uv}", "u", configure_gestures, 0),
++    SD_BUS_METHOD("BlockGestures", "a{sv}", "u", block_gestures, 0),
+     SD_BUS_METHOD("ResetGestures", "", "", reset_gestures, 0),
+     SD_BUS_VTABLE_END,
+ };
+@@ -270,7 +604,12 @@ static bool gestures_manager_config_init(struct gestures_manager *manager)
+         return false;
+     }
+ 
+-    return dbus_register_object(NULL, service_path, service_iface, gesture_vtable, manager);
++    if (!dbus_register_object(NULL, service_path, service_iface, gesture_vtable, manager)) {
++        kywc_log(KYWC_ERROR, "Gestures manager register dbus object failed");
++        return false;
++    }
++
++    return true;
+ }
+ 
+ static struct gesture *gesture_create_by_id(uint32_t id)
+@@ -420,6 +759,11 @@ static void handle_server_destroy(struct wl_listener *listener, void *data)
+     wl_list_remove(&manager->server_destroy.link);
+     wl_list_remove(&manager->server_start.link);
+ 
++    struct gesture_block_owner *block_owner, *block_owner_tmp;
++    wl_list_for_each_safe(block_owner, block_owner_tmp, &manager->block_owners, link) {
++        gesture_block_owner_destroy(block_owner);
++    }
++
+     /* free gesture */
+     struct gesture *gesture, *tmp;
+     wl_list_for_each_safe(gesture, tmp, &manager->gestures, link) {
+@@ -435,8 +779,14 @@ bool global_gestures_manager_create(struct server *server)
+     }
+ 
+     wl_list_init(&manager->gestures);
++    wl_list_init(&manager->block_owners);
++
++    if (!gestures_manager_config_init(manager)) {
++        free(manager);
++        manager = NULL;
++        return false;
++    }
+ 
+-    gestures_manager_config_init(manager);
+     setup_system_gestures_from_config(manager);
+ 
+     manager->server_start.notify = handle_server_start;
+diff --git a/src/input/global_shortcuts.c b/src/input/global_shortcuts.c
+index 0e45043..af9e68e 100644
+--- a/src/input/global_shortcuts.c
++++ b/src/input/global_shortcuts.c
+@@ -45,6 +45,7 @@ struct global_shortcut_session {
+     const char *handle;
+     const char *path;
+     const char *owner;
++    struct sd_bus_slot *watcher;
+ 
+     struct dbus_object *dbus;
+ 
+@@ -73,7 +74,6 @@ struct global_shortcut {
+ 
+ static struct global_shortcuts_manager {
+     struct config *config;
+-    bool name_owner_match_added;
+ 
+     struct wl_listener server_start;
+     struct wl_listener server_destroy;
+@@ -87,6 +87,8 @@ static const char *session_builtin = "kylin_wlcom";
+ 
+ static bool system_shortcut_write_config(struct global_shortcut *shortcut);
+ static void session_block_scopes_destroy(struct global_shortcut_session *session);
++static int session_name_owner_changed_handle(sd_bus_message *m, void *userdata,
++                                             sd_bus_error *ret_error);
+ 
+ static bool str_equal(const char *a, const char *b)
+ {
+@@ -143,6 +145,9 @@ static void shortcut_session_destroy(struct global_shortcut_session *session, bo
+         global_shortcut_destroy(shortcut, clean);
+     }
+ 
++    if (session->watcher) {
++        sd_bus_slot_unref(session->watcher);
++    }
+     dbus_unregister_object(session->dbus);
+     wl_list_remove(&session->link);
+     free((void *)session->handle);
+@@ -1095,28 +1100,15 @@ static const sd_bus_vtable shortcut_vtable[] = {
+ static int session_name_owner_changed_handle(sd_bus_message *m, void *userdata,
+                                              sd_bus_error *ret_error)
+ {
+-    const char *name = NULL, *old_owner = NULL, *new_owner = NULL;
+-    CK(sd_bus_message_read(m, "sss", &name, &old_owner, &new_owner));
+-    if (!name) {
++    const char *new_owner = NULL;
++    CK(sd_bus_message_skip(m, "ss"));
++    CK(sd_bus_message_read(m, "s", &new_owner));
++    if (!new_owner || *new_owner) {
+         return 0;
+     }
+ 
+-    if (old_owner && !*new_owner) {
+-        bool removed = false;
+-        struct global_shortcut_session *session, *tmp;
+-        wl_list_for_each_safe(session, tmp, &manager->sessions, link) {
+-            if (!session->owner || strcmp(session->owner, old_owner) != 0) {
+-                continue;
+-            }
+-
+-            removed = true;
+-            shortcut_session_destroy(session, true);
+-        }
+-
+-        if (removed) {
+-            kywc_log(KYWC_INFO, "Service: %s unregistered from owner %s", name, old_owner);
+-        }
+-    }
++    struct global_shortcut_session *session = userdata;
++    shortcut_session_destroy(session, true);
+ 
+     return 0;
+ }
+@@ -1169,20 +1161,31 @@ static struct global_shortcut_session *shortcut_session_get_or_create(const char
+         goto error;
+     }
+ 
+-    const char *match = "type=signal,interface=org.freedesktop.DBus,member=NameOwnerChanged";
+-    if (strcmp(session_handle, session_builtin) != 0 && !manager->name_owner_match_added) {
+-        if (!dbus_add_match(match, session_name_owner_changed_handle, NULL)) {
+-            kywc_log(KYWC_ERROR, "Shortcuts manager listener dbus service failed");
+-            goto error;
+-        }
+-        manager->name_owner_match_added = true;
+-    }
+-
+     session->owner = sender ? strdup(sender) : NULL;
+     if (sender && !session->owner) {
+         goto error;
+     }
+ 
++    if (session->owner) {
++        char *match_rule = string_create("sender='org.freedesktop.DBus',"
++                                         "type='signal',"
++                                         "interface='org.freedesktop.DBus',"
++                                         "member='NameOwnerChanged',"
++                                         "path='/org/freedesktop/DBus',"
++                                         "arg0='%s'",
++                                         session->owner);
++        if (!match_rule) {
++            goto error;
++        }
++
++        if (!dbus_add_match_slot(&session->watcher, match_rule, session_name_owner_changed_handle,
++                                 session)) {
++            free(match_rule);
++            goto error;
++        }
++        free(match_rule);
++    }
++
+     session->dbus =
+         dbus_register_object(NULL, session->path, service_session_iface, shortcut_vtable, session);
+     if (!session->dbus) {
+diff --git a/src/input/input.c b/src/input/input.c
+index 5850eb8..7e9889b 100644
+--- a/src/input/input.c
++++ b/src/input/input.c
+@@ -681,6 +681,11 @@ static void handle_keyboard_shortcuts_inhibitor_destroy(struct wl_listener *list
+     struct seat_keyboard_shortcuts_inhibitor *shortcuts_inhibitor =
+         wl_container_of(listener, shortcuts_inhibitor, destroy);
+ 
++    struct seat *seat = seat_from_wlr_seat(shortcuts_inhibitor->inhibitor->seat);
++    if (seat->activated_inhibitor == shortcuts_inhibitor) {
++        seat->activated_inhibitor = NULL;
++    }
++
+     wl_list_remove(&shortcuts_inhibitor->link);
+     wl_list_remove(&shortcuts_inhibitor->destroy.link);
+     free(shortcuts_inhibitor);
+@@ -703,7 +708,11 @@ static void handle_new_shortcuts_inhibitor(struct wl_listener *listener, void *d
+     struct seat *seat = seat_from_wlr_seat(inhibitor->seat);
+     wl_list_insert(&seat->keyboard_shortcuts_inhibitors, &shortcuts_inhibitor->link);
+ 
+-    wlr_keyboard_shortcuts_inhibitor_v1_activate(inhibitor);
++    struct wlr_surface *focused_surface = seat->wlr_seat->keyboard_state.focused_surface;
++    if (inhibitor->surface == focused_surface) {
++        wlr_keyboard_shortcuts_inhibitor_v1_activate(inhibitor);
++        seat->activated_inhibitor = shortcuts_inhibitor;
++    }
+ }
+ 
+ static void handle_new_pointer_constraint(struct wl_listener *listener, void *data)
+diff --git a/src/input/keyboard.c b/src/input/keyboard.c
+index ff7b480..300942c 100644
+--- a/src/input/keyboard.c
++++ b/src/input/keyboard.c
+@@ -187,7 +187,7 @@ static struct key_binding *keyboard_get_key_binding(struct keyboard *keyboard, b
+     struct keyboard_state *keyboard_state = &keyboard->state;
+ 
+     struct seat *seat = keyboard->seat;
+-    if (seat_is_keyboard_shortcuts_inhibited(seat)) {
++    if (seat->activated_inhibitor) {
+         return NULL;
+     }
+ 
+diff --git a/src/input/seat.c b/src/input/seat.c
+index d102b55..136d7bd 100644
+--- a/src/input/seat.c
++++ b/src/input/seat.c
+@@ -393,12 +393,14 @@ void seat_focus_surface(struct seat *seat, struct wlr_surface *surface)
+     struct wlr_seat *wlr_seat = seat->wlr_seat;
+     struct wlr_surface *last_surface = wlr_seat->keyboard_state.focused_surface;
+     if (last_surface != surface) {
++        seat->activated_inhibitor = NULL;
+         struct seat_keyboard_shortcuts_inhibitor *shortcuts_inhibitor = NULL;
+         wl_list_for_each(shortcuts_inhibitor, &seat->keyboard_shortcuts_inhibitors, link) {
+             if (shortcuts_inhibitor->inhibitor->surface == last_surface) {
+                 wlr_keyboard_shortcuts_inhibitor_v1_deactivate(shortcuts_inhibitor->inhibitor);
+             } else if (shortcuts_inhibitor->inhibitor->surface == surface) {
+                 wlr_keyboard_shortcuts_inhibitor_v1_activate(shortcuts_inhibitor->inhibitor);
++                seat->activated_inhibitor = shortcuts_inhibitor;
+             }
+         }
+     }
+@@ -462,20 +464,6 @@ void seat_feed_keyboard_key(struct seat *seat, uint32_t key, bool pressed)
+     keyboard_send_key(keyboard, key, pressed);
+ }
+ 
+-bool seat_is_keyboard_shortcuts_inhibited(struct seat *seat)
+-{
+-    struct wlr_surface *wlr_surface = seat->wlr_seat->keyboard_state.focused_surface;
+-
+-    struct seat_keyboard_shortcuts_inhibitor *shortcuts_inhibitor;
+-    wl_list_for_each(shortcuts_inhibitor, &seat->keyboard_shortcuts_inhibitors, link) {
+-        if (shortcuts_inhibitor->inhibitor->surface == wlr_surface) {
+-            return shortcuts_inhibitor->inhibitor->active;
+-        }
+-    }
+-
+-    return false;
+-}
+-
+ bool seat_is_dragging(struct seat *seat)
+ {
+     return selection_is_dragging(seat) || xwayland_is_dragging_x11(seat);
+diff --git a/src/input/touch.c b/src/input/touch.c
+index a18f008..0d75fe2 100644
+--- a/src/input/touch.c
++++ b/src/input/touch.c
+@@ -24,6 +24,7 @@
+ #define TOUCH_FILTER_TIMEOUT (100)
+ 
+ #define TOUCH_DEAD_ZONE (8.f)
++#define TOUCH_MOVE_THRESHOLD_MM (4.f)
+ 
+ struct touch_manager {
+     struct wl_listener new_input;
+@@ -663,6 +664,18 @@ static uint32_t touch_point_calc_directions(struct touch_point *point, double dx
+     return directions;
+ }
+ 
++static bool touch_point_has_moved(struct touch_point *point, double dx, double dy)
++{
++    struct wlr_touch *wlr_touch = point->touch->wlr_touch;
++    if (wlr_touch->width_mm <= 0.0 || wlr_touch->height_mm <= 0.0) {
++        return fabs(dx) > 0.01f || fabs(dy) > 0.01f;
++    }
++
++    double dx_mm = dx * wlr_touch->width_mm;
++    double dy_mm = dy * wlr_touch->height_mm;
++    return hypot(dx_mm, dy_mm) > TOUCH_MOVE_THRESHOLD_MM;
++}
++
+ static void touch_calc_average_delta(struct touch_point *point, double *dx, double *dy)
+ {
+     struct touch *touch = point->touch;
+@@ -756,8 +769,7 @@ void touch_handle_motion(struct wlr_touch_motion_event *event, bool handle)
+ 
+     double dx = event->x - point->abs_x;
+     double dy = event->y - point->abs_y;
+-    bool moved = fabs(dx) > 0.01f || fabs(dy) > 0.01f;
+-    if (!point->moved && !moved) {
++    if (!point->moved && !touch_point_has_moved(point, dx, dy)) {
+         return;
+     }
+ 
+diff --git a/src/render/opengl/pass.c b/src/render/opengl/pass.c
+index b231cd4..49694e8 100644
+--- a/src/render/opengl/pass.c
++++ b/src/render/opengl/pass.c
+@@ -317,6 +317,9 @@ void opengl_render_pass_add_texture(struct wlr_render_pass *wlr_pass,
+     wlr_render_texture_options_get_dst_box(wlr_options, &dst_box);
+     float alpha = wlr_render_texture_options_get_alpha(wlr_options);
+ 
++    uint32_t tex_w = wlr_options->texture->width;
++    uint32_t tex_h = wlr_options->texture->height;
++
+     bool need_copy = false;
+     if (pass->buffer) {
+         struct wlr_texture *wlr_texture =
+@@ -330,12 +333,21 @@ void opengl_render_pass_add_texture(struct wlr_render_pass *wlr_pass,
+     struct opengl_texture *copy_texture = NULL;
+     struct opengl_texture *texture = NULL;
+     if (need_copy) {
+-        copy_texture = create_copy_screen_texture(pass, &src_fbox);
+-        if (!copy_texture) {
+-            return;
++        if (options->repeat_mode == RENDER_TEXTURE_REPEAT_NONE) {
++            copy_texture = create_copy_screen_texture(pass, &src_fbox);
++            if (!copy_texture) {
++                return;
++            }
++
++            src_fbox.x = src_fbox.y = 0;
++        } else {
++            copy_texture = create_copy_screen_texture(
++                pass, &(struct wlr_fbox){ .width = tex_w, .height = tex_h });
++            if (!copy_texture) {
++                return;
++            }
+         }
+ 
+-        src_fbox.x = src_fbox.y = 0;
+         texture = copy_texture;
+     } else {
+         texture = opengl_texture_from_wlr_texture(wlr_options->texture);
+@@ -363,9 +375,6 @@ void opengl_render_pass_add_texture(struct wlr_render_pass *wlr_pass,
+         abort();
+     }
+ 
+-    uint32_t tex_w = texture->wlr_texture.width;
+-    uint32_t tex_h = texture->wlr_texture.height;
+-
+     int width = dst_box.width;
+     int height = dst_box.height;
+     if (wlr_options->transform & WL_OUTPUT_TRANSFORM_90) {
+diff --git a/src/render/pixman/pass.c b/src/render/pixman/pass.c
+index e6a217c..41c7383 100644
+--- a/src/render/pixman/pass.c
++++ b/src/render/pixman/pass.c
+@@ -246,6 +246,160 @@ static void render_pass_handle_add_texture(struct wlr_render_pass *wlr_pass,
+     }
+ }
+ 
++static void render_pass_handle_add_texture_repeat(struct wlr_render_pass *wlr_pass,
++                                                  const struct render_texture_options *options)
++{
++    struct pixman_render_pass *pass = pixman_renderer_pass_from_wlr_render_pass(wlr_pass);
++    struct pixman_texture *texture = get_texture(options->base.texture);
++    struct pixman_buffer *buffer = pass->buffer;
++    bool need_copy = buffer->image == texture->image;
++
++    if (!need_copy && !pixman_begin_data_ptr_access(texture->buffer, &texture->image,
++                                                    WLR_BUFFER_DATA_PTR_ACCESS_READ)) {
++        return;
++    }
++
++    int tex_w = texture->buffer->width;
++    int tex_h = texture->buffer->height;
++
++    pixman_image_t *src_image = texture->image;
++    if (need_copy) {
++        // Copy full texture instead of only copying the src_box region
++        struct wlr_box full_tex = { 0, 0, tex_w, tex_h };
++        src_image = create_copy_image(src_image, &full_tex);
++        if (!src_image) {
++            return;
++        }
++    }
++
++    pixman_repeat_t repeat;
++    switch (options->repeat_mode) {
++    case RENDER_TEXTURE_REPEAT_NORAML:
++        repeat = PIXMAN_REPEAT_NORMAL;
++        break;
++    case RENDER_TEXTURE_REPEAT_MIRROR:
++        repeat = PIXMAN_REPEAT_REFLECT;
++        break;
++    case RENDER_TEXTURE_REPEAT_DECAL:
++        repeat = PIXMAN_REPEAT_NONE;
++        break;
++    case RENDER_TEXTURE_REPEAT_NONE:
++    case RENDER_TEXTURE_REPEAT_CLAMP:
++    default:
++        repeat = PIXMAN_REPEAT_PAD;
++        break;
++    }
++    pixman_image_set_repeat(src_image, repeat);
++
++    pixman_op_t op = get_pixman_blending(options->base.blend_mode);
++    pixman_image_set_clip_region32(buffer->image, (pixman_region32_t *)options->base.clip);
++
++    struct wlr_box dst_box;
++    wlr_render_texture_options_get_dst_box(&options->base, &dst_box);
++
++    // For premultiplied alpha
++    pixman_image_t *mask = NULL;
++    float alpha = wlr_render_texture_options_get_alpha(&options->base);
++    if (alpha != 1) {
++        mask = pixman_image_create_solid_fill(&(struct pixman_color){
++            .alpha = 0xFFFF * alpha,
++        });
++    }
++
++    // src_box represents translation and scaling
++    if (options->base.src_box.x != 0.0 || options->base.src_box.y != 0.0 ||
++        options->base.src_box.width != tex_w || options->base.src_box.height != tex_h ||
++        options->base.transform != WL_OUTPUT_TRANSFORM_NORMAL) {
++        float tx = options->base.src_box.x;
++        float ty = options->base.src_box.y;
++        float sx = options->base.src_box.width / tex_w;
++        float sy = options->base.src_box.height / tex_h;
++
++        int tr_cos = 1, tr_sin = 0, tr_x = 0, tr_y = 0;
++        switch (options->base.transform) {
++        case WL_OUTPUT_TRANSFORM_NORMAL:
++        case WL_OUTPUT_TRANSFORM_FLIPPED:
++            break;
++        case WL_OUTPUT_TRANSFORM_90:
++        case WL_OUTPUT_TRANSFORM_FLIPPED_90:
++            tr_cos = 0;
++            tr_sin = 1;
++            tr_y = tex_w;
++            break;
++        case WL_OUTPUT_TRANSFORM_180:
++        case WL_OUTPUT_TRANSFORM_FLIPPED_180:
++            tr_cos = -1;
++            tr_sin = 0;
++            tr_x = tex_w;
++            tr_y = tex_h;
++            break;
++        case WL_OUTPUT_TRANSFORM_270:
++        case WL_OUTPUT_TRANSFORM_FLIPPED_270:
++            tr_cos = 0;
++            tr_sin = -1;
++            tr_x = tex_h;
++            break;
++        }
++
++        struct pixman_transform transform;
++        pixman_transform_init_identity(&transform);
++        // View order = Inverse transform order: Flip → Rotate → Scale → Translate
++
++        // Translate Inverse
++        pixman_transform_translate(&transform, NULL, pixman_double_to_fixed(-tx),
++                                   pixman_double_to_fixed(-ty));
++        // Scale Inverse
++        pixman_transform_scale(&transform, NULL, pixman_double_to_fixed(1.0 / sx),
++                               pixman_double_to_fixed(1.0 / sy));
++        // Rotation origin correction. Make texture top-left return to origin after rotation
++        pixman_transform_translate(&transform, NULL, -pixman_int_to_fixed(tr_x),
++                                   -pixman_int_to_fixed(tr_y));
++        // Rotate
++        pixman_transform_rotate(&transform, NULL, pixman_int_to_fixed(tr_cos),
++                                pixman_int_to_fixed(tr_sin));
++        // Flip
++        if (options->base.transform >= WL_OUTPUT_TRANSFORM_FLIPPED) {
++            pixman_transform_translate(&transform, NULL, -pixman_int_to_fixed(tex_w),
++                                       pixman_int_to_fixed(0));
++            pixman_transform_scale(&transform, NULL, pixman_int_to_fixed(-1),
++                                   pixman_int_to_fixed(1));
++        }
++
++        pixman_image_set_transform(src_image, &transform);
++
++        switch (options->base.filter_mode) {
++        case WLR_SCALE_FILTER_BILINEAR:
++            pixman_image_set_filter(src_image, PIXMAN_FILTER_BILINEAR, NULL, 0);
++            break;
++        case WLR_SCALE_FILTER_NEAREST:
++            pixman_image_set_filter(src_image, PIXMAN_FILTER_NEAREST, NULL, 0);
++            break;
++        }
++
++        pixman_image_composite32(op, src_image, mask, buffer->image, 0, 0, 0, 0, dst_box.x,
++                                 dst_box.y, dst_box.width, dst_box.height);
++
++        pixman_image_set_transform(src_image, NULL);
++    } else {
++        pixman_image_set_transform(src_image, NULL);
++        pixman_image_composite32(op, src_image, mask, buffer->image, 0, 0, 0, 0, dst_box.x,
++                                 dst_box.y, dst_box.width, dst_box.height);
++    }
++
++    pixman_image_set_clip_region32(buffer->image, NULL);
++    pixman_image_set_repeat(src_image, PIXMAN_REPEAT_NONE);
++
++    if (need_copy) {
++        pixman_image_unref(src_image);
++    } else {
++        wlr_buffer_end_data_ptr_access(texture->buffer);
++    }
++
++    if (mask != NULL) {
++        pixman_image_unref(mask);
++    }
++}
++
+ static void render_pass_handle_add_rect(struct wlr_render_pass *wlr_pass,
+                                         const struct wlr_render_rect_options *options)
+ {
+@@ -283,6 +437,11 @@ static const struct wlr_render_pass_impl wlr_render_pass_impl = {
+ static void pixman_render_pass_add_texture(struct wlr_render_pass *wlr_pass,
+                                            const struct render_texture_options *options)
+ {
++    if (options->repeat_mode != RENDER_TEXTURE_REPEAT_NONE) {
++        render_pass_handle_add_texture_repeat(wlr_pass, options);
++        return;
++    }
++
+     wlr_pass->impl->add_texture(wlr_pass, &options->base);
+ }
+ 
+@@ -347,6 +506,34 @@ static bool pixman_create_rounded_region(pixman_region32_t *region, const struct
+ static void pixman_render_pass_add_rect(struct wlr_render_pass *wlr_pass,
+                                         const struct render_rect_options *options)
+ {
++    // Stroke implemente by subtract clip region
++    if (options->stroke_width > 0.001f) {
++        struct wlr_render_rect_options base = options->base;
++
++        // Gradient fallback to pure color
++        if (options->linear_gradient) {
++            memcpy(&base.color, options->linear_gradient->color_stops[0].color, sizeof(float) * 4);
++        }
++
++        pixman_region32_t clip;
++        options->base.clip ? pixman_region32_copy(&clip, base.clip)
++                           : pixman_region32_init_rect(&clip, base.box.x, base.box.y,
++                                                       base.box.width, base.box.height);
++
++        pixman_region32_t sub_clip;
++        pixman_region32_init_rect(&sub_clip, base.box.x + options->stroke_width,
++                                  base.box.y + options->stroke_width,
++                                  base.box.width - options->stroke_width * 2.0,
++                                  base.box.height - options->stroke_width * 2.0);
++
++        pixman_region32_subtract(&clip, &clip, &sub_clip);
++
++        base.clip = &clip;
++        wlr_pass->impl->add_rect(wlr_pass, &base);
++        pixman_region32_fini(&clip);
++        return;
++    }
++
+     if (!options->base.clip && render_pass_options_has_radius(&options->radius)) {
+         pixman_region32_t clip;
+         if (pixman_create_rounded_region(&clip, &options->base.box, &options->radius)) {
+diff --git a/src/util/dbus.c b/src/util/dbus.c
+index 77aad26..2065ed1 100644
+--- a/src/util/dbus.c
++++ b/src/util/dbus.c
+@@ -273,15 +273,21 @@ void dbus_notify(const char *name, const char *summary, const char *body, const
+                              summary, body, 0, 0, 5000);
+ }
+ 
+-int dbus_add_match(const char *match, sd_bus_message_handler_t callback, void *data)
++bool dbus_add_match(const char *match, sd_bus_message_handler_t callback, void *data)
++{
++    return dbus_add_match_slot(NULL, match, callback, data);
++}
++
++bool dbus_add_match_slot(sd_bus_slot **slot, const char *match, sd_bus_message_handler_t callback,
++                         void *data)
+ {
+     if (!context || !context->user) {
+         return false;
+     }
+ 
+-    int ret = sd_bus_add_match(context->user, NULL, match, callback, data);
++    int ret = sd_bus_add_match(context->user, slot, match, callback, data);
+     if (ret < 0) {
+-        kywc_log(KYWC_ERROR, "Failed to add user match: %s", match);
++        kywc_log(KYWC_ERROR, "Failed to add user match: %s, %s", match, strerror(-ret));
+         return false;
+     }
+ 
+diff --git a/src/view/killer.c b/src/view/killer.c
+new file mode 100644
+index 0000000..3a83525
+--- /dev/null
++++ b/src/view/killer.c
+@@ -0,0 +1,311 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#define _GNU_SOURCE
++
++#include <fcntl.h>
++#include <signal.h>
++#include <stdbool.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <sys/wait.h>
++#include <unistd.h>
++
++#include <wlr/types/wlr_xdg_foreign_registry.h>
++
++#include <kywc/log.h>
++
++#include "nls.h"
++#include "scene/scene.h"
++#include "server.h"
++#include "util/dialog.h"
++#include "util/queue.h"
++#include "util/spawn.h"
++#include "view_p.h"
++
++static struct kill_dialog_manager {
++    struct wl_list kill_dialogs;
++
++    struct view_manager *view_manager;
++    struct wl_listener server_destroy;
++} *manager = NULL;
++
++struct kill_dialog {
++    struct wl_list link;
++
++    struct wlr_xdg_foreign_exported parent_exported;
++    struct wl_event_source *event_context;
++    int dialog_socket;
++
++    struct view *view;
++    struct wl_listener view_destroy;
++};
++
++static struct kill_dialog *kill_dialog_from_view(struct view *view)
++{
++    struct kill_dialog *hang_window;
++    wl_list_for_each(hang_window, &manager->kill_dialogs, link) {
++        if (hang_window->view == view) {
++            return hang_window;
++        }
++    }
++    return NULL;
++}
++
++static void kill_dialog_destroy(struct kill_dialog *dialog)
++{
++    if (!dialog) {
++        return;
++    }
++
++    if (dialog->event_context) {
++        wl_event_source_remove(dialog->event_context);
++    }
++
++    /* Send close request to wldialog */
++    if (dialog->dialog_socket >= 0) {
++        dialog_close(dialog->dialog_socket);
++        close(dialog->dialog_socket);
++    }
++
++    /* Remove the exported surface from the foreign registry */
++    if (dialog->parent_exported.registry) {
++        wlr_xdg_foreign_exported_finish(&dialog->parent_exported);
++    }
++
++    wl_list_remove(&dialog->link);
++    wl_list_remove(&dialog->view_destroy.link);
++    free(dialog);
++}
++
++#define KILL_POLL_RETRIES 16
++#define KILL_POLL_INTERVAL_US 250000 /* 250ms */
++
++static bool has_pid_aborted(pid_t pid)
++{
++    for (int i = 0; i < KILL_POLL_RETRIES; i++) {
++        int status = 0;
++        if (waitpid(pid, &status, WNOHANG | WNOWAIT) == pid) {
++            if (WIFSIGNALED(status) || WIFEXITED(status)) {
++                return true;
++            }
++        }
++        usleep(KILL_POLL_INTERVAL_US);
++    }
++    return false;
++}
++
++static void kill_job_execute(void *job, void *gdata, int thread_index)
++{
++    pid_t pid = (pid_t)(intptr_t)job;
++
++    if (kill(pid, SIGABRT) == 0 && has_pid_aborted(pid)) {
++        kywc_log(KYWC_DEBUG, "Process %d terminated after SIGABRT", pid);
++        return;
++    }
++
++    kywc_log(KYWC_WARN, "Process %d did not respond to SIGABRT, sending SIGKILL", pid);
++    kill(pid, SIGKILL);
++}
++
++static void kill_dialog_handle_view_destroy(struct wl_listener *listener, void *data)
++{
++    struct kill_dialog *dialog = wl_container_of(listener, dialog, view_destroy);
++
++    kill_dialog_destroy(dialog);
++}
++
++static void build_kill_dialog_request_json(json_object **out_obj, const char *app_id, pid_t pid,
++                                           const char *parent_window)
++{
++    json_object *obj = json_object_new_object();
++    json_object_object_add(obj, "title_bar", json_object_new_string("no_maximizable"));
++    json_object_object_add(obj, "window_title",
++                           json_object_new_string(tr("Program exception responding")));
++    json_object_object_add(obj, "window_icon", json_object_new_string("dialog-warning"));
++
++    if (parent_window) {
++        json_object_object_add(obj, "parent_window", json_object_new_string(parent_window));
++        json_object_object_add(obj, "modal", json_object_new_boolean(true));
++    }
++
++    char temp_str_title[512];
++    if (app_id == NULL) {
++        snprintf(temp_str_title, sizeof(temp_str_title),
++                 tr("Program exception responding(process number: %d). Do you want to force the "
++                    "app to close?"),
++                 pid);
++    } else {
++        snprintf(temp_str_title, sizeof(temp_str_title),
++                 tr("%s Program exception responding(process number: %d). Do you want to force the "
++                    "app to close?"),
++                 app_id, pid);
++    }
++    json_object *title_obj = json_object_new_object();
++    json_object_object_add(title_obj, "text", json_object_new_string(temp_str_title));
++    json_object_object_add(obj, "title", title_obj);
++
++    char temp_str[512];
++    snprintf(temp_str, sizeof(temp_str), tr("Note:Closing the app may loss all unsaved data."));
++    json_object *subtitle_obj = json_object_new_object();
++    json_object_object_add(subtitle_obj, "text", json_object_new_string(temp_str));
++    json_object_object_add(obj, "sub_title", subtitle_obj);
++
++    json_object_object_add(obj, "button_mode", json_object_new_int64(0));
++
++    json_object_object_add(obj, "allow_text", json_object_new_string(tr("Force Close")));
++    json_object_object_add(obj, "deny_text", json_object_new_string(tr("Wait")));
++
++    json_object *dialog = json_object_new_object();
++    json_object_object_add(dialog, "dialog", obj);
++    *out_obj = dialog;
++    kywc_log(KYWC_DEBUG, "Built hang window dialog JSON: %s", json_object_to_json_string(obj));
++}
++
++static int handle_kill_dialog(int fd, uint32_t mask, void *data)
++{
++    struct kill_dialog *dialog = data;
++
++    if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) {
++        kywc_log(KYWC_ERROR, "Error event on hang window dialog socket");
++        kill_dialog_destroy(dialog);
++        return 0;
++    }
++
++    struct view *view = dialog->view;
++
++    json_object *obj = dialog_get_reply(fd);
++    if (!obj) {
++        kywc_log(KYWC_ERROR, "Failed to get dialog reply");
++        kill_dialog_destroy(dialog);
++        return 0;
++    }
++
++    json_object *action_obj;
++    if (json_object_object_get_ex(obj, "user_action", &action_obj)) {
++        int64_t action = json_object_get_int64(action_obj);
++        kywc_log(KYWC_DEBUG, "Hang window dialog action: %ld", action);
++
++        if (action == 0) {
++            kywc_log(KYWC_INFO, "User chose to force close view: %s", view->base.app_id);
++            queue_add_job(manager->view_manager->server->queue, (void *)(intptr_t)view->base.pid,
++                          NULL, kill_job_execute, NULL);
++        } else {
++            kywc_log(KYWC_DEBUG, "User chose to wait for view: %s", view->base.app_id);
++        }
++    }
++
++    json_object_put(obj);
++    kill_dialog_destroy(dialog);
++
++    return 0;
++}
++
++static void kill_dialog_create(struct view *view)
++{
++    struct kill_dialog *dialog = kill_dialog_from_view(view);
++    if (dialog) {
++        return;
++    }
++
++    dialog = calloc(1, sizeof(*dialog));
++    if (!dialog) {
++        kywc_log(KYWC_ERROR, "Failed to allocate dialog");
++        return;
++    }
++    dialog->dialog_socket = -1;
++    wl_list_init(&dialog->link);
++    wl_list_init(&dialog->view_destroy.link);
++
++    /* Export the hung window's surface as a foreign toplevel handle so
++     * wldialog can import it and set itself as a modal child of it. */
++    const char *parent_window = NULL;
++    char parent_handle[sizeof("wayland:") + WLR_XDG_FOREIGN_HANDLE_SIZE];
++    if (manager->view_manager->foreign_registry &&
++        wlr_xdg_foreign_exported_init(&dialog->parent_exported,
++                                      manager->view_manager->foreign_registry)) {
++        dialog->parent_exported.surface = view->surface;
++        snprintf(parent_handle, sizeof(parent_handle), "wayland:%s",
++                 dialog->parent_exported.handle);
++        parent_window = parent_handle;
++    } else {
++        kywc_log(KYWC_WARN, "Failed to export parent window handle, dialog will not be modal");
++    }
++
++    /* Create a dialog to ask user what to do */
++    json_object *json_req = NULL;
++    build_kill_dialog_request_json(&json_req, view->base.app_id, view->base.pid, parent_window);
++    if (!json_req) {
++        kywc_log(KYWC_ERROR, "Failed to build kill dialog JSON");
++        kill_dialog_destroy(dialog);
++        return;
++    }
++
++    dialog->dialog_socket = spawn_dialog("wldialog");
++    if (dialog->dialog_socket < 0) {
++        kywc_log(KYWC_ERROR, "Failed to create kill dialog");
++        json_object_put(json_req);
++        kill_dialog_destroy(dialog);
++        return;
++    }
++
++    int flags = fcntl(dialog->dialog_socket, F_GETFL);
++    if (flags != -1) {
++        fcntl(dialog->dialog_socket, F_SETFL, flags | O_NONBLOCK);
++    }
++
++    if (!dialog_send_request(dialog->dialog_socket, json_req)) {
++        kywc_log(KYWC_ERROR, "Failed to send dialog request");
++        json_object_put(json_req);
++        kill_dialog_destroy(dialog);
++        return;
++    }
++
++    json_object_put(json_req);
++
++    dialog->view = view;
++
++    dialog->view_destroy.notify = kill_dialog_handle_view_destroy;
++    wl_signal_add(&view->base.events.destroy, &dialog->view_destroy);
++
++    wl_list_insert(&manager->kill_dialogs, &dialog->link);
++
++    dialog->event_context =
++        wl_event_loop_add_fd(manager->view_manager->server->event_loop, dialog->dialog_socket,
++                             WL_EVENT_READABLE, handle_kill_dialog, dialog);
++    if (!dialog->event_context) {
++        kywc_log(KYWC_ERROR, "Failed to add dialog socket to event loop");
++        kill_dialog_destroy(dialog);
++        return;
++    }
++}
++
++static void handle_server_destroy(struct wl_listener *listener, void *data)
++{
++    struct kill_dialog *dialog, *tmp;
++    wl_list_for_each_safe(dialog, tmp, &manager->kill_dialogs, link) {
++        kill_dialog_destroy(dialog);
++    }
++
++    wl_list_remove(&manager->server_destroy.link);
++    free(manager);
++    manager = NULL;
++}
++
++void kill_dialog_manager_create(struct view_manager *view_manager)
++{
++    manager = calloc(1, sizeof(*manager));
++    if (!manager) {
++        kywc_log(KYWC_ERROR, "Failed to create hang window dialog manager");
++        return;
++    }
++
++    manager->view_manager = view_manager;
++    wl_list_init(&manager->kill_dialogs);
++
++    view_manager->impl.show_hang_window = kill_dialog_create;
++
++    manager->server_destroy.notify = handle_server_destroy;
++    server_add_destroy_listener(view_manager->server, &manager->server_destroy);
++}
+diff --git a/src/view/meson.build b/src/view/meson.build
+index 7de8924..3083853 100644
+--- a/src/view/meson.build
++++ b/src/view/meson.build
+@@ -9,6 +9,7 @@ wlcom_sources += files(
+   'maximize_switcher.c',
+   'modal.c',
+   'positioner.c',
++  'killer.c',
+   'ssd.c',
+   'stack_mode.c',
+   'tablet_mode.c',
+diff --git a/src/view/view.c b/src/view/view.c
+index a64be16..b991a68 100644
+--- a/src/view/view.c
++++ b/src/view/view.c
+@@ -2439,7 +2439,6 @@ struct view *view_manager_get_highlight(void)
+ 
+ void view_show_hang_window(struct view *view)
+ {
+-    // TODO: implement show_hang_window
+     kywc_log(KYWC_WARN, "%s view is not responding", view->base.app_id);
+     if (view_manager->impl.show_hang_window) {
+         view_manager->impl.show_hang_window(view);
+@@ -2970,6 +2969,7 @@ struct view_manager *view_manager_create(struct server *server)
+     tile_manager_create(view_manager);
+     window_actions_create(view_manager);
+     view_manager_actions_create(view_manager);
++    kill_dialog_manager_create(view_manager);
+ 
+     wl_list_init(&view_manager->new_xdg_toplevel.link);
+     xdg_shell_init(view_manager);
+diff --git a/src/view/view_p.h b/src/view/view_p.h
+index 9627ddd..258bdbd 100644
+--- a/src/view/view_p.h
++++ b/src/view/view_p.h
+@@ -236,6 +236,8 @@ void tablet_mode_register(struct view_manager *view_manager);
+ 
+ bool ext_foreign_toplevel_create(struct server *server);
+ 
++void kill_dialog_manager_create(struct view_manager *view_manager);
++
+ #if HAVE_KDE_VIRTUAL_DESKTOP
+ bool kde_virtual_desktop_management_create(struct server *server);
+ #else
+diff --git a/src/xwayland/meson.build b/src/xwayland/meson.build
+index 8ae7cff..d1e2a50 100644
+--- a/src/xwayland/meson.build
++++ b/src/xwayland/meson.build
+@@ -5,9 +5,9 @@ xwayland_dep = dependency(
+   required: false,
+   fallback: 'xserver',
+   default_options: [
+-		'werror=false',
+-		'xvfb=false',
+-	],
++    'werror=false',
++    'xvfb=false',
++  ],
+ )
+ 
+ xwayland_feature_names = [
+diff --git a/tools/magnifier/magnifier.cpp b/tools/magnifier/magnifier.cpp
+index 52d4653..6cdf716 100644
+--- a/tools/magnifier/magnifier.cpp
++++ b/tools/magnifier/magnifier.cpp
+@@ -10,8 +10,9 @@
+ #include "com_kylin_Wlcom_Effect.h"
+ #include "magnifier.h"
+ #include "org_ukui_Magnifier.h"
+-
++#if KYSDK_IS_SUPPORT
+ #include <ukuiwindowhelper.h>
++#endif
+ 
+ #define GSETTINGS_THEME_NAME "org.ukui.style"
+ #define GSETTINGS_THEME_KEY "styleName"
+@@ -46,8 +47,10 @@ Magnifier::Magnifier(int type, QWidget *parent) : QWidget(parent), m_type(type)
+         qDebug() << "start org.ukui.Magnifier service failed";
+     }
+ 
++#if KYSDK_IS_SUPPORT
+     UkuiWindowHelper *windowHelper = new UkuiWindowHelper(this);
+     windowHelper->setSkipSwitcher(true);
++#endif
+ }
+ 
+ Magnifier::~Magnifier()
+diff --git a/tools/magnifier/meson.build b/tools/magnifier/meson.build
+index 6c5968a..5cffd75 100644
+--- a/tools/magnifier/meson.build
++++ b/tools/magnifier/meson.build
+@@ -3,9 +3,15 @@ if not add_languages('cpp', native: false, required: false)
+ endif
+ 
+ qt5 = import('qt5')
+-qt5dep = dependency('qt5', modules: ['Core', 'DBus', 'Widgets', 'Gui'], private_headers: true, required: false)
++qt5dep = dependency(
++  'qt5',
++  modules: ['Core', 'DBus', 'Widgets', 'Gui'],
++  private_headers: true,
++  required: false
++)
++
+ gsettings_dep = dependency('gsettings-qt')
+-kysdk_ukuiwindowhelper = dependency('kysdk-ukuiwindowhelper')
++kysdk_ukuiwindowhelper = dependency('kysdk-ukuiwindowhelper', required: false)
+ 
+ subdir('translations')
+ 
+@@ -21,15 +27,32 @@ xml_file = {
+ 
+ foreach name, path : xml_file
+   base_name = name.underscorify()
+-  gen_result = run_command([qdbusxml2cpp, '-p', join_paths(build_dir, base_name), path, '-N', '-i', 'dbus_interface_date.h'], check: true)
+-  mag_sources += qt5.preprocess(moc_headers: [join_paths(build_dir, base_name + '.h')], sources: [join_paths(build_dir, base_name + '.cpp')])
++  gen_result = run_command(
++    [
++      qdbusxml2cpp,
++      '-p', join_paths(build_dir, base_name),
++      path,
++      '-N',
++      '-i', 'dbus_interface_date.h'
++    ],
++    check: true
++  )
++  mag_sources += join_paths(build_dir, base_name + '.cpp')
++  mag_sources += qt5.preprocess(
++    moc_headers: [join_paths(build_dir, base_name + '.h')]
++  )
+ endforeach
+ 
+ res_processed = qt5.preprocess(
+   moc_headers: 'magnifier.h',
+-  qresources: files('svg.qrc'),
++  qresources: 'svg.qrc',
+ )
+ 
++cpp_args = ['-Wno-unused-parameter']
++if kysdk_ukuiwindowhelper.found()
++  cpp_args += '-DKYSDK_IS_SUPPORT'
++endif
++
+ mag_sources += [
+   res_processed,
+   'magnifier.cpp',
+@@ -39,6 +62,7 @@ mag_sources += [
+ executable('kylin-magnifier',
+   sources: [mag_sources],
+   dependencies: [qt5dep, gsettings_dep, wayland_client, kysdk_ukuiwindowhelper],
++  cpp_args: cpp_args,
+   build_by_default: true,
+   install: true,
+ )
+diff --git a/tools/meson.build b/tools/meson.build
+index 3bfc0cd..542f883 100644
+--- a/tools/meson.build
++++ b/tools/meson.build
+@@ -1,2 +1,3 @@
+ subdir('magnifier')
+-subdir('wlcctrl')
+\ No newline at end of file
++subdir('wlcctrl')
++subdir('wldialog')
+diff --git a/tools/wldialog/DialogSocket.json b/tools/wldialog/DialogSocket.json
+new file mode 100644
+index 0000000..0e6958f
+--- /dev/null
++++ b/tools/wldialog/DialogSocket.json
+@@ -0,0 +1,432 @@
++{
++    "protocol_version": "1.0",
++    "description": "客户端与 wldialog 通信的协议标准",
++    "routing_logic": {
++        "description": "接收端通过检查根对象中存在的特定键名来判断消息类型。'control' 和 'dialog' 键互斥，必须且只能存在一个。",
++        "rules": [
++            "若存在 'control' 键，则为控制信号，忽略其他业务键。",
++            "若存在 'dialog' 键，则为对话框请求，忽略其他业务键。",
++            "若同时存在或都不存在，则视为协议错误。",
++            "【注意】对话框具有‘一次性’特征：一旦 'dialog' 请求被处理并显示，后续任何尝试创建新对话框的 'dialog' 请求都将被拒绝，直到当前对话框通过 'control' 指令或用户操作被关闭"
++        ]
++    },
++    "control": {
++        "request": {
++            "description": "进程控制（如关闭进程等操作）。",
++            "type": "object",
++            "properties": {
++                "action": {
++                    "type": "integer",
++                    "required": true,
++                    "description": "进程控制操作类型。",
++                    "values": {
++                        "0": "请求关闭进程",
++                        "1": "保留（未使用）",
++                        "2": "保留（未使用）"
++                    }
++                }
++            }
++        },
++        "response": {
++            "description": "wldialog 处理后不返回任何数据。",
++            "format": "none"
++        }
++    },
++    "dialog": {
++        "type": "object",
++        "request": {
++            "description": "构建对话框，根据字段内容设置控件。wldialog进程同一时间只允许存在一个由dialog字段创建的对话框实例。如果对话框已存在，新的 'dialog' 请求会被接收端忽略。",
++            "properties": {
++                "parent_window": {
++                    "type": "string",
++                    "required": false,
++                    "description": "父窗口标识，用于窗口归属。格式为wayland:<HANDLE>，<HANDLE> 是通过 xdg_foreign 协议获取的surface handle",
++                    "example": "wayland:cfce5d9ff2237badc8239b8116e22f9f"
++                },
++                "modal": {
++                    "type": "boolean",
++                    "required": false,
++                    "description": "模态窗口属性，必须设置parent_window字段才有效。"
++                },
++                "title_bar": {
++                    "type": "string",
++                    "description": "窗口装饰栏按钮状态，如果当前字段未设置，则窗口装饰栏为正常三联状态",
++                    "required": false,
++                    "default": "close_only",
++                    "enum": [
++                        "close_only",
++                        "no_minimizable",
++                        "no_maximizable"
++                    ]
++                },
++                "window_title": {
++                    "type": "string",
++                    "required": false,
++                    "description": "标题栏名称",
++                    "example": "Permission Request"
++                },
++                "window_icon": {
++                    "type": "string",
++                    "required": false,
++                    "description": "标题栏对话框图标名称。",
++                    "example": "dialog-warning"
++                },
++                "title_icon": {
++                    "type": "string",
++                    "required": false,
++                    "description": "对话框内图标名称。。",
++                    "example": "dialog-warning"
++                },
++                "title": {
++                    "type": "object",
++                    "required": false,
++                    "description": "对话框主标题。",
++                    "properties": {
++                        "text": {
++                            "type": "string",
++                            "description": "标题文本内容",
++                            "required": true,
++                            "example": "Remote Desktop Request"
++                        },
++                        "font_bold": {
++                            "type": "boolean",
++                            "required": false,
++                            "default": false,
++                            "description": "字体是否加粗，如果字段未设置，则为默认状态。"
++                        }
++                    }
++                },
++                "sub_title": {
++                    "type": "object",
++                    "required": false,
++                    "description": "对话框副标题（辅助说明信息）。",
++                    "properties": {
++                        "text": {
++                            "type": "string",
++                            "description": "副标题文本内容",
++                            "required": true,
++                            "example": "Application: MyApp"
++                        },
++                        "font_light": {
++                            "type": "boolean",
++                            "required": false,
++                            "default": true,
++                            "description": "是否使用细体字体，如果字段未设置，则为默认状态。"
++                        }
++                    }
++                },
++                "message": {
++                    "type": "string",
++                    "required": false,
++                    "description": "正文内容（主要说明文本）。",
++                    "example": "MyApp wants to control your input devices."
++                },
++                "details": {
++                    "type": "string",
++                    "required": false,
++                    "description": "正文内容的额外说明（支持简单 HTML 标签显示）。必须要有message的信息才能够设置",
++                    "example": "• <b>Keyboard:</b> Control your keyboard input<br/>"
++                },
++                "button_mode": {
++                    "type": "string",
++                    "enum": [
++                        "normal",
++                        "deny_only",
++                        "allow_only"
++                    ],
++                    "required": false,
++                    "default": "normal",
++                    "description": "【底部按钮】按钮显示模式：normal=Allow 和 Deny 双按钮；deny_only=仅 Allow 按钮；allow_only=仅 Deny 按钮。（注意：底部按钮点击之后wldialog进程会发送完返回信息后立即退出。）"
++                },
++                "allow_text": {
++                    "type": "string",
++                    "required": false,
++                    "description": "【底部按钮】自定义 'Allow' 按钮的显示文本。在 button_mode=normal 或 allow_only 时生效。"
++                },
++                "deny_text": {
++                    "type": "string",
++                    "required": false,
++                    "description": "【底部按钮】自定义 'Deny' 按钮的显示文本。在 button_mode=normal 或 deny_only 时生效。"
++                },
++                "check_boxes": {
++                    "type": "array",
++                    "required": false,
++                    "description": "复选框",
++                    "items": {
++                        "type": "object",
++                        "properties": {
++                            "name": {
++                                "type": "string",
++                                "description": "唯一标识符，用于返回结果（必须在对话框中全局唯一）。"
++                            },
++                            "text": {
++                                "type": "string",
++                                "description": "复选框的说明文本。"
++                            },
++                            "default": {
++                                "type": "boolean",
++                                "default": false,
++                                "description": "默认是否勾选。"
++                            }
++                        },
++                        "required": [
++                            "name",
++                            "text"
++                        ]
++                    },
++                    "example": [
++                        {
++                            "name": "check_box1",
++                            "text": "remember this choice"
++                        },
++                        {
++                            "name": "check_box2",
++                            "text": "enable"
++                        }
++                    ]
++                },
++                "list": {
++                    "type": "object",
++                    "description": "列表",
++                    "required": [
++                        "name",
++                        "data"
++                    ],
++                    "properties": {
++                        "name": {
++                            "type": "string",
++                            "description": "唯一标识符，用于返回结果（必须在对话框中全局唯一）"
++                        },
++                        "mode": {
++                            "type": "string",
++                            "enum": [
++                                "list",
++                                "icon"
++                            ],
++                            "default": "list",
++                            "description": "显示模式, list：列表模式，icon：图标模式"
++                        },
++                        "multiple": {
++                            "type": "boolean",
++                            "default": false,
++                            "description": "列表选中模式是否为多选，默认false为单选"
++                        },
++                        "data": {
++                            "type": "array",
++                            "minItems": 1,
++                            "items": {
++                                "type": "object",
++                                "required": [
++                                    "key",
++                                    "title"
++                                ],
++                                "description": "每个item里面的字段及字段的属性必须一致",
++                                "properties": {
++                                    "key": {
++                                        "type": "string",
++                                        "description": "选项的唯一标识符，将作为该 list 的选中结果返回"
++                                    },
++                                    "title": {
++                                        "type": "string",
++                                        "description": "主标题"
++                                    },
++                                    "sub_title": {
++                                        "type": "string",
++                                        "description": "次标题"
++                                    },
++                                    "icon": {
++                                        "type": "string",
++                                        "description": "图标路径"
++                                    },
++                                    "text": {
++                                        "type": "string",
++                                        "description": "显示文本"
++                                    },
++                                    "selected": {
++                                        "type": "boolean",
++                                        "default": false,
++                                        "description": "是否默认选中"
++                                    }
++                                }
++                            }
++                        }
++                    },
++                    "example": {
++                        "name": "list",
++                        "mode": "icon",
++                        "items": [
++                            {
++                                "key": "item1",
++                                "title": "peony",
++                                "sub_title": "/home/kylin/",
++                                "icon": "system-file-manager",
++                                "text": "394bbe58-03c8-454e-9c51-274aa0ee5eb9"
++                            },
++                            {
++                                "key": "item2",
++                                "title": "terminal",
++                                "sub_title": "kylin@kylin-pc: ~",
++                                "icon": "utilities-terminal",
++                                "text": "d1ef03b1-443c-4a91-92e3-1f4d301e0dea"
++                            }
++                        ]
++                    }
++                },
++                "customs": {
++                    "type": "array",
++                    "required": false,
++                    "description": "通用容器，用于组织多个控件。",
++                    "items": {
++                        "type": "object",
++                        "required": [
++                            "title"
++                        ],
++                        "properties": {
++                            "title": {
++                                "type": "string",
++                                "description": "控件组合的名称"
++                            },
++                            "check_boxes": {
++                                "$ref": "#/dialog/request/fields/check_boxes"
++                            },
++                            "list": {
++                                "$ref": "#/dialog/request/fields/list"
++                            }
++                        }
++                    }
++                }
++            },
++            "tab_page": {
++                "type": "object",
++                "description": "标签页容器，每个标签页作为容器可包含多种控件。",
++                "required": [
++                    "name",
++                    "data"
++                ],
++                "properties": {
++                    "name": {
++                        "type": "string",
++                        "description": "唯一标识符，用于返回结果（必须在对话框中全局唯一）"
++                    },
++                    "data": {
++                        "type": "array",
++                        "minItems": 1,
++                        "items": {
++                            "type": "object",
++                            "required": [
++                                "title"
++                            ],
++                            "properties": {
++                                "title": {
++                                    "type": "string",
++                                    "description": "标签页标题。"
++                                },
++                                "check_boxes": {
++                                    "$ref": "#/dialog/request/fields/check_boxes"
++                                },
++                                "list": {
++                                    "$ref": "#/dialog/request/fields/list"
++                                },
++                                "customs": {
++                                    "$ref": "#/dialog/request/fields/customs"
++                                }
++                            }
++                        }
++                    }
++                }
++            }
++        }
++    },
++    "response": {
++        "description": "wldialog 返回的用户决策结果。仅返回对话框当前显示页面的所有结果。",
++        "format": "UTF-8 JSON object",
++        "fields": {
++            "user_action": {
++                "type": "integer",
++                "enum": [
++                    0,
++                    1,
++                    2
++                ],
++                "description": "用户操作结果：0 = 用户点击了允许（Allow）按钮；1 = 用户点击了拒绝（Deny）按钮；2 = 用户未通过按钮确认，而是直接关闭了对话框（例如点击窗口关闭按钮或按 Esc 键）。"
++            },
++            "check_boxes": {
++                "type": "array",
++                "description": "对应所有check_box结果",
++                "items": {
++                    "type": "object",
++                    "properties": {
++                        "name": {
++                            "type": "string",
++                            "description": "当前check_box的唯一标识符,如果是在tabpage等可切换容器下的check_box，name格式为tabPage_name|page_title|checkBox_name"
++                        },
++                        "checked": {
++                            "type": "boolean",
++                            "description": "当前check_box的结果"
++                        }
++                    },
++                    "required": [
++                        "name",
++                        "checked"
++                    ]
++                }
++            },
++            "lists": {
++                "type": "array",
++                "description": "对应所有list结果",
++                "items": {
++                    "type": "object",
++                    "required": [
++                        "name",
++                        "items"
++                    ],
++                    "properties": {
++                        "name": {
++                            "type": "string",
++                            "description": "list的唯一标识符, 如果是在tabpage等可切换容器下的list，name格式为parent_name|cur_name(例：tabPage_name|page_title|list_name）"
++                        },
++                        "items": {
++                            "type": "array",
++                            "key": {
++                                "type": "string",
++                                "description": "list里面每个选中item的标识符"
++                            }
++                        }
++                    }
++                }
++            },
++            "tab_pages": {
++                "type": "array",
++                "description": "对应所有tabPage的操作结果",
++                "items": {
++                    "type": "object",
++                    "required": [
++                        "name",
++                        "cur_page",
++                        "data"
++                    ],
++                    "properties": {
++                        "name": {
++                            "type": "string",
++                            "description": "对应tabPage容器的唯一标识符"
++                        },
++                        "cur_page": {
++                            "type": "string",
++                            "description": "对应tabPage选中的页面标题"
++                        },
++                        "data": {
++                            "type": "object",
++                            "description": "对应tabPage选中页面内可交互控件的结果",
++                            "check_boxes": {
++                                "$ref": "#/dialog/response/fields/check_boxes"
++                            },
++                            "lists": {
++                                "$ref": "#/dialog/response/fields/lists"
++                            }
++                        }
++                    }
++                }
++            }
++        }
++    }
++}
+diff --git a/tools/wldialog/DynamicModel.cpp b/tools/wldialog/DynamicModel.cpp
+new file mode 100644
+index 0000000..933765b
+--- /dev/null
++++ b/tools/wldialog/DynamicModel.cpp
+@@ -0,0 +1,128 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <QJsonObject>
++
++#include "DynamicModel.h"
++
++enum DynamicWidgetRoles {
++    DynamicWidgetRole = Qt::UserRole + 1,
++};
++
++DynamicWidgetModel::DynamicWidgetModel(QObject *parent) : QAbstractListModel(parent) {}
++
++DynamicWidgetModel::~DynamicWidgetModel()
++{
++    clear();
++}
++
++int DynamicWidgetModel::rowCount(const QModelIndex &parent) const
++{
++    if (parent.isValid()) {
++        return 0;
++    }
++
++    return m_dataList.size();
++}
++
++QVariant DynamicWidgetModel::data(const QModelIndex &index, int role) const
++{
++    if (!index.isValid()) {
++        return QVariant();
++    }
++
++    if (role == DynamicWidgetRole) {
++        return m_dataList.at(index.row());
++    }
++
++    return QVariant();
++}
++
++QHash<int, QByteArray> DynamicWidgetModel::roleNames() const
++{
++    QHash<int, QByteArray> roles;
++    roles[DynamicWidgetRole] = "widgetData";
++    return roles;
++}
++
++void DynamicWidgetModel::updateCheckBoxState(const QString &name, bool checked)
++{
++    if (!name.isEmpty()) {
++        m_checkBoxStates[name] = checked;
++    }
++}
++
++void DynamicWidgetModel::clear()
++{
++    beginResetModel();
++    m_dataList.clear();
++    endResetModel();
++
++    m_checkBoxStates.clear();
++}
++
++void DynamicWidgetModel::loadCheckboxes(const QString &parent, QVariantList &listItem,
++                                        const QJsonArray &req)
++{
++    for (const auto &val : req) {
++        QJsonObject obj = val.toObject();
++        QString name = obj["name"].toString();
++        QVariantMap itemData;
++        itemData["name"] = parent.isEmpty() ? name : (parent + "|" + name);
++        if (obj.contains("text")) {
++            itemData["text"] = obj["text"].toString();
++        }
++        if (obj.contains("default")) {
++            itemData["default"] = obj["default"].toBool();
++        }
++
++        QVariantMap item;
++        item["data"] = itemData;
++        item["type"] = "CheckBox";
++        listItem.append(item);
++    }
++}
++
++void DynamicWidgetModel::loadCustoms(const QString &parent, QVariantList &listItem,
++                                     const QJsonArray &req)
++{
++    for (const auto &val : req) {
++        QJsonObject obj = val.toObject();
++        QVariantMap data;
++        if (obj.contains("title")) {
++            data["title"] = obj["title"].toString();
++        }
++
++        QVariantList childList;
++        if (obj.contains("check_boxes") && obj["check_boxes"].isArray()) {
++            loadCheckboxes(parent, childList, obj["check_boxes"].toArray());
++        }
++
++        QVariantMap item;
++        item["data"] = data;
++        item["child"] = childList;
++        item["type"] = "Custom";
++        listItem.append(item);
++    }
++}
++
++void DynamicWidgetModel::loadFromJson(const QJsonObject &req)
++{
++    beginResetModel();
++
++    if (req.contains("check_boxes") && req["check_boxes"].isArray()) {
++        loadCheckboxes("", m_dataList, req["check_boxes"].toArray());
++    }
++
++    if (req.contains("customs") && req["customs"].isArray()) {
++        loadCustoms("", m_dataList, req["customs"].toArray());
++    }
++
++    endResetModel();
++}
++
++QMap<QString, bool> DynamicWidgetModel::getCheckBoxStates() const
++{
++    return m_checkBoxStates;
++}
+diff --git a/tools/wldialog/DynamicModel.h b/tools/wldialog/DynamicModel.h
+new file mode 100644
+index 0000000..09db092
+--- /dev/null
++++ b/tools/wldialog/DynamicModel.h
+@@ -0,0 +1,39 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef DYNAMIC_WIDGET_MODEL_H
++#define DYNAMIC_WIDGET_MODEL_H
++
++#include <QAbstractListModel>
++#include <QJsonArray>
++
++class DynamicWidgetModel : public QAbstractListModel
++{
++    Q_OBJECT
++  public:
++    explicit DynamicWidgetModel(QObject *parent = nullptr);
++    ~DynamicWidgetModel() override;
++
++    int rowCount(const QModelIndex &parent = QModelIndex()) const override;
++    QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
++    QHash<int, QByteArray> roleNames() const override;
++
++    void loadFromJson(const QJsonObject &req);
++
++    QMap<QString, bool> getCheckBoxStates() const;
++
++  public slots:
++    void updateCheckBoxState(const QString &name, bool checked);
++    void clear();
++
++  private:
++    void loadCheckboxes(const QString &parent, QVariantList &listItem, const QJsonArray &req);
++    void loadCustoms(const QString &parent, QVariantList &listItem, const QJsonArray &req);
++
++    QVariantList m_dataList;
++
++    QMap<QString, bool> m_checkBoxStates;
++};
++
++#endif // DYNAMIC_WIDGET_MODEL_H
+diff --git a/tools/wldialog/Gsettings.cpp b/tools/wldialog/Gsettings.cpp
+new file mode 100644
+index 0000000..b1f1643
+--- /dev/null
++++ b/tools/wldialog/Gsettings.cpp
+@@ -0,0 +1,137 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <QGSettings>
++#include <QVariant>
++
++#include "Gsettings.h"
++
++#define GSETTINGS_THEME_NAME "org.ukui.style"
++#define GSETTINGS_THEME_KEY "styleName"
++#define GSETTINGS_HIGHLIGHT_KEY "theme-color"
++
++GSettingsManager::GSettingsManager(QObject *parent) : QObject(parent)
++{
++    if (QGSettings::isSchemaInstalled(GSETTINGS_THEME_NAME)) {
++        m_settingsTheme = new QGSettings(GSETTINGS_THEME_NAME);
++        connect(m_settingsTheme, &QGSettings::changed, this, &GSettingsManager::themeChanged);
++    }
++    themeChanged();
++}
++
++GSettingsManager::~GSettingsManager()
++{
++    if (m_settingsTheme) {
++        delete m_settingsTheme;
++        m_settingsTheme = nullptr;
++    }
++}
++
++QColor GSettingsManager::borderColor() const
++{
++    return m_borderColor;
++}
++
++void GSettingsManager::setBorderColor(const QColor &color)
++{
++    if (m_borderColor != color) {
++        m_borderColor = color;
++        emit borderColorChanged();
++    }
++}
++
++QColor GSettingsManager::backgroundColor() const
++{
++    return m_backgroundColor;
++}
++
++void GSettingsManager::setBackgroundColor(const QColor &color)
++{
++    if (m_backgroundColor != color) {
++        m_backgroundColor = color;
++        emit backgroundColorChanged();
++    }
++}
++
++QColor GSettingsManager::themeColor() const
++{
++    return m_themeColor;
++}
++
++void GSettingsManager::setThemeColor(const QColor &color)
++{
++    if (m_themeColor != color) {
++        m_themeColor = color;
++        emit themeColorChanged();
++    }
++}
++
++QColor GSettingsManager::highLight() const
++{
++    return m_highLight;
++}
++
++void GSettingsManager::setHighLight(const QColor &color)
++{
++    if (m_highLight != color) {
++        m_highLight = color;
++        emit highLightChanged();
++    }
++}
++
++QColor GSettingsManager::textColor() const
++{
++    return m_textColor;
++}
++
++void GSettingsManager::setTextColor(const QColor &color)
++{
++    if (m_textColor != color) {
++        m_textColor = color;
++        emit textColorChanged();
++    }
++}
++
++void GSettingsManager::themeChanged()
++{
++    bool isDark = false;
++    QString highLight;
++    if (m_settingsTheme) {
++        QString themeName = m_settingsTheme->get(GSETTINGS_THEME_KEY).toString();
++        isDark = themeName.contains("dark", Qt::CaseInsensitive) ||
++                 themeName.contains("black", Qt::CaseInsensitive);
++
++        highLight = m_settingsTheme->get(GSETTINGS_HIGHLIGHT_KEY).toString();
++    }
++
++    int highLight_r = 18;
++    int highLight_g = 18;
++    int highLight_b = 18;
++    int highLight_a = 1;
++    if (!highLight.isEmpty()) {
++        QStringList list = highLight.split(",");
++        if (list.size() >= 4) {
++            highLight_r = list[0].trimmed().toInt();
++            highLight_g = list[1].trimmed().toInt();
++            highLight_b = list[2].trimmed().toInt();
++            double alphaRatio = list[3].trimmed().toDouble();
++            highLight_a = static_cast<int>(alphaRatio * 255);
++        }
++    }
++
++    QColor themeColor = isDark ? QColor(18, 18, 18) : QColor(255, 255, 255);
++    setThemeColor(themeColor);
++
++    QColor backgroundColor = isDark ? QColor(30, 30, 30) : QColor(245, 245, 245);
++    setBackgroundColor(backgroundColor);
++
++    QColor borderColor = isDark ? QColor(200, 195, 195) : QColor(131, 129, 129);
++    setBorderColor(borderColor);
++
++    QColor textColor = isDark ? QColor(255, 255, 255) : QColor(18, 18, 18);
++    setTextColor(textColor);
++
++    QColor highLightColor = QColor(highLight_r, highLight_g, highLight_b, highLight_a);
++    setHighLight(highLightColor);
++}
+diff --git a/tools/wldialog/Gsettings.h b/tools/wldialog/Gsettings.h
+new file mode 100644
+index 0000000..81c2639
+--- /dev/null
++++ b/tools/wldialog/Gsettings.h
+@@ -0,0 +1,62 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef GSETTINGSMANAGER_H
++#define GSETTINGSMANAGER_H
++
++#include <QColor>
++#include <QObject>
++
++class QGSettings;
++class GSettingsManager : public QObject
++{
++    Q_OBJECT
++    Q_PROPERTY(QColor borderColor READ borderColor WRITE setBorderColor NOTIFY borderColorChanged)
++    Q_PROPERTY(QColor backgroundColor READ backgroundColor WRITE setBackgroundColor NOTIFY
++                   backgroundColorChanged)
++    Q_PROPERTY(QColor themeColor READ themeColor WRITE setThemeColor NOTIFY themeColorChanged)
++    Q_PROPERTY(QColor highLight READ highLight WRITE setHighLight NOTIFY highLightChanged)
++    Q_PROPERTY(QColor textColor READ textColor WRITE setTextColor NOTIFY textColorChanged)
++  public:
++    explicit GSettingsManager(QObject *parent = nullptr);
++    virtual ~GSettingsManager();
++
++    QColor borderColor() const;
++    void setBorderColor(const QColor &color);
++
++    QColor backgroundColor() const;
++    void setBackgroundColor(const QColor &color);
++
++    QColor themeColor() const;
++    void setThemeColor(const QColor &color);
++
++    QColor highLight() const;
++    void setHighLight(const QColor &color);
++
++    QColor textColor() const;
++    void setTextColor(const QColor &color);
++
++  signals:
++    void borderColorChanged();
++    void backgroundColorChanged();
++    void themeColorChanged();
++    void highLightChanged();
++    void textColorChanged();
++
++  private slots:
++    void themeChanged();
++
++  private:
++    QGSettings *m_settingsTheme = nullptr;
++
++    QColor m_borderColor;
++    QColor m_backgroundColor;
++    QColor m_themeColor;
++    QColor m_highLight;
++    QColor m_textColor;
++
++    bool darkThemeStyle = false;
++};
++
++#endif // GSETTINGSMANAGER_H
+diff --git a/tools/wldialog/Main.cpp b/tools/wldialog/Main.cpp
+new file mode 100644
+index 0000000..2fec366
+--- /dev/null
++++ b/tools/wldialog/Main.cpp
+@@ -0,0 +1,260 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <QGuiApplication>
++#include <QJsonDocument>
++#include <QLibraryInfo>
++#include <QSocketNotifier>
++#include <QTimer>
++
++#include <fcntl.h>
++#include <unistd.h>
++
++#include "MainWindow.h"
++
++#if KYSDK_IS_SUPPORT
++#include <ukuiwindowhelper.h>
++UkuiWindowHelper *g_windowHelper = nullptr;
++#endif
++
++enum class ButtonResult {
++    ALLOW = 0,
++    DENY,
++    CLOSED,
++};
++
++QTimer *g_timeout = nullptr;
++static QSocketNotifier *g_notifier = nullptr;
++static bool g_windowIsActive = false;
++MainWindow *g_mainWindow = nullptr;
++
++void cleanup()
++{
++    if (g_mainWindow) {
++        QObject::disconnect(g_mainWindow, nullptr, nullptr, nullptr);
++    }
++
++    if (g_mainWindow) {
++        g_mainWindow->deleteLater();
++        g_mainWindow = nullptr;
++        qDebug() << "mainWindow cleaned up";
++    }
++
++    if (g_notifier) {
++        g_notifier->setEnabled(false);
++        int fd = g_notifier->socket();
++        if (fd >= 0) {
++            ::close(fd);
++            qDebug() << QString("Socket fd %1 closed manually.").arg(QString::number(fd));
++        }
++        delete g_notifier;
++        g_notifier = nullptr;
++    }
++
++    QTimer::singleShot(10, qApp, &QCoreApplication::quit);
++    qDebug() << "wldialog cleaned up";
++}
++
++void sendDialogResponse(int result)
++{
++    QJsonObject response;
++    response["user_action"] = result;
++    if (result != static_cast<int>(ButtonResult::CLOSED)) {
++        g_mainWindow->results(response);
++    }
++
++    QByteArray resp = QJsonDocument(response).toJson(QJsonDocument::Compact);
++    qDebug() << "Sending response: " + QString::fromUtf8(resp);
++    int fd = g_notifier->socket();
++    ssize_t totalWritten = 0;
++    while (totalWritten < resp.size()) {
++        ssize_t len = ::write(fd, resp.constData() + totalWritten, resp.size() - totalWritten);
++        if (len < 0) {
++            if (errno == EINTR) {
++                continue;
++            }
++            qWarning() << "Failed to write to socket_fd";
++            break;
++        }
++        totalWritten += len;
++    }
++    if (::write(fd, "\n", 1) < 0) {
++        qWarning() << "Failed to write newline to socket_fd";
++    }
++
++    QTimer::singleShot(50, []() { cleanup(); });
++}
++
++void handleDialog(const QJsonObject &req)
++{
++    qDebug() << "Handling dialog request";
++    QJsonObject dialogObj;
++    if (req.contains("dialog") && req["dialog"].isObject()) {
++        dialogObj = req["dialog"].toObject();
++    } else {
++        qWarning() << "'dialog' field is not a JSON object";
++        return;
++    }
++
++    if (g_windowIsActive) {
++        qWarning() << "协议错误：对话框已存在，拒绝重复创建。请先发送 control 指令关闭当前进程。";
++        return;
++    }
++
++    if (g_mainWindow) {
++        g_mainWindow->deleteLater();
++        g_mainWindow = nullptr;
++    }
++
++    g_mainWindow = new MainWindow();
++
++    if (dialogObj.contains("window_title")) {
++        g_mainWindow->setTitle(dialogObj["window_title"].toString("Permission Request"));
++    }
++
++    if (dialogObj.contains("window_icon")) {
++        QIcon icon = QIcon::fromTheme(dialogObj["window_icon"].toString());
++        if (!icon.isNull()) {
++            g_mainWindow->setIcon(icon);
++        }
++    }
++
++#if KYSDK_IS_SUPPORT
++    if (g_windowHelper) {
++        delete g_windowHelper;
++        g_windowHelper = nullptr;
++    }
++
++    if (dialogObj.contains("title_bar")) {
++        UkuiWindowHelper::States state = UkuiWindowHelper::State::Activatable |
++                                         UkuiWindowHelper::State::Movable |
++                                         UkuiWindowHelper::State::Closeable;
++        g_windowHelper = new UkuiWindowHelper(g_mainWindow);
++        if (dialogObj["title_bar"].toString() == "no_minimizable") {
++            g_windowHelper->setWindowState(UkuiWindowHelper::State::Maximizable |
++                                           UkuiWindowHelper::State::Fullscreenable | state);
++        } else if (dialogObj["title_bar"].toString() == "no_maximizable") {
++            g_windowHelper->setWindowState(UkuiWindowHelper::State::Minimizable | state);
++        } else {
++            g_windowHelper->setWindowState(state);
++        }
++
++        QObject::connect(g_mainWindow, &MainWindow::destroyed, []() {
++            if (g_windowHelper) {
++                delete g_windowHelper;
++                g_windowHelper = nullptr;
++            }
++        });
++    }
++#endif
++
++    g_mainWindow->initFromJson(dialogObj);
++
++    QObject::connect(g_mainWindow, &MainWindow::rejectedByAllow,
++                     []() { sendDialogResponse(static_cast<int>(ButtonResult::ALLOW)); });
++    QObject::connect(g_mainWindow, &MainWindow::rejectedByDeny,
++                     []() { sendDialogResponse(static_cast<int>(ButtonResult::DENY)); });
++    QObject::connect(g_mainWindow, &MainWindow::rejectedByClose,
++                     []() { sendDialogResponse(static_cast<int>(ButtonResult::CLOSED)); });
++
++    g_windowIsActive = true;
++}
++
++void handleControl(const QJsonObject &req)
++{
++    Q_UNUSED(req);
++    cleanup();
++}
++
++void handleRecvData()
++{
++    g_notifier->setEnabled(false);
++    int fd = g_notifier->socket();
++
++    bool fdIsErr = false;
++    QByteArray data;
++    QByteArray buffer(1024, Qt::Uninitialized);
++    while (true) {
++        ssize_t count = ::read(fd, buffer.data(), buffer.size());
++
++        if (count > 0) {
++            data.append(buffer.data(), count);
++        } else if (count == -1 && errno == EWOULDBLOCK) {
++            qDebug() << "No more data available at the moment. Waiting for the next notification.";
++            break;
++        } else {
++            qDebug() << "fd closed / abnormal error";
++            fdIsErr = true;
++            break;
++        }
++    }
++    g_notifier->setEnabled(true);
++
++    if (fdIsErr) {
++        cleanup();
++        return;
++    }
++
++    data = data.replace(0, '\n').trimmed();
++
++    QJsonParseError err;
++    QJsonDocument doc = QJsonDocument::fromJson(data, &err);
++    if (!doc.isObject()) {
++        qWarning() << QString("Invalid JSON: %1").arg(err.errorString());
++        return;
++    }
++
++    QJsonObject req = doc.object();
++    if (req.contains("dialog") && req.contains("control")) {
++        qWarning() << "Unsupported request";
++        return;
++    }
++    if (req.contains("dialog")) {
++        g_timeout->stop();
++        handleDialog(req);
++    } else if (req.contains("control")) {
++        handleControl(req);
++    } else {
++        qWarning() << "Protocol Error: Missing 'dialog' or 'control' key";
++    }
++    qDebug() << "Parsed request:" << req;
++}
++
++int main(int argc, char *argv[])
++{
++    if (argc < 2) {
++        qWarning() << "No socket fd provided in argv!";
++        return EXIT_FAILURE;
++    }
++
++    setenv("QT_QPA_PLATFORMTHEME", "ukui", 1);
++
++    int socket_fd = atoi(argv[argc - 1]);
++    if (socket_fd <= 0) {
++        qWarning() << "Invalid socket fd: " + QString::number(socket_fd);
++        return EXIT_FAILURE;
++    }
++    qDebug() << "Received communication fd: " << QString::number(socket_fd);
++
++    int flags = fcntl(socket_fd, F_GETFL);
++    if (flags != -1) {
++        fcntl(socket_fd, F_SETFL, flags | O_NONBLOCK);
++    }
++
++    QGuiApplication app(argc, argv);
++
++    g_notifier = new QSocketNotifier(socket_fd, QSocketNotifier::Read);
++    QObject::connect(g_notifier, &QSocketNotifier::activated, []() { handleRecvData(); });
++
++    g_timeout = new QTimer(&app);
++    g_timeout->setSingleShot(true);
++    g_timeout->start(20000);
++
++    QObject::connect(g_timeout, &QTimer::timeout, [&]() {
++        qWarning() << "Socket read timed out after 20 seconds.";
++        cleanup();
++    });
++
++    return app.exec();
++}
+diff --git a/tools/wldialog/MainWindow.cpp b/tools/wldialog/MainWindow.cpp
+new file mode 100644
+index 0000000..a9bc785
+--- /dev/null
++++ b/tools/wldialog/MainWindow.cpp
+@@ -0,0 +1,411 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <QBuffer>
++#include <QGuiApplication>
++#include <QHash>
++#include <QLocale>
++#include <QQmlContext>
++#include <QQmlEngine>
++#include <QQuickItem>
++#include <QScreen>
++#include <QTimer>
++
++#include "MainWindow.h"
++
++#define GSETTINGS_THEME_NAME "org.ukui.style"
++#define GSETTINGS_THEME_KEY "styleName"
++
++MainWindow::MainWindow(QWindow *parent)
++    : QQuickView(parent), m_gsettings(new GSettingsManager(this)),
++      m_dynamicModel(new DynamicWidgetModel(this))
++{
++    rootContext()->setContextProperty("dynamicModel", m_dynamicModel);
++    rootContext()->setContextProperty("gsettingsManager", m_gsettings);
++    rootContext()->setContextProperty("controller", this);
++}
++
++MainWindow::~MainWindow()
++{
++    if (engine()) {
++        engine()->trimComponentCache();
++        engine()->collectGarbage();
++    }
++}
++
++void MainWindow::setFinalSize(qreal width, qreal height)
++{
++    updateWindowSize(width, height);
++    setMinimumSize(QSize(width, height).boundedTo(m_maxSize));
++    show();
++    m_client = new WaylandClient(clientType, this);
++    setupParentWindow();
++    setDialogModal();
++}
++
++void MainWindow::updateWindowSize(qreal width, qreal height)
++{
++    QScreen *screen = this->screen();
++    if (screen) {
++        m_maxSize.setHeight(screen->availableGeometry().height() - 38);
++        m_maxSize.setWidth(screen->availableGeometry().width());
++    }
++
++    int finalWidth = qMax(width, 400.0);
++    int finalHeight = qMax(height, 200.0);
++    QSize newSize(qMin(finalWidth, m_maxSize.width()), qMin(finalHeight, m_maxSize.height()));
++    if (size() != newSize) {
++        resize(newSize);
++        qDebug() << QString("Resize to final correct size: %1 x %2")
++                        .arg(newSize.width())
++                        .arg(newSize.height());
++    }
++}
++
++void MainWindow::deny()
++{
++    qDebug() << "deny is clicked";
++    emit rejectedByDeny();
++}
++
++void MainWindow::allow()
++{
++    qDebug() << "allow is clicked";
++    emit rejectedByAllow();
++}
++
++void MainWindow::closeEvent(QCloseEvent *event)
++{
++    qDebug() << "Window is closing (closeEvent)...";
++    emit rejectedByClose();
++    event->ignore();
++}
++
++bool MainWindow::event(QEvent *ev)
++{
++    if (ev->type() == QEvent::Close) {
++        closeEvent(static_cast<QCloseEvent *>(ev));
++    }
++
++    return QQuickView::event(ev);
++}
++
++QColor MainWindow::windowColor() const
++{
++    return m_windowColor;
++}
++
++void MainWindow::setWindowColor(const QColor &windowColor)
++{
++    if (m_windowColor != windowColor) {
++        m_windowColor = windowColor;
++        emit windowColorChanged();
++    }
++}
++
++QString MainWindow::iconSource() const
++{
++    return m_iconSource;
++}
++
++void MainWindow::setIconSource(const QString &icon)
++{
++    if (m_iconSource != icon) {
++        m_iconSource = icon;
++        emit iconSourceChanged();
++    }
++}
++
++QString MainWindow::mainTitle() const
++{
++    return m_title;
++}
++
++void MainWindow::setMainTitle(const QString &title)
++{
++    if (m_title != title) {
++        m_title = title;
++        emit mainTitleChanged();
++    }
++}
++
++bool MainWindow::titleFontBold() const
++{
++    return m_titleFontBold;
++}
++
++void MainWindow::setTitleFontBold(bool bold)
++{
++    if (m_titleFontBold != bold) {
++        m_titleFontBold = bold;
++        emit titleFontBoldChanged();
++    }
++}
++
++QString MainWindow::subTitle() const
++{
++    return m_subTitle;
++}
++
++void MainWindow::setSubTitle(const QString &subTitle)
++{
++    if (m_subTitle != subTitle) {
++        m_subTitle = subTitle;
++        emit subTitleChanged();
++    }
++}
++
++bool MainWindow::subTitleFontLight() const
++{
++    return m_subTitleFontLight;
++}
++
++void MainWindow::setSubTitleFontLight(bool light)
++{
++    if (m_subTitleFontLight != light) {
++        m_subTitleFontLight = light;
++        emit subTitleFontLightChanged();
++    }
++}
++
++QString MainWindow::denyText() const
++{
++    return m_denyText;
++}
++
++void MainWindow::setDenyText(const QString &denyText)
++{
++    if (m_denyText != denyText) {
++        m_denyText = denyText;
++        emit denyTextChanged();
++    }
++}
++
++QString MainWindow::allowText() const
++{
++    return m_allowText;
++}
++
++void MainWindow::setAllowText(const QString &allowText)
++{
++    if (m_allowText != allowText) {
++        m_allowText = allowText;
++        emit allowTextChanged();
++    }
++}
++
++bool MainWindow::buttonsVisible() const
++{
++    return m_buttonsVisible;
++}
++
++void MainWindow::setButtonsVisible(bool visible)
++{
++    if (m_buttonsVisible != visible) {
++        m_buttonsVisible = visible;
++        emit buttonsVisibleChanged();
++    }
++}
++
++bool MainWindow::denyButtonVisible() const
++{
++    return m_denyButtonVisible;
++}
++
++void MainWindow::setDenyButtonVisible(bool visible)
++{
++    if (m_denyButtonVisible != visible) {
++        m_denyButtonVisible = visible;
++        emit denyButtonVisibleChanged();
++    }
++}
++
++bool MainWindow::allowButtonVisible() const
++{
++    return m_allowButtonVisible;
++}
++
++void MainWindow::setAllowButtonVisible(bool visible)
++{
++    if (m_allowButtonVisible != visible) {
++        m_allowButtonVisible = visible;
++        emit allowButtonVisibleChanged();
++    }
++}
++
++QString MainWindow::messageText() const
++{
++    return m_messageText;
++}
++
++void MainWindow::setMessageText(const QString &messageText)
++{
++    if (m_messageText != messageText) {
++        m_messageText = messageText;
++        emit messageTextChanged();
++    }
++}
++
++QString MainWindow::detailsText() const
++{
++    return m_detailsText;
++}
++
++void MainWindow::setDetailsText(const QString &detailsText)
++{
++    if (m_detailsText != detailsText) {
++        m_detailsText = detailsText;
++        emit detailsTextChanged();
++    }
++}
++
++void MainWindow::initFromJson(const QJsonObject &req)
++{
++    parseJson(req);
++    setSource(QUrl("qrc:/MainWindow.qml"));
++}
++
++void MainWindow::getCheckBoxes(QJsonObject &req, const QString &parent,
++                               const QMap<QString, bool> checkboxes)
++{
++    QJsonArray checkBoxStatesArray;
++    for (auto it = checkboxes.constBegin(); it != checkboxes.constEnd(); ++it) {
++        if (it.key().startsWith(parent)) {
++            QJsonObject item;
++            item["name"] = it.key().mid(parent.length());
++            item["checked"] = it.value();
++            checkBoxStatesArray.append(item);
++            qDebug() << QString("CheckBox: %1 status: %2").arg(it.key()).arg(it.value());
++        }
++    }
++
++    if (checkBoxStatesArray.isEmpty()) {
++        qDebug() << "[result] checkBoxStatesArray is empty";
++        return;
++    }
++
++    req["check_boxes"] = checkBoxStatesArray;
++}
++
++void MainWindow::results(QJsonObject &results)
++{
++    QMap<QString, bool> checkboxes = m_dynamicModel->getCheckBoxStates();
++    if (!checkboxes.isEmpty()) {
++        getCheckBoxes(results, "", checkboxes);
++    }
++}
++
++void MainWindow::parseJson(const QJsonObject &req)
++{
++    if (req.contains("parent_window")) {
++        QString parentIdStr = req["parent_window"].toString();
++        if (!parentIdStr.startsWith(QLatin1String("wayland:"))) {
++            qWarning() << "JSON: The format of the parent_window field is incorrect";
++        } else {
++            m_parentWindowHandle = parentIdStr.mid(strlen("wayland:"));
++            clientType |= WaylandClient::Protocol::XDG_FOREIGN;
++        }
++    }
++
++    if (req.contains("modal")) {
++        m_isModal = req["modal"].toBool();
++        clientType |= WaylandClient::Protocol::XDG_DIALOG;
++    }
++
++    if (req.contains("title_icon")) {
++        QString name = req["title_icon"].toString();
++        QIcon icon = QIcon::fromTheme(name);
++        if (!icon.isNull()) {
++            QPixmap pixmap = icon.pixmap(48, 48);
++            if (!pixmap.isNull()) {
++                QByteArray byteArray;
++                QBuffer buffer(&byteArray);
++                buffer.open(QIODevice::WriteOnly);
++                pixmap.save(&buffer, "PNG");
++
++                QString dataUrl =
++                    QStringLiteral("data:image/png;base64,%1").arg(QString(byteArray.toBase64()));
++                setIconSource(dataUrl);
++            }
++        }
++    }
++
++    if (req.contains("title")) {
++        QJsonValue val = req["title"];
++        if (val.isObject()) {
++            setMainTitle(val.toObject()["text"].toString());
++            setTitleFontBold(val.toObject()["font_bold"].toBool());
++        }
++    }
++
++    if (req.contains("sub_title")) {
++        QJsonValue val = req["sub_title"];
++        if (val.isObject()) {
++            setSubTitle(val.toObject()["text"].toString());
++            setSubTitleFontLight(val.toObject()["font_light"].toBool(true));
++        }
++    }
++
++    if (req.contains("message")) {
++        setMessageText(req["message"].toString());
++    }
++
++    if (req.contains("details")) {
++        setDetailsText(req["details"].toString());
++    }
++
++    if (req.contains("button_mode")) {
++        setButtonsVisible(true);
++        if (req["button_mode"].toString() == "deny_only") {
++            setAllowButtonVisible(false);
++        } else if (req["button_mode"].toString() == "allow_only") {
++            setDenyButtonVisible(false);
++        }
++
++        const QHash<QString, QString> denyHash = { { "zh_CN", "拒绝" }, { "zh_TW", "拒絕" } };
++        const QHash<QString, QString> allowHash = { { "zh_CN", "允许" }, { "zh_TW", "允許" } };
++        QString localeName = QLocale::system().name();
++        QString denyText = denyHash.value(localeName);
++        QString allowText = allowHash.value(localeName);
++
++        QString denyTextFromJson = req["deny_text"].toString();
++        QString allowTextFromJson = req["allow_text"].toString();
++        QString finalDenyText = denyTextFromJson.isEmpty()
++                                    ? (denyText.isEmpty() ? "Deny" : denyText)
++                                    : denyTextFromJson;
++        QString finalAllowText = allowTextFromJson.isEmpty()
++                                     ? (allowText.isEmpty() ? "Allow" : allowText)
++                                     : allowTextFromJson;
++        setDenyText(finalDenyText);
++        setAllowText(finalAllowText);
++    }
++
++    m_dynamicModel->loadFromJson(req);
++}
++
++void MainWindow::setupParentWindow()
++{
++    if (m_parentWindowHandle.isEmpty()) {
++        return;
++    }
++
++    m_xdgForeign = new XdgForeign(m_client, this);
++    connect(m_xdgForeign, &XdgForeign::parentWindowLost, m_xdgForeign, &QObject::deleteLater);
++
++    if (!m_xdgForeign->setParentWindow(this, m_parentWindowHandle)) {
++        qWarning() << "setParentWindow failed! Running without parent linkage";
++        m_xdgForeign->deleteLater();
++        m_xdgForeign = nullptr;
++    }
++}
++
++void MainWindow::setDialogModal()
++{
++    if (!m_isModal) {
++        return;
++    }
++
++    m_xdgDialog = new XdgDialog(m_client, this);
++    m_xdgDialog->setDialogModal(this, m_isModal);
++}
+diff --git a/tools/wldialog/MainWindow.h b/tools/wldialog/MainWindow.h
+new file mode 100644
+index 0000000..8741f79
+--- /dev/null
++++ b/tools/wldialog/MainWindow.h
+@@ -0,0 +1,145 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef MAINWINDOW_H
++#define MAINWINDOW_H
++
++#include <QJsonObject>
++#include <QQuickView>
++
++#include "DynamicModel.h"
++#include "Gsettings.h"
++#include "XdgDialog.h"
++#include "XdgForeign.h"
++
++class MainWindow : public QQuickView
++{
++    Q_OBJECT
++    Q_PROPERTY(QColor windowColor READ windowColor WRITE setWindowColor NOTIFY windowColorChanged)
++    Q_PROPERTY(QString iconSource READ iconSource WRITE setIconSource NOTIFY iconSourceChanged)
++    Q_PROPERTY(QString mainTitle READ mainTitle WRITE setMainTitle NOTIFY mainTitleChanged)
++    Q_PROPERTY(
++        bool titleFontBold READ titleFontBold WRITE setTitleFontBold NOTIFY titleFontBoldChanged)
++    Q_PROPERTY(QString subTitle READ subTitle WRITE setSubTitle NOTIFY subTitleChanged)
++    Q_PROPERTY(bool subTitleFontLight READ subTitleFontLight WRITE setSubTitleFontLight NOTIFY
++                   subTitleFontLightChanged)
++    Q_PROPERTY(bool buttonsVisible READ buttonsVisible WRITE setButtonsVisible NOTIFY
++                   buttonsVisibleChanged)
++    Q_PROPERTY(bool denyButtonVisible READ denyButtonVisible WRITE setDenyButtonVisible NOTIFY
++                   denyButtonVisibleChanged)
++    Q_PROPERTY(bool allowButtonVisible READ allowButtonVisible WRITE setAllowButtonVisible NOTIFY
++                   allowButtonVisibleChanged)
++    Q_PROPERTY(QString denyText READ denyText WRITE setDenyText NOTIFY denyTextChanged)
++    Q_PROPERTY(QString allowText READ allowText WRITE setAllowText NOTIFY allowTextChanged)
++    Q_PROPERTY(QString messageText READ messageText WRITE setMessageText NOTIFY messageTextChanged)
++    Q_PROPERTY(QString detailsText READ detailsText WRITE setDetailsText NOTIFY detailsTextChanged)
++  public:
++    explicit MainWindow(QWindow *parent = nullptr);
++    virtual ~MainWindow();
++
++    void closeEvent(QCloseEvent *event);
++    bool event(QEvent *ev) override;
++
++    QColor windowColor() const;
++    void setWindowColor(const QColor &windowColor);
++
++    QString iconSource() const;
++    void setIconSource(const QString &icon);
++
++    QString mainTitle() const;
++    void setMainTitle(const QString &title);
++
++    bool titleFontBold() const;
++    void setTitleFontBold(bool bold);
++
++    QString subTitle() const;
++    void setSubTitle(const QString &subTitle);
++
++    bool subTitleFontLight() const;
++    void setSubTitleFontLight(bool light);
++
++    QString denyText() const;
++    void setDenyText(const QString &denyText);
++
++    QString allowText() const;
++    void setAllowText(const QString &allowText);
++
++    QString messageText() const;
++    void setMessageText(const QString &messageText);
++
++    QString detailsText() const;
++    void setDetailsText(const QString &detailsText);
++
++    bool buttonsVisible() const;
++    void setButtonsVisible(bool visible);
++
++    bool denyButtonVisible() const;
++    void setDenyButtonVisible(bool visible);
++
++    bool allowButtonVisible() const;
++    void setAllowButtonVisible(bool visible);
++
++    void initFromJson(const QJsonObject &req);
++    void results(QJsonObject &results);
++
++  public slots:
++    void updateWindowSize(qreal width, qreal height);
++    void setFinalSize(qreal width, qreal height);
++    void deny();
++    void allow();
++
++  signals:
++    void windowColorChanged();
++    void iconSourceChanged();
++    void mainTitleChanged();
++    void titleFontBoldChanged();
++    void subTitleChanged();
++    void subTitleFontLightChanged();
++    void denyTextChanged();
++    void allowTextChanged();
++    void buttonsVisibleChanged();
++    void denyButtonVisibleChanged();
++    void allowButtonVisibleChanged();
++    void messageTextChanged();
++    void detailsTextChanged();
++
++    void rejectedByDeny();
++    void rejectedByAllow();
++    void rejectedByClose();
++
++  private:
++    void parseJson(const QJsonObject &req);
++    void getCheckBoxes(QJsonObject &req, const QString &parent, QMap<QString, bool> checkboxes);
++
++    void setupParentWindow();
++    void setDialogModal();
++
++    XdgForeign *m_xdgForeign = nullptr;
++    XdgDialog *m_xdgDialog = nullptr;
++    GSettingsManager *m_gsettings = nullptr;
++    WaylandClient *m_client = nullptr;
++    DynamicWidgetModel *m_dynamicModel = nullptr;
++
++    QSize m_maxSize;
++
++    QColor m_windowColor;
++    QString m_iconSource;
++    QString m_title;
++    QString m_subTitle;
++    QString m_denyText;
++    QString m_allowText;
++    bool m_titleFontBold = false;
++    bool m_subTitleFontLight = true;
++    QString m_messageText;
++    QString m_detailsText;
++    bool m_buttonsVisible = false;
++    bool m_denyButtonVisible = true;
++    bool m_allowButtonVisible = true;
++
++    QString m_parentWindowHandle;
++    bool m_isModal = false;
++    WaylandClient::Protocols clientType;
++};
++
++#endif // MAINWINDOW_H
+diff --git a/tools/wldialog/MainWindow.qml b/tools/wldialog/MainWindow.qml
+new file mode 100644
+index 0000000..1b25049
+--- /dev/null
++++ b/tools/wldialog/MainWindow.qml
+@@ -0,0 +1,257 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++import QtQuick 2.15
++import QtQuick.Controls 2.15
++import QtQuick.Layouts 1.15
++import QtQml.Models 2.2
++
++Rectangle {
++    id: root
++
++    property bool isRTL: Qt.application.layoutDirection === Qt.RightToLeft
++
++    width: 360
++    height: 200
++    anchors.fill: parent
++    color: gsettingsManager.themeColor
++    clip: true
++    Component.onCompleted: {
++        Qt.callLater(function () {
++            controller.setFinalSize(rootItem.width, rootItem.height);
++        });
++    }
++
++    LayoutMirroring.enabled: isRTL
++    LayoutMirroring.childrenInherit: true
++
++    Flickable {
++        id: flickable
++
++        anchors.fill: parent
++        contentWidth: rootItem.implicitWidth
++        contentHeight: rootItem.implicitHeight
++        clip: true
++        boundsBehavior: Flickable.StopAtBounds
++
++        Item {
++            id: rootItem
++
++            implicitWidth: mainLayout.implicitWidth + 48
++            implicitHeight: mainLayout.implicitHeight + 48
++            width: Math.max(implicitWidth, root.width)
++            height: Math.max(implicitHeight, root.height)
++
++            ColumnLayout {
++                id: mainLayout
++
++                anchors.fill: parent
++                anchors.margins: 24
++                spacing: 8
++
++                ColumnLayout {
++                    height: root.height - 48
++                    width: root.width - 48
++
++                    RowLayout {
++                        id: header
++
++                        Layout.fillWidth: true
++                        spacing: 8
++
++                        Image {
++                            id: iconImage
++
++                            visible: controller.iconSource
++                            source: controller.iconSource
++                            Layout.preferredWidth: 48
++                            Layout.preferredHeight: 48
++                            Layout.alignment: Qt.AlignHCenter | Qt.AlignVCenter
++                            fillMode: Image.PreserveAspectFit
++                        }
++
++                        ColumnLayout {
++                            id: title
++
++                            Layout.fillWidth: true
++                            spacing: 8
++
++                            Label {
++                                id: mainTitle
++
++                                visible: controller.mainTitle
++                                text: controller.mainTitle
++                                Layout.fillWidth: true
++                                Layout.minimumWidth: 300
++                                horizontalAlignment: Text.AlignLeft
++                                verticalAlignment: Text.AlignTop
++                                font.family: subTitle.font.family
++                                font.pointSize: subTitle.font.pointSize
++                                font.bold: controller.titleFontBold
++                            }
++
++                            Label {
++                                id: subTitle
++
++                                visible: controller.subTitle
++                                text: controller.subTitle
++                                wrapMode: Text.WordWrap
++                                Layout.fillWidth: true
++                                Layout.maximumWidth: title.width
++                                opacity: controller.subTitleFontLight ? 0.8 : 1
++                                horizontalAlignment: Text.AlignLeft
++                                verticalAlignment: Text.AlignTop
++                            }
++                        }
++                    }
++
++                    Label {
++                        id: message
++
++                        visible: controller.messageText
++                        text: controller.messageText
++                        wrapMode: Text.WordWrap
++                        Layout.fillWidth: true
++                    }
++
++                    Item {
++                        Layout.fillWidth: true
++                        Layout.fillHeight: true
++                        Layout.minimumHeight: Math.min(300, Math.max(100, detailsScrollView.contentHeight))
++
++                        visible: controller.detailsText
++
++                        Rectangle {
++                            anchors.fill: parent
++
++                            color: gsettingsManager.backgroundColor
++                            radius: 12
++                            opacity: 0.8
++                            border.width: 1
++                            border.color: Qt.rgba(gsettingsManager.borderColor.r, gsettingsManager.borderColor.g, gsettingsManager.borderColor.b, 0.5)
++                        }
++
++                        ScrollView {
++                            id: detailsScrollView
++
++                            clip: true
++                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
++                            ScrollBar.vertical.policy: ScrollBar.AlwaysOff
++                            anchors.fill: parent
++                            anchors.margins: 12
++                            contentWidth: width
++
++                            ColumnLayout {
++                                anchors.fill: parent
++
++                                Label {
++                                    id: detailsLabel
++
++                                    Layout.fillWidth: true
++                                    text: controller.detailsText
++                                    wrapMode: Text.WordWrap
++                                }
++                            }
++                        }
++                    }
++
++                    ColumnLayout {
++                        id: dynamicLayout
++
++                        visible: dynamicModel.rowCount() > 0
++                        Layout.fillWidth: true
++                        spacing: 8
++
++                        Repeater {
++                            id: topRepeater
++
++                            model: dynamicModel
++
++                            delegate: NodeDelegate {
++                                widgetModel: model.widgetData
++                            }
++                        }
++                    }
++
++                    Item {
++                        Layout.fillWidth: true
++                        Layout.fillHeight: true
++                    }
++
++                    RowLayout {
++                        id: buttonBox
++
++                        visible: controller.buttonsVisible
++                        Layout.topMargin: 32
++                        Layout.alignment: Qt.AlignRight | Qt.AlignBottom
++                        spacing: 8
++
++                        Button {
++                            id: denyButton
++
++                            visible: controller.denyButtonVisible
++                            text: controller.denyText
++                            highlighted: true
++                            Layout.minimumHeight: 36
++                            Layout.maximumHeight: 36
++                            onClicked: {
++                                controller.deny();
++                            }
++                        }
++
++                        Button {
++                            id: allowButton
++
++                            visible: controller.allowButtonVisible
++                            text: controller.allowText
++                            Layout.minimumHeight: 36
++                            Layout.maximumHeight: 36
++                            onClicked: {
++                                controller.allow();
++                            }
++                        }
++                    }
++                }
++            }
++        }
++
++        ScrollBar.vertical: ScrollBar {
++            id: verticalBar
++
++            visible: flickable.contentHeight > root.height
++
++            contentItem: Rectangle {
++                implicitWidth: 8
++                color: "#555659"
++                opacity: 0.8
++                radius: 4
++            }
++        }
++
++        ScrollBar.horizontal: ScrollBar {
++            id: horizontalBar
++
++            visible: flickable.contentWidth > root.width
++
++            contentItem: Rectangle {
++                implicitHeight: 8
++                color: "#555659"
++                opacity: 0.8
++                radius: 4
++            }
++        }
++    }
++
++    Connections {
++        target: mainLayout
++
++        function onImplicitWidthChanged() {
++            controller.updateWindowSize(rootItem.width, rootItem.height);
++        }
++
++        function onImplicitHeightChanged() {
++            controller.updateWindowSize(rootItem.width, rootItem.height);
++        }
++    }
++}
+diff --git a/tools/wldialog/NodeDelegate.qml b/tools/wldialog/NodeDelegate.qml
+new file mode 100644
+index 0000000..9b6fd36
+--- /dev/null
++++ b/tools/wldialog/NodeDelegate.qml
+@@ -0,0 +1,111 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++import QtQuick 2.15
++import QtQuick.Controls 2.15
++import QtQuick.Layouts 1.15
++import QtQml.Models 2.15
++
++ColumnLayout {
++    id: root
++
++    property var widgetModel: null
++
++    Layout.fillWidth: true
++    spacing: 10
++
++    ColumnLayout {
++        id: contentColumn
++
++        Layout.fillWidth: true
++        spacing: 8
++
++        Loader {
++            id: mainWidgetLoader
++
++            Layout.fillWidth: true
++            Layout.minimumHeight: item ? item.implicitHeight : 0
++            active: widgetModel !== undefined && widgetModel.type !== undefined
++            sourceComponent: {
++                switch (widgetModel.type) {
++                case "CheckBox":
++                    return checkBoxComp;
++                case "Custom":
++                    return customGroupComp;
++                default:
++                    return null;
++                }
++            }
++        }
++    }
++
++    Component {
++        id: checkBoxComp
++
++        RowLayout {
++            CheckBox {
++                text: widgetModel.data.text
++                checked: {
++                    var name = widgetModel.data.name;
++                    dynamicModel.updateCheckBoxState(name, widgetModel.data.default);
++                    return widgetModel.data.default;
++                }
++                onCheckedChanged: {
++                    var name = widgetModel.data.name;
++                    if (name) {
++                        dynamicModel.updateCheckBoxState(name, checked);
++                    }
++                }
++            }
++        }
++    }
++
++    Component {
++        id: customGroupComp
++
++        GroupBox {
++            id: groupBox
++
++            Layout.fillWidth: true
++
++            ColumnLayout {
++                id: customLayout
++
++                anchors.fill: parent
++                spacing: 8
++
++                Repeater {
++                    model: widgetModel.child
++
++                    delegate: Loader {
++                        Layout.fillWidth: true
++                        Component.onCompleted: {
++                            setSource("NodeDelegate.qml", {
++                                "widgetModel": modelData
++                            });
++                        }
++                    }
++                }
++            }
++
++            background: Rectangle {
++                y: groupBox.topPadding - groupBox.bottomPadding
++                width: parent.width
++                height: parent.height - groupBox.topPadding + groupBox.bottomPadding
++                color: gsettingsManager.themeColor
++                border.width: 1
++                border.color: "#d7d9db"
++                radius: 8
++            }
++
++            label: Label {
++                visible: widgetModel.data.title
++                text: widgetModel.data.title ? widgetModel.data.title : ""
++                wrapMode: Text.WordWrap
++                x: groupBox.leftPadding
++                width: groupBox.availableWidth
++            }
++        }
++    }
++}
+diff --git a/tools/wldialog/Resources.qrc b/tools/wldialog/Resources.qrc
+new file mode 100644
+index 0000000..dc0503b
+--- /dev/null
++++ b/tools/wldialog/Resources.qrc
+@@ -0,0 +1,6 @@
++<RCC version="1.0">
++    <qresource prefix="/">
++        <file>NodeDelegate.qml</file>
++        <file>MainWindow.qml</file>
++    </qresource>
++</RCC>
+diff --git a/tools/wldialog/WaylandClient.cpp b/tools/wldialog/WaylandClient.cpp
+new file mode 100644
+index 0000000..03d41e9
+--- /dev/null
++++ b/tools/wldialog/WaylandClient.cpp
+@@ -0,0 +1,78 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <QDebug>
++#include <QGuiApplication>
++
++#include "xdg-dialog-v1-client-protocol.h"
++#include "xdg-foreign-unstable-v2-client-protocol.h"
++
++#include "WaylandClient.h"
++
++WaylandClient::WaylandClient(Protocols protocols, QObject *parent)
++    : QObject(parent), m_activeProtocols(protocols)
++{
++    nativeInterface = QGuiApplication::platformNativeInterface();
++    if (!nativeInterface) {
++        qWarning() << "WaylandClient: Failed to get platform native interface";
++        return;
++    }
++
++    display =
++        reinterpret_cast<wl_display *>(nativeInterface->nativeResourceForIntegration("wl_display"));
++    if (!display) {
++        qWarning() << "WaylandClient: Failed to get wl_display.";
++        return;
++    }
++
++    m_registry = wl_display_get_registry(display);
++    wl_registry_add_listener(m_registry, &s_registryListener, this);
++    wl_display_roundtrip(display);
++}
++
++WaylandClient::~WaylandClient()
++{
++    if (xdgImporter) {
++        zxdg_importer_v2_destroy(xdgImporter);
++    }
++    if (xdgWmDialog) {
++        xdg_wm_dialog_v1_destroy(xdgWmDialog);
++    }
++    if (m_registry) {
++        wl_registry_destroy(m_registry);
++    }
++}
++
++void WaylandClient::registryGlobalHandler(void *data, struct wl_registry *registry, uint32_t name,
++                                          const char *interface, uint32_t /*version*/)
++{
++    auto *self = static_cast<WaylandClient *>(data);
++    if (!self) {
++        return;
++    }
++
++    if (self->m_activeProtocols.testFlag(Protocol::XDG_DIALOG) &&
++        strcmp(interface, xdg_wm_dialog_v1_interface.name) == 0) {
++        self->xdgWmDialog = reinterpret_cast<struct xdg_wm_dialog_v1 *>(
++            wl_registry_bind(registry, name, &xdg_wm_dialog_v1_interface, 1));
++    } else if (self->m_activeProtocols.testFlag(Protocol::XDG_FOREIGN) &&
++               strcmp(interface, zxdg_importer_v2_interface.name) == 0) {
++        self->xdgImporter = reinterpret_cast<struct zxdg_importer_v2 *>(
++            wl_registry_bind(registry, name, &zxdg_importer_v2_interface, 1));
++    }
++}
++
++void WaylandClient::registryGlobalRemoveHandler(void *data, struct wl_registry * /*registry*/,
++                                                uint32_t /*name*/)
++{
++    auto *self = static_cast<WaylandClient *>(data);
++    if (!self) {
++        return;
++    }
++}
++
++const struct wl_registry_listener WaylandClient::s_registryListener = {
++    .global = registryGlobalHandler,
++    .global_remove = registryGlobalRemoveHandler,
++};
+diff --git a/tools/wldialog/WaylandClient.h b/tools/wldialog/WaylandClient.h
+new file mode 100644
+index 0000000..20d77f9
+--- /dev/null
++++ b/tools/wldialog/WaylandClient.h
+@@ -0,0 +1,45 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef WAYLANDCLIENT_H
++#define WAYLANDCLIENT_H
++
++#include <QObject>
++#include <qpa/qplatformnativeinterface.h>
++
++#include <wayland-client.h>
++
++class WaylandClient : public QObject
++{
++    Q_OBJECT
++  public:
++    enum Protocol {
++        XDG_DIALOG = 0x01,
++        XDG_FOREIGN = 0x02,
++    };
++    Q_DECLARE_FLAGS(Protocols, Protocol)
++
++    explicit WaylandClient(Protocols protocols, QObject *parent = nullptr);
++    ~WaylandClient() override;
++
++    QPlatformNativeInterface *nativeInterface = nullptr;
++    wl_display *display = nullptr;
++    struct zxdg_importer_v2 *xdgImporter = nullptr;
++    struct xdg_wm_dialog_v1 *xdgWmDialog = nullptr;
++
++  private:
++    static void registryGlobalHandler(void *data, struct wl_registry *registry, uint32_t name,
++                                      const char *interface, uint32_t version);
++    static void registryGlobalRemoveHandler(void *data, struct wl_registry *registry,
++                                            uint32_t name);
++
++    static const struct wl_registry_listener s_registryListener;
++
++    wl_registry *m_registry = nullptr;
++
++    Protocols m_activeProtocols;
++};
++
++Q_DECLARE_OPERATORS_FOR_FLAGS(WaylandClient::Protocols)
++#endif // WAYLANDCLIENT_H
+diff --git a/tools/wldialog/XdgDialog.cpp b/tools/wldialog/XdgDialog.cpp
+new file mode 100644
+index 0000000..b556857
+--- /dev/null
++++ b/tools/wldialog/XdgDialog.cpp
+@@ -0,0 +1,47 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <QDebug>
++#include <QGuiApplication>
++
++#include "xdg-dialog-v1-client-protocol.h"
++
++#include "XdgDialog.h"
++
++XdgDialog::XdgDialog(WaylandClient *client, QObject *parent) : QObject(parent), m_client(client) {}
++
++XdgDialog::~XdgDialog()
++{
++    if (m_xdgDialog) {
++        xdg_dialog_v1_destroy(m_xdgDialog);
++        m_xdgDialog = nullptr;
++    }
++}
++
++void XdgDialog::setDialogModal(QWindow *window, bool flag)
++{
++    if (!m_client || !m_client->xdgWmDialog) {
++        return;
++    }
++
++    struct xdg_toplevel *xdgToplevel = reinterpret_cast<struct xdg_toplevel *>(
++        m_client->nativeInterface->nativeResourceForWindow("xdg_toplevel", window));
++    if (!xdgToplevel) {
++        qDebug() << "Failed to get xdg_toplevel";
++        return;
++    }
++
++    struct xdg_dialog_v1 *m_xdgDialog =
++        xdg_wm_dialog_v1_get_xdg_dialog(m_client->xdgWmDialog, xdgToplevel);
++    if (!m_xdgDialog) {
++        qDebug() << "Failed to create xdg_dialog";
++        return;
++    }
++
++    if (flag) {
++        xdg_dialog_v1_set_modal(m_xdgDialog);
++    } else {
++        xdg_dialog_v1_unset_modal(m_xdgDialog);
++    }
++}
+diff --git a/tools/wldialog/XdgDialog.h b/tools/wldialog/XdgDialog.h
+new file mode 100644
+index 0000000..48f0684
+--- /dev/null
++++ b/tools/wldialog/XdgDialog.h
+@@ -0,0 +1,24 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef XDGDIALOG_H
++#define XDGDIALOG_H
++
++#include "WaylandClient.h"
++
++class XdgDialog : public QObject
++{
++    Q_OBJECT
++  public:
++    XdgDialog(WaylandClient *client, QObject *parent = nullptr);
++    ~XdgDialog() override;
++
++    void setDialogModal(QWindow *window, bool flag);
++
++  private:
++    WaylandClient *m_client = nullptr;
++    struct xdg_dialog_v1 *m_xdgDialog = nullptr;
++};
++
++#endif // XDGDIALOG_H
+diff --git a/tools/wldialog/XdgForeign.cpp b/tools/wldialog/XdgForeign.cpp
+new file mode 100644
+index 0000000..1ba39a7
+--- /dev/null
++++ b/tools/wldialog/XdgForeign.cpp
+@@ -0,0 +1,84 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <QDebug>
++#include <QString>
++#include <QWindow>
++
++#include <wayland-client.h>
++
++#include "xdg-foreign-unstable-v2-client-protocol.h"
++
++#include "XdgForeign.h"
++
++XdgForeign::XdgForeign(WaylandClient *client, QObject *parent) : QObject(parent), m_client(client)
++{
++}
++
++XdgForeign::~XdgForeign()
++{
++    if (m_imported) {
++        zxdg_imported_v2_destroy(m_imported);
++        m_imported = nullptr;
++    }
++}
++
++void XdgForeign::importedDestroyedHandler(void *data, struct zxdg_imported_v2 *)
++{
++    auto *self = static_cast<XdgForeign *>(data);
++    if (!self) {
++        return;
++    }
++
++    qDebug() << "XDGForeign: imported destroyed";
++
++    self->m_imported = nullptr;
++    emit self->parentWindowLost();
++}
++
++const struct zxdg_imported_v2_listener XdgForeign::s_importedListener = {
++    .destroyed = importedDestroyedHandler,
++};
++
++bool XdgForeign::setParentWindow(QWindow *window, const QString &parentHandle)
++{
++    if (!m_client || !m_client->xdgImporter) {
++        return false;
++    }
++
++    if (!window) {
++        qWarning() << "XDGForeign: Invalid child window.";
++        return false;
++    }
++
++    if (parentHandle.isEmpty()) {
++        qWarning() << "XDGForeign: parentHandle is empty.";
++        return false;
++    }
++
++    wl_surface *surface = reinterpret_cast<wl_surface *>(
++        m_client->nativeInterface->nativeResourceForWindow("surface", window));
++
++    if (m_imported) {
++        zxdg_imported_v2_destroy(m_imported);
++        m_imported = nullptr;
++    }
++
++    m_imported =
++        zxdg_importer_v2_import_toplevel(m_client->xdgImporter, parentHandle.toUtf8().constData());
++    if (!m_imported) {
++        qWarning()
++            << QString("XDGForeign: Failed to import toplevel with handle: %1").arg(parentHandle);
++        return false;
++    }
++
++    zxdg_imported_v2_add_listener(m_imported, &s_importedListener, this);
++    zxdg_imported_v2_set_parent_of(m_imported, surface);
++
++    wl_display_flush(m_client->display);
++    wl_display_roundtrip(m_client->display);
++
++    qDebug() << QString("Parent window set successfully for handle: %1").arg(parentHandle);
++    return true;
++}
+diff --git a/tools/wldialog/XdgForeign.h b/tools/wldialog/XdgForeign.h
+new file mode 100644
+index 0000000..e7f9912
+--- /dev/null
++++ b/tools/wldialog/XdgForeign.h
+@@ -0,0 +1,32 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef XDGFOREIGN_H
++#define XDGFOREIGN_H
++
++#include "WaylandClient.h"
++
++class XdgForeign : public QObject
++{
++    Q_OBJECT
++  public:
++    XdgForeign(WaylandClient *client, QObject *parent = nullptr);
++    ~XdgForeign() override;
++
++    bool setParentWindow(QWindow *window, const QString &parentHandle);
++
++  Q_SIGNALS:
++    void parentWindowLost();
++
++  private:
++    static void importedDestroyedHandler(void *data, struct zxdg_imported_v2 *zxdg_imported_v2);
++
++    static const struct zxdg_imported_v2_listener s_importedListener;
++
++    struct zxdg_imported_v2 *m_imported = nullptr;
++
++    WaylandClient *m_client = nullptr;
++};
++
++#endif // XDGFOREIGN_H
+diff --git a/tools/wldialog/meson.build b/tools/wldialog/meson.build
+new file mode 100644
+index 0000000..7b2b73b
+--- /dev/null
++++ b/tools/wldialog/meson.build
+@@ -0,0 +1,60 @@
++if not add_languages('cpp', native: false, required: false)
++  subdir_done()
++endif
++
++qt5 = import('qt5')
++qt5dep = dependency(
++  'qt5',
++  modules: ['Core', 'Widgets', 'Gui', 'Network', 'Quick', 'QuickControls2', 'Qml'],
++  private_headers: true,
++  required: false,
++)
++
++protocols_client = [
++  protocols_code['xdg-dialog'],
++  protocols_code['xdg-foreign-unstable-v2'],
++  protocols_client_header['xdg-foreign-unstable-v2'],
++  protocols_client_header['xdg-dialog'],
++  protocols_code['xdg-shell'],
++  protocols_client_header['xdg-shell'],
++]
++
++moc_sources = qt5.preprocess(
++  moc_headers: [
++    'DynamicModel.h',
++    'Gsettings.h',
++    'MainWindow.h',
++    'WaylandClient.h',
++    'XdgDialog.h',
++    'XdgForeign.h',
++  ],
++  qresources: ['Resources.qrc'],
++)
++
++dialog_sources = []
++dialog_sources += protocols_client
++dialog_sources += moc_sources
++dialog_sources += files(
++  'DynamicModel.cpp',
++  'Gsettings.cpp',
++  'MainWindow.cpp',
++  'WaylandClient.cpp',
++  'XdgDialog.cpp',
++  'XdgForeign.cpp',
++  'Main.cpp',
++)
++
++cpp_args = ['-Wno-unused-parameter']
++if kysdk_ukuiwindowhelper.found()
++  cpp_args += '-DKYSDK_IS_SUPPORT'
++endif
++
++executable(
++  'wldialog',
++  sources: dialog_sources,
++  dependencies: [qt5dep, wayland_client, gsettings_dep, kysdk_ukuiwindowhelper, util],
++  cpp_args: cpp_args,
++  include_directories: wlcom_inc,
++  build_by_default: true,
++  install: true,
++)

@@ -1,0 +1,1035 @@
+// SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#include <float.h>
+#include <stdlib.h>
+
+#include "effect/blur.h"
+#include "render/opengl.h"
+#include "render/profile.h"
+#include "scene/decoration.h"
+#include "scene/render.h"
+#include "scene_p.h"
+#include "util/macros.h"
+#include "util/matrix.h"
+
+#include "decoration_frag.h"
+#include "decoration_vert.h"
+
+enum deco_update_cause {
+    DECO_UPDATE_CAUSE_NONE = 0,
+    DECO_UPDATE_CAUSE_SURFACE_SIZE = 1 << 0,
+    DECO_UPDATE_CAUSE_MARGIN = 1 << 1,
+    DECO_UPDATE_CAUSE_MARGIN_COLOR = 1 << 2,
+    DECO_UPDATE_CAUSE_MASK = 1 << 3,
+    DECO_UPDATE_CAUSE_CORNER_RADIUS = 1 << 4,
+    DECO_UPDATE_CAUSE_BLURRED = 1 << 5,
+    DECO_UPDATE_CAUSE_SURFACE_COLOR = 1 << 6,
+};
+
+struct ky_scene_decoration {
+    /* based on scene_rect */
+    struct ky_scene_rect rect;
+    ky_scene_node_destroy_func_t node_destroy;
+    uint32_t pending_cause;
+
+    /* mask for border, shadow, corner */
+    uint32_t mask; // TODO: resize region ?
+
+    /* surface size */
+    int surface_width;
+    int surface_height;
+    /* color in surface size */
+    float surface_color[4];
+    /* blurred in surface size */
+    bool surface_blurred;
+
+    /* margin */
+    int border_thickness;
+    int title_height;
+    /* margin color */
+    float border_color[4];
+    float title_color[4];
+
+    /* region used to resize */
+    int resize_width;
+
+    // window round rect
+    // 0=right-bottom, 1=right-top, 2=left-bottom, 3=left-top
+    int round_corner_radius[4];
+
+    // TODO: add multi shadow layer
+    float shadow_color[4];
+    int shadow_offset_x;
+    int shadow_offset_y;
+    int shadow_radius;
+
+    struct kywc_box shadow_box;
+    /**
+     * render_box = window_box + shadow_box
+     * window_box = 0, 0, rect.width, rect.height
+     */
+    struct kywc_box render_box;
+
+    pixman_region32_t surface_region;
+    pixman_region32_t title_region;
+    pixman_region32_t border_region;
+    pixman_region32_t round_corner_region;
+    /* clip region without round_corner_region */
+    pixman_region32_t pure_clip_region;
+    pixman_region32_t clip_region;
+};
+
+// opengl render
+static int32_t gl_shader = 0;
+
+struct gl_shader_location {
+    // vs
+    GLint in_uv;
+    GLint size;
+    GLint uv2ndc;
+    GLint inverse_transform;
+    // fs
+    GLint shadow_rect;
+    GLint shadow_sigma;
+    GLint shadow_color;
+    GLint border_aa;
+    GLint aspect;
+    GLint window_rect;
+    GLint rounded_corner_radius;
+    GLint border_thickness;
+    GLint border_color;
+    GLint title_height;
+    GLint title_color;
+};
+static struct gl_shader_location gl_locations = { 0 };
+
+static int scene_decoration_create_opengl_shader(struct ky_opengl_renderer *renderer)
+{
+    GLuint prog = ky_opengl_create_program(renderer, decoration_vert, decoration_frag);
+    if (prog <= 0) {
+        return -1;
+    }
+
+    gl_locations.in_uv = glGetAttribLocation(prog, "inUV");
+    gl_locations.uv2ndc = glGetUniformLocation(prog, "uv2ndc");
+    gl_locations.inverse_transform = glGetUniformLocation(prog, "inverseTransform");
+    gl_locations.size = glGetUniformLocation(prog, "size");
+    gl_locations.shadow_sigma = glGetUniformLocation(prog, "shadowSigma");
+    gl_locations.shadow_rect = glGetUniformLocation(prog, "shadowRect");
+    gl_locations.shadow_color = glGetUniformLocation(prog, "shadowColor");
+    gl_locations.border_aa = glGetUniformLocation(prog, "borderAA");
+    gl_locations.aspect = glGetUniformLocation(prog, "aspect");
+    gl_locations.window_rect = glGetUniformLocation(prog, "windowRect");
+    gl_locations.rounded_corner_radius = glGetUniformLocation(prog, "roundedCornerRadius");
+    gl_locations.border_thickness = glGetUniformLocation(prog, "borderThickness");
+    gl_locations.border_color = glGetUniformLocation(prog, "borderColor");
+    gl_locations.title_height = glGetUniformLocation(prog, "titleHeight");
+    gl_locations.title_color = glGetUniformLocation(prog, "titleColor");
+
+    return prog;
+}
+
+static void get_render_region_with_mask(struct ky_scene_decoration *deco, int lx, int ly,
+                                        struct ky_scene_render_target *target,
+                                        struct wlr_box *region)
+{
+    struct wlr_box box = {
+        .x = lx - target->logical.x + deco->render_box.x,
+        .y = ly - target->logical.y + deco->render_box.y,
+        .width = deco->render_box.width,
+        .height = deco->render_box.height,
+    };
+
+    int offset_x = MAX(0, deco->shadow_radius - deco->shadow_offset_x);
+    int offset_y = MAX(0, deco->shadow_radius - deco->shadow_offset_y);
+
+    bool left_mask = deco->mask & DECORATION_MASK_LEFT;
+    bool right_mask = deco->mask & DECORATION_MASK_RIGHT;
+    if (left_mask && right_mask) {
+        region->x = box.x;
+        region->width = box.width;
+    } else if (!left_mask && right_mask) {
+        region->x = box.x + offset_x;
+        region->width = box.width - offset_x;
+    } else if (left_mask && !right_mask) {
+        region->x = box.x;
+        region->width = deco->rect.width + offset_x;
+    } else {
+        region->x = box.x + offset_x;
+        region->width = deco->rect.width;
+    }
+
+    bool top_mask = deco->mask & DECORATION_MASK_TOP;
+    bool bottom_mask = deco->mask & DECORATION_MASK_BOTTOM;
+    if (top_mask && bottom_mask) {
+        region->y = box.y;
+        region->height = box.height;
+    } else if (!top_mask && bottom_mask) {
+        region->y = box.y + offset_y;
+        region->height = box.height - offset_y;
+    } else if (top_mask && !bottom_mask) {
+        region->y = box.y;
+        region->height = deco->rect.height + offset_y;
+    } else {
+        region->y = box.y + offset_y;
+        region->height = deco->rect.height;
+    }
+
+    ky_scene_render_box(region, target);
+}
+
+static void get_window_box_from_surface_box(struct ky_scene_decoration *deco,
+                                            struct ky_scene_render_target *target,
+                                            int border_thickness, int title_height,
+                                            const struct wlr_box *box,
+                                            const struct wlr_box *surface_box,
+                                            struct wlr_box *window_box)
+{
+    int border_thickness_2 = border_thickness * 2;
+
+    if (target->transform == WL_OUTPUT_TRANSFORM_90) {
+        window_box->x = surface_box->y - border_thickness - box->y;
+        window_box->y = surface_box->x - title_height - border_thickness - box->x;
+        window_box->width = surface_box->height + border_thickness_2;
+        window_box->height = surface_box->width + title_height + border_thickness_2;
+        // rotation correct
+        window_box->x = box->height - surface_box->height - border_thickness_2 - window_box->x;
+    } else if (target->transform == WL_OUTPUT_TRANSFORM_180) {
+        window_box->x = surface_box->x - border_thickness - box->x;
+        window_box->y = surface_box->y - border_thickness - box->y;
+        window_box->width = surface_box->width + border_thickness_2;
+        window_box->height = surface_box->height + title_height + border_thickness_2;
+        // rotation correct
+        window_box->x = box->width - surface_box->width - border_thickness_2 - window_box->x;
+        window_box->y =
+            box->height - surface_box->height - border_thickness_2 - title_height - window_box->y;
+    } else if (target->transform == WL_OUTPUT_TRANSFORM_270) {
+        window_box->x = surface_box->y - border_thickness - box->y;
+        window_box->y = surface_box->x - border_thickness - box->x;
+        window_box->width = surface_box->height + border_thickness_2;
+        window_box->height = surface_box->width + title_height + border_thickness_2;
+        // rotation correct
+        window_box->y =
+            box->width - surface_box->width - border_thickness_2 - title_height - window_box->y;
+    } else if (target->transform == WL_OUTPUT_TRANSFORM_FLIPPED) {
+        window_box->x = surface_box->x - border_thickness - box->x;
+        window_box->y = surface_box->y - title_height - border_thickness - box->y;
+        window_box->width = surface_box->width + border_thickness_2;
+        window_box->height = surface_box->height + title_height + border_thickness_2;
+        // rotation correct
+        window_box->x = box->width - surface_box->width - border_thickness_2 - window_box->x;
+    } else if (target->transform == WL_OUTPUT_TRANSFORM_FLIPPED_90) {
+        window_box->x = surface_box->y - border_thickness - box->y;
+        window_box->y = surface_box->x - title_height - border_thickness - box->x;
+        window_box->width = surface_box->height + border_thickness_2;
+        window_box->height = surface_box->width + title_height + border_thickness_2;
+    } else if (target->transform == WL_OUTPUT_TRANSFORM_FLIPPED_180) {
+        window_box->x = surface_box->x - border_thickness - box->x;
+        window_box->y = surface_box->y - border_thickness - box->y;
+        window_box->width = surface_box->width + border_thickness_2;
+        window_box->height = surface_box->height + title_height + border_thickness_2;
+        // rotation correct
+        window_box->y =
+            box->height - surface_box->height - border_thickness_2 - title_height - window_box->y;
+    } else if (target->transform == WL_OUTPUT_TRANSFORM_FLIPPED_270) {
+        window_box->x = surface_box->y - border_thickness - box->y;
+        window_box->y = surface_box->x - border_thickness - box->x;
+        window_box->width = surface_box->height + border_thickness_2;
+        window_box->height = surface_box->width + title_height + border_thickness_2;
+        // rotation correct
+        window_box->x = box->height - surface_box->height - border_thickness_2 - window_box->x;
+        window_box->y =
+            box->width - surface_box->width - border_thickness_2 - title_height - window_box->y;
+    } else {
+        window_box->x = surface_box->x - border_thickness - box->x;
+        window_box->y = surface_box->y - title_height - border_thickness - box->y;
+        window_box->width = surface_box->width + border_thickness_2;
+        window_box->height = surface_box->height + title_height + border_thickness_2;
+    }
+}
+
+static void scene_decoration_opengl_render(struct ky_scene_decoration *deco, int lx, int ly,
+                                           struct ky_scene_render_target *target,
+                                           const struct wlr_box *box, const pixman_region32_t *clip)
+{
+    struct wlr_box region_box = { 0 };
+    get_render_region_with_mask(deco, lx, ly, target, &region_box);
+    pixman_region32_t region;
+    pixman_region32_init_rect(&region, region_box.x, region_box.y, region_box.width,
+                              region_box.height);
+    pixman_region32_intersect(&region, &region, clip);
+
+    int rects_len;
+    const pixman_box32_t *rects = pixman_region32_rectangles(&region, &rects_len);
+    if (rects_len == 0) {
+        pixman_region32_fini(&region);
+        return;
+    }
+
+    GLfloat verts[rects_len * 6 * 2];
+    size_t vert_index = 0;
+    for (int i = 0; i < rects_len; i++) {
+        const pixman_box32_t *rect = &rects[i];
+        verts[vert_index++] = (GLfloat)(rect->x1 - box->x) / box->width;
+        verts[vert_index++] = (GLfloat)(rect->y1 - box->y) / box->height;
+        verts[vert_index++] = (GLfloat)(rect->x2 - box->x) / box->width;
+        verts[vert_index++] = (GLfloat)(rect->y1 - box->y) / box->height;
+        verts[vert_index++] = (GLfloat)(rect->x1 - box->x) / box->width;
+        verts[vert_index++] = (GLfloat)(rect->y2 - box->y) / box->height;
+        verts[vert_index++] = (GLfloat)(rect->x2 - box->x) / box->width;
+        verts[vert_index++] = (GLfloat)(rect->y1 - box->y) / box->height;
+        verts[vert_index++] = (GLfloat)(rect->x2 - box->x) / box->width;
+        verts[vert_index++] = (GLfloat)(rect->y2 - box->y) / box->height;
+        verts[vert_index++] = (GLfloat)(rect->x1 - box->x) / box->width;
+        verts[vert_index++] = (GLfloat)(rect->y2 - box->y) / box->height;
+    }
+
+    float scale = target->scale;
+    float width = box->width;
+    float height = box->height;
+    if (target->transform & WL_OUTPUT_TRANSFORM_90) {
+        width = box->height;
+        height = box->width;
+    }
+    // keep border ceil scale. avoid non-integer scale different thickness
+    int shadow_offset_x = roundf(deco->shadow_offset_x * scale);
+    int shadow_offset_y = roundf(deco->shadow_offset_y * scale);
+    int border_thickness = ceil(deco->border_thickness * scale);
+    int title_height = round(deco->title_height * scale);
+    float half_height = height * 0.5f; // shader distance scale
+    float shadow_radius = deco->shadow_radius * scale;
+    float round_corner_radius[4] = { 0 };
+    if (!(target->options & KY_SCENE_RENDER_DISABLE_ROUND_CORNER)) {
+        round_corner_radius[0] = deco->round_corner_radius[0] > 0
+                                     ? deco->round_corner_radius[0] * scale + border_thickness
+                                     : 0.0f;
+        round_corner_radius[1] = deco->round_corner_radius[1] > 0
+                                     ? deco->round_corner_radius[1] * scale + border_thickness
+                                     : 0.0f;
+        round_corner_radius[2] = deco->round_corner_radius[2] > 0
+                                     ? deco->round_corner_radius[2] * scale + border_thickness
+                                     : 0.0f;
+        round_corner_radius[3] = deco->round_corner_radius[3] > 0
+                                     ? deco->round_corner_radius[3] * scale + border_thickness
+                                     : 0.0f;
+    }
+
+    // surface rect as reference use framebuffer coord. avoid non-integer scale issuse
+    struct wlr_box surface_box = {
+        .x = lx + deco->border_thickness - target->logical.x,
+        .y = ly + deco->border_thickness + deco->title_height - target->logical.y,
+        .width = deco->surface_width,
+        .height = deco->surface_height,
+    };
+    ky_scene_render_box(&surface_box, target);
+    struct wlr_box window_box = { 0 };
+    get_window_box_from_surface_box(deco, target, border_thickness, title_height, box, &surface_box,
+                                    &window_box);
+    struct wlr_box shadow_window_box = {
+        .x = window_box.x + shadow_offset_x,
+        .y = window_box.y + shadow_offset_y,
+        .width = window_box.width,
+        .height = window_box.height,
+    };
+
+    struct kywc_box dst_box = {
+        .x = box->x,
+        .y = box->y,
+        .width = box->width,
+        .height = box->height,
+    };
+    struct ky_mat3 uv2ndc;
+    ky_mat3_uvofbox_to_ndc(&uv2ndc, target->buffer->width, target->buffer->height, 0, &dst_box);
+
+    struct ky_mat3 inverseTransform;
+    ky_mat3_invert_output_transform(&inverseTransform, target->transform);
+
+    KY_PROFILE_RENDER_ZONE(target->output->output->renderer, gzone, __func__);
+
+    glEnable(GL_BLEND);
+    glUseProgram(gl_shader);
+
+    glEnableVertexAttribArray(gl_locations.in_uv);
+    glVertexAttribPointer(gl_locations.in_uv, 2, GL_FLOAT, GL_FALSE, 0, verts);
+    // vert shader param
+    glUniformMatrix3fv(gl_locations.uv2ndc, 1, GL_FALSE, uv2ndc.matrix);
+    glUniformMatrix3fv(gl_locations.inverse_transform, 1, GL_FALSE, inverseTransform.matrix);
+    glUniform2f(gl_locations.size, width, height);
+    // frag shader param
+    // blur with to gaussian sigma. scale = 1.0 / (2.0 * sqrt(2.0 * log(2.0))) = 0.424660891
+    glUniform1f(gl_locations.shadow_sigma,
+                shadow_radius > 0.1f ? shadow_radius * 0.424660891f : FLT_MAX);
+    glUniform4f(gl_locations.shadow_rect, shadow_window_box.x, shadow_window_box.y,
+                shadow_window_box.x + shadow_window_box.width,
+                shadow_window_box.y + shadow_window_box.height);
+    glUniform4fv(gl_locations.shadow_color, 1, deco->shadow_color);
+    // 1 pixel border thickness keep 1 pixel less soft aa
+    float one_pixel_distance = 1.0 / half_height;
+    glUniform1f(gl_locations.border_aa, one_pixel_distance * 0.5f);
+    glUniform1f(gl_locations.aspect, width / height);
+    float width_distance = window_box.width / height;
+    float height_distance = window_box.height / height;
+    float offset_x_distance = width_distance * 0.5f + window_box.x / height;
+    float offset_y_distance = height_distance * 0.5f + window_box.y / height;
+    glUniform4f(gl_locations.window_rect, offset_x_distance, offset_y_distance, width_distance,
+                height_distance);
+    glUniform4f(
+        gl_locations.rounded_corner_radius,
+        deco->mask & DECORATION_MASK_BOTTOM_RIGHT ? round_corner_radius[0] * one_pixel_distance
+                                                  : 0.0f,
+        deco->mask & DECORATION_MASK_TOP_RIGHT ? round_corner_radius[1] * one_pixel_distance : 0.0f,
+        deco->mask & DECORATION_MASK_BOTTOM_LEFT ? round_corner_radius[2] * one_pixel_distance
+                                                 : 0.0f,
+        deco->mask & DECORATION_MASK_TOP_LEFT ? round_corner_radius[3] * one_pixel_distance : 0.0f);
+    glUniform1f(gl_locations.border_thickness, border_thickness * one_pixel_distance);
+    glUniform4fv(gl_locations.border_color, 1, deco->border_color);
+    glUniform1f(gl_locations.title_height, title_height / height);
+    glUniform4fv(gl_locations.title_color, 1, deco->title_color);
+
+    glDrawArrays(GL_TRIANGLES, 0, rects_len * 6);
+    glUseProgram(0);
+    glDisableVertexAttribArray(gl_locations.in_uv);
+
+    KY_PROFILE_RENDER_ZONE_END(target->output->output->renderer);
+
+    pixman_region32_fini(&region);
+}
+
+static void scene_decoration_update_round_corner_region(struct ky_scene_decoration *deco)
+{
+    pixman_region32_clear(&deco->round_corner_region);
+
+    if (gl_shader < 0) {
+        return;
+    }
+
+    int width = deco->surface_width;
+    int height = deco->surface_height;
+
+    // include border round_corner
+    float round_corner_radius[4] = {
+        deco->round_corner_radius[0] + deco->border_thickness,
+        deco->round_corner_radius[1] + deco->border_thickness,
+        deco->round_corner_radius[2] + deco->border_thickness,
+        deco->round_corner_radius[3] + deco->border_thickness,
+    };
+    int x1 = 0;
+    int x2 = width + 2 * deco->border_thickness;
+    int y1 = 0;
+    int y2 = height + deco->title_height + 2 * deco->border_thickness;
+    if ((deco->mask & DECORATION_MASK_TOP_LEFT) && round_corner_radius[3] > 0) {
+        pixman_region32_union_rect(&deco->round_corner_region, &deco->round_corner_region, x1, y1,
+                                   round_corner_radius[3], round_corner_radius[3]);
+    }
+    if ((deco->mask & DECORATION_MASK_TOP_RIGHT) && round_corner_radius[1] > 0) {
+        pixman_region32_union_rect(&deco->round_corner_region, &deco->round_corner_region,
+                                   x2 - round_corner_radius[1], y1, round_corner_radius[1],
+                                   round_corner_radius[1]);
+    }
+    if ((deco->mask & DECORATION_MASK_BOTTOM_LEFT) && round_corner_radius[2] > 0) {
+        pixman_region32_union_rect(&deco->round_corner_region, &deco->round_corner_region, x1,
+                                   y2 - round_corner_radius[2], round_corner_radius[2],
+                                   round_corner_radius[2]);
+    }
+    if ((deco->mask & DECORATION_MASK_BOTTOM_RIGHT) && round_corner_radius[0] > 0) {
+        pixman_region32_union_rect(&deco->round_corner_region, &deco->round_corner_region,
+                                   x2 - round_corner_radius[0], y2 - round_corner_radius[0],
+                                   round_corner_radius[0], round_corner_radius[0]);
+    }
+}
+
+static void scene_decoration_update_region(struct ky_scene_decoration *deco)
+{
+    pixman_region32_clear(&deco->surface_region);
+    pixman_region32_clear(&deco->title_region);
+    pixman_region32_clear(&deco->border_region);
+    pixman_region32_clear(&deco->pure_clip_region);
+
+    int width = deco->surface_width, height = deco->surface_height;
+    int title = deco->title_height, border = deco->border_thickness;
+    pixman_region32_init_rect(&deco->surface_region, border, border + title, width, height);
+    pixman_region32_init_rect(&deco->title_region, border, border, width, title);
+
+    pixman_region32_t reg1, reg2;
+    pixman_region32_init_rect(&reg1, 0, 0, deco->rect.width, deco->rect.height);
+    pixman_region32_init_rect(&reg2, border, border, width, title + height);
+    pixman_region32_subtract(&deco->border_region, &reg1, &reg2);
+    pixman_region32_fini(&reg1);
+    pixman_region32_fini(&reg2);
+
+    pixman_region32_init_rect(&deco->pure_clip_region, deco->render_box.x, deco->render_box.y,
+                              deco->render_box.width, deco->render_box.height);
+    pixman_region32_subtract(&deco->pure_clip_region, &deco->pure_clip_region,
+                             &deco->surface_region);
+}
+
+static void scene_decoration_update(struct ky_scene_decoration *deco, uint32_t cause)
+{
+    int width = deco->surface_width;
+    int height = deco->surface_height;
+    int shadow = deco->shadow_radius;
+    int title = deco->title_height;
+    int border = deco->border_thickness;
+
+    /* first check we have enough data to calc all regions */
+    if (width <= 0 || height <= 0 || (shadow <= 0 && border <= 0 && title <= 0)) {
+        deco->pending_cause |= cause;
+        return;
+    }
+
+    uint32_t pending_cause = deco->pending_cause | cause;
+    deco->pending_cause = DECO_UPDATE_CAUSE_NONE;
+
+    if (pending_cause & (DECO_UPDATE_CAUSE_SURFACE_SIZE | DECO_UPDATE_CAUSE_MARGIN)) {
+        int border2 = 2 * border;
+        struct kywc_box window = { 0, 0, width + border2, title + height + border2 };
+        int shadow2 = 2 * shadow;
+        deco->shadow_box = kywc_box_adjusted(&window, -shadow + deco->shadow_offset_x,
+                                             -shadow + deco->shadow_offset_y, shadow2, shadow2);
+        // render box = window box + shadow box
+        int x_min = MIN(window.x, deco->shadow_box.x);
+        int y_min = MIN(window.y, deco->shadow_box.y);
+        int x_max = MAX(window.x + window.width, deco->shadow_box.x + deco->shadow_box.width);
+        int y_max = MAX(window.y + window.height, deco->shadow_box.y + deco->shadow_box.height);
+        deco->render_box = (struct kywc_box){ x_min, y_min, x_max - x_min, y_max - y_min };
+
+        if (window.width != deco->rect.width || window.height != deco->rect.height) {
+            ky_scene_rect_set_size(&deco->rect, window.width, window.height);
+        }
+        scene_decoration_update_region(deco);
+    }
+
+    if (pending_cause & (DECO_UPDATE_CAUSE_SURFACE_SIZE | DECO_UPDATE_CAUSE_MARGIN |
+                         DECO_UPDATE_CAUSE_CORNER_RADIUS | DECO_UPDATE_CAUSE_MASK)) {
+        scene_decoration_update_round_corner_region(deco);
+        /* update clip region with corner region */
+        pixman_region32_clear(&deco->clip_region);
+        pixman_region32_union(&deco->clip_region, &deco->pure_clip_region,
+                              &deco->round_corner_region);
+    }
+
+    if (pending_cause & (DECO_UPDATE_CAUSE_SURFACE_SIZE | DECO_UPDATE_CAUSE_BLURRED)) {
+        ky_scene_node_set_blur_region(&deco->rect.node,
+                                      deco->surface_blurred ? &deco->surface_region : NULL);
+        pending_cause &= ~DECO_UPDATE_CAUSE_BLURRED;
+    }
+
+    if (pending_cause == DECO_UPDATE_CAUSE_SURFACE_COLOR) {
+        ky_scene_node_push_damage(&deco->rect.node, KY_SCENE_DAMAGE_BOTH, &deco->surface_region);
+        pending_cause &= ~DECO_UPDATE_CAUSE_SURFACE_COLOR;
+    }
+
+    if (pending_cause != DECO_UPDATE_CAUSE_NONE) {
+        bool damage_whole =
+            pending_cause & ~(DECO_UPDATE_CAUSE_MASK | DECO_UPDATE_CAUSE_MARGIN_COLOR);
+        ky_scene_node_push_damage(&deco->rect.node, KY_SCENE_DAMAGE_BOTH,
+                                  damage_whole ? NULL : &deco->clip_region);
+    }
+}
+
+struct ky_scene_decoration *ky_scene_decoration_from_node(struct ky_scene_node *node)
+{
+    struct ky_scene_rect *rect = ky_scene_rect_from_node(node);
+    struct ky_scene_decoration *decoration = wl_container_of(rect, decoration, rect);
+    return decoration;
+}
+
+struct ky_scene_node *ky_scene_node_from_decoration(struct ky_scene_decoration *decoration)
+{
+    return &decoration->rect.node;
+}
+
+static struct ky_scene_node *scene_decoration_accept_input(struct ky_scene_node *node, int lx,
+                                                           int ly, double px, double py, double *rx,
+                                                           double *ry)
+{
+    if (!node->enabled || node->input_bypassed) {
+        return NULL;
+    }
+
+    struct ky_scene_decoration *deco = ky_scene_decoration_from_node(node);
+    int border = deco->border_thickness;
+    int resize = deco->resize_width;
+
+    struct kywc_box window_box = { .width = deco->rect.width, .height = deco->rect.height };
+    int off = resize > 0 ? resize : border;
+    int lt = border - off;
+    int rb = (off - border) * 2;
+    struct kywc_box extend_input_box = kywc_box_adjusted(&window_box, lt, lt, rb, rb);
+
+    int x = floor(px) - lx;
+    int y = floor(py) - ly;
+    if (!kywc_box_contains_point(&extend_input_box, x, y)) {
+        return NULL;
+    }
+
+    *rx = px - lx;
+    *ry = py - ly;
+    return node;
+}
+
+static void scene_decoration_collect_damage(struct ky_scene_node *node, int lx, int ly,
+                                            bool parent_enabled, uint32_t damage_type,
+                                            pixman_region32_t *damage, pixman_region32_t *invisible,
+                                            pixman_region32_t *affected)
+{
+    bool node_enabled = parent_enabled && node->enabled;
+    /* node is still disabled, skip it */
+    if (!node_enabled && !node->last_enabled) {
+        node->damage_type = KY_SCENE_DAMAGE_NONE;
+        return;
+    }
+
+    struct ky_scene_decoration *deco = ky_scene_decoration_from_node(node);
+    // if node state is changed, it must in the affected region
+    if (deco->render_box.width > 0 && deco->render_box.height > 0 &&
+        pixman_region32_contains_rectangle(
+            affected, &(pixman_box32_t){ lx + deco->render_box.x, ly + deco->render_box.y,
+                                         lx + deco->render_box.x + deco->render_box.width,
+                                         ly + deco->render_box.y + deco->render_box.height }) ==
+            PIXMAN_REGION_OUT) {
+        return;
+    }
+
+    // no damage if node state is not changed
+    bool no_damage = node->last_enabled && node_enabled && damage_type == KY_SCENE_DAMAGE_NONE;
+    if (!no_damage) {
+        /* node last visible region is added to damgae */
+        if (node->last_enabled && (!node_enabled || (damage_type & KY_SCENE_DAMAGE_HARMFUL))) {
+            pixman_region32_union(damage, damage, &node->visible_region);
+        }
+    }
+
+    // update node visible region always
+    pixman_region32_clear(&node->visible_region);
+
+    if (node_enabled) {
+        pixman_region32_init_rect(&node->visible_region, lx + deco->render_box.x,
+                                  ly + deco->render_box.y, deco->render_box.width,
+                                  deco->render_box.height);
+        pixman_region32_subtract(&node->visible_region, &node->visible_region, invisible);
+
+        if (!no_damage) {
+            pixman_region32_union(damage, damage, &node->visible_region);
+        }
+
+        bool border_is_opaque = deco->border_thickness > 0 && deco->border_color[3] == 1;
+        bool title_is_opaque = deco->title_height > 0 && deco->title_color[3] == 1;
+        bool surface_is_opaque = deco->surface_color[3] == 1;
+        bool has_opaque_region = border_is_opaque || title_is_opaque || surface_is_opaque;
+        if (has_opaque_region) {
+            pixman_region32_t region;
+            pixman_region32_init(&region);
+            if (border_is_opaque) {
+                pixman_region32_union(&region, &region, &deco->border_region);
+            }
+            if (title_is_opaque) {
+                pixman_region32_union(&region, &region, &deco->title_region);
+            }
+            if (surface_is_opaque) {
+                pixman_region32_union(&region, &region, &deco->surface_region);
+            }
+            pixman_region32_subtract(&region, &region, &deco->round_corner_region);
+            pixman_region32_translate(&region, lx, ly);
+            pixman_region32_union(invisible, invisible, &region);
+            pixman_region32_fini(&region);
+        }
+    }
+
+    node->last_enabled = node_enabled;
+    node->damage_type = KY_SCENE_DAMAGE_NONE;
+}
+
+static void scene_decoration_blur_render(struct ky_scene_decoration *deco, int lx, int ly,
+                                         struct ky_scene_render_target *target,
+                                         const pixman_region32_t *region)
+{
+    if (deco->surface_color[3] == 1 || !deco->surface_blurred ||
+        target->options & KY_SCENE_RENDER_DISABLE_BLUR) {
+        return;
+    }
+
+    pixman_region32_t clip;
+    pixman_region32_init(&clip);
+    pixman_region32_copy(&clip, region);
+    ky_scene_render_region(&clip, target);
+
+    struct wlr_box blur_box = {
+        .x = lx - target->logical.x + deco->surface_region.extents.x1,
+        .y = ly - target->logical.y + deco->surface_region.extents.y1,
+        .width = deco->surface_width,
+        .height = deco->surface_height,
+    };
+    ky_scene_render_box(&blur_box, target);
+
+    struct ky_render_round_corner round_corner_radius = { 0 };
+    if (!(target->options & KY_SCENE_RENDER_DISABLE_ROUND_CORNER)) {
+        round_corner_radius.rb =
+            deco->round_corner_radius[0] > 0 ? deco->round_corner_radius[0] * target->scale : 0.0f;
+        round_corner_radius.rt =
+            deco->round_corner_radius[1] > 0 ? deco->round_corner_radius[1] * target->scale : 0.0f;
+        round_corner_radius.lb =
+            deco->round_corner_radius[2] > 0 ? deco->round_corner_radius[2] * target->scale : 0.0f;
+        round_corner_radius.lt =
+            deco->round_corner_radius[3] > 0 ? deco->round_corner_radius[3] * target->scale : 0.0f;
+    }
+
+    struct blur_render_options opts = {
+        .lx = lx,
+        .ly = ly,
+        .dst_box = &blur_box,
+        .clip = &clip,
+        .radius = &round_corner_radius,
+        .blur = deco->surface_blurred ? &deco->rect.node.blur : NULL,
+    };
+    blur_render_with_target(target, &opts);
+    pixman_region32_fini(&clip);
+}
+
+static void scene_decoration_render(struct ky_scene_node *node, int lx, int ly,
+                                    struct ky_scene_render_target *target)
+{
+    if (!node->enabled) {
+        return;
+    }
+
+    bool render_with_visibility = !(target->options & KY_SCENE_RENDER_DISABLE_VISIBILITY);
+    if (render_with_visibility && !pixman_region32_not_empty(&node->visible_region)) {
+        return;
+    }
+
+    struct ky_scene_decoration *deco = ky_scene_decoration_from_node(node);
+
+    pixman_region32_t render_region;
+    if (render_with_visibility) {
+        pixman_region32_init(&render_region);
+        pixman_region32_intersect(&render_region, &node->visible_region, &target->damage);
+    } else {
+        pixman_region32_init_rect(&render_region, deco->render_box.x, deco->render_box.y,
+                                  deco->render_box.width, deco->render_box.height);
+        if (pixman_region32_not_empty(&node->clip_region)) {
+            pixman_region32_intersect(&render_region, &render_region, &node->clip_region);
+        }
+        pixman_region32_translate(&render_region, lx, ly);
+        pixman_region32_intersect(&render_region, &render_region, &target->damage);
+    }
+
+    if (!pixman_region32_not_empty(&render_region)) {
+        pixman_region32_fini(&render_region);
+        return;
+    }
+
+    /* actual render region exclude the blur region */
+    pixman_region32_t clip_region;
+    pixman_region32_init(&clip_region);
+    pixman_region32_copy(&clip_region, &deco->clip_region);
+    pixman_region32_translate(&clip_region, lx, ly);
+    pixman_region32_intersect(&clip_region, &clip_region, &render_region);
+
+    bool need_render = pixman_region32_not_empty(&clip_region);
+    struct wlr_box dst_box = {
+        .x = lx - target->logical.x + deco->render_box.x,
+        .y = ly - target->logical.y + deco->render_box.y,
+        .width = deco->render_box.width,
+        .height = deco->render_box.height,
+    };
+    if (need_render) {
+        ky_scene_render_box(&dst_box, target);
+        pixman_region32_translate(&clip_region, -target->logical.x, -target->logical.y);
+    }
+    pixman_region32_translate(&render_region, -target->logical.x, -target->logical.y);
+
+    // try opengl render if opengl is used
+    if (gl_shader >= 0 && wlr_renderer_is_opengl(target->output->output->renderer)) {
+        if (gl_shader == 0) {
+            struct ky_opengl_renderer *renderer =
+                ky_opengl_renderer_from_wlr_renderer(target->output->output->renderer);
+            gl_shader = scene_decoration_create_opengl_shader(renderer);
+        }
+        if (gl_shader > 0) {
+            scene_decoration_blur_render(deco, lx, ly, target, &render_region);
+            if (need_render) {
+                ky_scene_render_region(&clip_region, target);
+                scene_decoration_opengl_render(deco, lx, ly, target, &dst_box, &clip_region);
+            }
+        } else {
+            gl_shader = -1;
+        }
+    }
+
+    if (deco->surface_color[3] != 0) {
+        pixman_region32_t surface;
+        pixman_region32_init(&surface);
+        pixman_region32_copy(&surface, &deco->surface_region);
+        pixman_region32_translate(&surface, lx - target->logical.x, ly - target->logical.y);
+        pixman_region32_intersect(&surface, &surface, &render_region);
+        ky_scene_render_region(&surface, target);
+
+        struct wlr_box surface_box = {
+            .x = lx - target->logical.x + deco->surface_region.extents.x1,
+            .y = ly - target->logical.y + deco->surface_region.extents.y1,
+            .width = deco->surface_width,
+            .height = deco->surface_height,
+        };
+        ky_scene_render_box(&surface_box, target);
+
+        ky_render_pass_add_rect(target->render_pass, &(struct ky_render_rect_options){
+            .base = {
+            .box = surface_box,
+            .color = {
+                .r = deco->surface_color[0],
+                .g = deco->surface_color[1],
+                .b = deco->surface_color[2],
+                .a = deco->surface_color[3],
+            },
+            .clip = &surface,
+            .blend_mode = WLR_RENDER_BLEND_MODE_PREMULTIPLIED,
+            },
+            .radius = {
+                .rb = deco->round_corner_radius[0] * target->scale,
+                .rt = deco->round_corner_radius[1] * target->scale,
+                .lb = deco->round_corner_radius[2] * target->scale,
+                .lt = deco->round_corner_radius[3] * target->scale,
+            },
+        });
+        pixman_region32_fini(&surface);
+    }
+
+    if (gl_shader > 0 || !need_render) {
+        pixman_region32_fini(&render_region);
+        pixman_region32_fini(&clip_region);
+        return;
+    }
+
+    /* draw border with border color */
+    if (deco->border_thickness > 0) {
+        pixman_region32_t border;
+        pixman_region32_init(&border);
+        pixman_region32_copy(&border, &deco->border_region);
+        pixman_region32_translate(&border, lx - target->logical.x, ly - target->logical.y);
+        pixman_region32_intersect(&border, &border, &clip_region);
+        ky_scene_render_region(&border, target);
+
+        wlr_render_pass_add_rect(target->render_pass, &(struct wlr_render_rect_options){
+            .box = dst_box,
+            .color = {
+                .r = deco->border_color[0],
+                .g = deco->border_color[1],
+                .b = deco->border_color[2],
+                .a = deco->border_color[3],
+            },
+            .clip = &border,
+            .blend_mode = deco->border_color[3] != 1 ? 
+                WLR_RENDER_BLEND_MODE_PREMULTIPLIED : WLR_RENDER_BLEND_MODE_NONE,
+        });
+        pixman_region32_fini(&border);
+    }
+
+    /* draw title with title color */
+    if (deco->title_height > 0) {
+        pixman_region32_t title;
+        pixman_region32_init(&title);
+        pixman_region32_copy(&title, &deco->title_region);
+        pixman_region32_translate(&title, lx - target->logical.x, ly - target->logical.y);
+        pixman_region32_intersect(&title, &title, &clip_region);
+        ky_scene_render_region(&title, target);
+
+        wlr_render_pass_add_rect(target->render_pass, &(struct wlr_render_rect_options){
+            .box = dst_box,
+            .color = {
+                .r = deco->title_color[0],
+                .g = deco->title_color[1],
+                .b = deco->title_color[2],
+                .a = deco->title_color[3],
+            },
+            .clip = &title,
+            .blend_mode = deco->title_color[3] != 1 ? 
+                WLR_RENDER_BLEND_MODE_PREMULTIPLIED : WLR_RENDER_BLEND_MODE_NONE,
+        });
+        pixman_region32_fini(&title);
+    }
+
+    pixman_region32_fini(&render_region);
+    pixman_region32_fini(&clip_region);
+}
+
+static void scene_decoration_get_bounding_box(struct ky_scene_node *node, struct wlr_box *box)
+{
+    struct ky_scene_decoration *deco = ky_scene_decoration_from_node(node);
+    *box = (struct wlr_box){ deco->render_box.x, deco->render_box.y, deco->render_box.width,
+                             deco->render_box.height };
+}
+
+static void scene_decoration_destroy(struct ky_scene_node *node)
+{
+    if (!node) {
+        return;
+    }
+
+    struct ky_scene_decoration *decoration = ky_scene_decoration_from_node(node);
+    pixman_region32_fini(&decoration->surface_region);
+    pixman_region32_fini(&decoration->title_region);
+    pixman_region32_fini(&decoration->border_region);
+    pixman_region32_fini(&decoration->round_corner_region);
+    pixman_region32_fini(&decoration->pure_clip_region);
+    pixman_region32_fini(&decoration->clip_region);
+
+    decoration->node_destroy(node);
+}
+
+struct ky_scene_decoration *ky_scene_decoration_create(struct ky_scene_tree *parent)
+{
+    struct ky_scene_decoration *decoration = calloc(1, sizeof(struct ky_scene_decoration));
+    if (!decoration) {
+        return NULL;
+    }
+
+    float color[4] = { 0, 0, 0, 0.25 };
+    ky_scene_rect_init(&decoration->rect, parent, 0, 0, color);
+    memset(decoration->surface_color, 0, sizeof(decoration->surface_color));
+    memcpy(decoration->title_color, color, sizeof(decoration->title_color));
+    memcpy(decoration->border_color, color, sizeof(decoration->border_color));
+    memcpy(decoration->shadow_color, color, sizeof(decoration->shadow_color));
+
+    decoration->node_destroy = decoration->rect.node.impl.destroy;
+    decoration->rect.node.impl.destroy = scene_decoration_destroy;
+    decoration->rect.node.impl.accept_input = scene_decoration_accept_input;
+    decoration->rect.node.impl.collect_damage = scene_decoration_collect_damage;
+    decoration->rect.node.impl.render = scene_decoration_render;
+    decoration->rect.node.impl.get_bounding_box = scene_decoration_get_bounding_box;
+    /* no need to update_region and push_damage, it is invisible */
+
+    pixman_region32_init(&decoration->surface_region);
+    pixman_region32_init(&decoration->title_region);
+    pixman_region32_init(&decoration->border_region);
+    pixman_region32_init(&decoration->round_corner_region);
+    pixman_region32_init(&decoration->pure_clip_region);
+    pixman_region32_init(&decoration->clip_region);
+
+    return decoration;
+}
+
+void ky_scene_decoration_set_surface_size(struct ky_scene_decoration *decoration, int width,
+                                          int height)
+{
+    if (decoration->surface_width == width && decoration->surface_height == height) {
+        return;
+    }
+
+    decoration->surface_width = width;
+    decoration->surface_height = height;
+    scene_decoration_update(decoration, DECO_UPDATE_CAUSE_SURFACE_SIZE);
+}
+
+void ky_scene_decoration_set_round_corner_radius(struct ky_scene_decoration *decoration,
+                                                 const int round_corner_radius[static 4])
+{
+    if (gl_shader < 0) {
+        return;
+    }
+
+    if (memcmp(decoration->round_corner_radius, round_corner_radius,
+               sizeof(decoration->round_corner_radius)) == 0) {
+        return;
+    }
+
+    memcpy(decoration->round_corner_radius, round_corner_radius,
+           sizeof(decoration->round_corner_radius));
+    scene_decoration_update(decoration, DECO_UPDATE_CAUSE_CORNER_RADIUS);
+}
+
+void ky_scene_decoration_set_margin(struct ky_scene_decoration *decoration, int title_height,
+                                    int border_thickness)
+{
+    if (decoration->title_height == title_height &&
+        decoration->border_thickness == border_thickness) {
+        return;
+    }
+
+    decoration->title_height = title_height;
+    decoration->border_thickness = border_thickness;
+    scene_decoration_update(decoration, DECO_UPDATE_CAUSE_MARGIN);
+}
+
+void ky_scene_decoration_set_margin_color(struct ky_scene_decoration *decoration,
+                                          const float title_color[static 4],
+                                          const float border_color[static 4])
+{
+    if (memcmp(decoration->title_color, title_color, sizeof(decoration->title_color)) == 0 &&
+        memcmp(decoration->border_color, border_color, sizeof(decoration->border_color)) == 0) {
+        return;
+    }
+
+    memcpy(decoration->title_color, title_color, sizeof(decoration->title_color));
+    memcpy(decoration->border_color, border_color, sizeof(decoration->border_color));
+    scene_decoration_update(decoration, DECO_UPDATE_CAUSE_MARGIN_COLOR);
+}
+
+void ky_scene_decoration_set_shadow(struct ky_scene_decoration *decoration, int off_x, int off_y,
+                                    int radius, const float color[static 4])
+{
+    if (gl_shader < 0) {
+        return;
+    }
+
+    uint32_t update = DECO_UPDATE_CAUSE_NONE;
+
+    if (decoration->shadow_offset_x != off_x || decoration->shadow_offset_y != off_y ||
+        decoration->shadow_radius != radius) {
+        decoration->shadow_offset_x = off_x;
+        decoration->shadow_offset_y = off_y;
+        decoration->shadow_radius = radius;
+        update |= DECO_UPDATE_CAUSE_MARGIN;
+    }
+
+    if (memcmp(decoration->shadow_color, color, sizeof(decoration->shadow_color))) {
+        memcpy(decoration->shadow_color, color, sizeof(decoration->shadow_color));
+        update |= DECO_UPDATE_CAUSE_MARGIN_COLOR;
+    }
+
+    if (update != DECO_UPDATE_CAUSE_NONE) {
+        scene_decoration_update(decoration, update);
+    }
+}
+
+void ky_scene_decoration_set_mask(struct ky_scene_decoration *decoration, uint32_t masks)
+{
+    if (decoration->mask == masks) {
+        return;
+    }
+
+    decoration->mask = masks;
+    scene_decoration_update(decoration, DECO_UPDATE_CAUSE_MASK);
+}
+
+void ky_scene_decoration_set_resize_width(struct ky_scene_decoration *decoration, int resize_with)
+{
+    if (decoration->resize_width == resize_with) {
+        return;
+    }
+
+    decoration->resize_width = resize_with;
+}
+
+void ky_scene_decoration_set_surface_blurred(struct ky_scene_decoration *decoration, bool blurred)
+{
+    if (decoration->surface_blurred == blurred) {
+        return;
+    }
+
+    decoration->surface_blurred = blurred;
+    scene_decoration_update(decoration, DECO_UPDATE_CAUSE_BLURRED);
+}
+
+void ky_scene_decoration_set_surface_color(struct ky_scene_decoration *decoration,
+                                           const float color[static 4])
+{
+    if (memcmp(decoration->surface_color, color, sizeof(decoration->surface_color)) == 0) {
+        return;
+    }
+
+    memcpy(decoration->surface_color, color, sizeof(decoration->surface_color));
+    scene_decoration_update(decoration, DECO_UPDATE_CAUSE_SURFACE_COLOR);
+}

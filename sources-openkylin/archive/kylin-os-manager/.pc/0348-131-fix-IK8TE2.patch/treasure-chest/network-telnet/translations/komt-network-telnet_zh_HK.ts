@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="zh_CN">
+<context>
+    <name>networktelnet::MainWindow</name>
+    <message>
+        <location filename="../mainwindow.cpp" line="43"/>
+        <source>Test</source>
+        <translation>測試</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="44"/>
+        <source>Testing</source>
+        <translation>測試中</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="32"/>
+        <source>Network Connectivity Detection Tool</source>
+        <translation>網路連通性檢測工具</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="45"/>
+        <source>IP/domain name</source>
+        <translation>IP 地址或域名</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="46"/>
+        <source>Port</source>
+        <translation>端口</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="47"/>
+        <source>Connection successful!</source>
+        <translation>連接成功！</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="48"/>
+        <source>Connection failed!</source>
+        <translation>連接失敗！</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="49"/>
+        <source>OK</source>
+        <translation>確定</translation>
+    </message>
+</context>
+</TS>

@@ -1,0 +1,2 @@
+subdir('magnifier')
+subdir('wlcctrl')

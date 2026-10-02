@@ -1,0 +1,73 @@
+// SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _UTIL_MATRIX_H_
+#define _UTIL_MATRIX_H_
+
+#include <wayland-server-protocol.h>
+
+#include <kywc/boxes.h>
+
+// Column Major (base glsl)
+struct ky_mat3 {
+    float matrix[9];
+};
+
+void ky_mat3_identity(struct ky_mat3 *mat3);
+
+void ky_mat3_init_scale(struct ky_mat3 *mat3, float sx, float sy);
+
+void ky_mat3_init_translate(struct ky_mat3 *mat3, float tx, float ty);
+
+void ky_mat3_init_scale_translate(struct ky_mat3 *mat3, float sx, float sy, float tx, float ty);
+
+// Right Multiplication
+void ky_mat3_multiply(struct ky_mat3 *a_mat, struct ky_mat3 *b_mat, struct ky_mat3 *result);
+
+void ky_mat3_translate(struct ky_mat3 *mat3, float x, float y);
+
+void ky_mat3_scale(struct ky_mat3 *mat3, float x, float y);
+
+// counter clock wise
+void ky_mat3_rotate(struct ky_mat3 *mat3, float rad);
+
+void ky_mat3_flip_x(struct ky_mat3 *mat3);
+
+void ky_mat3_flip_y(struct ky_mat3 *mat3);
+
+// use framebuffer coord not logic coord. see ky_scene_render_box
+void ky_mat3_framebuffer_to_ndc(struct ky_mat3 *mat3, int width, int height);
+
+/* not include translate & scale
+    // example
+    struct ky_mat3 transform;
+    ky_mat3_identity(&transform);
+
+    // keep scale->rotate->translate order
+    ky_mat3_scale(&transform, target->scale, target->scale);
+    // ky_mat3_rotate(&transform, 3.14 * 0.25); // if need rotate
+    ky_mat3_translate(&transform, lx - target->logical.x, ly - target->logical.y);
+
+    struct ky_mat3 to_ndc;
+    ky_mat3_logic_to_ndc(&to_ndc, target->logical.width, target->logical.height, target->transform);
+
+    struct ky_mat3 transform_ndc;
+    ky_mat3_multiply(&to_ndc, &transform, &transform_ndc);
+
+    // vertex shader
+    gl_Position = vec4(transform_ndc * vec3(position, 1.0), 1.0);
+*/
+void ky_mat3_logic_to_ndc(struct ky_mat3 *mat3, int width, int height,
+                          enum wl_output_transform transform);
+
+// for invert rotate uv
+void ky_mat3_invert_output_transform(struct ky_mat3 *mat, enum wl_output_transform transform);
+
+void ky_mat3_uvofbox_to_ndc(struct ky_mat3 *uv2ndc, int buffer_w, int buffer_h,
+                            float rotation_angle, const struct kywc_box *box);
+
+void ky_mat3_uvofbox_to_texture(struct ky_mat3 *uv2tex, enum wl_output_transform trans,
+                                const struct kywc_fbox *box);
+
+#endif /* _UTIL_MATRIX_H_ */

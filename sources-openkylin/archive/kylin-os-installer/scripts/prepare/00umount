@@ -1,0 +1,108 @@
+#!/bin/bash
+
+set -e
+#
+# 卸载设备
+
+TARGET=/target
+USER=$(id -un 1000)
+if [[ "${is_990_9a0}" = "true" ]]; then
+        echo "this is 990_9a0"
+else
+	if [[ -f /usr/share/glib-2.0/schemas/org.ukui.flash-disk.autoload.gschema.xml ]]; then
+  		# 取消自动挂载设置
+  		sudo -u ${USER:-kylin} gsettings set org.ukui.flash-disk.autoload ifautoload false
+	fi
+fi
+
+swapoff -a || true
+
+umount /media/*/* || true
+umount /media/* || true
+
+# 卸载 target 及虚拟文件系统
+if grep -q '/target' /proc/mounts; then
+    umount -l /target || true
+fi
+
+#sync
+#sleep 1
+#umount  /var/lib/os-prober/mount || true
+umount -l /var/lib/os-prober || true
+
+
+delete_lvm() {
+    local DEVICE=$1
+    vg_path="/dev/$(pvdisplay -c | grep -i "$DEVICE" | awk -F ":" '{print $2}')" || true
+    pv_name=$(pvdisplay -c | grep -i "$DEVICE" | awk -F ":" '{print $1}') || true
+    
+    if [ -n "$pv_name" ]; then
+        if [ -f "$vg_path" ]; then
+                lvremove -f $vg_path/* || true
+        fi
+        vgremove -f $vg_path || true
+        pvremove -f $pv_name || true
+    fi
+}
+lvm_disk=$(get_value devpath)
+delete_lvm ${lvm_disk}
+lvm_data=$(get_value data-device)
+if [[ -n ${lvm_data} ]]; then
+	delete_lvm ${lvm_data}
+fi
+format_disk=$(get_value format-disk)
+
+if [[ ${format_disk} == "false" ]]; then
+  num=1
+  disk=$(get_value devpath)
+  parted_disk=${disk##*/}
+  echo ${parted_list}
+  parted_list=
+  parted_list=$(ls /sys/block/${parted_disk} | grep ${parted_disk})
+
+  for i in ${parted_list}; do
+        parted_num=$(cat /sys/block/${parted_disk}/${i}/partition )
+        if [[ ${num} -lt ${parted_num} ]]; then
+                num=${parted_num}
+        fi
+  done
+  if [[ ${num} -gt 1 ]]; then
+        num=`expr ${num} + 1`
+  fi
+  sed -i "/parted-num/d" /tmp/ky-installer.cfg || true
+  echo "parted-num=$num" >>/tmp/ky-installer.cfg
+fi
+
+if [[ ${format_disk} == "false" ]]; then
+
+  disk=$(get_value devpath)
+  parted_disk=${disk##*/}
+  echo ${parted_list}
+  parted_list=
+  parted_list=$(ls /sys/block/${parted_disk} | grep ${parted_disk})
+
+  if [[ "${is_efi}" == "true" ]]; then
+  	find_efi=$(fdisk -l ${disk} | grep "EFI" )
+        if [[ -n ${find_efi} ]]; then
+                find_efi=`echo ${find_efi} | awk '{print $1}'`
+                sed -i "/parted-efi/d" /tmp/ky-installer.cfg || true
+                echo "parted-efi=${find_efi}" >>/tmp/ky-installer.cfg
+        fi
+  fi
+
+  if [[ "${is_efi}" == "false" ]]; then
+  	if echo "${disk}" | grep -q nvme; then
+                disk=${disk}p1
+          else
+                disk=${disk}1
+          fi
+          sed -i "/parted-boot/d" /tmp/ky-installer.cfg || true
+          echo "parted-boot=${disk}" >>/tmp/ky-installer.cfg 
+  fi
+
+fi
+
+#显卡测试
+if [ -x "/usr/bin/kwin-backend-auto-config-starter" ]; then
+    /usr/bin/kwin-backend-auto-config-starter & 
+fi

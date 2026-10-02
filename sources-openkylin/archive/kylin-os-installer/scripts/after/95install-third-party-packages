@@ -1,0 +1,170 @@
+#!/bin/bash
+
+set -e
+
+case ${LANGUAGES} in
+        'zh_CN')
+                echo "系统配置完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'en_US')
+                echo "System configuration completed" >>${LOG_PROGRESS_FILE}
+                ;;
+        'bo_CN')
+                echo "མ་ལག་སྒྲག་སྦྱར་ལེགས་གྲུབ།" >>${LOG_PROGRESS_FILE}
+                ;;
+        'zh_HK')
+                echo "系統配寘完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'mn_MN')
+                echo " ᠰᠢᠰᠲ᠋ᠡᠮ ᠤᠨ ᠪᠠᠶᠢᠷᠢᠯᠠᠯ ᠢ ᠪᠡᠶᠡᠯᠡᠭᠦᠯᠵᠡᠢ" >>${LOG_PROGRESS_FILE}
+                ;;
+              *)
+                echo "系统配置完成" >>${LOG_PROGRESS_FILE}
+                ;;
+esac
+
+
+new_sysroot_path=$(get_value new-root)
+
+if [[ "${is_minimal}" == "true" ]]; then
+    return 0
+elif [[ "${is_ghost}" == "true" ]]; then
+    return 0
+fi
+
+case ${LANGUAGES} in
+        'zh_CN')
+                echo "正在安装第三方包..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'en_US')
+                echo "Installing third-party packages..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'bo_CN')
+                echo "བཞིན་སྒྲག་སྦྱར་ཕྱོགས་གསུམ་པའི་ཁུག་མ།..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'zh_HK')
+                echo "正在安裝協力廠商包..." >>${LOG_PROGRESS_FILE}
+                ;;
+        'mn_MN')
+                echo " ᠶᠠᠭ ᠭᠤᠷᠪᠠᠳᠤᠭᠠᠷ ᠲᠠᠯᠠ ᠶᠢᠨ ᠪᠠᠭᠯᠠᠭᠠ ᠶᠢ ᠰᠠᠭᠤᠯᠭᠠᠵᠤ ᠪᠠᠶᠢᠨᠠ..." >>${LOG_PROGRESS_FILE}
+                ;;
+              *)
+                echo "正在安装第三方包..." >>${LOG_PROGRESS_FILE}
+                ;;
+esac
+
+
+# TODO, repeat code
+### Install third-party software packages for local
+do_third_party() {
+    dirname=$1
+    rsync -aHA ${dirname}/third-party $new_sysroot_path/tmp
+    chroot $new_sysroot_path /bin/sh -c 'find /tmp/third-party -name "*.deb" | grep -v "kylin-os-installer" >/tmp/third-party/packages.list' || true
+    count=$(cat $new_sysroot_path/tmp/third-party/packages.list | wc -l)
+    if [ $count -ne 0 ]; then
+        chroot $new_sysroot_path /bin/sh -c 'unset DEBIAN_HAS_FRONTEND && UCF_FORCE_CONFFNEW=YES dpkg -i $(cat /tmp/third-party/packages.list | xargs)'
+    fi
+    rm -rf $new_sysroot_path/tmp/third-party
+}
+
+install_package() {
+    pkgdir=$1
+    count=
+    if [[ ! -d /$new_sysroot_path/tmp/third-party/${pkgdir} ]]; then
+        return
+    fi
+
+    if [[ -d /$new_sysroot_path/tmp/third-party/${pkgdir}/common ]]; then
+        count=$(find /$new_sysroot_path/tmp/third-party/${pkgdir}/common -name "*.deb" | wc -l)
+        if [ $count -ne 0 ]; then
+                chroot /$new_sysroot_path /bin/sh -c "unset DEBIAN_HAS_FRONTEND && UCF_FORCE_CONFFNEW=YES dpkg -i /tmp/third-party/${pkgdir}/common/*.deb" || do_error third-party
+        fi
+        isSupport=
+        isSupport=$(dmidecode -s system-manufacturer)
+        if [[ $isSupport == "HUAWEI" ]];then
+                count=
+                count=$(find /$new_sysroot_path/tmp/third-party/${pkgdir}/huawei -name "*.deb" | wc -l)
+                if [ $count -ne 0 ]; then
+                        chroot /$new_sysroot_path /bin/sh -c "unset DEBIAN_HAS_FRONTEND && UCF_FORCE_CONFFNEW=YES dpkg -i /tmp/third-party/${pkgdir}/huawei/*.deb" || do_error third-party
+                fi
+        fi
+    else
+        count=$(find /$new_sysroot_path/tmp/third-party/${pkgdir} -name "*.deb" | wc -l)
+        if [ $count -ne 0 ]; then
+                chroot /$new_sysroot_path /bin/sh -c "unset DEBIAN_HAS_FRONTEND && UCF_FORCE_CONFFNEW=YES dpkg -i /tmp/third-party/${pkgdir}/*.deb" || do_error third-party
+        fi
+    fi
+}
+
+do_990third_party() {
+    dirname=$1
+    rsync -aHA ${dirname}/third-party $new_sysroot_path/tmp
+    install_package "common"
+
+    if [[ "${hw_typedata}" =~ "pguv" ]]; then
+        install_package "pguv"
+    elif [[ "${hw_typedata}" =~ "klvu" ]]; then
+        install_package "klvu"
+    elif [[ "${hw_typedata}" =~ "klvv" ]]; then
+        install_package "klvv"
+    elif [[ "${hw_typedata}" =~ "pguw" ]]; then
+        install_package "pguw"
+    elif [[ "${hw_typedata}" =~ "pgux" ]]; then
+        install_package "pgux"
+    elif [[ "${hw_typedata}" =~ "pangum900" ]]; then
+        install_package "pangum900"
+    fi
+
+    rm -rf $new_sysroot_path/tmp/third-party
+}
+
+if [[ -d /home/kylin/third-party ]]; then
+    do_third_party "/home/kylin"
+fi
+
+### Install third-party software packages
+if [[ -d /cdrom/third-party ]]; then
+    if [[ "${is_990_9a0}" == true ]]; then
+        do_990third_party "/cdrom"
+    else
+        do_third_party "/cdrom"
+    fi
+fi
+
+third_party=$(get_value third-party)
+if [[ -n ${third_party} ]]; then
+#if grep -q "third-party=" /proc/cmdline; then
+    if grep -q "url=" /proc/cmdline; then
+            cmd_cfg=$(cat /proc/cmdline)
+            url_ip=$(echo ${cmd_cfg##*url=}| awk '{print $1}')
+            url_ip=${url_ip%/*}
+	    
+	    mkdir -p $new_sysroot_path/third-party
+            wget -P$new_sysroot_path/third-party ${url_ip}/${third_party}
+            tar -xf $new_sysroot_path/third-party/${third_party} -C $new_sysroot_path/third-party/
+	    do_third_party "$new_sysroot_path/third-party"
+	    rm -rf $new_sysroot_path/third-party
+    fi
+fi
+
+case ${LANGUAGES} in
+        'zh_CN')
+                echo "第三方包安装完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'en_US')
+                echo "Third party package installation completed" >>${LOG_PROGRESS_FILE}
+                ;;
+        'bo_CN')
+                echo "ཕྱོགས་གསུམ་པའི་ཁུག་མ་སྒྲག་སྦྱར་ལེགས་གྲུབ།" >>${LOG_PROGRESS_FILE}
+                ;;
+        'zh_HK')
+                echo "協力廠商包安裝完成" >>${LOG_PROGRESS_FILE}
+                ;;
+        'mn_MN')
+                echo "ᠭᠤᠷᠪᠠᠳᠠᠬᠢ ᠲᠠᠯᠠ ᠶᠢᠨ ᠪᠠᠭᠯᠠᠭᠠ ᠶᠢ ᠰᠠᠭᠤᠯᠭᠠᠬᠤ ᠪᠡᠶᠡᠯᠡᠭᠳᠡᠪᠡ" >>${LOG_PROGRESS_FILE}
+                ;;
+              *)
+                echo "第三方包安装完成" >>${LOG_PROGRESS_FILE}
+                ;;
+esac
+

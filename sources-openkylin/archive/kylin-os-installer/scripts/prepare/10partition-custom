@@ -1,0 +1,325 @@
+#!/bin/bash
+
+set -e
+
+automatic=$(get_value automatic-installation)
+if [[ "$automatic" == "0" ]]; then
+    return 0
+elif [[ "${is_efi}" == "true" ]]; then
+    return 0
+fi
+
+disk_custom=$(get_value disk-custom)
+if [[ "${disk_custom}" == "false" ]]; then
+  return 0
+fi
+
+#保留用户数据安装，不能对分区进行调整(包括删减分区、调整分区大小等）,不能进行自定义分区安装
+data_unformat=$(get_value data-unformat)
+if [[ "${data_unformat}" == "true" ]]; then
+        echo "unformat data partition"
+        return 0
+fi
+
+#兼容老版本配置文件
+root_size=$(get_value disk-root)
+if [[ -n "${root_size}" ]]; then
+  return 0
+fi
+
+
+. /usr/share/kylin-os-installer/scripts/autopart-custom.sh
+disk=$(get_value devpath)
+data_device=$(get_value data-device)
+
+format_disk=$(get_value format-disk)
+if [[ ${format_disk} == true ]]; then
+	parted -s "${disk}" mktable msdos
+fi
+
+start=$(get_value kos-start)
+if [ -z ${start} ]; then
+        start=1
+fi
+end=${start}
+
+kos_end=$(get_value kos-end)
+if [ -z ${kos_end} ]; then
+        kos_end_ok="true"
+else
+        if [[ ${kos_end} == "0" ]]; then
+                kos_end_ok="true"
+        else
+                kos_end_ok="false"
+                end_size=$(fdisk -s "${disk}")
+                end_size=$(( end_size / 1024 ))
+                end_size=$(( end_size - kos_end ))
+        fi
+fi
+
+custom_partitions=$(get_value custom-partitions | sed 's/\"//g')
+one_list=${custom_partitions//;/ }
+two_list=
+for p in ${one_list[@]}; do
+        two_list="${two_list} $(echo $p | cut -f1)"
+done
+three_list=$(echo ${two_list} | tr ' ' '\n')
+
+partitions_num=0
+for i in ${three_list}; do
+        partitions_num=$(( partitions_num + 1 ))
+done
+
+if [[ -n ${data_device} ]]; then
+        partitions_num=$(( partitions_num - 1 ))
+fi
+
+num=1
+if [[ ${format_disk} == "false" ]]; then
+        num=$(get_value parted-num)
+	un_boot=$(get_value parted-num)
+fi
+for i in ${three_list}; do
+        
+#	partitions_num=$(( partitions_num - 1 ))
+        
+	custom_partition=$(get_value "custom-$i" | sed 's/\"//g')
+        custom_partition=${custom_partition//;/|}
+        fs=
+        fs=$(echo ${custom_partition#*fs=})
+        fs=$(echo ${fs%%|*})
+
+        size=
+        size=$(echo ${custom_partition#*size=})
+        size=$(echo ${size%%|*})
+
+        if [[ $i == "efi" ]]; then
+		partitions_num=$(( partitions_num - 1 ))
+                continue
+        fi
+
+        if [ $num -eq 2 ]; then
+                start=$((end + 2))
+                end=$start
+                parted -s "${disk}" mkpart extended "${start}"MiB 100%
+        fi
+
+
+        if [[ $i == "boot" ]]; then
+		
+		partitions_num=$(( partitions_num - 1 ))
+		if [[ $size == "default" ]]; then
+                       	size=$(get_value boot-size)
+                fi
+		
+		parted_boot=
+                parted_boot=$(get_value parted-boot)
+                if [ -z  ${parted_boot} ]; then
+                        start=$((end + 1))
+                        end=$((start + size))
+                        if [ $num -eq 1 ]; then
+                                parted -s "${disk}" mkpart primary "${fs}" "${start}"MiB "${end}"MiB
+                        else
+                                parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end}"MiB
+                        fi
+                        num=`expr $num + 1`
+		else
+			if [ ${un_boot} -eq 1 ]; then
+				num=`expr $num + 1`
+			fi
+		fi
+                continue
+	fi
+	
+	if [[ $i == "root" ]]; then
+		partitions_num=$(( partitions_num - 1 ))
+
+		if [[ $size == "default" ]]; then
+                	size=$(get_value root-size)
+                fi
+
+                start=$((end + 1))
+           	if [[ $size == "free-size" ]]; then
+			if [[ ${kos_end_ok} == "false" ]]; then
+	                	parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+                        else
+	                	parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+                        fi
+
+        	else
+			if [[ -n ${data_device} ]]; then
+                                is_free_size=$(grep "^custom-data=" "/tmp/ky-installer.cfg" | grep "free-size") || true
+                                if [ -z ${is_free_size} ]; then
+		     			end=$((start + size))
+                     			if [ $num -eq 1 ]; then
+                        			parted -s "${disk}" mkpart primary "${fs}" "${start}"MiB "${end}"MiB
+                     			else
+                        			parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end}"MiB
+                     			fi
+
+                                else
+					if [[ ${kos_end_ok} == "false" ]]; then
+	                			parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+                        		else
+	                			parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+                        		fi
+				fi
+                        else
+				if [[ ${partitions_num} == 0 ]]; then
+                                        if [[ ${kos_end_ok} == "false" ]]; then
+	                			parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+					else
+	                			parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+
+					fi
+				else
+					end=$((start + size))
+                     			if [ $num -eq 1 ]; then
+                        			parted -s "${disk}" mkpart primary "${fs}" "${start}"MiB "${end}"MiB
+                     			else
+                        			parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end}"MiB
+                     			fi
+				fi
+                        fi
+		fi
+                num=`expr $num + 1`
+                continue
+        fi
+
+        if [[ $i == "backup" ]]; then
+
+		partitions_num=$(( partitions_num - 1 ))
+		if [[ $size == "default" ]]; then
+                        size=$(get_value backup-size)
+                fi
+
+                start=$((end + 1))
+		if [[ ${partitions_num} == 0 ]]; then
+                	if [[ ${kos_end_ok} == "false" ]]; then
+                		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+			else
+                		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+			fi
+		else
+                	end=$((start + size))
+                	if [ $num -eq 1 ]; then
+                        	parted -s "${disk}" mkpart primary "${fs}" "${start}"MiB "${end}"MiB
+                	else
+                        	parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end}"MiB
+                	fi
+		fi
+                num=`expr $num + 1`
+                continue
+        fi
+
+        if [[ $i == "data" ]]; then
+		
+		if [[ $size == "default" ]]; then
+                	size=$(get_value data-size)
+                fi
+
+		if [[ -n ${data_device} ]]; then
+			umount -l "${data_device}" || true
+			parted -s "${data_device}" mktable msdos
+			if [[ ${kos_end_ok} == "false" ]]; then
+				data_end_size=$(fdisk -s "${data_device}")
+                                data_end_size=$(( data_end_size / 1024 ))
+                                data_end_size=$(( data_end_size - kos_end ))
+				parted -s "${data_device}" mkpart primary "${fs}" 1MiB "${data_device}"MiB
+			else
+				parted -s "${data_device}" mkpart primary "${fs}" 1MiB 100%
+			fi
+		else
+			partitions_num=$(( partitions_num - 1 ))
+                	start=$((end + 1))
+			if [[ $size == "free-size" ]]; then
+				if [[ ${kos_end_ok} == "false" ]]; then
+                        		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+                        	else
+                        		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+                        	fi
+                        else
+				if [[ ${partitions_num} == 0 ]]; then
+                			if [[ ${kos_end_ok} == "false" ]]; then
+                				parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+					else
+                				parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+					fi
+
+				else
+                			end=$((start + size))
+                			if [ $num -eq 1 ]; then
+                        			parted -s "${disk}" mkpart primary "${fs}" "${start}"MiB "${end}"MiB
+                			else   
+                        			parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end}"MiB
+                			fi
+				fi
+			fi
+        	        num=`expr $num + 1`
+		fi
+		continue
+        fi
+	
+	if [[ $i == "swap" ]]; then
+
+		partitions_num=$(( partitions_num - 1 ))
+		if [[ $size == "default" ]]; then
+                        size=$(get_value swap-size)
+                fi
+		
+                start=$((end + 1))
+		if [[ ${partitions_num} == 0 ]]; then
+                        if [[ ${kos_end_ok} == "false" ]]; then
+                		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+			else
+                		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+			fi
+		else
+                	end=$((start + size))
+                	if [ $num -eq 1 ]; then
+                        	parted -s "${disk}" mkpart primary "${fs}" "${start}"MiB "${end}"MiB
+                	else
+                        	parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end}"MiB
+                	fi
+		fi
+                num=`expr $num + 1`
+                continue
+        fi
+
+	partitions_num=$(( partitions_num - 1 ))
+        start=$((end + 1))
+
+	if [[ $size == "free-size" ]]; then
+		if [[ ${kos_end_ok} == "false" ]]; then
+                     	parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+                else
+                	parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+                fi
+        else
+
+		if [[ ${partitions_num} == 0 ]]; then
+	               	if [[ ${kos_end_ok} == "false" ]]; then
+                		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end_size}"MiB
+			else
+				parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB 100%
+			fi
+		else
+        		end=$((start + size))
+        		if [ $num -eq 1 ]; then
+                		parted -s "${disk}" mkpart primary "${fs}" "${start}"MiB "${end}"MiB
+        		else
+                		parted -s "${disk}" mkpart logical "${fs}" "${start}"MiB "${end}"MiB
+        		fi
+		fi
+	fi
+        num=`expr $num + 1`
+done
+num=1
+if [[ ${format_disk} == "false" ]]; then
+        num=$(get_value parted-num)
+fi
+
+parted -s "${disk}" set "${num}" boot on
+partprobe "${disk}"
+sync
+

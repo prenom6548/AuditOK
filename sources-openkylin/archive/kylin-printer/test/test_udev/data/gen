@@ -1,0 +1,66 @@
+#!/bin/bash
+
+path=$(cd `dirname $0`; pwd)
+cd $path
+
+case $1 in
+"install")
+    sudo cp kylin-printer-udev@.service /lib/systemd/system/
+    sudo cp 75-kylin-printer.rules /lib/udev/rules.d/
+    exit 0
+    ;;
+"remove")
+    sudo rm -rf /lib/systemd/system/kylin-printer-udev@.service
+    sudo rm -rf /lib/udev/rules.d/75-kylin-printer.rules
+    exit 0
+    ;;
+"clean")
+    rm -rf kylin-printer-udev@.service 75-kylin-printer.rules get
+    exit 0
+    ;;
+esac
+
+
+service_name="kylin-printer-udev@.service"
+rules_name="75-kylin-printer.rules"
+get_name="get"
+
+out_path="$path/get"
+
+cat>$service_name<<EOF
+[Unit]
+Description=Configure Plugged-In Printer
+Requires=cups.socket
+After=cups.socket
+
+[Service]
+ExecStart=$out_path add "%i"
+EOF
+
+cat>$rules_name<<EOF
+# UDEV rules for USB devices - ENV variables can be monitored
+# via 'sudo udevadm monitor --udev --subsystem-match=usb --property'
+# Low-level USB device add trigger
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ENV{ID_USB_INTERFACES}=="*:0701??:*", ENV{ID_USB_INTERFACES}!="*:070104:*", TAG+="systemd", ENV{SYSTEMD_WANTS}+="kylin-printer-udev@usb-\$env{BUSNUM}-\$env{DEVNUM}.service"
+# Low-level USB device remove trigger
+# Interface types:
+# 7/1/1 - device with unidirectional USB, managed by usb backend
+# 7/1/2 - device with bidirectional USB, managed by usb backend
+# 7/1/3 - device with special USB protocol, managed by hp backend
+# 7/1/4 - device with IPP over USB protocol, managed by ipp-usb daemon
+ACTION=="remove", SUBSYSTEM=="usb", ENV{INTERFACE}=="7/1/*", ENV{INTERFACE}!="7/1/4", RUN+="$out_path remove %p"
+EOF
+
+cat>$get_name<<EOF
+#!/bin/bash
+
+path=\$(cd \`dirname \$0\`; pwd)
+cd \$path
+res="\$1 \$2"
+whoami >> res.txt
+pwd >> res.txt
+echo \$res >> res.txt
+EOF
+
+chmod +x get
+exit 0

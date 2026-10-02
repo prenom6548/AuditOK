@@ -1,0 +1,483 @@
+From: =?utf-8?b?5LqO5oGS?= <yuheng@kylinos.cn>
+Date: Mon, 8 Jul 2024 09:25:29 +0000
+Subject: =?utf-8?b?ITc2IOabtOaWsOmDqOWIhm1wcmlz5o6l5Y+j5Yqf6IO9IE1lcmdlIHB1?=
+ =?utf-8?b?bGwgcmVxdWVzdCAhNzYgZnJvbSDkuo7mgZIvb3Blbmt5bGluL25pbGU=?=
+
+---
+ UI/dbusadapter.cpp                           | 87 +++++++++++++++++++++++++-
+ UI/dbusadapter.h                             | 91 ++++++++++------------------
+ UI/mainwidget.cpp                            | 80 ++++++++++++++++++++++++
+ UI/mainwidget.h                              | 22 +++++++
+ UIControl/player/coreplayer/mmediaplayer.cpp | 14 ++++-
+ UIControl/player/coreplayer/mmediaplayer.h   |  2 +
+ 6 files changed, 232 insertions(+), 64 deletions(-)
+
+diff --git a/UI/dbusadapter.cpp b/UI/dbusadapter.cpp
+index 531b104..bf49c87 100644
+--- a/UI/dbusadapter.cpp
++++ b/UI/dbusadapter.cpp
+@@ -5,12 +5,28 @@ DbusAdapter::DbusAdapter(QObject *parent) : QObject(parent)
+ {
+     QDBusConnection::sessionBus().unregisterService("org.mpris.MediaPlayer2.KylinMusic");
+     QDBusConnection::sessionBus().registerService("org.mpris.MediaPlayer2.KylinMusic");
+-    QDBusConnection::sessionBus().registerObject("/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", this, QDBusConnection::ExportNonScriptableSlots);
++    QDBusConnection::sessionBus().registerObject("/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", this, QDBusConnection::ExportAllContents);
+ 
+     this->setProperty("CanControl", false);
+     initMetadata();
+ }
+ 
++QString DbusAdapter::getPlaybackState()
++{
++    return Widget::mutual->getPlayState();
++}
++
++QString DbusAdapter::getLoopStatus()
++{
++    return Widget::mutual->getPlayMode();
++}
++
++void DbusAdapter::setLoopStatus(QString s)
++{
++    Widget::mutual->setPlayMode(s);
++}
++
++
+ void DbusAdapter::updateMetadata(const QVariantMap input)
+ {
+     bool needUpdate = false;
+@@ -22,7 +38,32 @@ void DbusAdapter::updateMetadata(const QVariantMap input)
+             needUpdate = true;
+         }
+     }
+-    emit onMetadataChanged(m_metadata);
++}
++
++double DbusAdapter::getVolume()
++{
++    return double(Widget::mutual->getVolume()) / 100;
++}
++
++// mpris中volume的取值范围是[0,1]，但软件中取值范围是[0, 100]
++void DbusAdapter::setVolume(double d)
++{
++    if (d < 0) {
++        d = 0;
++    } else if (d > 1) {
++        qWarning() << "setVolume error, bigger than 1, volume is :" << d;
++        return;
++    }
++
++    Widget::mutual->setVolume(d*100);
++
++    QStringList changeList { QString::number(d) };
++    notify("Volume", changeList);
++}
++
++long long DbusAdapter::getPosition()
++{
++    return Widget::mutual->getPosition() * 1000;
+ }
+ 
+ void DbusAdapter::initMetadata()
+@@ -106,8 +147,18 @@ void DbusAdapter::Exit() const
+     Widget::mutual->slotClose();
+ }
+ 
++/**
++ * @brief DbusAdapter::Seek
++ * @param offset 偏移微妙数，正数表示向后，负数表示向前
++ * 如果结果小于0，表示从开始位置播放；如果结果大于媒体时长，表示播放下一曲
++ */
+ void DbusAdapter::Seek(const qint64 Offset)
+ {
++    qDebug() << "seek :" << Offset;
++    // 如果小于0.1ms就不进行操作
++    if (qAbs(Offset) > 1000*99) {
++        Widget::mutual->Seek(Offset / 1000);
++    }
+ 
+ }
+ 
+@@ -120,3 +171,35 @@ void DbusAdapter::OpenUri(const QString &Uri)
+ {
+ 
+ }
++
++void DbusAdapter::notify(const QString &changedPropertie, const QStringList &invalidatedProperties)
++{
++    QVariantMap changedProperties;
++
++    QDBusConnection connection = QDBusConnection::sessionBus();
++    QString objectPath = "/org/mpris/MediaPlayer2";
++    QDBusMessage signalMessage= QDBusMessage::createSignal(objectPath,"org.freedesktop.DBus.Properties","PropertiesChanged");
++
++    changedProperties["property"] = changedPropertie;
++    signalMessage << "org.mpris.MediaPlayer2.Player" << changedProperties << invalidatedProperties;
++    connection.send(signalMessage);
++}
++
++double DbusAdapter::getRate()
++{
++    qDebug() << "getRate";
++    return Widget::mutual->getPlayRate();
++}
++
++
++void DbusAdapter::setRate(double d)
++{
++    qDebug() << "setRate:" << d;
++    if (d >= m_minimumRate && d <= m_maximumRate) {
++        Widget::mutual->setPlayRate(d);
++    } else {
++        qWarning() << "dbus set rate error, rate is :" << d;
++    }
++    QStringList changeList { QString::number(d) };
++    notify("Rate", changeList);
++}
+diff --git a/UI/dbusadapter.h b/UI/dbusadapter.h
+index e4a2bfc..18978de 100644
+--- a/UI/dbusadapter.h
++++ b/UI/dbusadapter.h
+@@ -7,37 +7,25 @@
+ //#include "UIControl/player/player.h"
+ #include "mainwidget.h"
+ 
+-enum Playback_Status {
+-    Playing,
+-    Paused,
+-    Stopped
+-};
+-
+-enum class Loop_Status {
+-    None,
+-    Track,
+-    Playlist
+-};
+-
+ class DbusAdapter : public QObject
+ {
+     Q_OBJECT
+     Q_CLASSINFO("D-Bus Interface", "org.mpris.MediaPlayer2.Player")
+ 
+     // When this property changes, the org.freedesktop.DBus.Properties.PropertiesChanged signal is emitted with the new value.
+-    Q_PROPERTY(Playback_Status PlaybackStatus READ getPlaybackStatus NOTIFY onPlayStatusChanged)
+-    Q_PROPERTY(Loop_Status LoopStatus READ getLoopStatus WRITE setLoopStatus NOTIFY onLoopStatusChanged)
+-    Q_PROPERTY(double Rate READ getRate WRITE setRate NOTIFY onRateChanged)
+-    Q_PROPERTY(bool Shuffle READ getShuffle WRITE setShuffle NOTIFY onShuffleChanged)
+-    Q_PROPERTY(QVariantMap Metadata READ getMetadata NOTIFY onMetadataChanged)
+-    Q_PROPERTY(double Volume READ getVolume WRITE setVolume NOTIFY onVolumeChanged)
+-    Q_PROPERTY(double MinimumRate READ getMinimumRate NOTIFY onMinimumRateChanged)
+-    Q_PROPERTY(double MaximumRate READ getMaximumRate NOTIFY onMaximumRateChanged)
+-    Q_PROPERTY(bool CanGoNext READ getCanGoNext NOTIFY onCanGoNextChanged)
+-    Q_PROPERTY(bool CanGoPrevious READ getCanGoPrevious NOTIFY onCanGoPreviousChanged)
+-    Q_PROPERTY(bool CanPlay READ getCanPlay NOTIFY onCanPlayChanged)
+-    Q_PROPERTY(bool CanPause READ getCanPause NOTIFY onCanPauseChanged)
+-    Q_PROPERTY(bool CanSeek READ getCanSeek NOTIFY onCanSeekChanged)
++    Q_PROPERTY(QString PlaybackStatus READ getPlaybackState)
++    Q_PROPERTY(QString LoopStatus READ getLoopStatus WRITE setLoopStatus)
++    Q_PROPERTY(double Rate READ getRate WRITE setRate)
++    Q_PROPERTY(bool Shuffle READ getShuffle WRITE setShuffle)
++    Q_PROPERTY(QVariantMap Metadata READ getMetadata)
++    Q_PROPERTY(double Volume READ getVolume WRITE setVolume)
++    Q_PROPERTY(double MinimumRate READ getMinimumRate)
++    Q_PROPERTY(double MaximumRate READ getMaximumRate)
++    Q_PROPERTY(bool CanGoNext READ getCanGoNext)
++    Q_PROPERTY(bool CanGoPrevious READ getCanGoPrevious)
++    Q_PROPERTY(bool CanPlay READ getCanPlay)
++    Q_PROPERTY(bool CanPause READ getCanPause)
++    Q_PROPERTY(bool CanSeek READ getCanSeek)
+ 
+     // When this property changes, the org.freedesktop.DBus.Properties.PropertiesChanged signal is NOT emitted with the new value.
+     Q_PROPERTY(long long Position READ getPosition)
+@@ -49,16 +37,14 @@ public:
+     void emitSeeked();
+ 
+ public:
+-    Playback_Status m_playbackStatus;
+-    Playback_Status getPlaybackStatus() { return m_playbackStatus; }
++    QString getPlaybackState();
+ 
+-    Loop_Status m_loopStatus;
+-    Loop_Status getLoopStatus() { return m_loopStatus; }
+-    void setLoopStatus(Loop_Status s) { m_loopStatus = s; }
++    QString getLoopStatus();
++    void setLoopStatus(QString s);
+ 
+     double m_rate;
+-    double getRate() { return m_rate; }
+-    void setRate(double d) { m_rate = d; }
++    double getRate();
++    void setRate(double d);
+ 
+     bool m_shuffle { false };
+     bool getShuffle() { return m_shuffle; }
+@@ -68,37 +54,33 @@ public:
+     QVariantMap getMetadata() { return m_metadata; }
+     void updateMetadata(const QVariantMap input);
+ 
+-    double m_volume;
+-    double getVolume() { return m_volume; }
+-    void setVolume(double b) { m_volume = b; }
++    double getVolume();
++    void setVolume(double b);
+ 
+-    long long m_position;
+-    long long getPosition() { return m_position; }
++    long long getPosition();
+ 
+-    double m_minimumRate;
++    double m_minimumRate { 0.5 };
+     double getMinimumRate() { return m_minimumRate; }
+-    void setMinimumRate(double d) { m_minimumRate = d; }
+ 
+-    double m_maximumRate;
++    double m_maximumRate { 3.0 };
+     double getMaximumRate() { return m_maximumRate; }
+-    void setMaximumRate(double d) { m_maximumRate = d; }
+ 
+-    bool m_canGoNext { false };
++    bool m_canGoNext { true };
+     bool getCanGoNext() { return m_canGoNext; }
+ 
+-    bool m_canGoPrevious { false };
++    bool m_canGoPrevious { true };
+     bool getCanGoPrevious() { return m_canGoPrevious; }
+ 
+-    bool m_canPlay { false };
++    bool m_canPlay { true };
+     bool getCanPlay() { return m_canPlay; }
+ 
+-    bool m_canPause { false };
++    bool m_canPause { true };
+     bool getCanPause() { return m_canPause; }
+ 
+-    bool m_canSeek { false };
++    bool m_canSeek { true };
+     bool getCanSeek() { return m_canSeek; }
+ 
+-    bool m_canControl { false };
++    bool m_canControl { true };
+     bool getCanControl() { return m_canControl; }
+     void setCanControl(const bool b) { m_canControl = b; }
+ 
+@@ -122,20 +104,9 @@ public Q_SLOTS:
+ Q_SIGNALS:
+     void Seeked(const qint64 url);
+ 
+-    void onPlayStatusChanged(Playback_Status status);
+-    void onLoopStatusChanged(Loop_Status status);
+-    void onRateChanged(double r);
+-    void onShuffleChanged(bool b);
+-    void onMetadataChanged(QVariantMap map);
+-    void onVolumeChanged(double d);
+-    void onMinimumRateChanged(double d);
+-    void onMaximumRateChanged(double d);
+-    void onCanGoNextChanged(bool b);
+-    void onCanGoPreviousChanged(bool b);
+-    void onCanPlayChanged(bool b);
+-    void onCanPauseChanged(bool b);
+-    void onCanSeekChanged(bool b);
+ 
++private:
++    void notify(const QString &changedProperties, const QStringList &invalidatedProperties);
+ };
+ 
+ #endif // DBUSADAPTER_H
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index 9729e80..0b901e8 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -538,6 +538,47 @@ void Widget::slotStateChanged(playController::PlayState state)
+     }
+ }
+ 
++QString Widget::getPlayMode() const
++{
++    switch (playController::getInstance().mode()) {
++    case CurrentItemInLoop:
++        return "Track";
++    case Loop:
++        return "Playlist";
++    default:
++        return "";
++    }
++}
++
++void Widget::setPlayMode(QString state)
++{
++
++    int mode;
++    if (state == "Track") {
++        mode = 1;
++    } else if (state == "Playlist") {
++        mode = 3;
++    } else {
++        return;
++    }
++    playSongArea->setPlayMode(mode);
++}
++
++QString Widget::getPlayState() const
++{
++    switch (playController::getInstance().getPlayer()->state()) {
++    case MMediaPlayer::StoppedState:
++        return "Stopped";
++    case MMediaPlayer::PlayingState:
++        return "Playing";
++    case MMediaPlayer::PausedState:
++        return "Paused";
++    default:
++        return "";
++    }
++
++}
++
+ void Widget::onScreenLock()
+ {
+     KyInfo() << "getState = " << playController::getInstance().getState();
+@@ -1198,6 +1239,17 @@ void Widget::VolumeDown() const
+     playSongArea->volumeReduce();
+ }
+ 
++void Widget::setVolume(int v) const
++{
++    playSongArea->slotVolumeChanged(v);
++}
++
++int Widget::getVolume() const
++{
++    return playController::getInstance().getVolume();
++}
++
++
+ /**
+  * @brief Widget::Next
+  * 跳转到曲目列表的下一首曲目。
+@@ -1248,6 +1300,34 @@ void Widget::PlayPause() const
+     }
+ }
+ 
++void Widget::Seek(const qint64 offset) const
++{
++    qint64 movePos = playController::getInstance().getPlayer()->position() + offset;
++    // 移动的目标位置小于0，则从0开始播放
++    if (movePos < 0) {
++        playController::getInstance().getPlayer()->setPosition(0);
++    } else if (movePos > playController::getInstance().getPlayer()->duration()) {
++        playController::getInstance().onNextSong();
++    } else {
++        playController::getInstance().getPlayer()->setPosition(movePos);
++    }
++}
++
++void Widget::setPlayRate(double s) const
++{
++    playController::getInstance().getPlayer()->setPlayRate(s);
++}
++
++double Widget::getPlayRate() const
++{
++    return playController::getInstance().getPlayer()->getPlayRate();
++}
++
++qint64 Widget::getPosition() const
++{
++    return playController::getInstance().getPlayer()->position();
++}
++
+ void Widget::slotRecoverNormalWidget()
+ {
+     if (Global::isWayland) {
+diff --git a/UI/mainwidget.h b/UI/mainwidget.h
+index 9ad7b7c..3284dfe 100644
+--- a/UI/mainwidget.h
++++ b/UI/mainwidget.h
+@@ -92,6 +92,10 @@ public Q_SLOTS:
+     void VolumeUp() const;
+     // 降低音量
+     void VolumeDown() const;
++    // 设置音量
++    void setVolume(int v) const;
++    // 获取音量
++    int getVolume() const;
+     // 下一首
+     void Next() const;
+     // 上一首
+@@ -103,6 +107,18 @@ public Q_SLOTS:
+     // 播放暂停
+     void PlayPause() const;
+ 
++    // 调整播放位置
++    void Seek(const qint64 Offset) const;
++
++    // 调整播放速度
++    void setPlayRate(double s) const;
++
++    // 获取播放速度
++    double getPlayRate() const;
++
++    // 获取当前播放位置
++    qint64 getPosition() const;
++
+     //mini
+     void slotRecoverNormalWidget();
+     //mini 关闭窗体
+@@ -125,6 +141,12 @@ public Q_SLOTS:
+     void setCreatFinishMsg(QString msg);
+     //如果正在播放，阻止锁屏
+     void slotStateChanged(playController::PlayState state);
++    // 获取播放状态
++    QString getPlayState() const;
++    // 获取播放模式
++    QString getPlayMode() const;
++    //设置当前播放状态
++    void setPlayMode(QString state);
+ private Q_SLOTS:
+     void onScreenLock();
+     void onScreenUnlock();
+diff --git a/UIControl/player/coreplayer/mmediaplayer.cpp b/UIControl/player/coreplayer/mmediaplayer.cpp
+index 3809d9e..a0d984a 100644
+--- a/UIControl/player/coreplayer/mmediaplayer.cpp
++++ b/UIControl/player/coreplayer/mmediaplayer.cpp
+@@ -83,6 +83,16 @@ void MMediaPlayer::play()
+     truePlay("0");
+ }
+ 
++void MMediaPlayer::setPlayRate(double s)
++{
++    setProperty("speed", QString::number(s));
++}
++
++double MMediaPlayer::getPlayRate()
++{
++    return getProperty("speed").toDouble();
++}
++
+ void MMediaPlayer::pause()
+ {
+     // 获得mpv播放器的"暂停"状态
+@@ -113,8 +123,8 @@ void MMediaPlayer::pauseOnly()
+     // 根据"暂停"状态来选择暂停还是播放
+     if(pasued == "no") {
+         KyInfo() << "begin pause.";
+-//        setProperty("pause", "yes");
+-//        changeState(PausedState);
++        setProperty("pause", "yes");
++        changeState(PausedState);
+     }
+ }
+ 
+diff --git a/UIControl/player/coreplayer/mmediaplayer.h b/UIControl/player/coreplayer/mmediaplayer.h
+index 5f2e109..2690971 100644
+--- a/UIControl/player/coreplayer/mmediaplayer.h
++++ b/UIControl/player/coreplayer/mmediaplayer.h
+@@ -33,6 +33,8 @@ public:
+     qint64 duration() const; //获取总时长
+     void setMedia(const MMediaContent &media); //设置待播放媒体
+     void play(); //播放
++    void setPlayRate(double s);
++    double getPlayRate();
+ public Q_SLOTS:
+     void stop(); //停止
+     void onMpvEvents(); //接收mpv事件

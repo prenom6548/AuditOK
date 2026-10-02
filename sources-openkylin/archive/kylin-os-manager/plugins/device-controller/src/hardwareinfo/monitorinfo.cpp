@@ -1,0 +1,180 @@
+#include "monitorinfo.h"
+#include <QApplication>
+#include <QScreen>
+#include <QDebug>
+#include <QProcess>
+
+MonitorInfo::MonitorInfo() {
+
+}
+
+QString MonitorInfo::getValue(QString value) {
+    if (value == "vendor") {
+        return vendor;
+    } else if (value == "name") {
+        if(name == ""){
+            if (is_main.toInt()){
+                return "Main Monitor";
+            }else{
+                return "Monitor";
+            }
+        }
+        return name;
+    } else if (value == "size") {
+        return size;
+    } else if (value == "ratio") {
+        return ratio;
+    } else if (value == "resolution") {
+        return getResolution();
+    } else if (value == "max_resolution") {
+        return max_resolution;
+    } else if (value == "is_main") {
+        if(isMainMonitor()){
+            return QApplication::tr("Yes");
+        }else{
+            return QApplication::tr("No");
+        }
+    } else if (value == "gamma") {
+        return gamma;
+    } else if (value == "interface") {
+        return interface;
+    } else if (value == "model") {
+        return model;
+    } else if (value == "visible_area") {
+        return visible_area;
+    } else if (value == "year") {
+        return year;
+    } else if (value == "week") {
+        return week;
+    } else {
+        return ""; // 如果传入的 value 不是以上列出的任何一个，返回空字符串
+    }
+}
+
+QString MonitorInfo::getResolution() {
+    QMap<QString, QString> devlist;
+    QProcess process;
+    process.start("xrandr --prop");
+    process.waitForFinished();
+
+    QString output = process.readAllStandardOutput();
+    QStringList lines = output.split('\n');
+
+    QList<int> intlist;
+    for (int i = 0; i < lines.length(); ++i) {
+        if(lines[i].contains(" connected") || lines[i].contains(" disconnected")){
+            intlist.append(i);
+        }
+    }
+    intlist.append(lines.length());
+
+    QStringList monitorList;
+    for (int i = 0; i < intlist.size() - 1; ++i) {
+        QString monitorInfo;
+        for (int j = intlist.at(i); j < intlist.at(i + 1); ++j) {
+            monitorInfo.append(lines.at(j)).append('\n');
+        }
+        monitorList.append(monitorInfo.trimmed()); // 移除末尾的换行符
+    }
+
+    QStringList monitorinfo;
+    for (int i = 0; i < monitorList.length(); ++i) {
+        if(QString(monitorList.at(i)).contains(interface)){
+            monitorinfo = QString(monitorList[i]).split('\n');
+            break;
+        }
+    }
+
+    QString currentDisplay = interface;
+    QString res;
+    bool isCurrentMode = false;
+
+    for (const QString &line: monitorinfo) {
+        if (line.startsWith("   ")) {
+            // 解析当前显示器的分辨率和刷新率
+            QStringList parts = line.simplified().split(' ');
+            if (parts.size() >= 2) {
+                QString refreshRate;
+                for (int i = 1; i < parts.length(); ++i) {
+                    if (QString(parts[i]).contains("*")) {
+                        res = parts[0];
+                        refreshRate = parts[i];
+                    }
+                    if (refreshRate.contains("+")) {
+                        refreshRate.remove("+");
+                    }
+                }
+                bool hasAsterisk = refreshRate.contains('*');
+
+                // 如果刷新率带有 '*'，表示当前模式
+                if (hasAsterisk) {
+                    refreshRate = refreshRate.remove('*');
+                    devlist[currentDisplay] = refreshRate;
+                    isCurrentMode = true;
+                } else if (!isCurrentMode && !devlist.contains(currentDisplay)) {
+                    // 如果没有 '*' 并且还没有记录当前显示器的刷新率
+                    devlist[currentDisplay] = refreshRate;
+                }
+            }
+        }
+    }
+
+    QList<QScreen *> screens = QGuiApplication::screens();
+            foreach (QScreen *screen, screens) {
+            QString interface = screen->name();
+            if (devlist.contains(interface)) {
+                QString resolution = res
+                                     + "@"
+                                     + devlist.value(interface) + "Hz";
+                return resolution;
+            }
+        }
+
+    return QString(); // 如果没有匹配到则返回空字符串
+}
+
+bool MonitorInfo::isMainMonitor(){
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if(screen->name() == this->interface){
+        return true;
+    }else{
+        return false;
+    }
+}
+
+MonitorInfo::~MonitorInfo() {
+}
+
+void MonitorInfo::setValue(QString key, QString value) {
+    if (key == "vendor") {
+        model = value;
+    } else if (key == "name") {
+        vendor = value;
+    } else if (key == "ratio") {
+        ratio = value;
+    } else if (key == "size") {
+        size = value;
+    } else if (key == "ratio") {
+        ratio = value;
+    } else if (key == "resolution") {
+        resolution = value;
+    } else if (key == "max_resolution") {
+        max_resolution = value;
+    } else if (key == "gamma") {
+        gamma = value;
+    } else if (key == "is_main") {
+        is_main = value;
+    }else if (key == "interface") {
+        interface = value;
+    }else if (key == "model") {
+        model = value;
+    }else if (key == "visible_area") {
+        visible_area = value;
+    }else if (key == "year") {
+        year = value;
+    }else if (key == "week") {
+        week = value;
+    }
+}
+
+

@@ -1,0 +1,217 @@
+From: =?utf-8?b?6YKT5aW9?= <denghao@kylinos.cn>
+Date: Wed, 24 Apr 2024 06:00:11 +0000
+Subject: =?utf-8?b?ITM3IDIwNTE5OSDlrZAg44CQ55m+5pel5pS75YWz44CR44CQ5Zu+5b2i?=
+ =?utf-8?b?5qCI5ZCI5oiQ5riy5p+T5oqA5pyv44CRVUtVSeW6lOeUqOmAgumFjSAvIOOAkA==?=
+ =?utf-8?b?55m+5pel5pS75YWz44CR44CQ5Zu+5b2i5qCI5ZCI5oiQ5riy5p+T5oqA5pyv44CR?=
+ =?utf-8?b?VUtVSeW6lOeUqOmAgumFjSAtIOW9lemfsyBNZXJnZSBwdWxsIHJlcXVlc3QgITM3?=
+ =?utf-8?b?IGZyb20g6YKT5aW9L29wZW5reWxpbi9uaWxl?=
+
+---
+ src/mainwindow.cpp   | 35 +++++++++++++++++++++++------------
+ src/mainwindow.h     |  2 ++
+ src/menumodule.cpp   | 12 +++++++++++-
+ src/miniwindow.cpp   |  3 ++-
+ src/renamewidget.cpp |  3 ++-
+ src/settings.cpp     |  7 +++++++
+ 6 files changed, 47 insertions(+), 15 deletions(-)
+
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index 08708b5..26dabb2 100755
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -34,6 +34,7 @@
+ #include "libkydate.h"
+ #include <libkydatacollect.h>
+ #include "windowmanager/windowmanager.h"
++#include "windowmanage.hpp"
+ 
+ #define BufferSize 35280
+ // const qint64 TIME_TRANSFORM = 1000 * 1000;              // 微秒转秒;
+@@ -719,6 +720,10 @@ void MainWindow::handleInsertSlot()
+ int MainWindow::command_Control(QString cmd1)
+ {
+     qDebug() << "命令:" << cmd1;
++    if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"), Qt::CaseInsensitive)) {
++        kabase::WindowManage::getWindowId(&m_id);
++        kabase::WindowManage::activateWindow(m_id);
++    }
+     // 990需求命令行控制
+     if (m_isFirstObject && !QFileInfo::exists(cmd1)) //首个实例不接受文件以外的参数
+     {
+@@ -734,7 +739,7 @@ int MainWindow::command_Control(QString cmd1)
+     if (cmd1 == "") //无参数，单例触发
+     {
+         // kwin接口唤醒
+-        KWindowSystem::forceActiveWindow(this->winId());
++        kdk::WindowManager::activateWindow(m_id);
+         qDebug() << "窗口置顶";
+         return 0;
+     }
+@@ -1072,9 +1077,10 @@ void MainWindow::miniShow()
+         kdk::WindowManager::setGeometry(m_miniWindow.windowHandle(), QRect((sw-m_miniWindow.width())/2, (sh-m_miniWindow.height())/2, m_miniWindow.width(),m_miniWindow.height() ));
+     }
+ 
+-    kdk::UkuiStyleHelper::self()->removeHeader(&m_miniWindow);
++    //kdk::UkuiStyleHelper::self()->removeHeader(&m_miniWindow);
++    kabase::WindowManage::removeHeader(&m_miniWindow);
+     m_miniWindow.activateWindow();
+-    m_miniWindow.move(this->geometry().center());
++    //m_miniWindow.move(this->geometry().center());
+     this->hide();
+ }
+ 
+@@ -1380,6 +1386,7 @@ void MainWindow::changeContinuePauseState(bool isContinue)
+         m_pauseButton->setToolTip(tr("pause"));
+     } else {
+         m_controlPlayAndPauseLayout->removeWidget(m_pauseButton);
++        m_continueButton->setVisible(true);
+         m_pauseButton->setParent(NULL);
+         m_controlPlayAndPauseLayout->insertWidget(1, m_continueButton);
+         m_continueButton->setToolTip(tr("start"));
+@@ -1531,7 +1538,8 @@ void MainWindow::mainWindow_page2()
+ 
+     m_controlPlayAndPauseLayout->addWidget(m_finishButton);
+     m_controlPlayAndPauseLayout->addWidget(m_pauseButton);
+-    //    controlPlayAndPauseLayout->removeWidget(continueButton);//切换至录音时要先去除continueButton所在wid
++    //m_controlPlayAndPauseLayout->removeWidget(m_continueButton);//切换至录音时要先去除continueButton所在wid
++    m_continueButton->setVisible(false);
+     m_controlPlayAndPauseLayout->addWidget(m_flagButton);
+     m_controlPlayAndPauseWid->setLayout(m_controlPlayAndPauseLayout);
+     m_controlPlayAndPauseWid->setFixedSize(304, 66);
+@@ -1638,14 +1646,14 @@ void MainWindow::goset()
+     m_setWindow.hideTitlebar();
+     m_setWindow.m_mainWidget->show();
+ 
+-//    m_setWindow.repaint();
+-    //m_setWindow.m_mainWidget->move(this->geometry().center() - m_setWindow.m_mainWidget->rect().center());
++    //设置设置窗口居中显示
++    if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"), Qt::CaseInsensitive))
++    {
++        int sw = QGuiApplication::primaryScreen()->availableGeometry().width();
++        int sh = QGuiApplication::primaryScreen()->availableGeometry().height();
++        kdk::WindowManager::setGeometry(m_setWindow.m_mainWidget->windowHandle(), QRect((sw-m_setWindow.m_mainWidget->width())/2, (sh-m_setWindow.m_mainWidget->height())/2, m_setWindow.m_mainWidget->width(),m_setWindow.m_mainWidget->height() ));
++    }
+ 
+-    //    if(isRecording||strat_pause)
+-    //    {
+-    //        qDebug()<<"可以结束";
+-    //        stop_clicked();
+-    //    }
+     if (m_isRecording || m_stratOrPause) {
+         m_setWindow.m_alterButton->setEnabled(false);
+         m_setWindow.m_formatDownList->setEnabled(false);
+@@ -1793,7 +1801,10 @@ void MainWindow::processArgs(QStringList args)
+ {
+     // kwin接口唤醒
+     qDebug() << "先窗口置顶";
+-    KWindowSystem::forceActiveWindow(this->winId());
++    //KWindowSystem::forceActiveWindow(this->winId());
++    kabase::WindowManage::getWindowId(&n_id);
++    kabase::WindowManage::activateWindow(n_id);
++    kdk::WindowManager::activateWindow(n_id);
+     if (m_isRecording) {
+         qDebug() << "设备正在录音不能播放!";
+         return;
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index 5e3c821..c7eb66b 100755
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -103,6 +103,8 @@ private:                            //波形相关
+     QVector<myWave *> m_customWave; //小矩形框
+     QStringList m_filePathList;
+     deviceMode m_deviceMode;
++    quint32 m_id;
++    quint32 n_id;
+ 
+ public: //放在public都是有原因的因为不同类之间中调用需要公用！！
+     void keyMEvent(); // M 添加标记
+diff --git a/src/menumodule.cpp b/src/menumodule.cpp
+index 88af421..449f2ba 100755
+--- a/src/menumodule.cpp
++++ b/src/menumodule.cpp
+@@ -19,6 +19,9 @@
+ #include "menumodule.h"
+ #include "mainwindow.h"
+ #include <kysdk/applications/ukuistylehelper/ukuistylehelper.h>
++#include "windowmanager/windowmanager.h"
++#include "windowmanage.hpp"
++#include <usermanual.h>
+ menuModule::menuModule(QWidget *parent = nullptr) : QWidget(parent)
+ {
+     initAction();
+@@ -173,7 +176,7 @@ void menuModule::aboutAction()
+ 
+ void menuModule::helpAction()
+ {
+-//    帮助点击事件处理
++    //帮助点击事件处理
+ #if DEBUG_MENUMODULE
+     appName = "kylin-recorder";
+ #endif
+@@ -199,6 +202,13 @@ void menuModule::initAbout()
+     m_aboutWindow->setWindowModality(Qt::WindowModal);
+     m_aboutWindow->setWindowModality(Qt::ApplicationModal);
+     m_aboutWindow->move(MainWindow::mutual->geometry().center() - m_aboutWindow->rect().center());
++    //设置窗口居中显示
++    if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"), Qt::CaseInsensitive))
++    {
++        int sw = QGuiApplication::primaryScreen()->availableGeometry().width();
++        int sh = QGuiApplication::primaryScreen()->availableGeometry().height();
++        kdk::WindowManager::setGeometry(m_aboutWindow->windowHandle(), QRect((sw-m_aboutWindow->width())/2, (sh-m_aboutWindow->height())/2, m_aboutWindow->width(),m_aboutWindow->height()));
++    }
+     m_aboutWindow->show();
+ }
+ 
+diff --git a/src/miniwindow.cpp b/src/miniwindow.cpp
+index 9d38cac..ad6dc46 100755
+--- a/src/miniwindow.cpp
++++ b/src/miniwindow.cpp
+@@ -210,7 +210,8 @@ void MiniWindow::normalShow()
+ {
+     // 一定要用showNormal()，不要用showMaximized(),防止点击最小化时，依次点击mini再点击复原导致原窗口尖角
+     MainWindow::mutual->showNormal();
+-    kdk::UkuiStyleHelper::self()->removeHeader(MainWindow::mutual);
++    //kdk::UkuiStyleHelper::self()->removeHeader(MainWindow::mutual);
++    kabase::WindowManage::removeHeader(MainWindow::mutual);
+     ::kabase::WindowManage::setMiddleOfScreen(MainWindow::mutual);
+     this->hide();
+     if(MainWindow::mutual->windowisFullScreen()){
+diff --git a/src/renamewidget.cpp b/src/renamewidget.cpp
+index 1187cfe..7c9d72c 100755
+--- a/src/renamewidget.cpp
++++ b/src/renamewidget.cpp
+@@ -237,7 +237,8 @@ void RenameWidget::setLineEditContent(QString m_filePath)
+     m_renameLineEdit->setText(fileInfo->baseName());
+     m_renameLineEdit->selectAll();
+     this->show();
+-    kdk::UkuiStyleHelper::self()->removeHeader(this);
++    //kdk::UkuiStyleHelper::self()->removeHeader(this);
++    kabase::WindowManage::removeHeader(this);
+     ::kabase::WindowManage::setMiddleOfScreen(this);
+ }
+ 
+diff --git a/src/settings.cpp b/src/settings.cpp
+index 9fb985c..0537bd7 100755
+--- a/src/settings.cpp
++++ b/src/settings.cpp
+@@ -25,6 +25,8 @@
+ #include "settings.h"
+ #include "mainwindow.h"
+ #include <kysdk/applications/ukuistylehelper/ukuistylehelper.h>
++#include "windowmanager/windowmanager.h"
++#include "windowmanage.hpp"
+ 
+ Settings::Settings(QWidget *parent) : QMainWindow(parent)
+ {
+@@ -43,6 +45,11 @@ Settings::Settings(QWidget *parent) : QMainWindow(parent)
+     //    QScreen *screen = QGuiApplication::primaryScreen();
+     //    mainWid ->move((screen->geometry().width() - WIDTH) / 2,(screen->geometry().height() - HEIGHT) / 2);
+     //显示在活动屏幕中间新方法
++    if (QGuiApplication::platformName().startsWith(QLatin1String("wayland"), Qt::CaseInsensitive)) {
++        int sw = QGuiApplication::primaryScreen()->availableGeometry().width();
++        int sh = QGuiApplication::primaryScreen()->availableGeometry().height();
++        kdk::WindowManager::setGeometry(this->windowHandle(), QRect((sw-this->width())/2, (sh-this->height())/2, this->width(),this->height() ));
++    }
+ 
+     //标题栏设置和布局
+     m_setWindowLabel = new QLabel(this);

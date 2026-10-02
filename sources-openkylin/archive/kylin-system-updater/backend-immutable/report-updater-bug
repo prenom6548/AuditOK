@@ -1,0 +1,66 @@
+#!/bin/sh
+#系统升级收集bug日志使用
+
+if [ $(id -u) -eq 0 ]; then
+    echo "当前执行权限是root，请使用普通权限来执行"
+    exit 1
+fi
+
+echo "系统升级收集BUG日志使用..."
+
+#建立收集的log目录
+mkdir updaterlog
+#记录一些基本信息
+date >> updaterlog/base-info
+dpkg -l | grep kylin-system-updater >> updaterlog/base-info
+echo $1 >> updaterlog/base-info
+echo "记录BUG产生时间（系统当前时间）以及升级相关的版本信息："
+cat updaterlog/base-info
+
+cp /etc/apt/sources.list updaterlog || true
+cp -r /var/log/syslog updaterlog || true
+cp -r /usr/share/kylin-update-desktop-config/config/ updaterlog || true
+cp -r /var/log/kylin-system-updater/ updaterlog/update-log || true
+cp -r /var/cache/kylin-system-updater updaterlog/cache || true
+
+#收集apt的日志
+cp -r /var/log/apt updaterlog || true
+cp -r /var/log/dpkg.log updaterlog || true
+cp -r /var/log/kylin-unattended-upgrades/ updaterlog || true
+cp -r ~/.config/kylin-background-upgrade/ updaterlog || true
+
+#收集前端日志
+cp -r ~/.log/kylin-update-frontend-notifysend.log updaterlog >/dev/null 2>&1 || true
+cp -r ~/.log/ukui-control-center.log updaterlog >/dev/null 2>&1 || true 
+cp -r ~/.log/ukui-notification-daemon.log updaterlog >/dev/null 2>&1 || true
+cp -r ~/.config/ukui-session/ updaterlog >/dev/null 2>&1 || true
+cp -r /tmp/kylin-updateresult-notify.log updaterlog >/dev/null 2>&1 || true
+
+#收集安装器日志
+mkdir updaterlog/kylin-installer
+dpkg -l | grep kare >> updaterlog/kylin-installer/kare.log >/dev/null 2>&1 || true
+kare -l >> updaterlog/kylin-installer/kare.log >/dev/null 2>&1 || true
+dpkg -l | grep kaiming >> updaterlog/kylin-installer/kaiming.log >/dev/null 2>&1 || true
+kaiming list >> updaterlog/kylin-installer/kaiming.log >/dev/null 2>&1 || true
+cp -r ~/.log/kylin-installer.log* updaterlog/kylin-installer || true
+cp -r ~/.log/kylin-uninstaller.log* updaterlog/kylin-installer || true
+
+outputName="$(date +%m-%d,%H-%M-%S)-updaterLog.tar.gz"
+
+#将所有的日志进行打包
+tar -czvf updaterLog.tar.gz updaterlog >/dev/null
+
+#删除收集的日志目录
+rm -rf updaterlog
+
+#将文件存储到桌面
+if [ ! -d ~/桌面 ]; then
+    mv updaterLog.tar.gz ~/Desktop/$outputName
+    echo 输出位置：~/Desktop/$outputName
+else
+    mv updaterLog.tar.gz ~/桌面/$outputName
+    echo 输出位置：~/桌面/$outputName
+fi
+
+echo "系统更新日志收集完毕..."
+echo "请将桌面下\033[5;32;49;1m $outputName \033[0m日志文件提交到禅道... "

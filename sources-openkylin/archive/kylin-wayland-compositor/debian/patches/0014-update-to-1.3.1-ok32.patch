@@ -1,0 +1,2525 @@
+From: Morose <chenlinxiang@kylinos.cn>
+Date: Thu, 20 Aug 2026 15:54:46 +0800
+Subject: update to 1.3.1-ok32
+
+Signed-off-by: Morose <chenlinxiang@kylinos.cn>
+---
+ docs/PROTOCOLS.md               |   2 +-
+ examples/gui/meson.build        |  16 +-
+ include/input/seat.h            |   7 +
+ include/nls.h                   |  32 ----
+ include/util/file.h             |   2 +
+ include/util/nls.h              |  38 +++++
+ meson.build                     |  21 ++-
+ po/locales.h.in                 |   8 +
+ po/meson.build                  |  55 +++++-
+ src/backend/drm/backend.c       |   6 +-
+ src/backend/drm/drm.c           |  52 ++++--
+ src/backend/drm/drm_p.h         |  39 ++++-
+ src/backend/drm/kms.c           |   1 -
+ src/backend/drm/renderer.c      | 365 +++++++++++++++++++++++++---------------
+ src/backend/libinput/events.c   |  68 +++++---
+ src/config/config.c             |   4 +-
+ src/config/kde_global_accel.c   |   2 +-
+ src/input/cursor.c              |   8 +
+ src/input/function.c            |  18 +-
+ src/input/seat.c                |   2 +
+ src/input/selection.c           |   9 +-
+ src/main.c                      |  21 ++-
+ src/plugin/security/meson.build |  14 +-
+ src/server.c                    |   8 +-
+ src/theme/theme.c               |   2 +-
+ src/util/dbus.c                 |   2 +-
+ src/util/file.c                 |  37 ++++
+ src/util/meson.build            |   1 +
+ src/util/nls.c                  | 108 ++++++++++++
+ src/view/action.c               |   2 +-
+ src/view/killer.c               |   3 +-
+ src/view/ssd.c                  |   2 +-
+ src/view/window_menu.c          |   2 +-
+ src/view/workspace.c            |   2 +-
+ tools/magnifier/in-black.svg    |   5 -
+ tools/magnifier/in-hide.svg     |   4 -
+ tools/magnifier/in-hover.svg    |   4 -
+ tools/magnifier/in-press.svg    |   4 -
+ tools/magnifier/in-white.svg    |   5 -
+ tools/magnifier/magnifier.cpp   | 171 +++++++++++--------
+ tools/magnifier/magnifier.h     |  14 +-
+ tools/magnifier/main.cpp        |   2 +
+ tools/magnifier/meson.build     |   5 +-
+ tools/magnifier/out-black.svg   |   5 -
+ tools/magnifier/out-hide.svg    |   4 -
+ tools/magnifier/out-hover.svg   |   4 -
+ tools/magnifier/out-press.svg   |   4 -
+ tools/magnifier/out-white.svg   |   5 -
+ tools/magnifier/svg.qrc         |  14 +-
+ tools/magnifier/zoom-in.svg     |   5 +
+ tools/magnifier/zoom-out.svg    |   5 +
+ tools/wldialog/meson.build      |  15 +-
+ 52 files changed, 814 insertions(+), 420 deletions(-)
+ delete mode 100644 include/nls.h
+ create mode 100644 include/util/nls.h
+ create mode 100644 po/locales.h.in
+ create mode 100644 src/util/nls.c
+ delete mode 100644 tools/magnifier/in-black.svg
+ delete mode 100644 tools/magnifier/in-hide.svg
+ delete mode 100644 tools/magnifier/in-hover.svg
+ delete mode 100644 tools/magnifier/in-press.svg
+ delete mode 100644 tools/magnifier/in-white.svg
+ delete mode 100644 tools/magnifier/out-black.svg
+ delete mode 100644 tools/magnifier/out-hide.svg
+ delete mode 100644 tools/magnifier/out-hover.svg
+ delete mode 100644 tools/magnifier/out-press.svg
+ delete mode 100644 tools/magnifier/out-white.svg
+ create mode 100644 tools/magnifier/zoom-in.svg
+ create mode 100644 tools/magnifier/zoom-out.svg
+
+diff --git a/docs/PROTOCOLS.md b/docs/PROTOCOLS.md
+index f4efd84..7dccbbe 100644
+--- a/docs/PROTOCOLS.md
++++ b/docs/PROTOCOLS.md
+@@ -87,7 +87,7 @@ wayland协议支持情况
+ | 协议名称                         | 支持情况 | 说明  |
+ | :------------------------------- | :------: | :---- |
+ | zwlr_data_control_manager_v1     |    2     |       |
+-| zwlr_export_dmabuf_manager_v1    |    1     |       |
++| zwlr_export_dmabuf_manager_v1    |    no    | drop  |
+ | zwlr_foreign_toplevel_manager_v1 |    3     |       |
+ | zwlr_gamma_control_manager_v1    |    no    | 1     |
+ | zwlr_input_inhibit_manager_v1    |    no    | deprecated |
+diff --git a/examples/gui/meson.build b/examples/gui/meson.build
+index aec54be..db5bc0d 100644
+--- a/examples/gui/meson.build
++++ b/examples/gui/meson.build
+@@ -7,6 +7,12 @@ qt5 = import('qt5')
+ qt5dep = dependency(
+   'qt5',
+   modules: ['Core', 'Gui', 'Widgets', 'Qml', 'Quick', 'QuickWidgets'],
++  required: false
++)
++
++qt5dep_priv = dependency(
++  'qt5',
++  modules: ['Gui'],
+   private_headers: true,
+   required: false
+ )
+@@ -36,7 +42,7 @@ executable(
+     'thumbnail.cpp', 'ThumbnailItem.cpp', 'ThumInfo.cpp',
+     resources_file, generated_files
+   ],
+-  dependencies: [qt5dep, libkywc, egl, glesv2, libdrm],
++  dependencies: [qt5dep, qt5dep_priv, libkywc, egl, glesv2, libdrm],
+   cpp_args: ['-Wno-unused-parameter'],
+   install: true
+ )
+@@ -66,7 +72,7 @@ executable(
+     'ThumbnailItem.cpp', 'ThumInfo.cpp',
+     resources_file, thu_files
+   ],
+-  dependencies: [qt5dep, libkywc, egl, glesv2, libdrm],
++  dependencies: [qt5dep, qt5dep_priv, libkywc, egl, glesv2, libdrm],
+   cpp_args: ['-Wno-unused-parameter'],
+   install: true
+ )
+@@ -82,7 +88,7 @@ executable(
+     blur_files, protocols_code['ukui-blur'],
+     protocols_client_header['ukui-blur']
+   ],
+-  dependencies: [qt5dep, wayland_client],
++  dependencies: [qt5dep, qt5dep_priv, wayland_client],
+   cpp_args: ['-Wno-unused-parameter'],
+   install: false
+ )
+@@ -98,7 +104,7 @@ executable(
+     protocols_code['kywc-security-manager-v1'],
+     protocols_client_header['kywc-security-manager-v1']
+   ],
+-  dependencies: [qt5dep, wayland_client],
++  dependencies: [qt5dep, qt5dep_priv, wayland_client],
+   cpp_args: ['-Wno-unused-parameter'],
+   install: false
+ )
+@@ -122,7 +128,7 @@ if have_ukui_background
+       protocols_code['linux-dmabuf-v1'],
+       protocols_client_header['linux-dmabuf-v1']
+     ],
+-    dependencies: [qt5dep, wayland_client, libdrm, gbm],
++    dependencies: [qt5dep, qt5dep_priv, wayland_client, libdrm, gbm],
+     cpp_args: ['-Wno-unused-parameter'],
+     install: false
+   )
+diff --git a/include/input/seat.h b/include/input/seat.h
+index f7c52a5..33ac722 100644
+--- a/include/input/seat.h
++++ b/include/input/seat.h
+@@ -67,6 +67,12 @@ struct seat_cursor_motion_event {
+     double lx, ly;
+ };
+ 
++struct seat_cursor_button_event {
++    uint32_t time_msec;
++    uint32_t button;
++    bool pressed;
++};
++
+ struct seat_keyboard_key_event {
+     struct input *device;
+     uint32_t time_msec;
+@@ -110,6 +116,7 @@ struct seat {
+ 
+     struct {
+         struct wl_signal cursor_motion;
++        struct wl_signal cursor_button;
+         struct wl_signal cursor_configure;
+         struct wl_signal keyboard_key;
+         struct wl_signal keyboard_modifiers;
+diff --git a/include/nls.h b/include/nls.h
+deleted file mode 100644
+index 2762a46..0000000
+--- a/include/nls.h
++++ /dev/null
+@@ -1,32 +0,0 @@
+-// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+-//
+-// SPDX-License-Identifier: GPL-1.0-or-later
+-
+-#ifndef _NLS_H_
+-#define _NLS_H_
+-
+-#if HAVE_NLS
+-#include <libintl.h>
+-#define tr gettext
+-#else
+-#define tr(s) (s)
+-#endif
+-
+-#include <locale.h>
+-#include <stdbool.h>
+-#include <string.h>
+-
+-static __attribute__((unused)) inline bool nls_layout_is_right_to_left(void)
+-{
+-    const char *locale = setlocale(LC_MESSAGES, NULL);
+-    return locale &&
+-           (strstr(locale, "ug_CN") || strstr(locale, "kk_KZ") || strstr(locale, "ky_KG"));
+-}
+-
+-static __attribute__((unused)) inline bool nls_text_is_right_align(void)
+-{
+-    const char *locale = setlocale(LC_MESSAGES, NULL);
+-    return locale && (strstr(locale, "kk_KZ") || strstr(locale, "ky_KG"));
+-}
+-
+-#endif /* _NLS_H_ */
+diff --git a/include/util/file.h b/include/util/file.h
+index 3dc9037..3a83992 100644
+--- a/include/util/file.h
++++ b/include/util/file.h
+@@ -10,6 +10,8 @@
+ 
+ bool file_exists(const char *path);
+ 
++bool file_mkdir_p(const char *path);
++
+ /* return home for fallback */
+ const char *file_get_xdg_pictures_dir(void);
+ 
+diff --git a/include/util/nls.h b/include/util/nls.h
+new file mode 100644
+index 0000000..7323daa
+--- /dev/null
++++ b/include/util/nls.h
+@@ -0,0 +1,38 @@
++// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#ifndef _UTIL_NLS_H_
++#define _UTIL_NLS_H_
++
++#include <locale.h>
++#include <stdbool.h>
++#include <string.h>
++
++#if HAVE_NLS
++#include <libintl.h>
++#define tr gettext
++struct locale {
++    const char *lang;
++    const char *data;
++    size_t size;
++};
++bool nls_setup_message(const char *domain, const struct locale locales[], size_t size);
++#else
++#define tr(s) (s)
++#endif
++
++static __attribute__((unused)) inline bool nls_layout_is_right_to_left(void)
++{
++    const char *locale = setlocale(LC_MESSAGES, NULL);
++    return locale &&
++           (strstr(locale, "ug_CN") || strstr(locale, "kk_KZ") || strstr(locale, "ky_KG"));
++}
++
++static __attribute__((unused)) inline bool nls_text_is_right_align(void)
++{
++    const char *locale = setlocale(LC_MESSAGES, NULL);
++    return locale && (strstr(locale, "kk_KZ") || strstr(locale, "ky_KG"));
++}
++
++#endif /* _UTIL_NLS_H_ */
+diff --git a/meson.build b/meson.build
+index ad57267..9dfcc19 100644
+--- a/meson.build
++++ b/meson.build
+@@ -212,13 +212,6 @@ add_project_arguments([
+   '-DEXTRA_PIXMAP_PATH="@0@"'.format(extra_pixmap_path),
+ ], language: 'c')
+ 
+-msgfmt = find_program('msgfmt', required: get_option('nls'))
+-add_project_arguments('-DHAVE_NLS=@0@'.format(msgfmt.found().to_int()), language: 'c')
+-if msgfmt.found()
+-  source_root = meson.current_source_dir()
+-  subdir('po')
+-endif
+-
+ if get_option('tracy')
+   tracy = dependency(
+     'tracy',
+@@ -228,7 +221,15 @@ if get_option('tracy')
+   wlcom_deps += tracy
+ endif
+ 
++msgfmt = find_program('msgfmt', required: get_option('nls'))
++add_project_arguments('-DHAVE_NLS=@0@'.format(msgfmt.found().to_int()), language: 'c')
++
+ subdir('data')
++
++if msgfmt.found()
++  subdir('po')
++endif
++
+ subdir('protocols')
+ subdir('src')
+ 
+@@ -296,11 +297,12 @@ summary({
+   'extra_apps_path': extra_apps_path,
+   'extra_pixmap_path': extra_pixmap_path,
+   },
+-  section: 'Configuration', bool_yn: true)
++  section: 'Configuration', bool_yn: true
++)
+ 
+ configure_file(
+   output: 'kywc_config.h',
+-	configuration: internal_config,
++  configuration: internal_config,
+ )
+ 
+ symbols_file = 'wlcom.syms'
+@@ -316,4 +318,5 @@ executable(
+   export_dynamic: true,
+   link_args: symbols_flag,
+   link_depends: symbols_file,
++  c_args: '-DTARGET_NAME="kylin-wlcom"'
+ )
+diff --git a/po/locales.h.in b/po/locales.h.in
+new file mode 100644
+index 0000000..36ac33a
+--- /dev/null
++++ b/po/locales.h.in
+@@ -0,0 +1,8 @@
++#ifndef _PO_LOCALES_H_
++#define _PO_LOCALES_H_
++
++#include "util/nls.h"
++
++@LOCALES@
++
++#endif /* _PO_LOCALES_H_ */
+diff --git a/po/meson.build b/po/meson.build
+index 87381f2..07ec5d4 100644
+--- a/po/meson.build
++++ b/po/meson.build
+@@ -1,10 +1,47 @@
+-i18n = import('i18n')
+-add_project_arguments('-DGETTEXT_PACKAGE="' + meson.project_name() + '"',
+-  '-DLOCALEDIR="' + get_option('prefix') / get_option('localedir') + '"',
+-  language:'c')
+-i18n.gettext(meson.project_name(),
+-  args: ['--directory=' + source_root,
+-    '--add-comments=TRANSLATORS',
+-    '--keyword=tr'],
+-    preset: 'glib'
++fs = import('fs')
++
++languages = []
++foreach line : fs.read(meson.current_source_dir() / 'LINGUAS').strip().split('\n')
++  if line != ''
++    languages += line
++  endif
++endforeach
++
++locales_table = ''
++mo_h_files = []
++foreach lang : languages
++  mo = custom_target(
++    lang + '.mo',
++    input: lang + '.po',
++    output: lang + '.mo',
++    command: [msgfmt, '-o', '@OUTPUT@', '@INPUT@'],
++  )
++
++  mo_h_files += custom_target(
++    lang + '_mo.h',
++    input: mo,
++    output: lang + '_mo.h',
++    command: [embed, lang + '_mo'],
++    feed: true,
++    capture: true,
++  )
++
++  locales_table += '#include "@0@_mo.h"\n'.format(lang)
++endforeach
++
++locales_table += '''
++static const struct locale locales[] = {
++'''
++foreach lang : languages
++  locales_table += '    { "@0@", @0@_mo, sizeof(@0@_mo) - 1 },\n'.format(lang)
++endforeach
++locales_table += '};'
++
++locales_h = configure_file(
++  input: 'locales.h.in',
++  output: 'locales.h',
++  configuration: {'LOCALES': locales_table},
+ )
++
++wlcom_sources += mo_h_files
++wlcom_sources += locales_h
+diff --git a/src/backend/drm/backend.c b/src/backend/drm/backend.c
+index 89937a0..741a9bf 100644
+--- a/src/backend/drm/backend.c
++++ b/src/backend/drm/backend.c
+@@ -7,6 +7,7 @@
+ #include <assert.h>
+ #include <fcntl.h>
+ #include <stdlib.h>
++#include <unistd.h>
+ #include <xf86drm.h>
+ 
+ #include <wlr/backend/interface.h>
+@@ -156,6 +157,7 @@ int drm_backend_get_non_master_fd(struct wlr_backend *wlr_backend)
+ 
+     if (drmIsMaster(fd) && drmDropMaster(fd) < 0) {
+         kywc_log_errno(KYWC_ERROR, "Failed to drop master");
++        close(fd);
+         return -1;
+     }
+ 
+@@ -179,7 +181,9 @@ bool drm_backend_support_timeline(struct wlr_backend *wlr_backend)
+         return false;
+     }
+ 
+-    return drmGetCap(fd, DRM_CAP_SYNCOBJ_TIMELINE, &cap) == 0 && cap == 1;
++    bool supported = drmGetCap(fd, DRM_CAP_SYNCOBJ_TIMELINE, &cap) == 0 && cap == 1;
++    close(fd);
++    return supported;
+ }
+ 
+ struct wlr_backend *drm_backend_create(struct session *session, struct session_device *dev,
+diff --git a/src/backend/drm/drm.c b/src/backend/drm/drm.c
+index a4cf1d0..8ed58f8 100644
+--- a/src/backend/drm/drm.c
++++ b/src/backend/drm/drm.c
+@@ -536,20 +536,28 @@ static bool drm_connector_update_cursor(struct drm_connector *conn, struct wlr_b
+     bool default_brightness = kywc_output->state.brightness == 100;
+     bool default_color_temp =
+         (kywc_output->state.color_temp == 0 || kywc_output->state.color_temp == 6500);
+-
+     bool default_color_filter = !kywc_output->state.color_filter;
+     bool default_color = kywc_output->state.color_feature == KYWC_OUTPUT_COLOR_FEATURE_DISABLE ||
+                          (default_color_filter && default_color_temp && default_brightness);
+     bool main_gpu = !drm_device_get_parent(drm);
+-    bool buffer_is_shm = conn->output.allocator->buffer_caps & WLR_BUFFER_CAP_SHM;
+-    bool buffer_match_plane = buffer_check_plane_formats(buffer, &conn->crtc->cursor->formats);
++    bool allocator_uses_shm = conn->output.allocator->buffer_caps & WLR_BUFFER_CAP_SHM;
++    bool buffer_matches_plane = buffer_check_plane_formats(buffer, &conn->crtc->cursor->formats);
++    bool need_cursor_blit =
++        !main_gpu || !default_color || allocator_uses_shm || !buffer_matches_plane;
+ 
+-    if (!main_gpu || !default_color || buffer_is_shm || !buffer_match_plane) {
++    if (need_cursor_blit) {
+         uint32_t format = DRM_FORMAT_ARGB8888;
+         struct drm_surface *surface = &conn->crtc->cursor->multi_surf;
+-        if (!drm_surface_init(conn->crtc->cursor, conn, main_gpu ? NULL : &drm->mgpu_renderer,
+-                              buffer->width, buffer->height, format, NULL, false,
+-                              buffer_match_plane)) {
++        struct drm_surface_blit_config blit_config = {
++            .mgpu_renderer = main_gpu ? NULL : &drm->mgpu_renderer,
++            .test_state = NULL,
++            .width = buffer->width,
++            .height = buffer->height,
++            .format = format,
++            .use_yuyv = false,
++            .buffer_matches_plane = buffer_matches_plane,
++        };
++        if (!drm_surface_init(conn->crtc->cursor, conn, &blit_config)) {
+             return false;
+         }
+ 
+@@ -560,11 +568,10 @@ static bool drm_connector_update_cursor(struct drm_connector *conn, struct wlr_b
+             .color_mat = default_color_filter
+                              ? drm_output_get_color_filter_matrix(KYWC_OUTPUT_COLOR_FILTER_NONE)
+                              : drm_output_get_color_filter_matrix(kywc_output->state.color_filter),
+-            .wlr_rend = surface->wlr_rend,
+             .damage = NULL,
++            .output = output,
+             .rgb_clear = true,
+             .use_yuyv = false,
+-            .output = output,
+         };
+ 
+         local_buf = drm_surface_blit(surface, &target);
+@@ -849,6 +856,7 @@ static void drm_connector_state_init(struct drm_connector_state *state, struct d
+         .base = base,
+         .active = output_pending_enable(&conn->output, base),
+         .output_state = &conn->state,
++        .primary_in_fence_fd = -1,
+     };
+ 
+     struct wlr_output_mode *mode = conn->output.current_mode;
+@@ -925,13 +933,15 @@ static bool drm_connector_state_update_primary_fb(struct drm_connector *conn,
+     bool hw_brightness = drm_output_use_hw_brightness(&conn->output, &output->base.state);
+     bool hw_color_temp = drm_output_use_hw_color_temp(&conn->output, &output->base.state);
+     bool hw_color_filter = drm_output_use_hw_color_filter(&conn->output, &output->base.state);
+-    bool main_gpu = !drm_device_get_parent(drm);
+     bool hw_support = hw_brightness && hw_color_temp && hw_color_filter;
+-    bool buffer_is_shm = conn->output.allocator->buffer_caps & WLR_BUFFER_CAP_SHM;
+-    bool use_yuyv = drm_output_yuyv_enabled(&conn->output, &output->base.state) && !buffer_is_shm &&
+-                    buffer_is_output_swapchain_buffer(conn, source);
++    bool main_gpu = !drm_device_get_parent(drm);
++    bool allocator_uses_shm = conn->output.allocator->buffer_caps & WLR_BUFFER_CAP_SHM;
++    bool use_yuyv = drm_output_yuyv_enabled(&conn->output, &output->base.state) &&
++                    !allocator_uses_shm && buffer_is_output_swapchain_buffer(conn, source);
++    bool need_primary_blit =
++        !test_only && (!main_gpu || !hw_support || use_yuyv || allocator_uses_shm);
+ 
+-    if (!test_only && (!main_gpu || !hw_support || use_yuyv || buffer_is_shm)) {
++    if (need_primary_blit) {
+         uint32_t format = main_gpu && !use_yuyv ? conn->output.render_format : DRM_FORMAT_ARGB8888;
+         if (state->base->committed & WLR_OUTPUT_STATE_RENDER_FORMAT) {
+             format = state->base->render_format;
+@@ -941,9 +951,16 @@ static bool drm_connector_state_update_primary_fb(struct drm_connector *conn,
+         struct drm_plane *primary = crtc->primary;
+         struct drm_surface *surface = &primary->multi_surf;
+         drm_output_pending_resolution(&conn->output, state->base, &width, &height);
+-        if (!drm_surface_init(primary, conn, main_gpu ? NULL : &drm->mgpu_renderer,
+-                              use_yuyv ? width / 2 : width, height, format, state->base, use_yuyv,
+-                              true)) {
++        struct drm_surface_blit_config blit_config = {
++            .mgpu_renderer = main_gpu ? NULL : &drm->mgpu_renderer,
++            .test_state = state->base,
++            .width = use_yuyv ? width / 2 : width,
++            .height = height,
++            .format = format,
++            .use_yuyv = use_yuyv,
++            .buffer_matches_plane = true,
++        };
++        if (!drm_surface_init(primary, conn, &blit_config)) {
+             return false;
+         }
+ 
+@@ -957,7 +974,6 @@ static bool drm_connector_state_update_primary_fb(struct drm_connector *conn,
+             .color_mat = hw_color_filter
+                              ? drm_output_get_color_filter_matrix(KYWC_OUTPUT_COLOR_FILTER_NONE)
+                              : drm_output_get_color_filter_matrix(kywc_output->state.color_filter),
+-            .wlr_rend = surface->wlr_rend,
+             .damage = conn->state.committed & DRM_OUTPUT_STATE_DAMAGE ? &conn->state.damage : NULL,
+             .output = output,
+             .rgb_clear = !use_yuyv ? !hw_support : false,
+diff --git a/src/backend/drm/drm_p.h b/src/backend/drm/drm_p.h
+index e42ddbd..7488a64 100644
+--- a/src/backend/drm/drm_p.h
++++ b/src/backend/drm/drm_p.h
+@@ -165,22 +165,48 @@ struct drm_renderer {
+ struct swapchain_option {
+     int width;
+     int height;
++
+     struct wlr_output *output;
+     struct wlr_drm_format *drm_format;
+-    const struct wlr_output_state *state;
++    const struct wlr_output_state *test_state;
++};
++
++struct drm_surface_blit_config {
++    struct drm_renderer *mgpu_renderer;
++    const struct wlr_output_state *test_state;
++
++    int width;
++    int height;
++    uint32_t format;
++
++    bool use_yuyv;
++    bool buffer_matches_plane;
+ };
+ 
+ struct surf_swapchain {
+     int width, height;
+     struct swapchain *swapchain;
+-    // TODO: check buffer matched
++    // TODO: match each source buffer with its backend buffer.
++};
++
++enum drm_surface_blit_mode {
++    DRM_SURFACE_BLIT_NONE,        /* not configured */
++    DRM_SURFACE_BLIT_RENDER,      /* OpenGL render */
++    DRM_SURFACE_BLIT_COPY,        /* CPU readback copy */
++    DRM_SURFACE_BLIT_RENDER_COPY, /* OpenGL render, then CPU readback copy */
+ };
+ 
+ struct drm_surface {
+     struct wlr_renderer *wlr_rend;
++    struct drm_renderer *mgpu_renderer;
+ 
+-    struct surf_swapchain *swapchain;
+-    struct surf_swapchain *dumb_swapchain;
++    enum drm_surface_blit_mode blit_mode;
++    uint32_t format;
++    bool use_yuyv;
++    bool buffer_matches_plane;
++
++    struct surf_swapchain *render_swapchain;
++    struct surf_swapchain *copy_swapchain;
+ 
+     struct drm_syncobj_timeline *timeline;
+     uint64_t point;
+@@ -274,8 +300,6 @@ struct drm_output_state {
+ };
+ 
+ struct drm_render_target {
+-    struct wlr_renderer *wlr_rend;
+-
+     struct wlr_buffer *source;
+ 
+     uint32_t brightness;
+@@ -486,8 +510,7 @@ bool drm_mgpu_renderer_init(struct drm_device *drm, struct drm_renderer *rendere
+ void drm_mgpu_renderer_finish(struct drm_renderer *renderer);
+ 
+ bool drm_surface_init(struct drm_plane *plane, struct drm_connector *conn,
+-                      struct drm_renderer *mgpu_renderer, int width, int height, uint32_t format,
+-                      const struct wlr_output_state *state, bool use_yuyv, bool buffer_match_plane);
++                      const struct drm_surface_blit_config *config);
+ 
+ bool drm_plane_pick_render_format(struct wlr_renderer *renderer,
+                                   const struct wlr_drm_format_set *display_formats,
+diff --git a/src/backend/drm/kms.c b/src/backend/drm/kms.c
+index 8de3c88..660b204 100644
+--- a/src/backend/drm/kms.c
++++ b/src/backend/drm/kms.c
+@@ -576,7 +576,6 @@ static void drm_kms_apply_atomic_commit(struct drm_connector_state *state)
+     if (state->primary_in_fence_fd >= 0) {
+         close(state->primary_in_fence_fd);
+     }
+-
+ }
+ 
+ static void drm_kms_rollback_atomic_commit(struct drm_connector_state *state)
+diff --git a/src/backend/drm/renderer.c b/src/backend/drm/renderer.c
+index fb60963..fff4544 100644
+--- a/src/backend/drm/renderer.c
++++ b/src/backend/drm/renderer.c
+@@ -124,15 +124,13 @@ void drm_mgpu_renderer_finish(struct drm_renderer *renderer)
+ 
+ void drm_surface_finish(struct drm_surface *surf)
+ {
+-    if (!surf || !surf->wlr_rend) {
++    if (!surf) {
+         return;
+     }
+ 
+     drm_syncobj_timeline_unref(surf->timeline);
+-    if (surf->dumb_swapchain != surf->swapchain) {
+-        surface_swapchain_destroy(surf->swapchain);
+-    }
+-    surface_swapchain_destroy(surf->dumb_swapchain);
++    surface_swapchain_destroy(surf->render_swapchain);
++    surface_swapchain_destroy(surf->copy_swapchain);
+ 
+     *surf = (struct drm_surface){ 0 };
+ }
+@@ -203,8 +201,8 @@ static bool create_opengl_shader(struct opengl_renderer *gl_renderer, bool use_y
+     return true;
+ }
+ 
+-static bool renderer_add_texture(struct wlr_renderer *renderer, struct wlr_texture *src_texture,
+-                                 struct drm_render_target *target)
++static bool render_surface_texture(struct wlr_renderer *renderer, struct wlr_texture *src_texture,
++                                   struct drm_render_target *target)
+ {
+     if (target->damage && !pixman_region32_not_empty(target->damage)) {
+         return true;
+@@ -368,33 +366,35 @@ static bool readpixel_from_buffer(struct wlr_renderer *wlr_rend, struct wlr_buff
+         pixman_region32_fini(&clipped);
+     }
+ 
+-    if (!wlr_renderer_read_pixels(wlr_rend, attribs.format, stride, width, height, x, y, x, y,
+-                                  dst_ptr)) {
+-        kywc_log(KYWC_ERROR, "Faild read pixels from primary renderer");
++    bool ok = wlr_renderer_read_pixels(wlr_rend, attribs.format, stride, width, height, x, y, x, y,
++                                       dst_ptr);
++    if (!ok) {
++        kywc_log(KYWC_ERROR, "Failed to read surface pixels");
+     }
+ 
+     wlr_renderer_end(wlr_rend);
+     wlr_buffer_end_data_ptr_access(dst);
+ 
+-    return true;
++    return ok;
+ }
+ 
+ static struct wlr_buffer *blit_buffer_with_opengl(struct drm_surface *surf,
+                                                   struct drm_render_target *target)
+ {
+-    struct wlr_renderer *renderer = target->wlr_rend;
++    struct wlr_renderer *renderer = surf->wlr_rend;
+     struct wlr_texture *tex = wlr_texture_from_buffer(renderer, target->source);
+     if (!tex) {
+         kywc_log(KYWC_ERROR, "Failed to import source buffer into renderer");
+         return NULL;
+     }
+ 
+-    struct wlr_buffer *dst = swapchain_acquire(surf->swapchain->swapchain, NULL);
++    struct wlr_buffer *dst = swapchain_acquire(surf->render_swapchain->swapchain, NULL);
+     if (!dst) {
+         kywc_log(KYWC_ERROR, "Failed to acquire swapchain buffer");
+         goto error_tex;
+     }
+ 
++    surf->point++;
+     struct wlr_buffer_pass_options options = { .signal_timeline = surf->timeline,
+                                                .signal_point = surf->point };
+     struct wlr_render_pass *pass = wlr_renderer_begin_buffer_pass(renderer, dst, &options);
+@@ -414,10 +414,15 @@ static struct wlr_buffer *blit_buffer_with_opengl(struct drm_surface *surf,
+         render_pass_add_rect(pass, &option);
+     }
+ 
+-    renderer_add_texture(renderer, tex, target);
+-
+-    if (!render_pass_submit(pass, target->output->quirks)) {
++    bool texture_rendered = render_surface_texture(renderer, tex, target);
++    bool pass_submitted = render_pass_submit(pass, target->output->quirks);
++    if (!texture_rendered) {
++        kywc_log(KYWC_ERROR, "Failed to render source texture");
++    }
++    if (!pass_submitted) {
+         kywc_log(KYWC_ERROR, "Failed to submit render pass");
++    }
++    if (!texture_rendered || !pass_submitted) {
+         goto error_dst;
+     }
+ 
+@@ -481,7 +486,7 @@ static bool test_swapchain(struct wlr_output *output, struct swapchain *swapchai
+ 
+ static struct surf_swapchain *surface_swapchain_create(struct wlr_allocator *allocator,
+                                                        enum allocator_buffer_type type,
+-                                                       struct swapchain_option *option)
++                                                       const struct swapchain_option *option)
+ {
+     struct surf_swapchain *surf_swapchain = calloc(1, sizeof(*surf_swapchain));
+     if (!surf_swapchain) {
+@@ -503,7 +508,7 @@ static struct surf_swapchain *surface_swapchain_create(struct wlr_allocator *all
+         return NULL;
+     }
+ 
+-    if (option->state && !test_swapchain(wlr_output, swapchain, option->state)) {
++    if (option->test_state && !test_swapchain(wlr_output, swapchain, option->test_state)) {
+         kywc_log(KYWC_DEBUG, "Output test failed on '%s', retrying without modifiers",
+                  option->output->name);
+         if (!drm_format_has(render_format, DRM_FORMAT_MOD_INVALID)) {
+@@ -521,7 +526,7 @@ static struct surf_swapchain *surface_swapchain_create(struct wlr_allocator *all
+         swapchain_destroy(swapchain);
+         swapchain = allocator_create_swapchain(allocator, type, option->width, option->height,
+                                                render_format, 0);
+-        if (!swapchain || !test_swapchain(wlr_output, swapchain, option->state)) {
++        if (!swapchain || !test_swapchain(wlr_output, swapchain, option->test_state)) {
+             kywc_log(KYWC_DEBUG, "Output test failed on '%s'", option->output->name);
+             goto error;
+         }
+@@ -538,151 +543,220 @@ error:
+     return NULL;
+ }
+ 
+-bool drm_surface_init(struct drm_plane *plane, struct drm_connector *conn,
+-                      struct drm_renderer *mgpu_renderer, int width, int height, uint32_t format,
+-                      const struct wlr_output_state *state, bool use_yuyv, bool buffer_match_plane)
++struct drm_surface_render_resources {
++    struct wlr_renderer *renderer;
++    struct wlr_allocator *allocator;
++    const struct wlr_drm_format_set *display_formats;
++};
++
++enum drm_surface_swapchain_mask {
++    DRM_SURFACE_NEEDS_RENDER_SWAPCHAIN = 1 << 0,
++    DRM_SURFACE_NEEDS_COPY_SWAPCHAIN = 1 << 1,
++};
++
++static bool surface_swapchain_matches(const struct surf_swapchain *swapchain, int width, int height)
+ {
+-    struct drm_surface *surf = &plane->multi_surf;
+-    if (surf->swapchain && surf->swapchain->swapchain && surf->swapchain->width == width &&
+-        surf->swapchain->height == height) {
+-        return true;
+-    }
++    return swapchain && swapchain->swapchain && swapchain->width == width &&
++           swapchain->height == height;
++}
+ 
+-    if (surf->dumb_swapchain != surf->swapchain) {
+-        surface_swapchain_destroy(surf->swapchain);
++static bool drm_surface_matches_config(const struct drm_surface *surface,
++                                       enum drm_surface_blit_mode blit_mode,
++                                       struct wlr_renderer *renderer, uint32_t swapchain_mask,
++                                       const struct drm_surface_blit_config *config)
++{
++    if (blit_mode == DRM_SURFACE_BLIT_NONE || surface->blit_mode != blit_mode ||
++        surface->wlr_rend != renderer || surface->mgpu_renderer != config->mgpu_renderer ||
++        surface->format != config->format || surface->use_yuyv != config->use_yuyv ||
++        surface->buffer_matches_plane != config->buffer_matches_plane) {
++        return false;
+     }
+ 
+-    surface_swapchain_destroy(surf->dumb_swapchain);
+-    surf->swapchain = NULL;
+-    surf->dumb_swapchain = NULL;
++    bool render_matches =
++        swapchain_mask & DRM_SURFACE_NEEDS_RENDER_SWAPCHAIN
++            ? surface_swapchain_matches(surface->render_swapchain, config->width, config->height)
++            : surface->render_swapchain == NULL;
++    bool copy_matches =
++        swapchain_mask & DRM_SURFACE_NEEDS_COPY_SWAPCHAIN
++            ? surface_swapchain_matches(surface->copy_swapchain, config->width, config->height)
++            : surface->copy_swapchain == NULL;
++
++    return render_matches && copy_matches;
++}
+ 
+-    /* both primary and secondary gpu use pixman */
+-    bool both_pixman = false;
++static struct surf_swapchain *
++drm_surface_create_render_swapchain(struct drm_connector *conn,
++                                    const struct drm_surface_blit_config *config,
++                                    const struct drm_surface_render_resources *resources)
++{
+     struct wlr_drm_format render_format = { 0 };
+-    struct wlr_renderer *renderer = conn->output.renderer;
+-    struct wlr_allocator *allocator = conn->output.allocator;
+-    const struct wlr_drm_format_set *display_formats = &plane->formats;
+-    struct surf_swapchain *swapchain = NULL;
+-    struct surf_swapchain *dumb_swapchain = NULL;
+-
+-    if (mgpu_renderer != NULL) {
+-        display_formats = &mgpu_renderer->formats;
+-        if (!wlr_renderer_is_pixman_renderer(mgpu_renderer->wlr_rend)) {
+-            renderer = mgpu_renderer->wlr_rend;
+-            allocator = mgpu_renderer->allocator;
+-        } else if (wlr_renderer_is_pixman_renderer(renderer)) {
+-            both_pixman = true;
+-            goto dumb_alloc;
+-        }
+-    } else if (wlr_renderer_is_pixman_renderer(renderer) &&
+-               allocator->buffer_caps & WLR_BUFFER_CAP_DMABUF) {
+-        surf->wlr_rend = renderer;
+-        return true;
+-    }
++    const struct wlr_drm_format_set *display_formats = resources->display_formats;
+ 
+     struct wlr_drm_format_set yuv_display_formats = { 0 };
+-    if (!mgpu_renderer && use_yuyv) {
+-        wlr_drm_format_set_add(&yuv_display_formats, format, DRM_FORMAT_MOD_LINEAR);
++    if (!config->mgpu_renderer && config->use_yuyv) {
++        wlr_drm_format_set_add(&yuv_display_formats, config->format, DRM_FORMAT_MOD_LINEAR);
+         display_formats = &yuv_display_formats;
+     }
+ 
+-    if (!buffer_match_plane) {
+-        const struct wlr_drm_format *_render_format = renderer_get_render_format(renderer, format);
+-        if (_render_format) {
+-            drm_format_copy(&render_format, _render_format);
++    bool has_render_format = false;
++    if (!config->buffer_matches_plane) {
++        const struct wlr_drm_format *renderer_format =
++            renderer_get_render_format(resources->renderer, config->format);
++        if (renderer_format) {
++            has_render_format = drm_format_copy(&render_format, renderer_format);
+         }
+     } else {
+-        drm_plane_pick_render_format(renderer, display_formats, &render_format, format);
++        has_render_format = drm_plane_pick_render_format(resources->renderer, display_formats,
++                                                         &render_format, config->format);
+     }
+     wlr_drm_format_set_finish(&yuv_display_formats);
+ 
+-    if (render_format.len == 0) {
+-        kywc_log(KYWC_WARN, "Renderer pick renderer format failed");
+-        return false;
++    if (!has_render_format) {
++        kywc_log(KYWC_WARN, "Failed to pick surface render format");
++        return NULL;
+     }
+ 
+-    enum allocator_buffer_type type = wlr_renderer_is_pixman_renderer(renderer)
+-                                          ? ALLOCATOR_BUFFER_TYPE_DUMB
+-                                          : ALLOCATOR_BUFFER_TYPE_GBM;
+-
+     struct swapchain_option option = {
+-        .width = width,
+-        .height = height,
++        .width = config->width,
++        .height = config->height,
+         .output = &conn->output,
+         .drm_format = &render_format,
+-        .state = use_yuyv ? NULL : state,
++        .test_state = config->use_yuyv ? NULL : config->test_state,
+     };
+-    swapchain = surface_swapchain_create(allocator, type, &option);
++    enum allocator_buffer_type buffer_type = wlr_renderer_is_pixman_renderer(resources->renderer)
++                                                 ? ALLOCATOR_BUFFER_TYPE_DUMB
++                                                 : ALLOCATOR_BUFFER_TYPE_GBM;
++    struct surf_swapchain *swapchain =
++        surface_swapchain_create(resources->allocator, buffer_type, &option);
+     wlr_drm_format_finish(&render_format);
+-    if (!swapchain) {
++    return swapchain;
++}
++
++static struct surf_swapchain *
++drm_surface_create_copy_swapchain(struct drm_plane *plane, struct drm_connector *conn,
++                                  const struct drm_surface_blit_config *config)
++{
++    struct wlr_renderer *copy_renderer =
++        config->mgpu_renderer ? config->mgpu_renderer->wlr_rend : conn->output.renderer;
++    struct wlr_allocator *copy_allocator =
++        config->mgpu_renderer ? config->mgpu_renderer->allocator : conn->output.allocator;
++
++    const struct wlr_drm_format *plane_format =
++        wlr_drm_format_set_get(&plane->formats, config->format);
++    uint32_t disp_format = plane_format ? config->format : DRM_FORMAT_XRGB8888;
++
++    struct wlr_drm_format drm_format = { 0 };
++    if (!config->buffer_matches_plane) {
++        plane_format = wlr_drm_format_set_get(&plane->formats, disp_format);
++        if (!plane_format) {
++            return NULL;
++        }
++        if (!drm_format_copy(&drm_format, plane_format)) {
++            return NULL;
++        }
++    } else if (!drm_plane_pick_render_format(copy_renderer, &plane->formats, &drm_format,
++                                             disp_format)) {
++        kywc_log(KYWC_WARN, "Failed to pick surface copy format");
++        return NULL;
++    }
++
++    struct swapchain_option option = {
++        .width = config->width,
++        .height = config->height,
++        .output = &conn->output,
++        .drm_format = &drm_format,
++        .test_state = NULL,
++    };
++    struct surf_swapchain *copy_swapchain =
++        surface_swapchain_create(copy_allocator, ALLOCATOR_BUFFER_TYPE_DUMB, &option);
++    wlr_drm_format_finish(&drm_format);
++    return copy_swapchain;
++}
++
++bool drm_surface_init(struct drm_plane *plane, struct drm_connector *conn,
++                      const struct drm_surface_blit_config *config)
++{
++    struct drm_surface *surf = &plane->multi_surf;
++    struct drm_surface_render_resources render_resources = {
++        .renderer = conn->output.renderer,
++        .allocator = conn->output.allocator,
++        .display_formats = &plane->formats,
++    };
++
++    bool mgpu_pixman = config->mgpu_renderer != NULL &&
++                       wlr_renderer_is_pixman_renderer(config->mgpu_renderer->wlr_rend);
++    if (config->mgpu_renderer != NULL) {
++        render_resources.display_formats = &config->mgpu_renderer->formats;
++        if (!mgpu_pixman) {
++            render_resources.renderer = config->mgpu_renderer->wlr_rend;
++            render_resources.allocator = config->mgpu_renderer->allocator;
++        }
++    }
++
++    bool allocator_uses_shm = conn->output.allocator->buffer_caps & WLR_BUFFER_CAP_SHM;
++    bool need_render = wlr_renderer_is_opengl(render_resources.renderer);
++    bool need_copy_swapchain = mgpu_pixman || !config->buffer_matches_plane;
++    bool need_copy = need_copy_swapchain || (allocator_uses_shm && !need_render);
++    if (!need_render && !need_copy) {
++        kywc_log(KYWC_ERROR, "DRM surface blit requires render or copy");
+         return false;
+     }
+ 
+-    if (!mgpu_renderer && type == ALLOCATOR_BUFFER_TYPE_DUMB) {
+-        dumb_swapchain = swapchain;
++    enum drm_surface_blit_mode blit_mode;
++    if (need_render) {
++        blit_mode = need_copy ? DRM_SURFACE_BLIT_RENDER_COPY : DRM_SURFACE_BLIT_RENDER;
++    } else {
++        blit_mode = DRM_SURFACE_BLIT_COPY;
+     }
+ 
+-dumb_alloc:
+-    if ((mgpu_renderer && wlr_renderer_is_pixman_renderer(mgpu_renderer->wlr_rend)) ||
+-        !buffer_match_plane) {
+-        struct wlr_renderer *dumb_renderer =
+-            mgpu_renderer ? mgpu_renderer->wlr_rend : conn->output.renderer;
+-        struct wlr_allocator *dumb_allocator =
+-            mgpu_renderer ? mgpu_renderer->allocator : conn->output.allocator;
++    uint32_t swapchain_mask = 0;
++    if (need_render || (need_copy && !need_copy_swapchain)) {
++        swapchain_mask |= DRM_SURFACE_NEEDS_RENDER_SWAPCHAIN;
++    }
++    if (need_copy_swapchain) {
++        swapchain_mask |= DRM_SURFACE_NEEDS_COPY_SWAPCHAIN;
++    }
+ 
+-        const struct wlr_drm_format *_drm_format = wlr_drm_format_set_get(&plane->formats, format);
+-        uint32_t disp_format = format;
+-        if (!_drm_format) {
+-            disp_format = DRM_FORMAT_XRGB8888;
+-        }
++    if (drm_surface_matches_config(surf, blit_mode, render_resources.renderer, swapchain_mask,
++                                   config)) {
++        return true;
++    }
+ 
+-        struct wlr_drm_format drm_format = { 0 };
+-        if (!buffer_match_plane) {
+-            _drm_format = wlr_drm_format_set_get(&plane->formats, disp_format);
+-            if (!_drm_format) {
+-                surface_swapchain_destroy(swapchain);
+-                return false;
+-            }
+-            drm_format_copy(&drm_format, _drm_format);
+-        } else {
+-            if (!drm_plane_pick_render_format(dumb_renderer, &plane->formats, &drm_format,
+-                                              disp_format)) {
+-                kywc_log(KYWC_WARN, "surface dumb format format failed");
+-                surface_swapchain_destroy(swapchain);
+-                return false;
+-            }
+-        }
++    struct surf_swapchain *render_swapchain = NULL;
++    struct surf_swapchain *copy_swapchain = NULL;
+ 
+-        struct swapchain_option option = {
+-            .width = width,
+-            .height = height,
+-            .output = &conn->output,
+-            .drm_format = &drm_format,
+-            .state = NULL,
+-        };
+-        dumb_swapchain =
+-            surface_swapchain_create(dumb_allocator, ALLOCATOR_BUFFER_TYPE_DUMB, &option);
+-        wlr_drm_format_finish(&drm_format);
+-        if (!dumb_swapchain) {
+-            surface_swapchain_destroy(swapchain);
++    if (swapchain_mask & DRM_SURFACE_NEEDS_RENDER_SWAPCHAIN) {
++        render_swapchain = drm_surface_create_render_swapchain(conn, config, &render_resources);
++        if (!render_swapchain) {
+             return false;
+         }
++    }
+ 
+-        if (both_pixman) {
+-            swapchain = dumb_swapchain;
++    if (swapchain_mask & DRM_SURFACE_NEEDS_COPY_SWAPCHAIN) {
++        copy_swapchain = drm_surface_create_copy_swapchain(plane, conn, config);
++        if (!copy_swapchain) {
++            surface_swapchain_destroy(render_swapchain);
++            return false;
+         }
+     }
+ 
+-    surf->swapchain = swapchain;
+-    surf->dumb_swapchain = dumb_swapchain;
+-    surf->wlr_rend = renderer;
++    drm_surface_finish(surf);
++    surf->wlr_rend = render_resources.renderer;
++    surf->mgpu_renderer = config->mgpu_renderer;
++    surf->blit_mode = blit_mode;
++    surf->format = config->format;
++    surf->use_yuyv = config->use_yuyv;
++    surf->buffer_matches_plane = config->buffer_matches_plane;
++    surf->render_swapchain = render_swapchain;
++    surf->copy_swapchain = copy_swapchain;
+ 
+     int drm_fd = wlr_renderer_get_drm_fd(surf->wlr_rend);
+     if (backend_support_timeline(conn->output.backend) &&
+         renderer_support_timeline(surf->wlr_rend) && drm_fd >= 0) {
+         surf->timeline = drm_syncobj_timeline_create(drm_fd);
+         if (surf->timeline == NULL) {
+-            kywc_log(KYWC_ERROR, "Failed to create DRM syncobj timeline, falling back to implicit sync");
++            kywc_log(KYWC_ERROR,
++                     "Failed to create DRM syncobj timeline, falling back to implicit sync");
+         }
+     }
+ 
+@@ -691,38 +765,49 @@ dumb_alloc:
+ 
+ struct wlr_buffer *drm_surface_blit(struct drm_surface *surface, struct drm_render_target *target)
+ {
+-    if (wlr_renderer_is_pixman_renderer(surface->wlr_rend) && !surface->swapchain &&
+-        !surface->dumb_swapchain) {
+-        // do not blit
+-        return wlr_buffer_lock(target->source);
+-    }
+-
+-    struct wlr_buffer *buffer = target->source;
+-    if (wlr_renderer_is_opengl(surface->wlr_rend)) {
++    struct wlr_buffer *buffer = NULL;
++    switch (surface->blit_mode) {
++    case DRM_SURFACE_BLIT_RENDER:
++    case DRM_SURFACE_BLIT_RENDER_COPY:
++        assert(surface->render_swapchain);
+         buffer = blit_buffer_with_opengl(surface, target);
+-    } else {
+-        buffer = wlr_buffer_lock(buffer);
++        if (!buffer) {
++            return NULL;
++        }
++        break;
++    case DRM_SURFACE_BLIT_COPY:
++        assert((surface->render_swapchain != NULL) != (surface->copy_swapchain != NULL));
++        buffer = wlr_buffer_lock(target->source);
++        break;
++    case DRM_SURFACE_BLIT_NONE:
++        kywc_log(KYWC_ERROR, "DRM surface is not configured for blit");
++        return NULL;
+     }
+ 
+-    if (!surface->dumb_swapchain) {
++    if (surface->blit_mode == DRM_SURFACE_BLIT_RENDER) {
+         return buffer;
+     }
+ 
+-    struct wlr_buffer *dumb_buffer = swapchain_acquire(surface->dumb_swapchain->swapchain, NULL);
+-    if (!dumb_buffer) {
+-        kywc_log(KYWC_ERROR, "Failed to acquire multi-GPU dumb swapchain buffer");
++    struct surf_swapchain *copy_swapchain = surface->copy_swapchain;
++    if (surface->blit_mode == DRM_SURFACE_BLIT_COPY && !copy_swapchain) {
++        copy_swapchain = surface->render_swapchain;
++    }
++    assert(copy_swapchain);
++
++    struct wlr_buffer *copy_buffer = swapchain_acquire(copy_swapchain->swapchain, NULL);
++    if (!copy_buffer) {
++        kywc_log(KYWC_ERROR, "Failed to acquire surface copy swapchain buffer");
+         goto error;
+     }
+ 
+-    if (!readpixel_from_buffer(target->wlr_rend, buffer, dumb_buffer, target->damage)) {
+-        goto error_pixel;
++    if (!readpixel_from_buffer(surface->wlr_rend, buffer, copy_buffer, target->damage)) {
++        wlr_buffer_unlock(copy_buffer);
++        goto error;
+     }
+ 
+     wlr_buffer_unlock(buffer);
+-    return dumb_buffer;
++    return copy_buffer;
+ 
+-error_pixel:
+-    wlr_buffer_unlock(dumb_buffer);
+ error:
+     wlr_buffer_unlock(buffer);
+     return NULL;
+diff --git a/src/backend/libinput/events.c b/src/backend/libinput/events.c
+index 700dd90..a89b35f 100644
+--- a/src/backend/libinput/events.c
++++ b/src/backend/libinput/events.c
+@@ -159,6 +159,10 @@ static void handle_pointer_zone_begin(struct libinput_event *event,
+                                       struct libinput_input_device *input_device)
+ {
+     struct libinput_event_gesture *gevent = libinput_event_get_gesture_event(event);
++    if (!gevent) {
++        return;
++    }
++
+     enum pointer_zone_gesture_zone zone;
+     if (!zone_from_libinput(libinput_event_gesture_get_zone(gevent), &zone)) {
+         kywc_log(KYWC_DEBUG, "Unhandled libinput zone gesture zone");
+@@ -180,6 +184,10 @@ static void handle_pointer_zone_update(struct libinput_event *event,
+                                        struct libinput_input_device *input_device)
+ {
+     struct libinput_event_gesture *gevent = libinput_event_get_gesture_event(event);
++    if (!gevent) {
++        return;
++    }
++
+     enum pointer_zone_gesture_zone zone;
+     if (!zone_from_libinput(libinput_event_gesture_get_zone(gevent), &zone)) {
+         kywc_log(KYWC_DEBUG, "Unhandled libinput zone gesture zone");
+@@ -205,6 +213,10 @@ static void handle_pointer_zone_end(struct libinput_event *event,
+                                     struct libinput_input_device *input_device)
+ {
+     struct libinput_event_gesture *gevent = libinput_event_get_gesture_event(event);
++    if (!gevent) {
++        return;
++    }
++
+     struct input_event ie = {
+         .type = INPUT_EVENT_ZONE_END,
+         .time_msec = usec_to_msec(libinput_event_gesture_get_time_usec(gevent)),
+@@ -374,7 +386,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+                 wl_signal_emit_mutable(&backend->backend.events.new_input, &dev->tablet_pad.base);
+             }
+             break;
+-        case INPUT_EVENT_DEVICE_REMOVED:
++        case INPUT_EVENT_DEVICE_REMOVED:;
+             int vendor = libinput_device_get_id_vendor(dev->handle);
+             int product = libinput_device_get_id_product(dev->handle);
+             const char *name = libinput_device_get_name(dev->handle);
+@@ -382,7 +394,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+ 
+             destroy_libinput_input_device(dev);
+             break;
+-        case INPUT_EVENT_KEYBOARD_KEY:
++        case INPUT_EVENT_KEYBOARD_KEY:;
+             struct wlr_keyboard_key_event key_ev = {
+                 .keycode = ie.key.key,
+                 .state =
+@@ -392,7 +404,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wlr_keyboard_notify_key(&dev->keyboard, &key_ev);
+             break;
+-        case INPUT_EVENT_POINTER_MOTION:
++        case INPUT_EVENT_POINTER_MOTION:;
+             struct wlr_pointer_motion_event motion_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -404,7 +416,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             wl_signal_emit_mutable(&dev->pointer.events.motion, &motion_ev);
+             wl_signal_emit_mutable(&dev->pointer.events.frame, &dev->pointer);
+             break;
+-        case INPUT_EVENT_POINTER_MOTION_ABSOLUTE:
++        case INPUT_EVENT_POINTER_MOTION_ABSOLUTE:;
+             struct wlr_pointer_motion_absolute_event motion_abs_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -414,7 +426,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             wl_signal_emit_mutable(&dev->pointer.events.motion_absolute, &motion_abs_ev);
+             wl_signal_emit_mutable(&dev->pointer.events.frame, &dev->pointer);
+             break;
+-        case INPUT_EVENT_POINTER_BUTTON:
++        case INPUT_EVENT_POINTER_BUTTON:;
+             struct wlr_pointer_button_event button_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -424,7 +436,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             wl_signal_emit_mutable(&dev->pointer.events.button, &button_ev);
+             wl_signal_emit_mutable(&dev->pointer.events.frame, &dev->pointer);
+             break;
+-        case INPUT_EVENT_POINTER_AXIS:
++        case INPUT_EVENT_POINTER_AXIS:;
+             struct wlr_pointer_axis_event axis_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -450,7 +462,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->touch.events.down, &down_ev);
+             break;
+-        case INPUT_EVENT_TOUCH_UP:
++        case INPUT_EVENT_TOUCH_UP:;
+             struct wlr_touch_up_event up_ev = {
+                 .touch = &dev->touch,
+                 .time_msec = ie.time_msec,
+@@ -472,7 +484,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->touch.events.motion, &touch_motion_ev);
+             break;
+-        case INPUT_EVENT_TOUCH_CANCEL:
++        case INPUT_EVENT_TOUCH_CANCEL:;
+             struct wlr_touch_cancel_event cancel_ev = {
+                 .touch = &dev->touch,
+                 .time_msec = ie.time_msec,
+@@ -483,7 +495,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+         case INPUT_EVENT_TOUCH_FRAME:
+             wl_signal_emit_mutable(&dev->touch.events.frame, NULL);
+             break;
+-        case INPUT_EVENT_SWITCH_TOGGLE:
++        case INPUT_EVENT_SWITCH_TOGGLE:;
+             struct wlr_switch_toggle_event switch_ev = {
+                 .time_msec = ie.time_msec,
+                 .switch_type = ie.sw.switch_type,
+@@ -491,7 +503,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->switch_device.events.toggle, &switch_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_SWIPE_BEGIN:
++        case INPUT_EVENT_GESTURE_SWIPE_BEGIN:;
+             struct wlr_pointer_swipe_begin_event swipe_begin_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -499,7 +511,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.swipe_begin, &swipe_begin_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_SWIPE_UPDATE:
++        case INPUT_EVENT_GESTURE_SWIPE_UPDATE:;
+             struct wlr_pointer_swipe_update_event swipe_update_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -509,7 +521,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.swipe_update, &swipe_update_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_SWIPE_END:
++        case INPUT_EVENT_GESTURE_SWIPE_END:;
+             struct wlr_pointer_swipe_end_event swipe_end_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -517,7 +529,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.swipe_end, &swipe_end_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_PINCH_BEGIN:
++        case INPUT_EVENT_GESTURE_PINCH_BEGIN:;
+             struct wlr_pointer_pinch_begin_event pinch_begin_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -525,7 +537,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.pinch_begin, &pinch_begin_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_PINCH_UPDATE:
++        case INPUT_EVENT_GESTURE_PINCH_UPDATE:;
+             struct wlr_pointer_pinch_update_event pinch_update_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -537,7 +549,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.pinch_update, &pinch_update_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_PINCH_END:
++        case INPUT_EVENT_GESTURE_PINCH_END:;
+             struct wlr_pointer_pinch_end_event pinch_end_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -545,7 +557,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.pinch_end, &pinch_end_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_HOLD_BEGIN:
++        case INPUT_EVENT_GESTURE_HOLD_BEGIN:;
+             struct wlr_pointer_hold_begin_event hold_begin_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -553,7 +565,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.hold_begin, &hold_begin_ev);
+             break;
+-        case INPUT_EVENT_GESTURE_HOLD_END:
++        case INPUT_EVENT_GESTURE_HOLD_END:;
+             struct wlr_pointer_hold_end_event hold_end_ev = {
+                 .pointer = &dev->pointer,
+                 .time_msec = ie.time_msec,
+@@ -561,7 +573,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->pointer.events.hold_end, &hold_end_ev);
+             break;
+-        case INPUT_EVENT_TABLET_TOOL_AXIS:
++        case INPUT_EVENT_TABLET_TOOL_AXIS:;
+             struct wlr_tablet_tool_axis_event tablet_axis_ev = {
+                 .tablet = &dev->tablet,
+                 .tool = (struct wlr_tablet_tool *)ie.tablet_axis.tool,
+@@ -581,7 +593,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->tablet.events.axis, &tablet_axis_ev);
+             break;
+-        case INPUT_EVENT_TABLET_TOOL_PROXIMITY:
++        case INPUT_EVENT_TABLET_TOOL_PROXIMITY:;
+             struct wlr_tablet_tool_proximity_event prox_ev = {
+                 .tablet = &dev->tablet,
+                 .tool = (struct wlr_tablet_tool *)ie.tablet_proximity.tool,
+@@ -593,7 +605,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->tablet.events.proximity, &prox_ev);
+             break;
+-        case INPUT_EVENT_TABLET_TOOL_TIP:
++        case INPUT_EVENT_TABLET_TOOL_TIP:;
+             struct wlr_tablet_tool_tip_event tip_ev = {
+                 .tablet = &dev->tablet,
+                 .tool = (struct wlr_tablet_tool *)ie.tablet_tip.tool,
+@@ -604,7 +616,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->tablet.events.tip, &tip_ev);
+             break;
+-        case INPUT_EVENT_TABLET_TOOL_BUTTON:
++        case INPUT_EVENT_TABLET_TOOL_BUTTON:;
+             struct wlr_tablet_tool_button_event tablet_button_ev = {
+                 .tablet = &dev->tablet,
+                 .tool = (struct wlr_tablet_tool *)ie.tablet_button.tool,
+@@ -614,7 +626,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->tablet.events.button, &tablet_button_ev);
+             break;
+-        case INPUT_EVENT_TABLET_PAD_BUTTON:
++        case INPUT_EVENT_TABLET_PAD_BUTTON:;
+             struct wlr_tablet_pad_button_event pad_button_ev = {
+                 .time_msec = ie.time_msec,
+                 .button = ie.tablet_pad.button,
+@@ -624,7 +636,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->tablet_pad.events.button, &pad_button_ev);
+             break;
+-        case INPUT_EVENT_TABLET_PAD_RING:
++        case INPUT_EVENT_TABLET_PAD_RING:;
+             struct wlr_tablet_pad_ring_event pad_ring_ev = {
+                 .time_msec = ie.time_msec,
+                 .ring = ie.tablet_pad.number,
+@@ -634,7 +646,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->tablet_pad.events.ring, &pad_ring_ev);
+             break;
+-        case INPUT_EVENT_TABLET_PAD_STRIP:
++        case INPUT_EVENT_TABLET_PAD_STRIP:;
+             struct wlr_tablet_pad_strip_event pad_strip_ev = {
+                 .time_msec = ie.time_msec,
+                 .strip = ie.tablet_pad.number,
+@@ -648,7 +660,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             tool_destroy((struct tablet_tool *)ie.tablet_tool_destroy.tool,
+                          (struct libinput_input_device *)ie.tablet_tool_destroy.dev);
+             break;
+-        case INPUT_EVENT_RAW_TAP:
++        case INPUT_EVENT_RAW_TAP:;
+             struct pointer_raw_tap_event tap_ev = {
+                 .time_msec = ie.time_msec,
+                 .fingers = ie.raw_tap.fingers,
+@@ -656,7 +668,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             wl_signal_emit_mutable(&dev->events.raw_tap, &tap_ev);
+             break;
+ #if HAVE_LIBINPUT_ZONE_GESTURE
+-        case INPUT_EVENT_ZONE_BEGIN:
++        case INPUT_EVENT_ZONE_BEGIN:;
+             struct pointer_zone_gesture_begin_event zone_begin_ev = {
+                 .time_msec = ie.time_msec,
+                 .fingers = ie.zone_gesture.fingers,
+@@ -664,7 +676,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->events.zone_begin, &zone_begin_ev);
+             break;
+-        case INPUT_EVENT_ZONE_UPDATE:
++        case INPUT_EVENT_ZONE_UPDATE:;
+             struct pointer_zone_gesture_update_event zone_update_ev = {
+                 .time_msec = ie.time_msec,
+                 .fingers = ie.zone_gesture.fingers,
+@@ -673,7 +685,7 @@ void dispatch_input_events(struct libinput_backend *backend)
+             };
+             wl_signal_emit_mutable(&dev->events.zone_update, &zone_update_ev);
+             break;
+-        case INPUT_EVENT_ZONE_END:
++        case INPUT_EVENT_ZONE_END:;
+             struct pointer_zone_gesture_end_event zone_end_ev = {
+                 .time_msec = ie.time_msec,
+                 .cancelled = ie.zone_gesture.cancelled,
+diff --git a/src/config/config.c b/src/config/config.c
+index ece0058..ddb104a 100644
+--- a/src/config/config.c
++++ b/src/config/config.c
+@@ -17,7 +17,7 @@ static struct config_manager *config_manager = NULL;
+ 
+ static const char *check_config_file(void)
+ {
+-    char *config_dir = string_expand_path("~/.config/kylin-wlcom");
++    char *config_dir = string_expand_path("~/.config/" TARGET_NAME "");
+     if (!config_dir) {
+         return NULL;
+     }
+@@ -91,7 +91,7 @@ struct config_manager *config_manager_create(struct server *server)
+         config_manager->json = json_object_from_file(config_manager->file);
+     }
+     /* get system default config */
+-    config_manager->sys_json = json_object_from_file("/etc/kylin-wlcom/config.json");
++    config_manager->sys_json = json_object_from_file("/etc/" TARGET_NAME "/config.json");
+     kywc_log(KYWC_INFO, "Get the sys default config from the etc directory");
+     if (!config_manager->sys_json) {
+         kywc_log(KYWC_WARN, "The default config does not exist");
+diff --git a/src/config/kde_global_accel.c b/src/config/kde_global_accel.c
+index 9a329f5..1ff75b6 100644
+--- a/src/config/kde_global_accel.c
++++ b/src/config/kde_global_accel.c
+@@ -1162,7 +1162,7 @@ static void handle_server_destroy(struct wl_listener *listener, void *data)
+     registry = NULL;
+ }
+ 
+-static const char *component_builtin = "kylin-wlcom";
++static const char *component_builtin = TARGET_NAME;
+ 
+ static bool kglobalaccel_builtin_shortcuts(struct key_binding *binding, char *unique_name,
+                                            char *friendly_name, int32_t modifiers, int32_t key)
+diff --git a/src/input/cursor.c b/src/input/cursor.c
+index 46519ed..c023abb 100644
+--- a/src/input/cursor.c
++++ b/src/input/cursor.c
+@@ -184,6 +184,14 @@ void cursor_feed_button(struct cursor *cursor, uint32_t button, bool pressed, ui
+                         uint32_t double_click_time)
+ {
+     struct seat *seat = cursor->seat;
++
++    struct seat_cursor_button_event event = {
++        .time_msec = current_time_msec(),
++        .button = button,
++        .pressed = pressed,
++    };
++    wl_signal_emit_mutable(&cursor->seat->events.cursor_button, &event);
++
+     bool last_is_pressed = cursor->last_click_pressed;
+     uint32_t last_button = cursor->last_click_button;
+     cursor->last_click_pressed = pressed;
+diff --git a/src/input/function.c b/src/input/function.c
+index d8818c2..e11ad2e 100644
+--- a/src/input/function.c
++++ b/src/input/function.c
+@@ -1067,16 +1067,20 @@ bool function_entry_get_gesture_optional(enum function_id id, enum gesture_devic
+ 
+ static enum language get_language_from_system(void)
+ {
+-    const char *system_lang = setlocale(LC_ALL, "");
+-    if (!strncmp(system_lang, "zh_CN", 5)) {
++    const char *system_lang = setlocale(LC_MESSAGES, "");
++    if (STRING_INVALID(system_lang)) {
++        return LANG_EN_US;
++    }
++
++    if (strncmp(system_lang, "zh_CN", 5) == 0) {
+         return LANG_ZH_CN;
+-    } else if (!strncmp(system_lang, "zh_HK", 5)) {
++    } else if (strncmp(system_lang, "zh_HK", 5) == 0) {
+         return LANG_ZH_HK;
+-    } else if (!strncmp(system_lang, "en_US", 5)) {
++    } else if (strncmp(system_lang, "en_US", 5) == 0) {
+         return LANG_EN_US;
+-    } else if (!strncmp(system_lang, "bo_CN", 5)) {
++    } else if (strncmp(system_lang, "bo_CN", 5) == 0) {
+         return LANG_BO_CN;
+-    } else if (!strncmp(system_lang, "mn_MN", 5)) {
++    } else if (strncmp(system_lang, "mn_MN", 5) == 0) {
+         return LANG_MN_MN;
+     }
+ 
+@@ -1169,7 +1173,7 @@ static void ukui_media_do_action(const char *action)
+ {
+     if (!dbus_call_methodv("org.ukui.SettingsDaemon", "/org/ukui/SettingsDaemon/MediaKeys",
+                            "org.ukui.SettingsDaemon.MediaKeys", "externalDoActionWithName", NULL,
+-                           NULL, "ss", action, "kylin-wlcom")) {
++                           NULL, "ss", action, TARGET_NAME)) {
+         kywc_log(KYWC_ERROR, "Dbus call MediaKeys.externalDoActionWithName(%s) failed", action);
+     }
+ }
+diff --git a/src/input/seat.c b/src/input/seat.c
+index 136d7bd..5b3b4f9 100644
+--- a/src/input/seat.c
++++ b/src/input/seat.c
+@@ -56,6 +56,7 @@ static void _seat_destroy(struct seat *seat)
+     wl_signal_emit_mutable(&seat->events.destroy, NULL);
+ 
+     assert(wl_list_empty(&seat->events.cursor_motion.listener_list));
++    assert(wl_list_empty(&seat->events.cursor_button.listener_list));
+     assert(wl_list_empty(&seat->events.cursor_configure.listener_list));
+     assert(wl_list_empty(&seat->events.keyboard_key.listener_list));
+     assert(wl_list_empty(&seat->events.keyboard_modifiers.listener_list));
+@@ -137,6 +138,7 @@ struct seat *seat_create(struct input_manager *input_manager, const char *name)
+     wl_list_init(&seat->keyboard_shortcuts_inhibitors);
+ 
+     wl_signal_init(&seat->events.cursor_motion);
++    wl_signal_init(&seat->events.cursor_button);
+     wl_signal_init(&seat->events.cursor_configure);
+     wl_signal_init(&seat->events.keyboard_key);
+     wl_signal_init(&seat->events.keyboard_modifiers);
+diff --git a/src/input/selection.c b/src/input/selection.c
+index ed352ea..49116fa 100644
+--- a/src/input/selection.c
++++ b/src/input/selection.c
+@@ -311,9 +311,14 @@ static void handle_start_drag(struct wl_listener *listener, void *data)
+     cursor_set_image(selection->seat->cursor, CURSOR_DEFAULT);
+     cursor_lock_image(selection->seat->cursor, true);
+     selection->source_accepted.notify = handle_source_accepted;
+-    wl_signal_add(&selection->drag->source->events.accepted, &selection->source_accepted);
+     selection->source_dnd_action.notify = handle_source_dnd_action;
+-    wl_signal_add(&selection->drag->source->events.dnd_action, &selection->source_dnd_action);
++    if (selection->drag->source) {
++        wl_signal_add(&selection->drag->source->events.accepted, &selection->source_accepted);
++        wl_signal_add(&selection->drag->source->events.dnd_action, &selection->source_dnd_action);
++    } else {
++        wl_list_init(&selection->source_accepted.link);
++        wl_list_init(&selection->source_dnd_action.link);
++    }
+ 
+     if (wlr_drag->grab_type == WLR_DRAG_GRAB_KEYBOARD_TOUCH) {
+         selection->pointer_grab_begin.notify = handle_pointer_grab_begin;
+diff --git a/src/main.c b/src/main.c
+index 7299a1e..0589768 100644
+--- a/src/main.c
++++ b/src/main.c
+@@ -4,7 +4,6 @@
+ 
+ #define _POSIX_C_SOURCE 200809L
+ #include <getopt.h>
+-#include <libintl.h>
+ #include <locale.h>
+ #include <signal.h>
+ #include <stdio.h>
+@@ -17,6 +16,12 @@
+ #include "util/logger.h"
+ #include "util/spawn.h"
+ 
++#if HAVE_NLS
++#include "locales.h"
++#include "util/macros.h"
++#include "util/nls.h"
++#endif
++
+ static struct server server = {
+     .options = {
+         .enable_xwayland = true,
+@@ -37,7 +42,7 @@ static const struct option long_options[] = {
+ };
+ 
+ static const char usage[] =
+-    "Usage: kylin-wlcom [options] [command]\n"
++    "Usage: " TARGET_NAME " [options] [command]\n"
+     "\n"
+     "  -h, --help               Show help message and quit.\n"
+     "  -d, --debug              Enables full logging, including debug information.\n"
+@@ -157,7 +162,7 @@ static void child_handler(int signo, siginfo_t *sip, void *unused)
+     server.session_pid = -1;
+ 
+     if (server.options.binding_session) {
+-        kywc_log(KYWC_FATAL, "Kylin-wlcom abort...");
++        kywc_log(KYWC_FATAL, "" TARGET_NAME " abort...");
+         terminate(EXIT_SUCCESS);
+     }
+ }
+@@ -182,9 +187,7 @@ int main(int argc, char *argv[])
+     setlocale(LC_NUMERIC, "C");
+ 
+ #if HAVE_NLS
+-    bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR);
+-    bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
+-    textdomain(GETTEXT_PACKAGE);
++    nls_setup_message(TARGET_NAME, locales, ARRAY_SIZE(locales));
+ #endif
+ 
+     bool enable_debug = false;
+@@ -211,7 +214,7 @@ int main(int argc, char *argv[])
+             server.session_process = optarg;
+             break;
+         case 'v': // version
+-            printf("kylin-wlcom version " KYWC_VERSION "\n");
++            printf("" TARGET_NAME " version " KYWC_VERSION "\n");
+             exit(EXIT_SUCCESS);
+             break;
+         case 'V': // verbose
+@@ -234,10 +237,10 @@ int main(int argc, char *argv[])
+     } else if (enable_verbose) {
+         level = KYWC_INFO;
+     }
+-    logger_init(level, server.options.log_to_file ? "kylin-wlcom.log" : NULL,
++    logger_init(level, server.options.log_to_file ? "" TARGET_NAME ".log" : NULL,
+                 server.options.log_in_realtime);
+     logger_set_rate_limit(server.options.log_rate_limit ? 5000 : 0, 10);
+-    kywc_log(KYWC_SILENT, "kylin-wlcom %s starting...", KYWC_VERSION);
++    kywc_log(KYWC_SILENT, "" TARGET_NAME " %s starting...", KYWC_VERSION);
+     kywc_log(KYWC_SILENT, "Current LC_MESSAGES locale: %s", setlocale(LC_MESSAGES, NULL));
+ 
+     /* set Number of open files to max */
+diff --git a/src/plugin/security/meson.build b/src/plugin/security/meson.build
+index 8fae3c1..c3ce488 100644
+--- a/src/plugin/security/meson.build
++++ b/src/plugin/security/meson.build
+@@ -24,14 +24,20 @@ security_client_header = custom_target(
+ )
+ 
+ qt5 = import('qt5')
+-qt5_dep = dependency(
++qt5dep = dependency(
+   'qt5',
+   modules: ['Core', 'Gui', 'Widgets'],
+-  private_headers: true,
+   required: false 
+ )
+ 
+-if not qt5_dep.found()
++qt5dep_priv = dependency(
++  'qt5',
++  modules: ['Gui'],
++  private_headers: true,
++  required: false
++)
++
++if not (qt5dep.found() and qt5dep_priv.found())
+   subdir_done()
+ endif
+ 
+@@ -51,7 +57,7 @@ wayland_client = dependency('wayland-client')
+ gui_exe = executable(
+   'gui',
+   sources: gui_source,
+-  dependencies: [qt5_dep, wayland_client],
++  dependencies: [qt5dep, qt5dep_priv, wayland_client],
+   cpp_args: ['-Wno-unused-parameter'],
+   override_options: ['optimization=3', 'debug=false'],
+   install: false
+diff --git a/src/server.c b/src/server.c
+index 7482dd8..3c86622 100644
+--- a/src/server.c
++++ b/src/server.c
+@@ -14,7 +14,6 @@
+ #include <wlr/backend.h>
+ #include <wlr/render/allocator.h>
+ #include <wlr/types/wlr_compositor.h>
+-#include <wlr/types/wlr_export_dmabuf_v1.h>
+ #include <wlr/types/wlr_fractional_scale_v1.h>
+ #include <wlr/types/wlr_output_layout.h>
+ #include <wlr/types/wlr_subcompositor.h>
+@@ -73,7 +72,7 @@ static void server_create_inhibitor(struct server *server)
+     }
+ 
+     dbus_call_system_methodv(service, path, interface, "Inhibit", server_set_inhibitor, server,
+-                             "ssss", "sleep", "kylin-wlcom", "Power off outputs when hibernate",
++                             "ssss", "sleep", TARGET_NAME, "Power off outputs when hibernate",
+                              "delay");
+ }
+ 
+@@ -211,7 +210,7 @@ static void kywc_log_callback(enum wlr_log_importance verbosity, const char *fmt
+ }
+ 
+ static void kywc_log_callback_dumb(enum wlr_log_importance verbosity, const char *fmt,
+-                                   va_list args){};
++                                   va_list args) {};
+ 
+ static void server_get_active_vt(struct server *server)
+ {
+@@ -282,7 +281,6 @@ static bool wlroots_server_init(struct server *server)
+     tearing_control_manager_v1_create(server->display);
+     presentation_create(server->display);
+ 
+-    wlr_export_dmabuf_manager_v1_create(server->display);
+     wlr_viewporter_create(server->display);
+     wlr_fractional_scale_manager_v1_create(server->display, 1);
+     alpha_modifier_v1_create(server->display);
+@@ -430,5 +428,5 @@ void server_finish(struct server *server)
+     /* free memory in fontconfig */
+     pango_cairo_font_map_set_default(NULL);
+ 
+-    kywc_log(KYWC_SILENT, "Kylin-wlcom finished...\n");
++    kywc_log(KYWC_SILENT, "" TARGET_NAME " finished...\n");
+ }
+diff --git a/src/theme/theme.c b/src/theme/theme.c
+index 671532e..8015d64 100644
+--- a/src/theme/theme.c
++++ b/src/theme/theme.c
+@@ -17,7 +17,7 @@
+ #include "base_light_svg_src.h"
+ 
+ #include "config.h"
+-#include "nls.h"
++#include "util/nls.h"
+ #include "painter.h"
+ #include "render/renderer.h"
+ #include "server.h"
+diff --git a/src/util/dbus.c b/src/util/dbus.c
+index 2065ed1..38048c5 100644
+--- a/src/util/dbus.c
++++ b/src/util/dbus.c
+@@ -124,7 +124,7 @@ bool dbus_context_create(struct server *server)
+         if (ret < 0) {
+             kywc_log(KYWC_ERROR, "Failed to acquire service name: %s", strerror(-ret));
+             if (ret == -EEXIST) {
+-                kywc_log(KYWC_ERROR, "Is a Kylin-Wlcom already running?");
++                kywc_log(KYWC_ERROR, "Is a " TARGET_NAME " already running?");
+             }
+             sd_bus_flush_close_unref(context->user);
+             context->user = NULL;
+diff --git a/src/util/file.c b/src/util/file.c
+index 16a9fe1..498db4a 100644
+--- a/src/util/file.c
++++ b/src/util/file.c
+@@ -337,3 +337,40 @@ out:
+ 
+     return pictures_dir;
+ }
++
++bool file_mkdir_p(const char *path)
++{
++    if (STRING_INVALID(path)) {
++        return false;
++    }
++
++    char *tmp = strdup(path);
++    if (!tmp) {
++        return false;
++    }
++
++    size_t len = strlen(tmp);
++    while (len > 1 && tmp[len - 1] == '/') {
++        tmp[--len] = '\0';
++    }
++
++    char *p = tmp + 1;
++    while (*p) {
++        if (*p == '/') {
++            while (*(p + 1) == '/') {
++                p++;
++            }
++            *p = '\0';
++            if (mkdir(tmp, 0755) != 0 && errno != EEXIST) {
++                free(tmp);
++                return false;
++            }
++            *p = '/';
++        }
++        p++;
++    }
++
++    bool ret = (mkdir(tmp, 0755) == 0 || errno == EEXIST);
++    free(tmp);
++    return ret;
++}
+diff --git a/src/util/meson.build b/src/util/meson.build
+index f264b8f..003c7a4 100644
+--- a/src/util/meson.build
++++ b/src/util/meson.build
+@@ -6,6 +6,7 @@ util_common = files(
+   'file.c',
+   'hash_table.c',
+   'limit.c',
++  'nls.c',
+   'queue.c',
+   'spsc_chain.c',
+   'string.c',
+diff --git a/src/util/nls.c b/src/util/nls.c
+new file mode 100644
+index 0000000..31b0bf0
+--- /dev/null
++++ b/src/util/nls.c
+@@ -0,0 +1,108 @@
++// SPDX-FileCopyrightText: 2026 KylinSoft Co., Ltd.
++//
++// SPDX-License-Identifier: GPL-1.0-or-later
++
++#include <stdlib.h>
++
++#include "util/file.h"
++#include "util/macros.h"
++#include "util/nls.h"
++#include "util/string.h"
++
++#if HAVE_NLS
++
++static const struct locale *find_locale(const struct locale locales[], size_t size)
++{
++    const char *locale = setlocale(LC_MESSAGES, NULL);
++
++    if (STRING_INVALID(locale) || strcmp(locale, "C") == 0 || strcmp(locale, "POSIX") == 0) {
++        return NULL;
++    }
++
++    size_t base_len = strcspn(locale, ".@");
++    if (base_len > 0) {
++        for (size_t i = 0; i < size; i++) {
++            if (strlen(locales[i].lang) == base_len &&
++                strncmp(locales[i].lang, locale, base_len) == 0) {
++                return &locales[i];
++            }
++        }
++    }
++
++    size_t lang_len = strcspn(locale, "_.@");
++    if (lang_len == 0) {
++        return NULL;
++    }
++
++    for (size_t i = 0; i < size; i++) {
++        if (strlen(locales[i].lang) == lang_len &&
++            strncmp(locales[i].lang, locale, lang_len) == 0) {
++            return &locales[i];
++        }
++    }
++
++    return NULL;
++}
++
++static bool write_locale_file(const struct locale *entry, const char *dir, const char *domain)
++{
++    char *path = string_create("%s/%s/LC_MESSAGES", dir, entry->lang);
++    if (!path) {
++        return false;
++    }
++
++    if (!file_mkdir_p(path)) {
++        free(path);
++        return false;
++    }
++
++    char *file = string_create("%s/%s.mo", path, domain);
++    free(path);
++    if (!file) {
++        return false;
++    }
++
++    FILE *fp = fopen(file, "w+b");
++    free(file);
++    if (!fp) {
++        return false;
++    }
++
++    size_t size = fwrite(entry->data, 1, entry->size, fp);
++    fflush(fp);
++    fclose(fp);
++
++    return size == entry->size;
++}
++
++bool nls_setup_message(const char *domain, const struct locale locales[], size_t size)
++{
++    if (STRING_INVALID(domain)) {
++        return false;
++    }
++
++    const char *runtime_dir = getenv("XDG_RUNTIME_DIR");
++    if (!runtime_dir || runtime_dir[0] != '/') {
++        return false;
++    }
++
++    char *dir = string_create("%s/%s", runtime_dir, domain);
++    if (!dir) {
++        return false;
++    }
++
++    const struct locale *entry = find_locale(locales, size);
++    if (!entry || !write_locale_file(entry, dir, domain)) {
++        free(dir);
++        return false;
++    }
++
++    bindtextdomain(domain, dir);
++    bind_textdomain_codeset(domain, "UTF-8");
++    textdomain(domain);
++
++    free(dir);
++    return true;
++}
++
++#endif
+diff --git a/src/view/action.c b/src/view/action.c
+index d5a255d..1f9ab51 100644
+--- a/src/view/action.c
++++ b/src/view/action.c
+@@ -15,12 +15,12 @@
+ #include "input/cursor.h"
+ #include "input/function.h"
+ #include "input/seat.h"
+-#include "nls.h"
+ #include "output.h"
+ #include "scene/thumbnail.h"
+ #include "util/dbus.h"
+ #include "util/file.h"
+ #include "util/macros.h"
++#include "util/nls.h"
+ #include "util/string.h"
+ #include "view/action.h"
+ #include "view_p.h"
+diff --git a/src/view/killer.c b/src/view/killer.c
+index 3a83525..5d76bc6 100644
+--- a/src/view/killer.c
++++ b/src/view/killer.c
+@@ -16,10 +16,9 @@
+ 
+ #include <kywc/log.h>
+ 
+-#include "nls.h"
+-#include "scene/scene.h"
+ #include "server.h"
+ #include "util/dialog.h"
++#include "util/nls.h"
+ #include "util/queue.h"
+ #include "util/spawn.h"
+ #include "view_p.h"
+diff --git a/src/view/ssd.c b/src/view/ssd.c
+index e702670..9ee95fe 100644
+--- a/src/view/ssd.c
++++ b/src/view/ssd.c
+@@ -11,13 +11,13 @@
+ 
+ #include "effect/fade.h"
+ #include "input/cursor.h"
+-#include "nls.h"
+ #include "output.h"
+ #include "painter.h"
+ #include "scene/decoration.h"
+ #include "theme.h"
+ #include "util/color.h"
+ #include "util/macros.h"
++#include "util/nls.h"
+ #include "view/action.h"
+ #include "view_p.h"
+ #include "widget/scaled_buffer.h"
+diff --git a/src/view/window_menu.c b/src/view/window_menu.c
+index 1f0e7c6..e4c8f09 100644
+--- a/src/view/window_menu.c
++++ b/src/view/window_menu.c
+@@ -7,8 +7,8 @@
+ #include <stdlib.h>
+ 
+ #include "input/seat.h"
+-#include "nls.h"
+ #include "output.h"
++#include "util/nls.h"
+ #include "view/action.h"
+ #include "view_p.h"
+ #include "widget/menu.h"
+diff --git a/src/view/workspace.c b/src/view/workspace.c
+index 6e0a76b..7696076 100644
+--- a/src/view/workspace.c
++++ b/src/view/workspace.c
+@@ -12,9 +12,9 @@
+ 
+ #include "effect/translation.h"
+ #include "input/cursor.h"
+-#include "nls.h"
+ #include "server.h"
+ #include "util/macros.h"
++#include "util/nls.h"
+ #include "util/string.h"
+ #include "view_p.h"
+ 
+diff --git a/tools/magnifier/in-black.svg b/tools/magnifier/in-black.svg
+deleted file mode 100644
+index 0f0c1db..0000000
+--- a/tools/magnifier/in-black.svg
++++ /dev/null
+@@ -1,5 +0,0 @@
+-	<!-- 深色主题版本（无填充圆环） -->
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#191818" stroke-width="2"/>
+-  <path d="M12 8V16M8 12H16" stroke="#191818" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+diff --git a/tools/magnifier/in-hide.svg b/tools/magnifier/in-hide.svg
+deleted file mode 100644
+index 10d9057..0000000
+--- a/tools/magnifier/in-hide.svg
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#787878" stroke-width="2"/>
+-  <path d="M12 8V16M8 12H16" stroke="#585858" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+\ No newline at end of file
+diff --git a/tools/magnifier/in-hover.svg b/tools/magnifier/in-hover.svg
+deleted file mode 100644
+index 33a06c8..0000000
+--- a/tools/magnifier/in-hover.svg
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#33aaff" stroke-width="2"/>
+-  <path d="M12 8V16M8 12H16" stroke="#4ec4f6" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+\ No newline at end of file
+diff --git a/tools/magnifier/in-press.svg b/tools/magnifier/in-press.svg
+deleted file mode 100644
+index 529c117..0000000
+--- a/tools/magnifier/in-press.svg
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#3088d9" stroke-width="2"/>
+-  <path d="M12 8V16M8 12H16" stroke="#2793f6" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+\ No newline at end of file
+diff --git a/tools/magnifier/in-white.svg b/tools/magnifier/in-white.svg
+deleted file mode 100644
+index 3238336..0000000
+--- a/tools/magnifier/in-white.svg
++++ /dev/null
+@@ -1,5 +0,0 @@
+-	<!-- 深色主题版本（无填充圆环） -->
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#f5f5f5" stroke-width="2"/>
+-  <path d="M12 8V16M8 12H16" stroke="#f5f5f5" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+diff --git a/tools/magnifier/magnifier.cpp b/tools/magnifier/magnifier.cpp
+index 6cdf716..64b6608 100644
+--- a/tools/magnifier/magnifier.cpp
++++ b/tools/magnifier/magnifier.cpp
+@@ -4,6 +4,7 @@
+ 
+ #include <QApplication>
+ #include <QDesktopWidget>
++#include <QFile>
+ #include <QHBoxLayout>
+ #include <QScreen>
+ 
+@@ -15,7 +16,8 @@
+ #endif
+ 
+ #define GSETTINGS_THEME_NAME "org.ukui.style"
+-#define GSETTINGS_THEME_KEY "styleName"
++#define GSETTINGS_THEME_KEY "style-name"
++#define GSETTINGS_HIGHLIGHT_KEY "theme-color"
+ 
+ static void registerMetaTypes()
+ {
+@@ -75,7 +77,7 @@ void Magnifier::on_zoomIn_clicked()
+ void Magnifier::on_zoomOut_clicked()
+ {
+     if (!ukui_magnifier || !ukui_magnifier->isValid()) {
+-        qDebug() << "ZoomIn failed: DBus interface not available";
++        qDebug() << "ZoomOut failed: DBus interface not available";
+         return;
+     }
+ 
+@@ -87,8 +89,10 @@ void Magnifier::on_zoomOut_clicked()
+ void Magnifier::on_scaleChanged(uint scale)
+ {
+     if (scale >= 16.0) {
++        button_zoomIn->setIcon(m_zoomInDisabled);
+         button_zoomIn->setEnabled(false);
+     } else if (scale <= 1.0) {
++        button_zoomOut->setIcon(m_zoomOutDisabled);
+         button_zoomOut->setEnabled(false);
+         scale = 1;
+     } else {
+@@ -106,66 +110,62 @@ void Magnifier::on_zoomStop()
+ void Magnifier::on_themeChanged()
+ {
+     bool isDark = false;
++    QString highlightColor = "#33aaff";
+     if (m_settingsTheme) {
+         QString themeName = m_settingsTheme->get(GSETTINGS_THEME_KEY).toString();
+         isDark = themeName.contains("dark", Qt::CaseInsensitive) ||
+                  themeName.contains("black", Qt::CaseInsensitive);
++        QString highLight = m_settingsTheme->get(GSETTINGS_HIGHLIGHT_KEY).toString();
++        QStringList list = highLight.split(",");
++        if (list.size() >= 3) {
++            int r = list[0].trimmed().toInt();
++            int g = list[1].trimmed().toInt();
++            int b = list[2].trimmed().toInt();
++            highlightColor = QString::asprintf("#%02X%02X%02X", r, g, b);
++        }
+     }
+ 
+     m_bgColor = isDark ? QColor(18, 18, 18) : QColor(255, 255, 255);
++    QString iconColor = isDark ? "#f5f5f5" : "#191818";
++    QString disabledColor = "#666363";
+ 
+-    if (!flag_zoomIn) {
+-        QString in_svg = isDark ? "in-white.svg" : "in-black.svg";
+-        button_zoomIn->setStyleSheet("QPushButton {"
+-                                     "   background: transparent;"
+-                                     "   background-image:url(:/" +
+-                                     in_svg +
+-                                     ");"
+-                                     "   background-repeat: no-repeat;"
+-                                     "   background-position: center;"
+-                                     "   icon-size: 24px;"
+-                                     "}"
+-                                     "QPushButton:hover {"
+-                                     "   background-image:url(:/in-hover.svg);"
+-                                     "   icon-size: 24px;"
+-                                     "}"
+-                                     "QPushButton:pressed {"
+-                                     "   background-image:url(:/in-press.svg);"
+-                                     "   icon-size: 24px;"
+-                                     "}"
+-                                     "QPushButton:disabled {"
+-                                     "   background-image:url(:/in-hide.svg);"
+-                                     "   icon-size: 24px;"
+-                                     "}");
+-    }
+-    if (!flag_zoomOut) {
+-        QString out_svg = isDark ? "out-white.svg" : "out-black.svg";
+-
+-        button_zoomOut->setStyleSheet("QPushButton {"
+-                                      "   background: transparent;"
+-                                      "   background-image:url(:/" +
+-                                      out_svg +
+-                                      ");"
+-                                      "   background-repeat: no-repeat;"
+-                                      "   background-position: center;"
+-                                      "   icon-size: 24px;"
+-                                      "}"
+-                                      "QPushButton:hover {"
+-                                      "   background-image:url(:/out-hover.svg);"
+-                                      "   icon-size: 24px;"
+-                                      "}"
+-                                      "QPushButton:pressed {"
+-                                      "   background-image:url(:/out-press.svg);"
+-                                      "   icon-size: 24px;"
+-                                      "}"
+-                                      "QPushButton:disabled {"
+-                                      "   background-image:url(:/out-hide.svg);"
+-                                      "   icon-size: 24px;"
+-                                      "}");
+-    }
++    m_zoomInNormal = loadSvgWithColor(":/zoom-in.svg", "#f5f5f5", iconColor);
++    m_zoomInHover = loadSvgWithColor(":/zoom-in.svg", "#f5f5f5", highlightColor);
++    m_zoomInDisabled = loadSvgWithColor(":/zoom-in.svg", "#f5f5f5", disabledColor);
+ 
+-    scale_label->setStyleSheet(isDark ? "color: rgb(250, 242, 242);" : "color: rgb(17, 16, 16);");
++    m_zoomOutNormal = loadSvgWithColor(":/zoom-out.svg", "#f5f5f5", iconColor);
++    m_zoomOutHover = loadSvgWithColor(":/zoom-out.svg", "#f5f5f5", highlightColor);
++    m_zoomOutDisabled = loadSvgWithColor(":/zoom-out.svg", "#f5f5f5", disabledColor);
++
++    QIcon inIcon;
++    inIcon.addPixmap(m_zoomInNormal, QIcon::Normal);
++    inIcon.addPixmap(m_zoomInDisabled, QIcon::Disabled);
++    button_zoomIn->setIcon(inIcon);
++    button_zoomIn->setIconSize(QSize(24, 24));
++    button_zoomIn->setStyleSheet("QPushButton,"
++                                 "QPushButton:hover,"
++                                 "QPushButton:pressed,"
++                                 "QPushButton:focus,"
++                                 "QPushButton:active {"
++                                 "   background: transparent;"
++                                 "   border: none;"
++                                 "}");
++
++    QIcon outIcon;
++    outIcon.addPixmap(m_zoomOutNormal, QIcon::Normal);
++    outIcon.addPixmap(m_zoomOutDisabled, QIcon::Disabled);
++    button_zoomOut->setIcon(outIcon);
++    button_zoomOut->setIconSize(QSize(24, 24));
++    button_zoomOut->setStyleSheet("QPushButton,"
++                                  "QPushButton:hover,"
++                                  "QPushButton:pressed,"
++                                  "QPushButton:focus,"
++                                  "QPushButton:active {"
++                                  "   background: transparent;"
++                                  "   border: none;"
++                                  "}");
+ 
++    scale_label->setStyleSheet(isDark ? "color: rgb(250, 242, 242);" : "color: rgb(17, 16, 16);");
+     repaint();
+ }
+ 
+@@ -192,28 +192,20 @@ void Magnifier::setupUI()
+     setFixedSize(250, 100);
+ 
+     setWindowTitle(tr("Magnifier"));
+-    // 创建内容区域
++
+     button_zoomIn = new QPushButton(this);
+     button_zoomIn->setFixedSize(38, 38);
+     button_zoomIn->setIconSize(QSize(24, 24));
+-    QIcon zoomIn = QIcon::fromTheme("zoom-in-symbolic");
+-    if (!zoomIn.isNull()) {
+-        button_zoomIn->setIcon(zoomIn);
+-        flag_zoomIn = true;
+-    }
+     button_zoomIn->setFlat(true);
+     button_zoomIn->setToolTip(tr("Zoom In"));
++    button_zoomIn->installEventFilter(this);
+ 
+     button_zoomOut = new QPushButton(this);
+     button_zoomOut->setFixedSize(38, 38);
+     button_zoomOut->setIconSize(QSize(24, 24));
+-    QIcon zoomOut = QIcon::fromTheme("zoom-out-symbolic");
+-    if (!zoomOut.isNull()) {
+-        button_zoomOut->setIcon(zoomOut);
+-        flag_zoomOut = true;
+-    }
+     button_zoomOut->setFlat(true);
+     button_zoomOut->setToolTip(tr("Zoom Out"));
++    button_zoomOut->installEventFilter(this);
+ 
+     scale_label = new QLabel("100%", this);
+     scale_label->setAlignment(Qt::AlignCenter);
+@@ -239,13 +231,6 @@ void Magnifier::setupConnection()
+ 
+ void Magnifier::enableZoom()
+ {
+-    static bool metaTypesRegistered = false;
+-    if (!metaTypesRegistered) {
+-        qDBusRegisterMetaType<WlcomData::DBusEffectData>();
+-        qDBusRegisterMetaType<WlcomData::DBusEffectDataList>();
+-        metaTypesRegistered = true;
+-    }
+-
+     wlcom_effect = new ComKylinWlcomEffectInterface("com.kylin.Wlcom", "/com/kylin/Wlcom/Effect",
+                                                     QDBusConnection::sessionBus(), this);
+     if (!wlcom_effect->isValid()) {
+@@ -282,6 +267,52 @@ int Magnifier::checkZoomIsStarted()
+     return 1;
+ }
+ 
++bool Magnifier::eventFilter(QObject *obj, QEvent *event)
++{
++    if (obj == button_zoomIn) {
++        if (event->type() == QEvent::Enter) {
++            if (button_zoomIn->isEnabled()) {
++                button_zoomIn->setIcon(m_zoomInHover);
++            }
++        } else if (event->type() == QEvent::Leave) {
++            if (button_zoomIn->isEnabled()) {
++                button_zoomIn->setIcon(m_zoomInNormal);
++            }
++        }
++    } else if (obj == button_zoomOut) {
++        if (event->type() == QEvent::Enter) {
++            if (button_zoomOut->isEnabled()) {
++                button_zoomOut->setIcon(m_zoomOutHover);
++            }
++        } else if (event->type() == QEvent::Leave) {
++            if (button_zoomOut->isEnabled()) {
++                button_zoomOut->setIcon(m_zoomOutNormal);
++            }
++        }
++    }
++    return QWidget::eventFilter(obj, event);
++}
++
++QPixmap Magnifier::loadSvgWithColor(const QString &resourcePath, const QString &oldColor,
++                                    const QString &newColor)
++{
++    QFile file(resourcePath);
++    if (!file.open(QIODevice::ReadOnly)) {
++        return QPixmap();
++    }
++    QString svgContent = QString::fromUtf8(file.readAll());
++    file.close();
++
++    if (!oldColor.isEmpty() && !newColor.isEmpty()) {
++        svgContent.replace(oldColor, newColor);
++    }
++
++    QByteArray data = svgContent.toUtf8();
++    QPixmap pixmap;
++    pixmap.loadFromData(data, "SVG");
++    return pixmap;
++}
++
+ void Magnifier::paintEvent(QPaintEvent *event)
+ {
+     QPainter painter(this);
+diff --git a/tools/magnifier/magnifier.h b/tools/magnifier/magnifier.h
+index 1997781..41a8bd8 100644
+--- a/tools/magnifier/magnifier.h
++++ b/tools/magnifier/magnifier.h
+@@ -8,6 +8,7 @@
+ #include <QGSettings>
+ #include <QLabel>
+ #include <QPainter>
++#include <QPixmap>
+ #include <QPushButton>
+ #include <QWidget>
+ 
+@@ -26,6 +27,7 @@ class Magnifier : public QWidget
+   protected:
+     void paintEvent(QPaintEvent *event) override;
+     void showEvent(QShowEvent *event) override;
++    bool eventFilter(QObject *obj, QEvent *event) override;
+ 
+   private slots:
+     void on_zoomIn_clicked();
+@@ -44,12 +46,20 @@ class Magnifier : public QWidget
+     QLabel *scale_label;
+     QGSettings *m_settingsTheme = nullptr;
+     QColor m_bgColor;
+-    bool flag_zoomIn = false;
+-    bool flag_zoomOut = false;
++
++    QPixmap m_zoomInNormal;
++    QPixmap m_zoomInHover;
++    QPixmap m_zoomInDisabled;
++    QPixmap m_zoomOutNormal;
++    QPixmap m_zoomOutHover;
++    QPixmap m_zoomOutDisabled;
+ 
+     void setupUI();
+     void setupConnection();
+     void enableZoom();
++
++    static QPixmap loadSvgWithColor(const QString &resourcePath, const QString &oldColor,
++                                    const QString &newColor);
+ };
+ 
+ #endif // MAGNIFIER_H
+diff --git a/tools/magnifier/main.cpp b/tools/magnifier/main.cpp
+index 44e1a45..3a7a76a 100644
+--- a/tools/magnifier/main.cpp
++++ b/tools/magnifier/main.cpp
+@@ -11,6 +11,8 @@
+ 
+ int main(int argc, char *argv[])
+ {
++    setenv("QT_QPA_PLATFORMTHEME", "ukui", 1);
++
+     QApplication app(argc, argv);
+ 
+     QString systemLanguage = QLocale::system().name();
+diff --git a/tools/magnifier/meson.build b/tools/magnifier/meson.build
+index c1a6db4..d5f8ea9 100644
+--- a/tools/magnifier/meson.build
++++ b/tools/magnifier/meson.build
+@@ -6,10 +6,13 @@ qt5 = import('qt5')
+ qt5dep = dependency(
+   'qt5',
+   modules: ['Core', 'DBus', 'Widgets', 'Gui'],
+-  private_headers: true,
+   required: false
+ )
+ 
++if not qt5dep.found()
++  subdir_done()
++endif
++
+ gsettings_dep = dependency('gsettings-qt')
+ kysdk_ukuiwindowhelper = dependency('kysdk-ukuiwindowhelper', required: false)
+ 
+diff --git a/tools/magnifier/out-black.svg b/tools/magnifier/out-black.svg
+deleted file mode 100644
+index a90f11e..0000000
+--- a/tools/magnifier/out-black.svg
++++ /dev/null
+@@ -1,5 +0,0 @@
+-<!-- 深色主题减号图标 -->
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#191818" stroke-width="2"/>
+-  <path d="M8 12H16" stroke="#191818" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+diff --git a/tools/magnifier/out-hide.svg b/tools/magnifier/out-hide.svg
+deleted file mode 100644
+index 52bec69..0000000
+--- a/tools/magnifier/out-hide.svg
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#787878" stroke-width="2"/>
+-  <path d="M8 12H16" stroke="#585858" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+\ No newline at end of file
+diff --git a/tools/magnifier/out-hover.svg b/tools/magnifier/out-hover.svg
+deleted file mode 100644
+index 899cebb..0000000
+--- a/tools/magnifier/out-hover.svg
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#33aaff" stroke-width="2"/>
+-  <path d="M8 12H16" stroke="#4ec4f6" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+\ No newline at end of file
+diff --git a/tools/magnifier/out-press.svg b/tools/magnifier/out-press.svg
+deleted file mode 100644
+index 3a9fcfb..0000000
+--- a/tools/magnifier/out-press.svg
++++ /dev/null
+@@ -1,4 +0,0 @@
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#3088d9" stroke-width="2"/>
+-  <path d="M8 12H16" stroke="#2793f6" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+\ No newline at end of file
+diff --git a/tools/magnifier/out-white.svg b/tools/magnifier/out-white.svg
+deleted file mode 100644
+index a9c30df..0000000
+--- a/tools/magnifier/out-white.svg
++++ /dev/null
+@@ -1,5 +0,0 @@
+-<!-- 深色主题减号图标 -->
+-<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+-  <circle cx="12" cy="12" r="10" fill="none" stroke="#f5f5f5" stroke-width="2"/>
+-  <path d="M8 12H16" stroke="#f5f5f5" stroke-width="2" stroke-linecap="round"/>
+-</svg>
+diff --git a/tools/magnifier/svg.qrc b/tools/magnifier/svg.qrc
+index cb64f04..489801f 100644
+--- a/tools/magnifier/svg.qrc
++++ b/tools/magnifier/svg.qrc
+@@ -1,14 +1,6 @@
+ <RCC>
+     <qresource prefix="/">
+-        <file>in-white.svg</file>
+-        <file>in-black.svg</file>
+-        <file>in-hide.svg</file>
+-        <file>in-hover.svg</file>
+-        <file>in-press.svg</file>
+-        <file>out-black.svg</file>
+-        <file>out-white.svg</file>
+-        <file>out-hide.svg</file>
+-        <file>out-hover.svg</file>
+-        <file>out-press.svg</file>
++        <file>zoom-in.svg</file>
++        <file>zoom-out.svg</file>
+     </qresource>
+-</RCC>
+\ No newline at end of file
++</RCC>
+diff --git a/tools/magnifier/zoom-in.svg b/tools/magnifier/zoom-in.svg
+new file mode 100644
+index 0000000..3238336
+--- /dev/null
++++ b/tools/magnifier/zoom-in.svg
+@@ -0,0 +1,5 @@
++	<!-- 深色主题版本（无填充圆环） -->
++<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++  <circle cx="12" cy="12" r="10" fill="none" stroke="#f5f5f5" stroke-width="2"/>
++  <path d="M12 8V16M8 12H16" stroke="#f5f5f5" stroke-width="2" stroke-linecap="round"/>
++</svg>
+diff --git a/tools/magnifier/zoom-out.svg b/tools/magnifier/zoom-out.svg
+new file mode 100644
+index 0000000..a9c30df
+--- /dev/null
++++ b/tools/magnifier/zoom-out.svg
+@@ -0,0 +1,5 @@
++<!-- 深色主题减号图标 -->
++<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
++  <circle cx="12" cy="12" r="10" fill="none" stroke="#f5f5f5" stroke-width="2"/>
++  <path d="M8 12H16" stroke="#f5f5f5" stroke-width="2" stroke-linecap="round"/>
++</svg>
+diff --git a/tools/wldialog/meson.build b/tools/wldialog/meson.build
+index 7b2b73b..52fbadc 100644
+--- a/tools/wldialog/meson.build
++++ b/tools/wldialog/meson.build
+@@ -6,10 +6,20 @@ qt5 = import('qt5')
+ qt5dep = dependency(
+   'qt5',
+   modules: ['Core', 'Widgets', 'Gui', 'Network', 'Quick', 'QuickControls2', 'Qml'],
+-  private_headers: true,
+   required: false,
+ )
+ 
++qt5dep_priv = dependency(
++  'qt5',
++  modules: ['Gui'],
++  private_headers: true,
++  required: false
++)
++
++if not (qt5dep.found() and qt5dep_priv.found())
++  subdir_done()
++endif
++
+ protocols_client = [
+   protocols_code['xdg-dialog'],
+   protocols_code['xdg-foreign-unstable-v2'],
+@@ -52,7 +62,8 @@ endif
+ executable(
+   'wldialog',
+   sources: dialog_sources,
+-  dependencies: [qt5dep, wayland_client, gsettings_dep, kysdk_ukuiwindowhelper, util],
++  dependencies: [qt5dep, qt5dep_priv, wayland_client,
++                 gsettings_dep, kysdk_ukuiwindowhelper, util],
+   cpp_args: cpp_args,
+   include_directories: wlcom_inc,
+   build_by_default: true,

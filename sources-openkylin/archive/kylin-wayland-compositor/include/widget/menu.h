@@ -1,0 +1,122 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _WIDGET_MENU_H_
+#define _WIDGET_MENU_H_
+
+#include "input/seat.h"
+#include "scene/decoration.h"
+#include "widget.h"
+
+enum item_type {
+    ITEM_TYPE_NORMAL = 0,
+    ITEM_TYPE_FLIP_UP,
+    ITEM_TYPE_FLIP_DOWN,
+};
+
+struct menu_item {
+    struct scene_tree *tree;
+    struct wl_listener destroy; // tree node destroy
+    struct widget *content;
+
+    struct wl_list link; // menu::items
+    struct menu *menu;
+    struct menu *submenu; // may be NULL
+
+    char *text;
+    char *shortcut;
+    bool first, last, checked, separator;
+    bool enabled, redraw, activated, shown;
+
+    enum item_type item_type;
+    uint32_t key; // shortcut key
+
+    bool (*action)(struct menu_item *item, uint32_t key, void *data);
+    void *data;
+};
+
+struct menu {
+    struct scene_tree *tree;
+    struct wl_listener destroy;
+
+    /* for shadow and blur */
+    struct scene_decoration *deco;
+
+    struct wl_list items;
+    struct menu_item *parent; // NULL if root-menu
+    struct menu_item *hovered;
+    /**
+     * used when the menu exceeds the output
+     * not included in the number of item
+     */
+    struct menu_item *flip_up, *flip_down;
+    struct menu_item *clip_item;
+
+    struct menu *root; // root menu
+    struct output *output;
+
+    struct wl_listener output_disable;
+    /* redraw menu and items */
+    struct wl_listener theme_update;
+
+    int shown_start, shown_item, item_count;
+    int clip_item_height;
+
+    int width, height, item_height;
+    bool enabled, redraw, fade_enabled, exceed_output;
+
+    void *data;
+
+    // only used when root menu
+    struct menu *current; // current menu in operation
+
+    struct seat *seat;
+    struct seat_pointer_grab pointer_grab;
+    struct seat_keyboard_grab keyboard_grab;
+    struct seat_touch_grab touch_grab;
+};
+
+struct menu *menu_create(struct scene_tree *parent);
+
+void menu_destroy(struct menu *menu);
+
+void menu_set_fade_enabled(struct menu *menu, bool enabled);
+
+void menu_item_add_shortcut(struct menu_item *item, const char *text);
+
+struct menu_item *menu_add_item(struct menu *menu, const char *text, uint32_t key,
+                                bool (*action)(struct menu_item *item, uint32_t key, void *data),
+                                void *data);
+
+struct menu *menu_item_add_submenu(struct menu_item *item);
+
+void menu_item_set_enabled(struct menu_item *item, bool enabled);
+
+void menu_item_set_checked(struct menu_item *item, bool checked);
+
+void menu_item_set_separator(struct menu_item *item, bool separator);
+
+void menu_item_set_activated(struct menu_item *item, bool activated);
+
+void menu_item_update_text(struct menu_item *item, const char *text);
+
+void menu_item_raise_to_top(struct menu_item *item);
+
+void menu_item_lower_to_bottom(struct menu_item *item);
+
+void menu_item_place_above(struct menu_item *item, struct menu_item *sibling);
+
+void menu_item_place_below(struct menu_item *item, struct menu_item *sibling);
+
+/**
+ * show a root-menu at (x, y), support input with specific seat
+ */
+void menu_show(struct menu *menu, struct seat *seat, int x, int y);
+
+/*
+ * hide a root-menu
+ */
+void menu_hide(struct menu *menu);
+
+#endif /* _WIDGET_MENU_H_ */

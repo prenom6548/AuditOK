@@ -1,0 +1,1111 @@
+From: snowsi <348240162@qq.com>
+Date: Fri, 15 Dec 2023 09:52:18 +0000
+Subject: =?utf-8?b?ITUwIOaNouacuuWKqeaJiy1kYnVz5YaF5a655L+u5pS577yM55WM6Z2i?=
+ =?utf-8?b?6LCD5pW0IE1lcmdlIHB1bGwgcmVxdWVzdCAhNTAgZnJvbSB6aGFuZ3hpbnhpbi9v?=
+ =?utf-8?b?cGVua3lsaW4vbmlsZQ==?=
+
+---
+ daemons/service/dbus.cpp                           | 302 ++++++++++++++++++++-
+ daemons/service/dbus.h                             |  27 ++
+ kom/kom-buriedpoint.cpp                            |   2 +
+ .../driver-controller/src/hardwareinfowidget.cpp   |  67 +++--
+ treasure-chest/replacement/globaldata.cpp          |  70 ++++-
+ treasure-chest/replacement/globaldata.h            |  12 +
+ .../replacement/view/acceptchoosedata.cpp          |  25 +-
+ treasure-chest/replacement/view/acceptchoosedata.h |   1 -
+ .../replacement/view/acceptdatawidget.cpp          |  27 +-
+ treasure-chest/replacement/view/acceptdatawidget.h |   1 -
+ .../replacement/view/acceptmigrationappdata.cpp    |  36 ++-
+ .../replacement/view/acceptmigrationappdata.h      |  10 +-
+ .../replacement/view/acceptmigrationdata.cpp       |   4 +-
+ treasure-chest/replacement/view/mainwidget.cpp     |   1 +
+ treasure-chest/replacement/view/sendoldsysinfo.cpp |  16 +-
+ treasure-chest/replacement/view/sendoldsysinfo.h   |   3 -
+ 16 files changed, 509 insertions(+), 95 deletions(-)
+
+diff --git a/daemons/service/dbus.cpp b/daemons/service/dbus.cpp
+index e54c044..eec965e 100644
+--- a/daemons/service/dbus.cpp
++++ b/daemons/service/dbus.cpp
+@@ -197,6 +197,8 @@ void DataMigration::receiverTestServer(QString pwd, QString ip, QString name)
+     m_processTest->start("rsync", options);
+     m_processTest->waitForStarted();
+     m_processTest->waitForFinished();
++
++    receiverMigrateAppData();
+ }
+ 
+ void DataMigration::receiverSendSuccSig()
+@@ -222,6 +224,7 @@ void DataMigration::receiverSendSuccSig()
+     }
+     outputFile.close();
+ 
++    // receiverMigrateAppData();
+ }
+ 
+ int dbus::DataMigration::receiverError(QString error)
+@@ -276,12 +279,12 @@ void DataMigration::receiverCreatPwdFile(QString pwd)
+ 
+ void DataMigration::receiverGetDataInfo(int type)
+ {
+-    /*
+-     * 应用 : /bin /usr /lib /var /sbin /etc /opt
+-     * 用户 : /home /etc 
+-     * 系统配置 :  /etc 
+-     * 黑名单 : 'var/run/*','backup/*','boot/*','cdrom/*','dev/*','lost+found/*','media/*','mmkv.default','mmkv.default.crc','mnt/*','proc/*','root/*','run/*','srv/*','sys/*','system/*','tmp/*'
+-     */ 
++    // *
++    //  * 应用 : /bin /usr /lib /var /sbin /etc /opt
++    //  * 用户 : /home /etc 
++    //  * 系统配置 :  /etc 
++    //  * 黑名单 : 'var/run/*','backup/*','boot/*','cdrom/*','dev/*','lost+found/*','media/*','mmkv.default','mmkv.default.crc','mnt/*','proc/*','root/*','run/*','srv/*','sys/*','system/*','tmp/*'
++    //  *
+ 
+     if (!m_processDataSize) {
+         m_processDataSize = new QProcess(this);
+@@ -388,6 +391,11 @@ void DataMigration::receiverMigrateData(int type)
+         });
+         connect(m_processMigrateDate, &QProcess::readyReadStandardOutput, this, &DataMigration::processMrigrationOut);
+     }
++    QString etcPath = m_receiverDataFile + "/etc/";
++    QDir dirEtc = QDir(etcPath);
++    if (!dirEtc.exists()) {
++        dirEtc.mkpath(etcPath);
++    }
+ 
+     QStringList options;
+     switch (type)
+@@ -395,7 +403,7 @@ void DataMigration::receiverMigrateData(int type)
+     // 迁移etc目录
+     case MigrateDataType::SysConfData:
+         options << "-c"
+-                << " rsync -avz --info=progress2 --password-file=" + m_recePwdFile + " " + m_name + "@" + m_ip + "::shareFile/etc/ " + m_receiverDataFile + "/";
++                << " rsync -avz --info=progress2 --password-file=" + m_recePwdFile + " " + m_name + "@" + m_ip + "::shareFile/etc/ " + etcPath;
+         break;
+     // 迁移home和etc目录
+     case MigrateDataType::UserData:
+@@ -444,8 +452,8 @@ void DataMigration::processMrigrationOut()
+     foreach (const QString& line, lines) {
+         QDBusMessage send = QDBusMessage::createSignal(DBUS_PARH_DATA_MIGRATION, DBUS_INTERFACE_DATA_MIGRATION, "sigMigrateDataInfo");
+         if(line.startsWith("total size is")) {
+-            QDBusMessage send = QDBusMessage::createSignal(DBUS_PARH_DATA_MIGRATION, DBUS_INTERFACE_DATA_MIGRATION, "sigMigrateDataSuccess");
+-            QDBusConnection::systemBus().send(send);
++            QDBusMessage sendSuccess = QDBusMessage::createSignal(DBUS_PARH_DATA_MIGRATION, DBUS_INTERFACE_DATA_MIGRATION, "sigMigrateDataSuccess");
++            QDBusConnection::systemBus().send(sendSuccess);
+         } else if (line.contains("created directory") || line.contains("./") || line.contains("receiving incremental file list") || line == "") {
+             continue;
+         } else if (line.contains("sent") && line.contains("received") && line.contains("bytes") && line.endsWith("bytes/sec")) {
+@@ -494,7 +502,7 @@ void DataMigration::receiverAppDataList(QStringList list)
+             QString str = list[i] + "\n";
+             QByteArray bytes = str.toUtf8();
+             int len = file.write(bytes);
+-            if(len = 0) {
++            if(len == 0) {
+                 qDebug() <<  " ===== DBUS === AppListFile write data failed !!!" << list[i];
+             }
+         }
+@@ -503,6 +511,72 @@ void DataMigration::receiverAppDataList(QStringList list)
+     } else {
+         qDebug() << " ===== DBUS === AppListFile failed to create!";
+     }
++    appDesktopToPkg(list);
++}
++
++void dbus::DataMigration::appDesktopToPkg(QStringList list)
++{
++    QStringList packageDesktopList;
++    QStringList allDesktopsList;
++    QHash<QString, QStringList> packDeskInfoHash;
++    QHash<QString, QString> desktopPackageHash;
++    QFile file(m_receiverDataFile + m_senderappInfoListFile);
++    if(!file.open(QIODevice::ReadOnly|QIODevice::Text)) {
++        qDebug()<<" Open json file failed ";
++        return;
++    }
++    
++    QTextStream in(&file);
++    while (!in.atEnd()) {
++        QString line = in.readLine();
++        if (line == "") {
++            continue;
++        }
++        // pack_v_all: desktop1 desktop2
++        QStringList listInfo = line.split(":");
++        QStringList desktopList = listInfo[1].split(" "); 
++        foreach (const QString& listStr, desktopList) {
++            desktopPackageHash.insert(listStr, listInfo[0]);
++        }
++        // packDeskInfoHash.insert(listInfo[0], desktopList);
++    }
++
++    // desktopPackageHash -> 存放的是 desktop (key) : package (value)
++    // packDeskInfoHash -> 存放的是 package (key) : desktops (value)
++
++    foreach (const QString& listStr, list) {
++        if (desktopPackageHash.contains(listStr)) {
++            QString valuePack = desktopPackageHash.value(listStr);
++            // 判断 packDeskInfoHash 中key是否存在 valuePack ，存在将 listStr 存放在desktop文件列表中
++            if (packDeskInfoHash.contains(valuePack)) {
++                QStringList valueDesktopList = packDeskInfoHash.value(valuePack);
++                valueDesktopList.append(listStr);
++            } else {
++                QStringList valueDesktopList;
++                valueDesktopList.append(listStr);
++                packDeskInfoHash.insert(valuePack, valueDesktopList);
++            }
++        }
++    }
++
++    QFile PackageInfofile(m_appInfoListFile);
++    PackageInfofile.resize(0);
++    PackageInfofile.close();
++    if (PackageInfofile.open(QIODevice::ReadWrite | QIODevice::Text | QIODevice::Append)) {
++        QHash <QString, QStringList>::const_iterator it;//迭代器的使用,it一开始指向的是第0个元素之前的位置
++        for(it = packDeskInfoHash.constBegin(); it != packDeskInfoHash.constEnd(); ++it)
++        {
++            QString str = it.key() + ": " + it.value().join(" ") + "\n";
++            QByteArray bytes = str.toUtf8();
++            int len = PackageInfofile.write(bytes);
++            if(len == 0) {
++                qDebug() <<  " ===== DBUS === " << m_appInfoListFile << " write data failed !!!";
++            }
++        }
++        PackageInfofile.close();
++    } else {
++        qDebug() << " ===== DBUS === " << m_appInfoListFile << " failed to create!";
++    }
+ }
+ 
+ void dbus::DataMigration::receiverStopRsync()
+@@ -558,6 +632,213 @@ void dbus::DataMigration::receiverConfigData()
+         // configAppData();
+ }
+ 
++void dbus::DataMigration::receiverMigrateAppData()
++{
++    QString path = "usr/share/applications/";
++    QString getDataPath = m_receiverDataFile + "/" + path;
++
++    QDir confDir = QDir(getDataPath);
++    if (!confDir.exists()) {
++        confDir.mkpath(getDataPath);
++    }
++    if (m_processMigrateDektopDate == nullptr ) {
++        m_processMigrateDektopDate = new QProcess();
++        connect(m_processMigrateDektopDate, &QProcess::readyReadStandardError, this,[=](){
++            QString error = m_processMigrateDektopDate->readAllStandardError();
++            QDBusMessage send =
++                    QDBusMessage::createSignal(DBUS_PARH_DATA_MIGRATION, DBUS_INTERFACE_DATA_MIGRATION, "sigReceProcessFail");
++            send << error;
++            QDBusConnection::systemBus().send(send);
++        });
++        connect(m_processMigrateDektopDate, &QProcess::readyReadStandardOutput, this, [=](){
++            // 解析标准输出，获取文件名、当前速度和当前拉取数据大小
++            QString output = m_processMigrateDektopDate->readAllStandardOutput();
++            
++            QStringList lines = output.split("\n");
++            foreach (const QString& line, lines) {
++                if(line.startsWith("total size is")) {
++                    QDBusMessage send = QDBusMessage::createSignal(DBUS_PARH_DATA_MIGRATION, DBUS_INTERFACE_DATA_MIGRATION, "sigMigrateAppDataSuccess");
++                    QDBusConnection::systemBus().send(send);
++                } 
++            }
++        });
++    }
++    QStringList options;
++    options << "-c"
++            << " rsync -avz --password-file=" + m_recePwdFile + " " + m_name + "@" + m_ip + "::shareFile/" + path + " " + getDataPath;
++    m_processMigrateDektopDate->start("bash", options);
++
++    m_processMigrateDektopDate->waitForFinished();
++}
++
++void dbus::DataMigration::senderGetAppDesktopInfo()
++{
++    // 读取/usr/share/application/的所有desktop文件
++    QDir* dirinfo = new QDir(desktopFilePath);
++    if (!dirinfo->exists()) {
++        delete dirinfo, dirinfo = nullptr;
++    }
++    dirinfo->setNameFilters(QStringList("*"));
++    QStringList fileList = dirinfo->entryList(QDir::Files);
++
++    fileList.removeOne(".");
++    fileList.removeOne("..");
++    QStringList desktopList;
++    desktopList.clear();
++    QString desktopStr;
++
++    for (int i = 0; i < fileList.size(); i++ ) {
++
++        QString file = desktopFilePath + fileList[i];
++
++        QSettings desktopFileSetting(file, QSettings::IniFormat);
++        desktopFileSetting.setIniCodec(QTextCodec::codecForName("UTF-8"));
++        desktopFileSetting.beginGroup(DesktopGroup);
++        QString name = desktopFileSetting.value(DesktopKeyNameZH).toString();
++        QString comm = desktopFileSetting.value(DesktopKeyCommentZH).toString();
++        QString Exec = desktopFileSetting.value("Exec").toString();
++        if (name == "") {
++            name = desktopFileSetting.value(DesktopKeyNameEN).toString();
++        } 
++        if (comm == "") {
++            comm = desktopFileSetting.value(DesktopKeyCommentEN).toString();
++        }
++        if (name == "") {
++            continue;
++        }
++        desktopList.append(desktopFilePath + fileList[i]);
++        desktopStr = desktopStr + " " + desktopFilePath + fileList[i];
++    }
++    qDebug() << " sender /usr/share/application/的desktop文件数量: " << desktopList.size();
++
++    if ( m_processGetDesktopInfo == nullptr) {
++        m_processGetDesktopInfo = new QProcess();
++    }
++    // 清空文件和正确的desktop的列表，应用包名列表
++    QFile file(m_senderappInfoListFile);
++    file.resize(0);
++    QFile desktopFile(m_senderappListFile);
++    desktopFile.resize(0);
++    m_desktopFileIsRightList.clear();
++    m_packsgeNameList.clear();
++    m_hashPackage.clear();
++
++    m_processGetDesktopInfo->start("dpkg -S " + desktopStr);
++    m_processGetDesktopInfo->waitForFinished();
++
++    processDesktopToPackageOut();
++    // 使用dpkg -l获取包信息
++    senderGetAppPackageInfo(m_packsgeNameList);
++}
++
++void DataMigration::processDesktopToPackageOut()
++{
++    QString outPut = m_processGetDesktopInfo->readAllStandardOutput();
++    QStringList lines = outPut.split("\n");
++
++    foreach (const QString& line, lines) {
++        if (line == "") {
++            continue;
++        }
++        QStringList packageList = line.split(":");
++        QString packageName = packageList[0];
++        QStringList desktopFileList = packageList[1].split("/");
++        QString desktopFile = desktopFileList.last();
++
++        // 将数据 应用包名，desktop文件写到哈希表中，将正确的desktop文件名字写到，应用包列表
++        if (m_hashPackage.contains(packageName)) {
++            QStringList valueList = m_hashPackage.value(packageName);
++            valueList.append(desktopFile);
++            m_hashPackage[packageName] = valueList;
++        } else {
++            QStringList valueList;
++            valueList.append(desktopFile);
++            m_hashPackage.insert(packageName, valueList);
++            m_packsgeNameList.append(packageName);
++        }
++        m_desktopFileIsRightList.append(desktopFile);
++        
++    }
++
++    // 将正确的desktop文件列表数据写入文件中
++    QFile desktopFile(m_senderappListFile);
++    desktopFile.close();
++    if (desktopFile.open(QIODevice::ReadWrite | QIODevice::Text)) {
++        for(int i = 0; i < m_desktopFileIsRightList.size() ;i++ ) {
++            QString str = m_desktopFileIsRightList[i] + "\n";
++            QByteArray bytes = str.toUtf8();
++            int len = desktopFile.write(bytes);
++            if(len == 0) {
++                qDebug() <<  " ===== DBUS === " << m_senderappListFile << " write data failed !!!" << m_desktopFileIsRightList[i];
++            }
++        }
++        desktopFile.close();
++
++    } else {
++        qDebug() << " ===== DBUS === " << m_senderappListFile << " failed to create!";
++    }
++}
++
++void DataMigration::senderGetAppPackageInfo(QStringList list)
++{
++    if ( m_processGetPackageInfo == nullptr) {
++        m_processGetPackageInfo = new QProcess();
++        m_desktopFileIsRightList.clear();
++
++        // 设置要执行的命令和参数
++        QStringList args;
++        args << "-l";
++        args << list;
++
++        m_processGetPackageInfo->setProgram("dpkg");
++        m_processGetPackageInfo->setArguments(args);
++    }
++    QFile file(m_senderappInfoListFile);
++    file.resize(0);
++
++    m_processGetPackageInfo->start();
++    if (!m_processGetPackageInfo->waitForFinished()) {
++        qDebug() << "Failed to start dpkg process.";
++    }
++    processPackageInfoOut();
++}
++
++void dbus::DataMigration::processPackageInfoOut()
++{
++    QString outPut = m_processGetPackageInfo->readAllStandardOutput();
++    QStringList lines = outPut.split("\n");
++
++    for (const QString& line : lines) {
++        if (!line.contains("ii")) {
++            continue;
++        }
++        QStringList parts = line.split(" ", QString::SkipEmptyParts);
++        
++        if (parts.length() < 3) {
++            continue;
++        }
++        QString packageName = parts[1];
++        QString packageVersion = parts[2];
++        QString packageType = parts[3];
++        QString hashKey = packageName + "_" + packageVersion + "_" + packageType;
++        QStringList list = m_hashPackage.value(packageName);
++    
++        QFile file(m_senderappInfoListFile);
++        file.close();
++        if (file.open(QIODevice::ReadWrite | QIODevice::Text | QIODevice::Append)) {
++            QString str = hashKey + ": " + list.join(" ") + "\n";
++            QByteArray bytes = str.toUtf8();
++            int len = file.write(bytes);
++            if(len == 0) {
++                qDebug() <<  " ===== DBUS === " << m_senderappInfoListFile << " write data failed !!!";
++            }
++            file.close();
++        } else {
++            qDebug() << " ===== DBUS === " << m_senderappInfoListFile << " failed to create!";
++        }
++    }
++}
++
+ QStringList DataMigration::readYamlFile(QString str)
+ {
+     QStringList list;
+@@ -793,6 +1074,7 @@ void DataMigration::configUseData()
+ 
+ void DataMigration::configAppData()
+ {
++    // 读取被选中的desktop列表中的每个desktop文件的内容
+     QFile file(m_appListFile);
+     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+         qDebug() << "Failed to open file!";
+diff --git a/daemons/service/dbus.h b/daemons/service/dbus.h
+index ee5b7b0..9d522e4 100644
+--- a/daemons/service/dbus.h
++++ b/daemons/service/dbus.h
+@@ -64,6 +64,9 @@ public slots:
+     /* 发送端 */
+     void senderStartServer(QString name, QString pwd) ; // 开启服务
+     void senderStopServer(); // 关闭服务, 使用命令killall rsync ，删去配置文件
++    void senderGetAppDesktopInfo(); // 获取本机应用的信息
++    void senderGetAppPackageInfo(QStringList list); // 获取本机应用包的信息
++
+     /* 接收端 */
+     void receiverTestServer(QString pwd, QString IP, QString name); // 创建用户认证，测试连接
+     void receiverGetDataInfo(int type); // 获取迁移数据大小
+@@ -72,6 +75,7 @@ public slots:
+     void receiverAppDataList(QStringList list);
+     void receiverConfigData();//迁移完成后进行配置
+     void receiverStopRsync(); // 停止文件迁移
++    void receiverMigrateAppData(); // 应用desktop迁移
+ private:
+     void senderCreatConfigFile(QString name); // 创建rsync的配置文件，
+     void senderCreatPwdFile(QString name, QString pwd); // 创建用户认证文件
+@@ -81,9 +85,12 @@ private:
+     int receiverError(QString error);
+     void processDataSizeOut(); // 接收端拉取数据大小
+     void processMrigrationOut(); // 接收端拉取数据
++    void processDesktopToPackageOut(); // 发送端获取到使用dpkg -S获取到的数据
++    void processPackageInfoOut(); // 发送端获取到使用dpkg -l获取到的数据
+     void configSysData();
+     void configUseData();
+     void configAppData();
++    void appDesktopToPkg(QStringList list);
+     QStringList readYamlFile(QString str);
+     QStringList getHomeDirChildDir(QString str);
+     QStringList getUserInfo(QString uname, QString filePath);
+@@ -98,19 +105,38 @@ private:
+     int m_type;
+     QStringList m_listFile;
+     QStringList m_listFolders;
++    QStringList m_desktopFileIsRightList;
++    QStringList m_packsgeNameList;
++    QHash <QString, QStringList> m_hashPackage;
+     QString m_sendConfigFile = "/etc/rsyncd.conf";  // rsync配置文件
+     QString m_sendConfigFileBackup = "/etc/rsyncd.conf_backup"; // 配置文件备份
+     QString m_sendPwdFile = "/etc/kylinReplacementSender.passwd"; // 发送端认证文件
+     QString m_recePwdFile = "/tmp/kylinReplacementReceiver.passwd"; // 接收端认证文件
+     QString m_excludeFile = "/usr/share/kylin-os-manager/replacement/data/ReplacementDataExcludeFile"; // 黑名单
+     QString m_excludeHomeAndEtcFile = "/usr/share/kylin-os-manager/replacement/data/mrigationHomeAndEtcFile.list"; // 黑名单
++
+     QString m_appListFile = "/usr/share/kylin-os-manager/replacement/destktop.list"; // 被选中应用列表
++    QString m_appInfoListFile = "/usr/share/kylin-os-manager/replacement/package-desktop.info"; // 被选中的应用列表
++
++    QString m_senderappInfoListFile = "/usr/share/applications/package-desktop.info"; // 应用列表信息
++    QString m_senderappListFile = "/usr/share/applications/replacement_destktop.list"; // 可迁移应用列表
++
+     QString m_appDataYamlFile = "/usr/share/kylin-os-manager/replacement/data/appClassification.yaml"; // app的列表
+     QString m_configDataYamlFile = "/usr/share/kylin-os-manager/replacement/data/etcPolicy.yaml"; // etc的列表
+     QString m_receiverDataFile = "/fs.old";// 接受数据目录 todo:后续会读取发送端的类型，标为目录名
++    QString desktopFilePath = "/usr/share/applications/";
++    QString DesktopGroup = "Desktop Entry";
++    QString DesktopKeyNameEN = "Name";
++    QString DesktopKeyNameZH = "Name[zh_CN]";
++    QString DesktopKeyCommentEN = "Comment";
++    QString DesktopKeyCommentZH = "Comment[zh_CN]";
+     QProcess *m_processTest = nullptr;
+     QProcess *m_processDataSize = nullptr;
+     QProcess *m_processMigrateDate = nullptr;
++    QProcess *m_processMigrateDektopDate = nullptr;
++    QProcess *m_processGetDesktopInfo = nullptr;
++    QProcess *m_processGetPackageInfo = nullptr;
++    int num = 0;
+     
+ signals:
+     void sigReceTestSuccess();
+@@ -119,6 +145,7 @@ signals:
+     void sigMigrateDataSize(qint64);
+     void sigMigrateDataSuccess();
+     void sigConfigDataSuccess();
++    void sigMigrateAppDataSuccess();
+ };
+ 
+ } // namespace dbus
+diff --git a/kom/kom-buriedpoint.cpp b/kom/kom-buriedpoint.cpp
+index f50cfdf..c9ecb5b 100644
+--- a/kom/kom-buriedpoint.cpp
++++ b/kom/kom-buriedpoint.cpp
+@@ -15,6 +15,8 @@ QString BuriedPoint::BuriedPointPageToString(BuriedPointPage buried_point_page)
+         return QString("PluginsWinDataMigration");
+     case BuriedPointPage::PluginsRemoteAssistanceTool:
+         return QString("PluginsRemoteAssistanceTool");
++    case BuriedPointPage::PluginsDriverManager:
++        return QString("PluginsDriverManager");
+     case BuriedPointPage::ServiceMonitor:
+         return QString("ServiceMonitor");
+     default:
+diff --git a/plugins/driver-controller/src/hardwareinfowidget.cpp b/plugins/driver-controller/src/hardwareinfowidget.cpp
+index d386985..64db2a7 100644
+--- a/plugins/driver-controller/src/hardwareinfowidget.cpp
++++ b/plugins/driver-controller/src/hardwareinfowidget.cpp
+@@ -1135,38 +1135,51 @@ void HardWareInfoWidget::setGraphicContent(int i) {
+ }
+ 
+ void HardWareInfoWidget::getBaseboardInfo() {
+-// 设置内容
+-    m_baseboardModelLabel->setText(g_infogetter->m_baseboardinfo.model);
+ 
+-    TreeItem *item1 = new TreeItem(tr("Manufacturer"), g_infogetter->m_baseboardinfo.vendor);
+-    QTreeWidgetItem *childItem1 = new QTreeWidgetItem();
+-    childItem1->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+-    m_TreeWidget->topLevelItem(3)->addChild(childItem1);
+-    m_TreeWidget->setItemWidget(childItem1, 0, item1);
++    // 设置内容
++    if (g_infogetter->m_baseboardinfo.model != "") {
++        m_baseboardModelLabel->setText(g_infogetter->m_baseboardinfo.model);
++    }
+ 
+-    TreeItem *item2 = new TreeItem(tr("Version"), g_infogetter->m_baseboardinfo.version);
+-    QTreeWidgetItem *childItem2 = new QTreeWidgetItem();
+-    childItem2->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+-    m_TreeWidget->topLevelItem(3)->addChild(childItem2);
+-    m_TreeWidget->setItemWidget(childItem2, 0, item2);
++    if (g_infogetter->m_baseboardinfo.vendor != "") {
++        TreeItem *item1 = new TreeItem(tr("Manufacturer"), g_infogetter->m_baseboardinfo.vendor);
++        QTreeWidgetItem *childItem1 = new QTreeWidgetItem();
++        childItem1->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
++        m_TreeWidget->topLevelItem(3)->addChild(childItem1);
++        m_TreeWidget->setItemWidget(childItem1, 0, item1);
++    }
+ 
+-    TreeItem *item3 = new TreeItem(tr("Chassis Handle"), g_infogetter->m_baseboardinfo.chassishandle);
+-    QTreeWidgetItem *childItem3 = new QTreeWidgetItem();
+-    childItem3->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+-    m_TreeWidget->topLevelItem(3)->addChild(childItem3);
+-    m_TreeWidget->setItemWidget(childItem3, 0, item3);
++    if (g_infogetter->m_baseboardinfo.version != "") {
++        TreeItem *item2 = new TreeItem(tr("Version"), g_infogetter->m_baseboardinfo.version);
++        QTreeWidgetItem *childItem2 = new QTreeWidgetItem();
++        childItem2->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
++        m_TreeWidget->topLevelItem(3)->addChild(childItem2);
++        m_TreeWidget->setItemWidget(childItem2, 0, item2);
++    }
+ 
+-    TreeItem *item4 = new TreeItem(tr("Bios Vendor"), g_infogetter->m_baseboardinfo.biosvendor);
+-    QTreeWidgetItem *childItem4 = new QTreeWidgetItem();
+-    childItem4->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+-    m_TreeWidget->topLevelItem(3)->addChild(childItem4);
+-    m_TreeWidget->setItemWidget(childItem4, 0, item4);
++    if (g_infogetter->m_baseboardinfo.chassishandle != "") {
++        TreeItem *item3 = new TreeItem(tr("Chassis Handle"), g_infogetter->m_baseboardinfo.chassishandle);
++        QTreeWidgetItem *childItem3 = new QTreeWidgetItem();
++        childItem3->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
++        m_TreeWidget->topLevelItem(3)->addChild(childItem3);
++        m_TreeWidget->setItemWidget(childItem3, 0, item3);
++    }
+ 
+-    TreeItem *item5 = new TreeItem(tr("Bios Version"), g_infogetter->m_baseboardinfo.biosversion);
+-    QTreeWidgetItem *childItem5 = new QTreeWidgetItem();
+-    childItem5->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+-    m_TreeWidget->topLevelItem(3)->addChild(childItem5);
+-    m_TreeWidget->setItemWidget(childItem5, 0, item5);
++    if (g_infogetter->m_baseboardinfo.biosvendor != "") {
++        TreeItem *item4 = new TreeItem(tr("Bios Vendor"), g_infogetter->m_baseboardinfo.biosvendor);
++        QTreeWidgetItem *childItem4 = new QTreeWidgetItem();
++        childItem4->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
++        m_TreeWidget->topLevelItem(3)->addChild(childItem4);
++        m_TreeWidget->setItemWidget(childItem4, 0, item4);
++    }
++
++    if (g_infogetter->m_baseboardinfo.biosversion != "") {
++        TreeItem *item5 = new TreeItem(tr("Bios Version"), g_infogetter->m_baseboardinfo.biosversion);
++        QTreeWidgetItem *childItem5 = new QTreeWidgetItem();
++        childItem5->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
++        m_TreeWidget->topLevelItem(3)->addChild(childItem5);
++        m_TreeWidget->setItemWidget(childItem5, 0, item5);
++    }
+ 
+     baseboardItemCount = 5;
+ }
+diff --git a/treasure-chest/replacement/globaldata.cpp b/treasure-chest/replacement/globaldata.cpp
+index 99ff30c..17825b2 100644
+--- a/treasure-chest/replacement/globaldata.cpp
++++ b/treasure-chest/replacement/globaldata.cpp
+@@ -6,6 +6,7 @@
+ #include <QStandardPaths>
+ #include "kom-configure.h"
+ #include "kom-buriedpoint.h"
++#include "dbus_args.h"
+ 
+ QString GlobalData::g_appNameText;
+ QIcon GlobalData::g_appNameIconText;
+@@ -113,6 +114,9 @@ QSize GlobalData::g_sizeWidget;
+ GlobalData::GlobalData()
+ {
+     initText();
++
++    m_dbus = new QDBusInterface(dbus::DBUS_SERVICENAME, dbus::DBUS_PARH_DATA_MIGRATION, dbus::DBUS_INTERFACE_DATA_MIGRATION,
++                                QDBusConnection::systemBus());
+ }
+ 
+ GlobalData *GlobalData::getInstance()
+@@ -122,7 +126,7 @@ GlobalData *GlobalData::getInstance()
+ }
+ GlobalData::~GlobalData()
+ {
+-
++    m_dbus->deleteLater();
+ }
+ 
+ void GlobalData::initText()
+@@ -240,4 +244,68 @@ void GlobalData::setHighColorBtn(QPushButton *btn)
+ {
+     btn->setProperty("isImportant", true);
+     btn->setFlat(false);
++}
++
++void GlobalData::dbusSenderStartServer(QString name, QString pwd)
++{
++    QDBusMessage msg = m_dbus->call("senderStartServer", name, pwd);
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : senderStartServer" << msg.errorMessage();
++    }
++}
++
++void GlobalData::dbusSenderStopServer()
++{
++    QDBusMessage msg = m_dbus->call("senderStopServer");
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : senderStopServer" << msg.errorMessage();
++    }
++}
++
++void GlobalData::dbusSenderGetDesktopInfo()
++{
++    QDBusMessage msg = m_dbus->call("senderGetAppDesktopInfo");
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : senderStopServer" << msg.errorMessage();
++    }
++}
++
++void GlobalData::dbusReceiverTestServer(QString pwd, QString IP, QString name)
++{
++    QDBusMessage msg = m_dbus->call("receiverTestServer", pwd, IP, name);
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : receiverTestServer " << msg.errorMessage();
++    }
++}
++
++void GlobalData::dbusReceiverMigrateData(ChooseDataType type)
++{
++    QDBusMessage msg = m_dbus->call("receiverMigrateData", type);
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : receiverMigrateData" << msg.errorMessage();
++    }
++}
++
++void GlobalData::dbusReceiverStopRsync()
++{
++    QDBusMessage msg = m_dbus->call("receiverStopRsync");
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : receiverStopRsync" << msg.errorMessage();
++    }
++}
++
++void GlobalData::dbusReceiverReboot()
++{
++    QDBusMessage msg = m_dbus->call("receiverReboot");
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : receiverReboot" << msg.errorMessage();
++    }
++}
++
++void GlobalData::dbusReceiverGetDataInfo(ChooseDataType type)
++{
++    QDBusMessage msg = m_dbus->call("receiverGetDataInfo", type);
++    if (msg.errorMessage() != "") {
++        qDebug() << "dbus interface error : receiverGetDataInfo" << msg.errorMessage();
++    }
+ }
+\ No newline at end of file
+diff --git a/treasure-chest/replacement/globaldata.h b/treasure-chest/replacement/globaldata.h
+index fb0cbb6..f318c21 100644
+--- a/treasure-chest/replacement/globaldata.h
++++ b/treasure-chest/replacement/globaldata.h
+@@ -5,6 +5,7 @@
+ #include <QIcon>
+ #include <QPushButton>
+ #include <QDateTime>
++#include <QDBusInterface>
+ 
+ /* 错误类型 */
+ enum SysType {
+@@ -153,6 +154,17 @@ public:
+     QDateTime g_timeStart;
+     QDateTime g_timeEnd;
+     QString g_time = "";
++    bool g_chooseAppData = true;
++
++    QDBusInterface *m_dbus = nullptr;
++    void dbusSenderStartServer(QString name, QString pwd);
++    void dbusSenderStopServer();
++    void dbusSenderGetDesktopInfo();
++    void dbusReceiverTestServer(QString pwd, QString IP, QString name);
++    void dbusReceiverMigrateData(ChooseDataType type);
++    void dbusReceiverStopRsync();
++    void dbusReceiverReboot();
++    void dbusReceiverGetDataInfo(ChooseDataType type);
+ 
+ private:
+     GlobalData();
+diff --git a/treasure-chest/replacement/view/acceptchoosedata.cpp b/treasure-chest/replacement/view/acceptchoosedata.cpp
+index 8208406..7851628 100644
+--- a/treasure-chest/replacement/view/acceptchoosedata.cpp
++++ b/treasure-chest/replacement/view/acceptchoosedata.cpp
+@@ -76,9 +76,6 @@ void AcceptChooseData::initUI()
+     configAppData();
+     configSysData();
+     configUseData();
+-
+-    m_dbus = new QDBusInterface(dbus::DBUS_SERVICENAME, dbus::DBUS_PARH_DATA_MIGRATION, dbus::DBUS_INTERFACE_DATA_MIGRATION,
+-                                QDBusConnection::systemBus());
+ }
+ 
+ void AcceptChooseData::initConn()
+@@ -198,6 +195,8 @@ void AcceptChooseData::slotStartMigration()
+     GlobalData::getInstance()->g_timeStart = QDateTime::currentDateTime();
+ 
+     emit sigChooseData(type);
++
++    m_checkBoxApp->initAppWidget();
+ }
+ 
+ void AcceptChooseData::slotChangeBtnStyle()
+@@ -226,27 +225,27 @@ void AcceptChooseData::slotChangeBtnStyle()
+     m_lableSize->SetText(GlobalData::g_textRectCalculating);
+     m_btnStart->setEnabled(false);
+     QDBusMessage msg;
++    ChooseDataType type;
+     if (app && sys && user) {
+-        msg = m_dbus->call("receiverGetDataInfo", 6);
++        type = ChooseDataType::AllData;
+     } else if (!app && sys && user) {
+-        msg = m_dbus->call("receiverGetDataInfo", 5);
++        type = ChooseDataType::UserAndSys;
+     }else if (app && !sys && user) {
+-        msg = m_dbus->call("receiverGetDataInfo", 3);
++        type = ChooseDataType::AppAndUser;
+     }else if (app && sys && !user) {
+-        msg = m_dbus->call("receiverGetDataInfo", 4);
++        type = ChooseDataType::AppAndSys;
+     }else if (app && !sys && !user) {
+-        msg = m_dbus->call("receiverGetDataInfo", 0);
++        type = ChooseDataType::AppData;
+     }else if (!app && !sys && user) {
+-        msg = m_dbus->call("receiverGetDataInfo", 1);
++        type = ChooseDataType::UserData;
+     }else if (!app && sys && !user) {
+-        msg = m_dbus->call("receiverGetDataInfo", 2);
++        type = ChooseDataType::SysData;
+     } else {
+         m_lable->hide();
+         m_lableSize->hide();
++        return;
+     }
+-    if (msg.errorMessage() != "") {
+-        qDebug() << "dbus interface error : senderStartServer" << msg.errorMessage();
+-    }
++    GlobalData::getInstance()->dbusReceiverGetDataInfo(type);
+ }
+ 
+ void AcceptChooseData::slotMigrationDataSize(qint64 num)
+diff --git a/treasure-chest/replacement/view/acceptchoosedata.h b/treasure-chest/replacement/view/acceptchoosedata.h
+index 23f3d76..55f922f 100644
+--- a/treasure-chest/replacement/view/acceptchoosedata.h
++++ b/treasure-chest/replacement/view/acceptchoosedata.h
+@@ -36,7 +36,6 @@ private:
+     QHBoxLayout *m_layoutHLabel = nullptr;
+     QVBoxLayout *m_layoutVMain = nullptr; // 主界面纵向布局
+     
+-    QDBusInterface *m_dbus = nullptr;
+     QString m_appDataYamlFile = "/usr/share/kylin-os-manager/replacement/data/appClassification.yaml"; // app的列表
+     QString m_configDataYamlFile = "/usr/share/kylin-os-manager/replacement/data/etcPolicy.yaml"; // etc的列表
+     const QString confDirPath = "/usr/share/kylin-os-manager/replacement/data/";
+diff --git a/treasure-chest/replacement/view/acceptdatawidget.cpp b/treasure-chest/replacement/view/acceptdatawidget.cpp
+index 77e49bd..42d165a 100644
+--- a/treasure-chest/replacement/view/acceptdatawidget.cpp
++++ b/treasure-chest/replacement/view/acceptdatawidget.cpp
+@@ -12,8 +12,6 @@ AcceptDataWidget::AcceptDataWidget(QWidget *parent)
+ 
+ AcceptDataWidget::~AcceptDataWidget()
+ {
+-    m_dbus->deleteLater();
+-
+ }
+ 
+ void AcceptDataWidget::initUI()
+@@ -33,9 +31,6 @@ void AcceptDataWidget::initUI()
+     m_btnTip = new QPushButton(this);
+     m_labelTip = new K::TextLabel(this);
+ 
+-    m_dbus = new QDBusInterface(dbus::DBUS_SERVICENAME, dbus::DBUS_PARH_DATA_MIGRATION, dbus::DBUS_INTERFACE_DATA_MIGRATION,
+-                                QDBusConnection::systemBus());
+-  
+     QDBusConnection::systemBus().connect(dbus::DBUS_SERVICENAME, dbus::DBUS_PARH_DATA_MIGRATION, dbus::DBUS_INTERFACE_DATA_MIGRATION,
+                                           QString("sigReceTestSuccess"), this, SLOT(ConnSuccess()));
+   
+@@ -163,9 +158,7 @@ void AcceptDataWidget::slotNextPage()
+     QString ip = list.at(0);
+     QString name = list.at(1);
+     QString pwd = list.at(2);
+-    QDBusMessage msg = m_dbus->call("receiverTestServer", pwd, ip, name);
+-    if (msg.errorMessage() != "")     
+-            qDebug() << "dbus interface error : receiverTestServer " << msg.errorMessage();
++    GlobalData::getInstance()->dbusReceiverTestServer(pwd, ip, name);
+     // 监听信号
+ }
+ 
+@@ -175,11 +168,7 @@ void AcceptDataWidget::slotMigrationData(ChooseDataType type)
+     m_stackedWid->setCurrentIndex(2);
+     m_acceptStatus->setStatusStyle(AcceptDataStatus::FlowPart::ThirdPart);
+ 
+-    QDBusMessage msg;
+-    msg = m_dbus->call("receiverMigrateData", type);
+-    if (msg.errorMessage() != "") {
+-        qDebug() << "dbus interface error : senderStartServer" << msg.errorMessage();
+-    }
++    GlobalData::getInstance()->dbusReceiverMigrateData(type);
+     m_btnCannel->show();
+ }
+ 
+@@ -203,13 +192,9 @@ void AcceptDataWidget::slotCannel()
+     m_stackedWid->setCurrentIndex(1);
+     m_acceptStatus->setStatusStyle(AcceptDataStatus::FlowPart::SecondPart);
+     // m_btnReboot->show();
+-    qDebug() << "############";
++    
++    GlobalData::getInstance()->dbusReceiverStopRsync();
+ 
+-    QDBusMessage msg;
+-    msg = m_dbus->call("receiverStopRsync");
+-    if (msg.errorMessage() != "") {
+-        qDebug() << "dbus interface error : senderStartServer" << msg.errorMessage();
+-    }
+     this->update();
+ }
+ 
+@@ -279,7 +264,7 @@ void AcceptDataWidget::ipAutoDiscovery()
+ // 重启
+ void AcceptDataWidget::slotReboot()
+ {
+-    QDBusMessage msg = m_dbus->call("receiverReboot");
++    GlobalData::getInstance()->dbusReceiverReboot();
+ }
+ 
+ void AcceptDataWidget::slotMigrationDataFinish()
+@@ -287,4 +272,6 @@ void AcceptDataWidget::slotMigrationDataFinish()
+     m_stackedWid->setCurrentIndex(3);
+     m_acceptStatus->setStatusStyle(AcceptDataStatus::FlowPart::LastPart);
+     m_acceptReboot->setLabelsText();
++    m_btnReboot->show();
++    m_btnCannel->hide();
+ }
+\ No newline at end of file
+diff --git a/treasure-chest/replacement/view/acceptdatawidget.h b/treasure-chest/replacement/view/acceptdatawidget.h
+index be52175..8f31e50 100644
+--- a/treasure-chest/replacement/view/acceptdatawidget.h
++++ b/treasure-chest/replacement/view/acceptdatawidget.h
+@@ -43,7 +43,6 @@ private:
+     K::TextLabel *m_labelTip = nullptr;
+     
+     QVBoxLayout *m_layoutVMain = nullptr; // 主界面纵向布局
+-    QDBusInterface *m_dbus = nullptr;
+ 
+     bool m_isDataMigration = false;
+ 
+diff --git a/treasure-chest/replacement/view/acceptmigrationappdata.cpp b/treasure-chest/replacement/view/acceptmigrationappdata.cpp
+index 3d9dc24..fccda10 100644
+--- a/treasure-chest/replacement/view/acceptmigrationappdata.cpp
++++ b/treasure-chest/replacement/view/acceptmigrationappdata.cpp
+@@ -12,6 +12,7 @@
+ #include <QJsonDocument>
+ #include <QJsonObject>
+ #include <QJsonArray>
++#include <QCloseEvent>
+ 
+ #include "acceptmigrationappdata.h"
+ #include "../globaldata.h"
+@@ -130,6 +131,8 @@ void AcceptMigrationAppData::initUI()
+ 
+ void AcceptMigrationAppData::initTreeWidget()
+ {
++    readSenderDesktopAllowMigrationFile();
++
+     QDir* dirinfo = new QDir(desktopFilePath);
+     if (!dirinfo->exists()) {
+         delete dirinfo, dirinfo = nullptr;
+@@ -144,6 +147,9 @@ void AcceptMigrationAppData::initTreeWidget()
+     m_treeWidget->headerItem()->setCheckState(0, Qt::Unchecked);
+ 
+     for (int i = 0; i < fileList.size(); i++ ) {
++        if (!m_listAllowDesktopFile.contains(fileList[i])) {
++            continue;
++        }
+ 
+         QString file = desktopFilePath + fileList[i];
+ 
+@@ -210,12 +216,12 @@ void AcceptMigrationAppData::initTreeWidget()
+ 
+ void AcceptMigrationAppData::clickSureBtn()
+ {
+-    emit sigAppData(m_list);
+     this->close();
+ }
+ 
+ void AcceptMigrationAppData::clickCannelBtn()
+ {
++    GlobalData::getInstance()->g_chooseAppData = false;
+     this->close();
+ }
+ 
+@@ -233,6 +239,8 @@ void AcceptMigrationAppData::treeItemChanged(QTreeWidgetItem *item, int column)
+ 
+ void AcceptMigrationAppData::initTreewidgetStyle()
+ {
++    m_itemHash.clear();
++    m_list.clear();
+     m_treeWidget->clear();
+     if (createJsonFile()) {
+         readJsonFile();
+@@ -306,6 +314,22 @@ void AcceptMigrationAppData::writeJsonFile()
+     return;
+ }
+ 
++void AcceptMigrationAppData::readSenderDesktopAllowMigrationFile()
++{
++    m_listAllowDesktopFile.clear();
++    QFile file(desktopListAllowFilePath);
++    if(!file.open(QIODevice::ReadOnly|QIODevice::Text)) {
++        qDebug()<<" Open json file failed ";
++        return;
++    }
++    // 读取文件内容并判断每一行的开头
++    QTextStream in(&file);
++    while (!in.atEnd()) {
++        QString line = in.readLine();
++        m_listAllowDesktopFile.append(line);
++    }
++}
++
+ void AcceptMigrationAppData::readJsonFile()
+ {
+     m_listApp.clear();
+@@ -360,3 +384,13 @@ void AcceptMigrationAppData::readJsonFile()
+ 
+     return;
+ }
++
++// 窗口关闭事件
++void AcceptMigrationAppData::closeEvent(QCloseEvent *event)
++{
++    Q_UNUSED(event);
++    if ( GlobalData::getInstance()->g_chooseAppData == true) {
++        emit sigAppData(m_list);
++    }
++    GlobalData::getInstance()->g_chooseAppData = true;
++}
+\ No newline at end of file
+diff --git a/treasure-chest/replacement/view/acceptmigrationappdata.h b/treasure-chest/replacement/view/acceptmigrationappdata.h
+index c8dbfdb..b0599ce 100644
+--- a/treasure-chest/replacement/view/acceptmigrationappdata.h
++++ b/treasure-chest/replacement/view/acceptmigrationappdata.h
+@@ -7,12 +7,14 @@
+ #include <QPushButton>
+ #include <QTreeWidget>
+ #include <QStandardItem>
++#include <QCloseEvent>
+ #include "../component/text_label.h"
+ #include "kwidget.h"
+ 
+ using namespace kdk;
+ 
+-const QString desktopFilePath = "/usr/share/applications/";
++const QString desktopFilePath = "/fs.old/usr/share/applications/";
++const QString desktopListAllowFilePath = "/fs.old/usr/share/applications/replacement_destktop.list";
+ const QString DesktopGroup = "Desktop Entry";
+ const QString DesktopKeyNameEN = "Name";
+ const QString DesktopKeyNameZH = "Name[zh_CN]";
+@@ -28,6 +30,10 @@ public:
+     ~AcceptMigrationAppData();
+     void initTreewidgetStyle();
+ 
++
++    // 窗口关闭事件
++    void closeEvent(QCloseEvent *event);
++
+ private:
+     void initUI();
+     void initTreeWidget();
+@@ -36,6 +42,7 @@ private:
+     bool createJsonFile();
+     void writeJsonFile();
+     void readJsonFile();
++    void readSenderDesktopAllowMigrationFile();
+ 
+     K::TextLabel *m_label = nullptr;
+     QPushButton *m_btnSure = nullptr;
+@@ -50,6 +57,7 @@ private:
+     QStringList m_listApp;
+     QStringList m_listNameContains;
+     QStringList m_listIncompatible;
++    QStringList m_listAllowDesktopFile;
+ 
+ public slots:
+     void treeItemChanged(QTreeWidgetItem *item, int column);
+diff --git a/treasure-chest/replacement/view/acceptmigrationdata.cpp b/treasure-chest/replacement/view/acceptmigrationdata.cpp
+index c8987db..aa89d40 100644
+--- a/treasure-chest/replacement/view/acceptmigrationdata.cpp
++++ b/treasure-chest/replacement/view/acceptmigrationdata.cpp
+@@ -175,9 +175,7 @@ void AcceptMigrationData::slotMigrationDataInfo(QStringList list)
+ 
+     if (list[1].toLongLong() == GlobalData::getInstance()->g_migrationDataSize) {
+         // 配置 receiverConfigData
+-        QDBusMessage msg = m_dbus->call("receiverConfigData");
+-        if (msg.errorMessage() != "")     
+-            qDebug() << "dbus interface error : receiverConfigData" << msg.errorMessage();
++        slotConfigData();
+     }
+ }
+ 
+diff --git a/treasure-chest/replacement/view/mainwidget.cpp b/treasure-chest/replacement/view/mainwidget.cpp
+index c1234a6..a49d8b8 100644
+--- a/treasure-chest/replacement/view/mainwidget.cpp
++++ b/treasure-chest/replacement/view/mainwidget.cpp
+@@ -107,6 +107,7 @@ void MainWidget::initConn()
+     connect(m_homePage, &HomePageWidget::sinStatClick, this, [this](){
+         m_stackedWid->setCurrentIndex(1);
+         initSetStyle();
++        GlobalData::getInstance()->dbusSenderGetDesktopInfo();
+     });
+ 
+ }
+diff --git a/treasure-chest/replacement/view/sendoldsysinfo.cpp b/treasure-chest/replacement/view/sendoldsysinfo.cpp
+index 8927ea8..6a22a30 100644
+--- a/treasure-chest/replacement/view/sendoldsysinfo.cpp
++++ b/treasure-chest/replacement/view/sendoldsysinfo.cpp
+@@ -17,8 +17,6 @@ OldSysInfo::OldSysInfo(QWidget *parent)
+ 
+ OldSysInfo::~OldSysInfo()
+ {
+-    m_dbus->deleteLater();
+-
+ }
+ 
+ void OldSysInfo::initUI()
+@@ -78,9 +76,6 @@ void OldSysInfo::initUI()
+     m_btnShareData->setText(GlobalData::g_textBtnSharing);
+     GlobalData::getInstance()->setHighColorBtn(m_btnShareData);
+ 
+-    m_dbus = new QDBusInterface(dbus::DBUS_SERVICENAME, dbus::DBUS_PARH_DATA_MIGRATION, dbus::DBUS_INTERFACE_DATA_MIGRATION,
+-                                QDBusConnection::systemBus());
+-
+     connect(m_btnShareData, &QPushButton::clicked, this, &OldSysInfo::slotStarShare);
+     connect(m_editPwd, &QLineEdit::textChanged, this, &OldSysInfo::changeBtnType);
+     connect(m_editName, &QLineEdit::textChanged, this, &OldSysInfo::changeBtnType);
+@@ -210,11 +205,7 @@ void OldSysInfo::slotStarShare()
+     // 启动共享(rsync)
+     m_nameStr = m_editName->text();
+     QString senderName = m_editId->text() + m_nameStr;
+-    QDBusMessage msg = m_dbus->call("senderStartServer", senderName, m_code);
+-    if (msg.errorMessage() != "") {
+-        qDebug() << "dbus interface error : senderStartServer" << msg.errorMessage();
+-    }
+-        
++    GlobalData::getInstance()->dbusSenderStartServer(senderName, m_code);
+ 
+     // 启动共享(ip共享)
+     initZeroConf();
+@@ -226,10 +217,7 @@ void OldSysInfo::slotStopShare()
+     m_zeroConf.stopServicePublish();
+     // dbus执行关闭迁移
+     
+-    QDBusMessage msg = m_dbus->call("senderStopServer");
+-    if (msg.errorMessage() != "") {
+-        qDebug() << "dbus interface error : senderStopServer" << msg.errorMessage();
+-    }
++    GlobalData::getInstance()->dbusSenderStopServer();
+     m_btnShareData->setText(GlobalData::g_textBtnStartSharing);
+     m_btnShareData->setEnabled(true);
+ }
+\ No newline at end of file
+diff --git a/treasure-chest/replacement/view/sendoldsysinfo.h b/treasure-chest/replacement/view/sendoldsysinfo.h
+index 6d6d9f1..f885afe 100644
+--- a/treasure-chest/replacement/view/sendoldsysinfo.h
++++ b/treasure-chest/replacement/view/sendoldsysinfo.h
+@@ -7,7 +7,6 @@
+ #include <QFormLayout>
+ #include <QPushButton>
+ #include <QLabel>
+-#include <QDBusInterface>
+ #include "../component/text_label.h"
+ #include "qzeroconf.h"
+ 
+@@ -44,8 +43,6 @@ private:
+     QHBoxLayout *m_layoutHMain = nullptr;
+     QFormLayout *m_layoutF = nullptr;
+ 
+-    QDBusInterface *m_dbus = nullptr;
+-
+     QString m_code = "";
+     int m_num = 8;
+     QZeroConf m_zeroConf;

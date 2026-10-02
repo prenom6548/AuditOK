@@ -1,0 +1,382 @@
+From: snowsi <348240162@qq.com>
+Date: Fri, 24 Nov 2023 09:30:46 +0000
+Subject: =?utf-8?b?ITI5IOWQjOatpSB5YW5ndHplIOWIhuaUr+S7o+eggSBNZXJnZSBwdWxs?=
+ =?utf-8?b?IHJlcXVlc3QgITI5IGZyb20gc25vd3NpL29wZW5reWxpbi9uaWxl?=
+
+---
+ .gitignore                                         |  3 +-
+ daemons/service/dbus.cpp                           | 31 --------
+ daemons/service/dbus.h                             |  2 -
+ kom/CMakeLists.txt                                 | 14 ++--
+ kom/kom-buriedpoint.cpp                            | 83 ++++++++++------------
+ kom/kom-buriedpoint.h                              | 27 +++----
+ .../src/feedbackmanagerlogic.cpp                   | 76 ++++----------------
+ 7 files changed, 74 insertions(+), 162 deletions(-)
+
+diff --git a/.gitignore b/.gitignore
+index 567609b..1c85d0e 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1 +1,2 @@
+-build/
++.idea
++cmake-build-*
+diff --git a/daemons/service/dbus.cpp b/daemons/service/dbus.cpp
+index 73ba026..27e4835 100644
+--- a/daemons/service/dbus.cpp
++++ b/daemons/service/dbus.cpp
+@@ -21,19 +21,6 @@ void Dbus::creatDbusServer()
+     }
+ }
+ 
+-QString Tool::getMessage(const QString &arg) const
+-{
+-    QString cmd = "bash -c \"" + arg + "\"";
+-    QProcess proc;
+-    proc.start(cmd);
+-    proc.waitForFinished();
+-    QByteArray res = proc.readAllStandardError();
+-    if (res.isEmpty()) {
+-        return "1" + QString(proc.readAllStandardOutput());
+-    }
+-    return "0" + QString(res);
+-}
+-
+ QStringList Tool::getFileNameFromDir(const QString &arg) const
+ {
+     QStringList tmp;
+@@ -46,24 +33,6 @@ QStringList Tool::getFileNameFromDir(const QString &arg) const
+     return tmp;
+ }
+ 
+-QString Tool::cpFile(const QString &file, const QString &path) const
+-{
+-    QString cmd = "cp -rf " + file + " " + path;
+-    QString trueCmd = "bash -c \"" + cmd + "\"";
+-    QProcess proc;
+-    proc.start(trueCmd);
+-    proc.waitForFinished();
+-    QByteArray res = proc.readAllStandardError();
+-    if (res.isEmpty()) {
+-        QString chmod = "chmod a+r " + path + QFileInfo(file).fileName();
+-        proc.start(chmod);
+-        proc.waitForFinished();
+-    } else {
+-        qDebug() << "cp cmd error:" << trueCmd << res;
+-    }
+-    return res;
+-}
+-
+ DbusManager::DbusManager()
+ {
+     QThread *thread = new QThread(this);
+diff --git a/daemons/service/dbus.h b/daemons/service/dbus.h
+index 66f8298..ba067f3 100644
+--- a/daemons/service/dbus.h
++++ b/daemons/service/dbus.h
+@@ -12,8 +12,6 @@ class Tool : public QObject
+ public:
+     Tool(QObject *parent = nullptr) : QObject(parent) {}
+ public slots:
+-    QString getMessage(const QString &arg) const;
+-    QString cpFile(const QString &file, const QString &path) const;
+     QStringList getFileNameFromDir(const QString &arg) const;
+ };
+ 
+diff --git a/kom/CMakeLists.txt b/kom/CMakeLists.txt
+index 3c92857..8936068 100644
+--- a/kom/CMakeLists.txt
++++ b/kom/CMakeLists.txt
+@@ -25,6 +25,10 @@ pkg_check_modules(GSETTINGS gsettings-qt)
+ include_directories(${GSETTINGS_INCLUDE_DIRS})
+ link_directories(${GSETTINGS_LIBARAY_DIRS})
+ 
++pkg_check_modules(KYSDK_DATACOLLECT kysdk-datacollect)
++include_directories(${KYSDK_DATACOLLECT_INCLUDE_DIRS})
++link_directories(${KYSDK_DATACOLLECT_LIBRARY_DIRS})
++
+ set(SRCS
+         ${KOM_DIR}/kom-label.cpp
+         ${KOM_DIR}/kom-ukui-gsettings.cpp
+@@ -35,10 +39,6 @@ set(SRCS
+         ${KOM_DIR}/security_utils.cpp)
+ 
+ add_library(${PROJECT_NAME} ${SRCS})
+-target_link_libraries(${PROJECT_NAME}  Qt5::Widgets)
+-target_link_libraries(${PROJECT_NAME}  ${GSETTINGS_LIBRARIES})
+-
+-pkg_check_modules(KYSDK_MODULE kysdk-diagnostics)
+-include_directories(${KYSDK_MODULE_INCLUDE_DIRS})
+-link_directories(${KYSDK_MODULE_LIBRARY_DIRS})
+-link_libraries(${KYSDK_MODULE_LIBRARIES})
++target_link_libraries(${PROJECT_NAME} PRIVATE Qt5::Widgets)
++target_link_libraries(${PROJECT_NAME} PRIVATE ${GSETTINGS_LIBRARIES})
++target_link_libraries(${PROJECT_NAME} PRIVATE ${KYSDK_DATACOLLECT_LIBRARIES})
+diff --git a/kom/kom-buriedpoint.cpp b/kom/kom-buriedpoint.cpp
+index 9f26989..f50cfdf 100644
+--- a/kom/kom-buriedpoint.cpp
++++ b/kom/kom-buriedpoint.cpp
+@@ -1,23 +1,21 @@
++#include <libkydatacollect.h>
+ #include "kom-buriedpoint.h"
+-#include <libkydiagnostics.h>
+-#include <QDebug>
+-namespace kom
+-{
+ 
+-QString BuriedPoint::getBuriedPointTypeString(BuriedPointType type)
+-{
+-    switch (type) {
+-    case BuriedPointType::MainApplication:
++namespace kom {
++
++QString BuriedPoint::BuriedPointPageToString(BuriedPointPage buried_point_page) {
++    switch (buried_point_page) {
++    case BuriedPointPage::MainApplication:
+         return QString("MainApplication");
+-    case BuriedPointType::PluginsServiceSupport:
++    case BuriedPointPage::PluginsServiceSupport:
+         return QString("PluginsServiceSupport");
+-    case BuriedPointType::PluginsToolBox:
++    case BuriedPointPage::PluginsToolBox:
+         return QString("PluginsToolBox");
+-    case BuriedPointType::PluginsWinDataMigration:
++    case BuriedPointPage::PluginsWinDataMigration:
+         return QString("PluginsWinDataMigration");
+-    case BuriedPointType::PluginsRemoteAssistanceTool:
++    case BuriedPointPage::PluginsRemoteAssistanceTool:
+         return QString("PluginsRemoteAssistanceTool");
+-    case BuriedPointType::ServiceMonitor:
++    case BuriedPointPage::ServiceMonitor:
+         return QString("ServiceMonitor");
+     default:
+         return QString("UnknowType");
+@@ -25,43 +23,38 @@ QString BuriedPoint::getBuriedPointTypeString(BuriedPointType type)
+     return QString("UnknowType");
+ }
+ 
+-bool BuriedPoint::uploadMessage(BuriedPointType messageType, QMap<QString, QString> data)
+-{
+-    KBuriedPoint kp[data.count()];
+-    memset(kp, '\0', sizeof(kp));
+-    for (int i = 0; i < data.count(); i++) {
+-        QString key = data.keys().at(i);
+-        kp[i].key = strdup(key.toUtf8().data());
+-        kp[i].value = strdup(data.value(key).toUtf8().data());
+-    }
+-    QString typeString = getBuriedPointTypeString(messageType);
+-#ifdef DEBUG_MODE
+-    qDebug() << "埋点信息：" << typeString << kp[0].key << kp[0].value;
+-#endif
+-    int result = kdk_buried_point("kylin-os-manager", typeString.toUtf8().data(), kp, data.count());
+-    for (int i = 0; i < data.count(); i++) {
+-        delete kp[i].key;
+-        delete kp[i].value;
++void BuriedPoint::uploadMessage(BuriedPointPage buried_point_page, const QString &event_code, const QMap<QString, QString> &custom_property) {
++    KTrackData *track_data = kdk_dia_data_init(KEventSourceType::KEVENTSOURCE_DESKTOP, KEventType::KEVENT_CLICK);
++
++    int cursor{0};
++    int property_size{custom_property.size()};
++    KCustomProperty property[property_size];
++    for (auto iter = custom_property.begin(); iter != custom_property.end(); iter++) {
++        property[cursor].key = strdup(iter.key().toLocal8Bit().data());
++        property[cursor].value = strdup(iter.value().toLocal8Bit().data());
++        cursor++;
+     }
+-    if (result == 0) {
+-        return true;
++
++    kdk_dia_append_custom_property(track_data, property, property_size);
++    kdk_dia_upload_default(track_data,
++                           event_code.toLocal8Bit().data(),
++                           BuriedPointPageToString(buried_point_page).toLocal8Bit().data());
++
++    for (int i = 0; i < property_size; i++) {
++        free(property[i].key);
++        free(property[i].value);
+     }
+-    qDebug() << "埋点失败！！";
+-    return false;
++    kdk_dia_data_free(track_data);
+ }
+ 
+-bool BuriedPoint::uploadMessage(BuriedPointType messageType, const QString &key, const QString &value)
+-{
+-    QMap<QString, QString> data;
+-    data.insert(key, value);
+-    return uploadMessage(messageType, data);
++void BuriedPoint::uploadMessage(BuriedPointPage buried_point_page, const QString &event_code, const QString &data) {
++    QMap<QString, QString> custom_property;
++    custom_property.insert("ExtraData", data);
++    uploadMessage(buried_point_page, event_code, custom_property);
+ }
+ 
+-bool BuriedPoint::uploadMessage(BuriedPointType messageType, const QString &msg)
+-{
+-    QMap<QString, QString> data;
+-    data.insert("Event", msg);
+-    return uploadMessage(messageType, data);
++void BuriedPoint::uploadMessage(BuriedPointPage buried_point_page, const QString &event_code) {
++    uploadMessage(buried_point_page, event_code, QMap<QString, QString>());
+ }
+ 
+-} // namespace kom
++}
+diff --git a/kom/kom-buriedpoint.h b/kom/kom-buriedpoint.h
+index 030d40b..0919d08 100644
+--- a/kom/kom-buriedpoint.h
++++ b/kom/kom-buriedpoint.h
+@@ -1,11 +1,12 @@
+ #ifndef __KOM_BURIEDPOINT_H__
+ #define __KOM_BURIEDPOINT_H__
++
+ #include <QString>
+ #include <QMap>
+-namespace kom
+-{
+ 
+-enum BuriedPointType {
++namespace kom {
++
++enum BuriedPointPage {
+     MainApplication = 0,
+     PluginsServiceSupport,
+     PluginsToolBox,
+@@ -14,18 +15,20 @@ enum BuriedPointType {
+ 
+     ServiceMonitor
+ };
+-class BuriedPoint
+-{
++
++class BuriedPoint {
+ public:
+-    BuriedPoint() {}
+-    ~BuriedPoint() {}
+-    static bool uploadMessage(BuriedPointType messageType, QMap<QString, QString> data);
+-    static bool uploadMessage(BuriedPointType messageType, const QString &key, const QString &value);
+-    static bool uploadMessage(BuriedPointType messageType, const QString &msg);
++    BuriedPoint() = default;
++    ~BuriedPoint() = default;
++
++    static void uploadMessage(BuriedPointPage buried_point_page, const QString &event_code);
++    static void uploadMessage(BuriedPointPage buried_point_page, const QString &event_code, const QString &data);
++    static void uploadMessage(BuriedPointPage buried_point_page, const QString &event_code, const QMap<QString, QString> &custom_property);
+ 
+ private:
+-    static QString getBuriedPointTypeString(BuriedPointType type);
++    static QString BuriedPointPageToString(BuriedPointPage buried_point_page);
+ };
+-} // namespace kom
++
++}
+ 
+ #endif
+diff --git a/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp b/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp
+index df0d80e..3e6c81e 100644
+--- a/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp
++++ b/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp
+@@ -102,7 +102,7 @@ void FeedbackManagerLogic::collecting()
+                 collectingCmd(tmpSaveDir, it->getMessage());
+                 break;
+             case InformationItem::Others:
+-                collectingOther(tmpSaveDir, it->getMessage(), it->getItemName());
++//                collectingOther(tmpSaveDir, it->getMessage(), it->getItemName());
+                 break;
+             default:
+                 break;
+@@ -322,20 +322,8 @@ void FeedbackManagerLogic::collectingFile(const QString &saveDir, const QString
+                 continue;
+             }
+         }
+-        QDBusMessage msg = m_dbus->call("cpFile", nowFile, saveDir);
+-        if (msg.type() != QDBusMessage::ReplyMessage) {
+-            qDebug() << "dbus interface error : cpFile" << msg.errorMessage();
+-            continue;
+-        }
+-        if (msg.arguments().isEmpty()) {
+-            qDebug() << "dbus interface return null : cpFile";
+-            continue;
+-        }
+-        QVariant var = msg.arguments().first();
+-        if (var.type() == QVariant::String) {
+-            QString res = var.toString();
+-            error += res;
+-        }
++        QString cmd = "cp -r \"" + nowFile + "\" \"" + saveDir + "\"";
++        error += getCmdMessage(cmd,false);
+     }
+ 
+     if (!error.isEmpty()) {
+@@ -353,21 +341,14 @@ void FeedbackManagerLogic::collectingFile(const QString &saveDir, const QString
+ 
+ QString FeedbackManagerLogic::getCmdMessage(const QString &message, bool hasType)
+ {
+-    QDBusInterface interface(dbus::DBUS_SERVICENAME, dbus::DBUS_PARH_TOOL, dbus::DBUS_INTERFACE_TOOL,
+-                             QDBusConnection::systemBus());
+-    QDBusMessage msg = interface.call("getMessage", message);
+-    if (msg.type() != QDBusMessage::ReplyMessage) {
+-        qDebug() << "dbus interface error : getMessage" << msg.errorMessage();
+-        return "";
+-    }
+-    if (msg.arguments().isEmpty()) {
+-        qDebug() << "dbus interface return null : getMessage";
+-        return "";
+-    }
+-    QString res = msg.arguments().first().toString();
+-    if (res.length() < 1) {
+-        qDebug() << "dbus interface return string error : getMessage";
+-        return "";
++    QProcess proc;
++    proc.start(message);
++    proc.waitForFinished();
++    QString res = proc.readAllStandardOutput();
++    if (res.isEmpty()) {
++        res = "0" + proc.readAllStandardError();
++    } else {
++        res = "1" + res;
+     }
+     if (!hasType) {
+         if (res.at(0) == '0') {
+@@ -403,40 +384,7 @@ void FeedbackManagerLogic::collectingCmd(const QString &saveDir, const QString &
+ 
+ void FeedbackManagerLogic::collectingOther(const QString &saveDir, const QString &message, const QString &name)
+ {
+-    int tstart = m_time->elapsed();
+-    QString fileName = "/var/log/hedron/policy_cache.json";
+-    QString key1 = "after";
+-    QString value1 = "";
+-    QString key2 = "type_code";
+-    QString value2 = "";
+-    QString key3 = "dest";
+-    QString res;
+-    if (name == "防火墙脚本") {
+-        value1 = "script";
+-        value2 = "8401";
+-        res = getPathFromJson(fileName, key1, value1, key3, key2, value2);
+-    } else if (name == "外设策略文件") {
+-        value2 = "85**";
+-        res = getPathFromJson(fileName, key2, value2, key3);
+-    } else if (name == "应用运行黑名单文件") {
+-        value2 = "8205";
+-        res = getPathFromJson(fileName, key2, value2, key3);
+-    } else if (name == "应用防卸载文件") {
+-        value1 = "softwareUninstallDisable";
+-        res = getPathFromJson(fileName, key1, value1, key3);
+-    }
+-    if (!value2.contains('*')) {
+-        collectingFile(saveDir, res, 1);
+-    } else {
+-        QFile file(saveDir + "message");
+-        if (!file.open(QIODevice::NewOnly)) {
+-            qDebug() << "creat user data file error :" << saveDir + fileName;
+-            return;
+-        }
+-        file.write(res.toLocal8Bit());
+-        file.close();
+-    }
+-    qDebug() << "采集用时：" << m_time->elapsed() - tstart << " | " << message;
++
+ }
+ 
+ QString FeedbackManagerLogic::getPathFromJson(QString fn, QString k1, QString v1, QString keyRes, QString k2,

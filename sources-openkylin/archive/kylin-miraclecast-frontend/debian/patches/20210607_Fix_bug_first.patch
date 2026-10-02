@@ -1,0 +1,123 @@
+Description: <short summary of the patch>
+ TODO: Put a short summary on the line above and replace this paragraph
+ with a longer explanation of this change. Complete the meta-information
+ with other relevant fields (see below for details). To make it easier, the
+ information below has been extracted from the changelog. Adjust it or drop
+ it.
+ .
+ miracast-dialog (1.0-2) v101; urgency=medium
+ .
+   * 和服务端进行联调
+Author: pangyi <pangyi@kylinos.cn>
+
+---
+The information above should follow the Patch Tagging Guidelines, please
+checkout http://dep.debian.net/deps/dep3/ to learn about the format. Here
+are templates for supplementary fields that you might want to add:
+
+Origin: <vendor|upstream|other>, <url of original patch>
+Bug: <url in upstream bugtracker>
+Bug-Debian: https://bugs.debian.org/<bugnumber>
+Bug-Ubuntu: https://launchpad.net/bugs/<bugnumber>
+Forwarded: <no|not-needed|url proving that it has been forwarded>
+Reviewed-By: <name and email of someone who approved the patch>
+Last-Update: 2021-06-07
+
+--- miracast-dialog-1.0.orig/dbus/interactiondbusinterface.cpp
++++ miracast-dialog-1.0/dbus/interactiondbusinterface.cpp
+@@ -18,5 +18,7 @@ QString InteractionDBusInterface::getPin
+         return QString("getPinFailed");
+     }
+     QList<QVariant> args = message.arguments();
+-    return args.at(0).toString();
++    qDebug() << args.at(0).toInt();
++    qDebug() << args.at(1).toString();
++    return args.at(1).toString();
+ }
+--- miracast-dialog-1.0.orig/dbus/interactiondbusinterface.h
++++ miracast-dialog-1.0/dbus/interactiondbusinterface.h
+@@ -10,7 +10,7 @@ public:
+         return "/org/freedesktop/miracleagent";
+     }
+     inline const char *getInterfaceName() const{
+-        return "org.freedesktop.miracleagent";
++        return "org.freedesktop.miracleagent.op";
+     }
+ 
+     /*
+--- miracast-dialog-1.0.orig/src/widget.cpp
++++ miracast-dialog-1.0/src/widget.cpp
+@@ -41,7 +41,9 @@ Widget::Widget(QWidget *parent)
+ 
+     ui->stackedWidget->setCurrentIndex(0);
+ 
+-    show();
++    dbusSignalInit();
++
++//    show();
+ }
+ 
+ Widget::~Widget()
+@@ -59,19 +61,19 @@ void Widget::dbusSignalInit()
+     QDBusConnection connection = QDBusConnection::sessionBus();
+ 
+     // 收到移动设备的连接请求信号
+-    if(connection.connect(QString(), getDbusSiganlPath(), getDbusInterfaceName(),
+-                       "Confirming", this, SLOT(getConfirmingSignal(QString deviceName))))
++    if(connection.connect(getServiceName(), getDbusSiganlPath(), getDbusInterfaceName(),
++                       "Confirming", this, SLOT(getConfirmingSignal(QString))))
+         qDebug() << "连接confirming信号成功！";
+-    if(connection.connect(QString(), getDbusSiganlPath(), getDbusInterfaceName(),
+-                       "Formationing", this, SLOT(getFormationingSignal(QString deviceName))))
++    if(connection.connect(getServiceName(), getDbusSiganlPath(), getDbusInterfaceName(),
++                       "Formationing", this, SLOT(getFormationingSignal(QString))))
+         qDebug() << "连接Formationing信号成功！";
+-    if(connection.connect(QString(), getDbusSiganlPath(), getDbusInterfaceName(),
+-                       "FormationOver", this, SLOT(getFormationOverSignal(int status, QString failedReason))))
++    if(connection.connect(getServiceName(), getDbusSiganlPath(), getDbusInterfaceName(),
++                       "FormationOver", this, SLOT(getFormationOverSignal(int, QString))))
+         qDebug() << "连接FormationOver信号成功！";
+-    if(connection.connect(QString(), getDbusSiganlPath(), getDbusInterfaceName(),
+-                       "RtspOver", this, SLOT(getRtspOverSignal(int status))))
++    if(connection.connect(getServiceName(), getDbusSiganlPath(), getDbusInterfaceName(),
++                       "RtspOver", this, SLOT(getRtspOverSignal(int))))
+         qDebug() << "连接RtspOver信号成功！";
+-    if(connection.connect(QString(), getDbusSiganlPath(), getDbusInterfaceName(),
++    if(connection.connect(getServiceName(), getDbusSiganlPath(), getDbusInterfaceName(),
+                        "disconnected", this, SLOT(getdisconnectedSignal())))
+         qDebug() << "连接disconnected信号成功！";
+ }
+@@ -83,11 +85,13 @@ void Widget::getFormationingSignal(QStri
+     connectDevice = deviceName;
+     FirstPageReset();
+     secondPageReset(INITIALED);
++    activateWindow();
+     show();
+ }
+ 
+ void Widget::getConfirmingSignal(QString deviceName)
+ {
++    qDebug() << "label1";
+     if(ui->stackedWidget->currentIndex() != 0)
+         ui->stackedWidget->setCurrentIndex(0);
+     connectDevice = deviceName;
+@@ -95,6 +99,7 @@ void Widget::getConfirmingSignal(QString
+     FirstPageReset();
+     ui->deviceLabel->setText(device);
+     countDownWarning();
++    activateWindow();
+     show();
+ }
+ 
+--- miracast-dialog-1.0.orig/src/widget.h
++++ miracast-dialog-1.0/src/widget.h
+@@ -39,6 +39,9 @@ public:
+     // dbusx信号初始化
+     void dbusSignalInit();
+     // 获取dbus信号路径
++    const char *getServiceName() const{
++        return "org.freedesktop.miracleagent";
++    }
+     const char *getDbusSiganlPath() const{
+         return "/org/freedesktop/miracleagent";
+     }

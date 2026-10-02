@@ -1,0 +1,841 @@
+From: snowsi <348240162@qq.com>
+Date: Wed, 3 Jan 2024 08:25:39 +0000
+Subject: =?utf-8?b?ITUxIGZlYXQo5pWF6Zqc6K+K5patKTog5L+u5pS56YCa5L+h5Y2P6K6u?=
+ =?utf-8?b?5Li65paw54mI5Y2P6K6uIE1lcmdlIHB1bGwgcmVxdWVzdCAhNTEgZnJvbSBzbm93?=
+ =?utf-8?b?c2kvb3Blbmt5bGluL25pbGU=?=
+
+---
+ .../fault_diagnosis/diagnoses/complete_machine.cpp | 199 ++++++++++++---------
+ .../fault_diagnosis/diagnoses/complete_machine.h   |   4 +-
+ plugins/fault_diagnosis/diagnoses/diagnosis.h      |   9 +-
+ plugins/fault_diagnosis/diagnosis_core.cpp         |  82 +++++----
+ plugins/fault_diagnosis/diagnosis_core.h           |   4 +
+ plugins/fault_diagnosis/diagnosis_manage.cpp       |   2 +
+ plugins/fault_diagnosis/diagnosis_manage.h         |   2 +
+ plugins/fault_diagnosis/mainwindow.cpp             |   9 +-
+ .../fault_diagnosis/test/complete_machine_test.cpp | 154 +++++++++-------
+ .../fault_diagnosis/test/complete_machine_test.h   |   4 +
+ 10 files changed, 269 insertions(+), 200 deletions(-)
+
+diff --git a/plugins/fault_diagnosis/diagnoses/complete_machine.cpp b/plugins/fault_diagnosis/diagnoses/complete_machine.cpp
+index d519653..447eca6 100644
+--- a/plugins/fault_diagnosis/diagnoses/complete_machine.cpp
++++ b/plugins/fault_diagnosis/diagnoses/complete_machine.cpp
+@@ -8,29 +8,51 @@
+ #include <QDebug>
+ #include "complete_machine.h"
+ 
++static const QString DBUS_NAME = "com.kylin.kydoctor";
++static const QString DBUS_PATH = "/com/kylin/kydoctor";
++static const QString DBUS_INTERFACE = "com.kylin.kydoctor";
++
+ namespace fault_diagnosis {
+ 
+ CompleteMachine::CompleteMachine(QObject *parent)
+     : Diagnosis(parent)
+ {
+-    interface_.reset(new QDBusInterface("com.kylin.kydoctor",
+-                                        "/com/kylin/kydoctor",
+-                                        "com.kylin.kydoctor",
++    interface_.reset(new QDBusInterface(DBUS_NAME,
++                                        DBUS_PATH,
++                                        DBUS_INTERFACE,
+                                         QDBusConnection::systemBus(),
+                                         this));
+     if (interface_->isValid()) {
+-        QDBusConnection::systemBus().connect("com.kylin.kydoctor",
+-                                             "/com/kylin/kydoctor",
+-                                             "com.kylin.kydoctor",
++        QDBusConnection::systemBus().connect(DBUS_NAME,
++                                             DBUS_PATH,
++                                             DBUS_INTERFACE,
+                                              "SignalProgress",
+                                              this,
+-                                             SLOT(on_RepairProgress(qint64,qint32)));
+-        QDBusConnection::systemBus().connect("com.kylin.kydoctor",
+-                                             "/com/kylin/kydoctor",
+-                                             "com.kylin.kydoctor",
++                                             SLOT(on_RepairProgress(qint64, qint32)));
++        QDBusConnection::systemBus().connect(DBUS_NAME,
++                                             DBUS_PATH,
++                                             DBUS_INTERFACE,
+                                              "SigFixed",
+                                              this,
+-                                             SLOT(on_Fixed(qint64,bool,QString)));
++                                             SLOT(on_Fixed(qint64, bool, QString)));
++        QDBusConnection::systemBus().connect(DBUS_NAME,
++                                             DBUS_PATH,
++                                             DBUS_INTERFACE,
++                                             "CheckItem",
++                                             this,
++                                             SLOT(on_CheckFinish(QString)));
++        QDBusConnection::systemBus().connect(DBUS_NAME,
++                                             DBUS_PATH,
++                                             DBUS_INTERFACE,
++                                             "CheckItemOver",
++                                             this,
++                                             SLOT(on_CheckFinish(bool)));
++        QDBusConnection::systemBus().connect(DBUS_NAME,
++                                             DBUS_PATH,
++                                             DBUS_INTERFACE,
++                                             "RepairOver",
++                                             this,
++                                             SIGNAL(sig_RepairFinish(bool)));
+     }
+ }
+ 
+@@ -110,70 +132,18 @@ bool CompleteMachine::DiagnosticsList(QList<DiagnosticCategory> &diagnostic_cate
+     return true;
+ }
+ 
+-bool CompleteMachine::Check(qint64 mark, DiagnosticResult &diagnostic_result) {
++bool CompleteMachine::Check(qint64 mark) {
+     if (!interface_->isValid()) {
+         qCritical() << "Complete machine diagnosis dbus interface is not vaild";
+         return false;
+     }
+ 
+-    QDBusReply<QString> reply = interface_->call("CheckItem", mark);
+-    if (!reply.isValid()) {
+-        qCritical() << "Complete machine diagnosis CheckItem dbus interface return is not vaild";
+-        return false;
+-    }
+-
+-    // 测试数据
+-    // QByteArray tmp_json_data{"{\"Overview\":\"检测了 10 项，7 项正确，3 项错误\",\"Details\":[{\"ErrorCode\":123456,\"Describe\":\"错误原因描述\"},{\"ErrorCode\":9876,\"Describe\":\"错误原因描述\"}]}"};
+-
+-    QJsonParseError json_parse_error;
+-    const auto document = QJsonDocument::fromJson(reply.value().toUtf8(), &json_parse_error);
+-    if (document.isNull()) {
+-        qCritical() << "Complete machine diagnosis parse check result json fail: " << json_parse_error.errorString();
+-        return false;
+-    }
+-    if (!document.isObject()) {
+-        qCritical() << "Complete machine diagnosis check result json format error.";
++    auto message = interface_->call("CheckItem", mark);
++    if (message.type() == QDBusMessage::ErrorMessage) {
++        qCritical() << "Complete machine diagnosis CheckItem dbus interface return error: " << message.errorMessage();
+         return false;
+     }
+ 
+-    const auto root_object = document.object();
+-    if (!root_object.contains("Overview") || !root_object.contains("Details")) {
+-        qCritical() << "Complete machine diagnosis check result json incomplete fields.";
+-        return false;
+-    }
+-
+-    const auto details = root_object["Details"];
+-    if (!details.isArray()) {
+-        qCritical() << "Complete machine diagnosis check result json \"Details\" fields format error.";
+-        return false;
+-    }
+-
+-    QList<DiagnosticError> diagnostic_errors;
+-    const auto detail_array = details.toArray();
+-    for (int i = 0; i < detail_array.size(); i++) {
+-        if (!detail_array.at(i).isObject())
+-            continue;
+-
+-        const auto obj = detail_array.at(i).toObject();
+-        if (!obj.contains("ErrorCode") || !obj.contains("Describe") || !obj.contains("Name")) {
+-            qWarning() << "Check D-Bus return value \"Details\" field is invalid element.";
+-            continue;
+-        }
+-
+-        bool ok;
+-        qint64 error_code = obj["ErrorCode"].toString().toLongLong(&ok, 0);
+-        if (ok) {
+-            DiagnosticError diagnostic_error;
+-            diagnostic_error.error_code = error_code;
+-            diagnostic_error.name = obj["Name"].toString();
+-            diagnostic_error.describe = obj["Describe"].toString();
+-            diagnostic_errors.push_back(diagnostic_error);
+-        }
+-    }
+-
+-    diagnostic_result.overview = root_object["Overview"].toString();
+-    diagnostic_result.details = diagnostic_errors;
+-
+     return true;
+ }
+ 
+@@ -187,11 +157,6 @@ bool CompleteMachine::Repair(const QList<RepairItem> &repair_items) {
+     for (const auto &i: repair_items) {
+         QJsonObject obj;
+         obj["ErrorCode"] = i.error_code;
+-        obj["SolutionType"] = i.solution_type;
+-        obj["Crc"] = i.crc;
+-        obj["CmdLine"] = i.cmdline;
+-        obj["PackageList"] = i.package_list;
+-        obj["OtherInfo"] = i.other;
+         root_array.push_back(obj);
+     }
+ 
+@@ -199,24 +164,13 @@ bool CompleteMachine::Repair(const QList<RepairItem> &repair_items) {
+     doc.setArray(root_array);
+     auto json_data = doc.toJson();
+ 
+-    QEventLoop event_loop;
+-    bool ok;
+-    auto pend = interface_->asyncCall("RepairItem", QString::fromLocal8Bit(json_data));
+-    auto *watcher = new QDBusPendingCallWatcher(pend, this);
+-    connect(watcher, &QDBusPendingCallWatcher::finished, this, [&](QDBusPendingCallWatcher *watcher) {
+-        QDBusPendingReply<bool> reply = *watcher;
+-        if (reply.isError()) {
+-            qCritical() << "Complete machine diagnosis RepairItem interface return is not valid: " << reply.error();
+-            ok = false;
+-        } else {
+-            ok = reply.argumentAt<0>();
+-        }
+-        watcher->deleteLater();
+-        event_loop.quit();
+-    });
+-    event_loop.exec();
++    auto message = interface_->call("RepairItem", QString::fromLocal8Bit(json_data));
++    if (message.type() == QDBusMessage::ErrorMessage) {
++        qCritical() << "Complete machine diagnosis repair dbus return error message: " << message.errorMessage();
++        return false;
++    }
+ 
+-    return ok;
++    return true;
+ }
+ 
+ void CompleteMachine::on_CheckProgress(qint64 item_mark, qint32 progress) {
+@@ -227,6 +181,73 @@ void CompleteMachine::on_RepairProgress(qint64 item_mark, qint32 progress) {
+     Q_EMIT sig_RepairProgress(Mark(), item_mark, progress);
+ }
+ 
++void CompleteMachine::on_CheckFinish(QString check_result) {
++    DiagnosticResult diagnostic_result;
++
++    do {
++        QJsonParseError json_parse_error;
++        const auto document = QJsonDocument::fromJson(check_result.toUtf8(), &json_parse_error);
++        if (document.isNull()) {
++            qCritical() << "Complete machine diagnosis parse check result json fail: "
++                        << json_parse_error.errorString();
++            break;
++        }
++        if (!document.isObject()) {
++            qCritical() << "Complete machine diagnosis check result json format error.";
++            break;
++        }
++        const auto root_object = document.object();
++        if (!root_object.contains("Overview") || !root_object.contains("Details")) {
++            qCritical() << "Complete machine diagnosis check result json incomplete fields.";
++            break;
++        }
++        const auto details = root_object["Details"];
++        if (!details.isArray()) {
++            qCritical() << "Complete machine diagnosis check result json \"Details\" fields format error.";
++            break;
++        }
++        QList<DiagnosticError> diagnostic_errors;
++        const auto detail_array = details.toArray();
++        for (int i = 0; i < detail_array.size(); i++) {
++            if (!detail_array.at(i).isObject())
++                continue;
++
++            const auto obj = detail_array.at(i).toObject();
++            if (!obj.contains("ErrorCode") || !obj.contains("Describe") || !obj.contains("Name")) {
++                qWarning() << "Check D-Bus return value \"Details\" field is invalid element.";
++                continue;
++            }
++
++            bool ok;
++            qint64 error_code = obj["ErrorCode"].toString().toLongLong(&ok, 0);
++            if (ok) {
++                DiagnosticError diagnostic_error;
++                diagnostic_error.error_code = error_code;
++                diagnostic_error.name = obj["Name"].toString();
++                diagnostic_error.describe = obj["Describe"].toString();
++                diagnostic_errors.push_back(diagnostic_error);
++            }
++        }
++        diagnostic_result.overview = root_object["Overview"].toString();
++        diagnostic_result.details = diagnostic_errors;
++    } while(0);
++
++    if (diagnostic_result.overview.isEmpty()) {
++        diagnostic_result.overview = tr("Backend diagnosis error, please try again later");
++        Q_EMIT sig_CheckFinish(false, diagnostic_result);
++        return;
++    }
++    Q_EMIT sig_CheckFinish(true, diagnostic_result);
++}
++
++void CompleteMachine::on_CheckFinish(bool ok) {
++    if (!ok) {
++        DiagnosticResult diagnostic_result;
++        diagnostic_result.overview = tr("Service diagnosis excepton");
++        Q_EMIT sig_CheckFinish(false, diagnostic_result);
++    }
++}
++
+ void CompleteMachine::on_Fixed(qint64 error_code, bool ok, QString reason) {
+     Q_EMIT sig_Fixed(Mark(), error_code, ok, reason);
+ }
+diff --git a/plugins/fault_diagnosis/diagnoses/complete_machine.h b/plugins/fault_diagnosis/diagnoses/complete_machine.h
+index 099fd3f..a9fdae2 100644
+--- a/plugins/fault_diagnosis/diagnoses/complete_machine.h
++++ b/plugins/fault_diagnosis/diagnoses/complete_machine.h
+@@ -11,12 +11,14 @@ public:
+     ~CompleteMachine();
+     virtual QString Mark() override;
+     virtual bool DiagnosticsList(QList<DiagnosticCategory> &diagnostic_categories) override;
+-    virtual bool Check(qint64 mark, DiagnosticResult &diagnostic_result) override;
++    virtual bool Check(qint64 mark) override;
+     virtual bool Repair(const QList<RepairItem> &repair_items) override;
+ 
+ private Q_SLOTS:
+     void on_CheckProgress(qint64 item_mark, qint32 progress);
+     void on_RepairProgress(qint64 item_mark, qint32 progress);
++    void on_CheckFinish(QString check_result);
++    void on_CheckFinish(bool ok);
+     void on_Fixed(qint64 error_code, bool ok, QString reason);
+ 
+ private:
+diff --git a/plugins/fault_diagnosis/diagnoses/diagnosis.h b/plugins/fault_diagnosis/diagnoses/diagnosis.h
+index f422ab9..f6f40f4 100644
+--- a/plugins/fault_diagnosis/diagnoses/diagnosis.h
++++ b/plugins/fault_diagnosis/diagnoses/diagnosis.h
+@@ -35,11 +35,6 @@ struct DiagnosticResult {
+ 
+ struct RepairItem {
+     QString error_code;
+-    QString solution_type;
+-    QString crc;
+-    QString cmdline;
+-    QString package_list;
+-    QString other;
+ };
+ 
+ class Diagnosis: public QObject {
+@@ -49,13 +44,15 @@ public:
+     virtual ~Diagnosis() {}
+     virtual QString Mark() = 0;
+     virtual bool DiagnosticsList(QList<DiagnosticCategory> &diagnostic_categories) = 0;
+-    virtual bool Check(qint64 mark, DiagnosticResult &diagnostic_result) = 0;
++    virtual bool Check(qint64 mark) = 0;
+     virtual bool Repair(const QList<RepairItem> &repair_items) = 0;
+ 
+ Q_SIGNALS:
+     void sig_CheckProgress(QString diagnosis_mark, qint64 item_mark, qint32 progress);
+     void sig_RepairProgress(QString diagnosis_mark, qint64 item_mark, qint32 progress);
++    void sig_CheckFinish(bool ok, fault_diagnosis::DiagnosticResult diagnostic_result);
+     void sig_Fixed(QString diagnosis_mark, qint64 error_code, bool ok, QString reason);
++    void sig_RepairFinish(bool ok);
+ };
+ 
+ }
+diff --git a/plugins/fault_diagnosis/diagnosis_core.cpp b/plugins/fault_diagnosis/diagnosis_core.cpp
+index 0a0af8a..60a3654 100644
+--- a/plugins/fault_diagnosis/diagnosis_core.cpp
++++ b/plugins/fault_diagnosis/diagnosis_core.cpp
+@@ -9,6 +9,8 @@ DiagnosisCore::DiagnosisCore()
+     connect(diagnosis_manager_, &DiagnosisManage::sig_CheckProgress, this, &DiagnosisCore::sig_CheckProgress);
+     connect(diagnosis_manager_, &DiagnosisManage::sig_RepairProgress, this, &DiagnosisCore::sig_RepairProgress);
+     connect(diagnosis_manager_, &DiagnosisManage::sig_Fixed, this, &DiagnosisCore::sig_Fixed);
++    connect(diagnosis_manager_, &DiagnosisManage::sig_CheckFinish, this, &DiagnosisCore::on_CheckFinish);
++    connect(diagnosis_manager_, &DiagnosisManage::sig_RepairFinish, this, &DiagnosisCore::on_RepairFinish);
+ }
+ 
+ void DiagnosisCore::on_DiagnosticsList() {
+@@ -41,31 +43,12 @@ void DiagnosisCore::on_Check(fault_diagnosis::CheckEntry check_entry) {
+     if (!diagnosis)
+         throw std::runtime_error("diagnosis mark is not exist");
+ 
+-    CheckEntryResult check_entry_result;
+-    check_entry_result.check = check_entry;
+-
+-    DiagnosticResult diagnostic_result;
+-    if (diagnosis->Check(check_entry.entry_mark, diagnostic_result)) {
+-        check_entry_result.ok = true;
+-        check_entry_result.result = diagnostic_result;
+-    } else {
+-        check_entry_result.ok = false;
+-        check_entry_result.result.overview = tr("Diagnosis error");
+-    }
+-
+-    if (!diagnostic_result.details.isEmpty()) {
+-        for (const auto &e: diagnostic_result.details) {
+-            auto error_code = e.error_code;
+-            Database::SolutionRecord solution_record;
+-            if (!Database::SolutionRecordWithErrorCode(error_code, solution_record)) {
+-                qCritical() << "Fail to query the solution to the error code";
+-                continue;
+-            }
+-            check_entry_result.solution_records[error_code] = solution_record;
+-        }
++    current_check_entry_ = check_entry;
++    if (!diagnosis->Check(check_entry.entry_mark)) {
++        DiagnosticResult diagnostic_result;
++        diagnostic_result.overview = tr("Diagnosis error");
++        on_CheckFinish(false, diagnostic_result);
+     }
+-
+-    Q_EMIT sig_CheckFinished(check_entry_result);
+ }
+ 
+ void DiagnosisCore::on_Repair(fault_diagnosis::RepairEntry repair_entry) {
+@@ -78,22 +61,53 @@ void DiagnosisCore::on_Repair(fault_diagnosis::RepairEntry repair_entry) {
+         RepairItem repair_item;
+         auto solution_record = iter.value();
+         repair_item.error_code = solution_record.error_code;
+-        repair_item.solution_type = solution_record.solution_type;
+-        repair_item.crc = solution_record.crc;
+-        repair_item.cmdline = solution_record.cmdline;
+-        repair_item.package_list = solution_record.package_list;
+-        repair_item.other = solution_record.other;
+         repair_items.push_back(repair_item);
+     }
+ 
++    current_repair_entry_ = repair_entry;
++    if (!diagnosis->Repair(repair_items)) {
++        on_RepairFinish(false);
++    }
++}
++
++void DiagnosisCore::on_CheckFinish(bool ok, fault_diagnosis::DiagnosticResult diagnostic_result) {
++    CheckEntryResult check_entry_result;
++    check_entry_result.ok = ok;
++    check_entry_result.check = current_check_entry_;
++    check_entry_result.result = diagnostic_result;
++    if (!diagnostic_result.details.empty()) {
++        for (const auto &e: diagnostic_result.details) {
++            auto error_code = e.error_code;
++            Database::SolutionRecord solution_record;
++            if (!Database::SolutionRecordWithErrorCode(error_code, solution_record)) {
++                qCritical() << "Fail to query the solution to the error code";
++                continue;
++            }
++            check_entry_result.solution_records.insert(error_code, solution_record);
++        }
++    }
++
++    // 清空当前检测项
++    current_check_entry_.category = "";
++    current_check_entry_.diagnosis_mark = "";
++    current_check_entry_.entry_mark = -1;
++
++    Q_EMIT sig_CheckFinished(check_entry_result);
++}
++
++void DiagnosisCore::on_RepairFinish(bool ok) {
+     RepairEntryResult repair_entry_result;
+-    repair_entry_result.repair = repair_entry;
+-    if (diagnosis->Repair(repair_items)) {
+-        repair_entry_result.ok = true;
+-    } else {
+-        repair_entry_result.ok = false;
++    repair_entry_result.ok = ok;
++    if (!ok) {
+         repair_entry_result.reason = tr("Repair fail");
+     }
++    repair_entry_result.repair = current_repair_entry_;
++
++    // 清空当前修复项
++    current_repair_entry_.category = "";
++    current_repair_entry_.diagnosis_mark = "";
++    current_repair_entry_.entry_mark = -1;
++    current_repair_entry_.errors.clear();
+ 
+     Q_EMIT sig_RepairFinished(repair_entry_result);
+ }
+diff --git a/plugins/fault_diagnosis/diagnosis_core.h b/plugins/fault_diagnosis/diagnosis_core.h
+index 2b2f26e..edb1f62 100644
+--- a/plugins/fault_diagnosis/diagnosis_core.h
++++ b/plugins/fault_diagnosis/diagnosis_core.h
+@@ -24,10 +24,14 @@ Q_SIGNALS:
+ public Q_SLOTS:
+     void on_DiagnosticsList();
+     void on_Check(fault_diagnosis::CheckEntry check_entry);
++    void on_CheckFinish(bool ok, fault_diagnosis::DiagnosticResult diagnostic_result);
+     void on_Repair(fault_diagnosis::RepairEntry repair_entry);
++    void on_RepairFinish(bool ok);
+ 
+ private:
+     DiagnosisManage *diagnosis_manager_;
++    CheckEntry current_check_entry_;
++    RepairEntry current_repair_entry_;
+ };
+ 
+ }
+diff --git a/plugins/fault_diagnosis/diagnosis_manage.cpp b/plugins/fault_diagnosis/diagnosis_manage.cpp
+index 84583ff..7de3054 100644
+--- a/plugins/fault_diagnosis/diagnosis_manage.cpp
++++ b/plugins/fault_diagnosis/diagnosis_manage.cpp
+@@ -18,7 +18,9 @@ void DiagnosisManage::Register(const QSharedPointer<Diagnosis> &diagnosis) {
+     manager_[mark] = diagnosis;
+     connect(diagnosis.get(), &Diagnosis::sig_CheckProgress, this, &DiagnosisManage::sig_CheckProgress);
+     connect(diagnosis.get(), &Diagnosis::sig_RepairProgress, this, &DiagnosisManage::sig_RepairProgress);
++    connect(diagnosis.get(), &Diagnosis::sig_CheckFinish, this, &DiagnosisManage::sig_CheckFinish);
+     connect(diagnosis.get(), &Diagnosis::sig_Fixed, this, &DiagnosisManage::sig_Fixed);
++    connect(diagnosis.get(), &Diagnosis::sig_RepairFinish, this, &DiagnosisManage::sig_RepairFinish);
+ }
+ 
+ const QMap<QString, QSharedPointer<Diagnosis>> &DiagnosisManage::Diagnoses() {
+diff --git a/plugins/fault_diagnosis/diagnosis_manage.h b/plugins/fault_diagnosis/diagnosis_manage.h
+index eadf7c5..c290095 100644
+--- a/plugins/fault_diagnosis/diagnosis_manage.h
++++ b/plugins/fault_diagnosis/diagnosis_manage.h
+@@ -17,7 +17,9 @@ public:
+ Q_SIGNALS:
+     void sig_CheckProgress(QString diagnosis_mark, qint64 item_mark, qint32 progress);
+     void sig_RepairProgress(QString diagnosis_mark, qint64 item_mark, qint32 progress);
++    void sig_CheckFinish(bool ok, fault_diagnosis::DiagnosticResult diagnostic_result);
+     void sig_Fixed(QString diagnosis_mark, qint64 error_code, bool ok, QString reason);
++    void sig_RepairFinish(bool);
+ 
+ private:
+     void Register(const QSharedPointer<Diagnosis> &diagnosis);
+diff --git a/plugins/fault_diagnosis/mainwindow.cpp b/plugins/fault_diagnosis/mainwindow.cpp
+index 4a88124..ea3cd81 100644
+--- a/plugins/fault_diagnosis/mainwindow.cpp
++++ b/plugins/fault_diagnosis/mainwindow.cpp
+@@ -522,13 +522,16 @@ void MainWindow::on_CheckFinished(fault_diagnosis::CheckEntryResult check_entry_
+     const auto diagnosis_entry  = GetDiagnosisEntryWithCategory(check_entry_result.check.category,
+                                                                 check_entry_result.check.diagnosis_mark,
+                                                                 check_entry_result.check.entry_mark);
++    auto *diagnosis_entry_item = diagnosis_entry.first;
+     auto *diagnosis_entry_widget = diagnosis_entry.second;
+-    if (diagnosis_entry_widget != nullptr) {
+-        diagnosis_entry_widget->SetDiagnosticResult(check_entry_result);
++    if (diagnosis_entry_item == nullptr || diagnosis_entry_widget == nullptr) {
++        qCritical() << "No corresponding diagnostic item found.";
++        return;
+     }
+ 
++    diagnosis_entry_widget->SetDiagnosticResult(check_entry_result);
++
+     // 构建错误项
+-    auto *diagnosis_entry_item = diagnosis_entry.first;
+     for (const auto &e: check_entry_result.result.details) {
+         auto *error_entry_item = new QTreeWidgetItem(diagnosis_entry_item);
+         auto *error_entry_widget = new ErrorEntryWidget(e, check_entry_result.solution_records[e.error_code], this);
+diff --git a/plugins/fault_diagnosis/test/complete_machine_test.cpp b/plugins/fault_diagnosis/test/complete_machine_test.cpp
+index 76e6074..ed4aa80 100644
+--- a/plugins/fault_diagnosis/test/complete_machine_test.cpp
++++ b/plugins/fault_diagnosis/test/complete_machine_test.cpp
+@@ -1,3 +1,4 @@
++#include "complete_machine_test.h"
+ #include <unistd.h>
+ #include <stdlib.h>
+ #include <string>
+@@ -6,7 +7,7 @@
+ #include <QJsonDocument>
+ #include <QJsonObject>
+ #include <QJsonArray>
+-#include "complete_machine_test.h"
++#include <QTimer>
+ 
+ namespace fault_diagnosis_test {
+ 
+@@ -141,10 +142,12 @@ QString CompleteMachineTest::CheckItem(qint64 mark) {
+     while (sec == 0) {
+         sec = rand() % 4;
+     }
+-    sleep(sec);
+ 
+-    QMap<qint64, QString> maps;
+-    std::string x01 = R"(
++    QTimer::singleShot(sec * 1000, this, [&, mark]() {
++
++
++        QMap<qint64, QString> maps;
++        std::string x01 = R"(
+ {
+     "Overview": "检测了 20 项，17 项正确，3 项错误",
+     "Details": [
+@@ -166,18 +169,18 @@ QString CompleteMachineTest::CheckItem(qint64 mark) {
+     ]
+ }
+ )";
+-    maps[0x01] = QString::fromStdString(x01);
++        maps[0x01] = QString::fromStdString(x01);
+ 
+-    std::string x02 = R"(
++        std::string x02 = R"(
+ {
+     "Overview": "检测了 10 项，10 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x02] = QString::fromStdString(x02);
++        maps[0x02] = QString::fromStdString(x02);
+ 
+-    std::string x03 = R"(
++        std::string x03 = R"(
+ {
+     "Overview": "检测了 10 项，8 项正确，2 项错误",
+     "Details": [
+@@ -194,39 +197,39 @@ QString CompleteMachineTest::CheckItem(qint64 mark) {
+     ]
+ }
+ )";
+-    maps[0x03] = QString::fromStdString(x03);
++        maps[0x03] = QString::fromStdString(x03);
+ 
+-    // ------------ 内核检测 ------------
++        // ------------ 内核检测 ------------
+ 
+-    std::string x11 = R"(
++        std::string x11 = R"(
+ {
+     "Overview": "检测了 5 项，5 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x11] = QString::fromStdString(x11);
++        maps[0x11] = QString::fromStdString(x11);
+ 
+-    std::string x12 = R"(
++        std::string x12 = R"(
+ {
+     "Overview": "检测了 1 项，1 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x12] = QString::fromStdString(x12);
++        maps[0x12] = QString::fromStdString(x12);
+ 
+-    std::string x13 = R"(
++        std::string x13 = R"(
+ {
+     "Overview": "检测了 30 项，30 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x13] = QString::fromStdString(x13);
++        maps[0x13] = QString::fromStdString(x13);
+ 
+-    // ------------ 系统服务检测 ------------
+-    std::string x21 = R"(
++        // ------------ 系统服务检测 ------------
++        std::string x21 = R"(
+ {
+     "Overview": "检测了 120 项，115 项正确，5 项错误",
+     "Details": [
+@@ -258,9 +261,9 @@ QString CompleteMachineTest::CheckItem(qint64 mark) {
+     ]
+ }
+ )";
+-    maps[0x21] = QString::fromStdString(x21);
++        maps[0x21] = QString::fromStdString(x21);
+ 
+-    std::string x22 = R"(
++        std::string x22 = R"(
+ {
+     "Overview": "检测了 67 项，66 项正确，1 项错误",
+     "Details": [
+@@ -272,9 +275,9 @@ QString CompleteMachineTest::CheckItem(qint64 mark) {
+     ]
+ }
+ )";
+-    maps[0x22] = QString::fromStdString(x22);
++        maps[0x22] = QString::fromStdString(x22);
+ 
+-    std::string x23 = R"(
++        std::string x23 = R"(
+ {
+     "Overview": "检测了 45 项，43 项正确，2 项错误",
+     "Details": [
+@@ -291,28 +294,28 @@ QString CompleteMachineTest::CheckItem(qint64 mark) {
+     ]
+ }
+ )";
+-    maps[0x23] = QString::fromStdString(x23);
++        maps[0x23] = QString::fromStdString(x23);
+ 
+-    // ---------------- 系统应用检测（包含手动修复） ------------
+-    std::string x31 = R"(
++        // ---------------- 系统应用检测（包含手动修复） ------------
++        std::string x31 = R"(
+ {
+     "Overview": "检测了 1 项，1 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x31] = QString::fromStdString(x31);
++        maps[0x31] = QString::fromStdString(x31);
+ 
+-    std::string x32 = R"(
++        std::string x32 = R"(
+ {
+     "Overview": "检测了 1 项，1 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x32] = QString::fromStdString(x32);
++        maps[0x32] = QString::fromStdString(x32);
+ 
+-    std::string x33 = R"(
++        std::string x33 = R"(
+ {
+     "Overview": "检测了 114 项，99 项正确，5 项错误",
+     "Details": [
+@@ -344,75 +347,86 @@ QString CompleteMachineTest::CheckItem(qint64 mark) {
+     ]
+ }
+ )";
+-    maps[0x33] = QString::fromStdString(x33);
++        maps[0x33] = QString::fromStdString(x33);
+ 
+-    // ------------ 应用软件检测 ------------
+-    std::string x41 = R"(
++        // ------------ 应用软件检测 ------------
++        std::string x41 = R"(
+ {
+     "Overview": "检测了 60 项，60 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x41] = QString::fromStdString(x41);
++        maps[0x41] = QString::fromStdString(x41);
+ 
+-    std::string x42 = R"(
++        std::string x42 = R"(
+ {
+     "Overview": "检测了 10 项，10 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x42] = QString::fromStdString(x42);
++        maps[0x42] = QString::fromStdString(x42);
+ 
+-    std::string x43 = R"(
++        std::string x43 = R"(
+ {
+     "Overview": "检测了 30 项，30 项正确，0 项错误",
+     "Details": [
+     ]
+ }
+ )";
+-    maps[0x43] = QString::fromStdString(x43);
++        maps[0x43] = QString::fromStdString(x43);
+ 
+-    return maps[mark];
++        // 构建 D-Bus 信号
++        auto message = QDBusMessage::createSignal(DBUS_PATH, DBUS_INTERFACE, "CheckItem");
++        message << maps[mark];
++        conn_.send(message);
++    });
++
++    return "";
+ }
+ 
+ bool CompleteMachineTest::RepairItem(QString repair_items) {
+-    QJsonParseError error;
+-    auto document = QJsonDocument::fromJson(repair_items.toLocal8Bit(), &error);
+-    if (error.error != QJsonParseError::NoError) {
+-        qCritical() << "Repair json parse fail: " << error.errorString();
+-        return false;
+-    }
+-
+-    if (!document.isArray()) {
+-        qCritical() << "Repair json is not a array.";
+-        return false;
+-    }
++    QTimer::singleShot(0, this, [&, repair_items]() {
++        QJsonParseError error;
++        auto document = QJsonDocument::fromJson(repair_items.toLocal8Bit(), &error);
++        if (error.error != QJsonParseError::NoError) {
++            qCritical() << "Repair json parse fail: " << error.errorString();
++            EmitRepairOver(false);
++            return;
++        }
+ 
+-    const auto array = document.array();
+-    for (int i = 0; i < array.size(); i++) {
+-        if (!array.at(i).isObject()) {
+-            continue;
++        if (!document.isArray()) {
++            qCritical() << "Repair json is not a array.";
++            EmitRepairOver(false);
++            return;
+         }
+-        const auto object = array.at(i).toObject();
+-        if (object.contains("ErrorCode")) {
+-            int sec{0};
+-            srand(time(NULL));
+-            while (sec == 0) {
+-                sec = rand() % 4;
+-            }
+-            sleep(sec);
+ 
+-            bool ok;
+-            auto error_code = object["ErrorCode"].toString().toULongLong(&ok, 16);
+-            if (!ok) {
+-                qCritical() << "Error code QString to int fail." << repair_items;
++        const auto array = document.array();
++        for (int i = 0; i < array.size(); i++) {
++            if (!array.at(i).isObject()) {
+                 continue;
+             }
+-            EmitSigFixed(error_code, true, "");
++            const auto object = array.at(i).toObject();
++            if (object.contains("ErrorCode")) {
++                int sec{0};
++                srand(time(NULL));
++                while (sec == 0) {
++                    sec = rand() % 4;
++                }
++                sleep(sec);
++
++                bool ok;
++                auto error_code = object["ErrorCode"].toString().toULongLong(&ok, 16);
++                if (!ok) {
++                    qCritical() << "Error code QString to int fail." << repair_items;
++                    continue;
++                }
++                EmitSigFixed(error_code, true, "");
++            }
+         }
+-    }
++        EmitRepairOver(true);
++    });
+ 
+     return true;
+ }
+@@ -432,4 +446,10 @@ void CompleteMachineTest::EmitSigProgress(qint64 entry_mark, qint32 progress) {
+     conn_.send(message);
+ }
+ 
++void CompleteMachineTest::EmitRepairOver(bool ok) {
++    auto message = QDBusMessage::createSignal(DBUS_PATH, DBUS_INTERFACE, "RepairOver");
++    message << ok;
++    conn_.send(message);
++}
++
+ }
+diff --git a/plugins/fault_diagnosis/test/complete_machine_test.h b/plugins/fault_diagnosis/test/complete_machine_test.h
+index cd09d20..7d61be1 100644
+--- a/plugins/fault_diagnosis/test/complete_machine_test.h
++++ b/plugins/fault_diagnosis/test/complete_machine_test.h
+@@ -16,6 +16,9 @@ public:
+ Q_SIGNALS:
+     void SigFixed(qint64 error_code, bool ok, QString reason);
+     void SignalProgress(qint64 entry_mark, qint32 progress);
++    void ChckItem(QString);
++    void CheckItemOver(bool);
++    void RepairOver(bool);
+ 
+ public Q_SLOTS:
+     QString GetCheckList();
+@@ -25,6 +28,7 @@ public Q_SLOTS:
+ private:
+     void EmitSigFixed(qint64 error_code, bool ok, const QString &reason);
+     void EmitSigProgress(qint64 entry_mark, qint32 progress);
++    void EmitRepairOver(bool ok);
+ 
+     QDBusConnection &conn_;
+ };

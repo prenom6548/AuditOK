@@ -1,0 +1,465 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _SCENE_H_
+#define _SCENE_H_
+
+#include <kywc/boxes.h>
+
+#include <pixman.h>
+#include <time.h>
+
+#include <wlr/types/wlr_damage_ring.h>
+#include <wlr/types/wlr_linux_dmabuf_v1.h>
+#include <wlr/types/wlr_tearing_control_v1.h>
+#include <wlr/util/addon.h>
+#include <wlr/util/box.h>
+
+struct wlr_buffer;
+struct wlr_output;
+struct wlr_output_layout;
+struct wlr_output_layout_output;
+
+struct ky_scene_node;
+struct ky_scene_tree;
+struct ky_scene_rect;
+struct ky_scene_buffer;
+
+struct ky_scene_output;
+struct ky_scene_output_layout;
+struct ky_scene_output_state_options;
+
+struct ky_scene_render_target;
+
+typedef void (*ky_scene_node_destroy_func_t)(struct ky_scene_node *node);
+
+typedef struct ky_scene_node *(*ky_scene_node_accept_input_func_t)(struct ky_scene_node *node,
+                                                                   int lx, int ly, double px,
+                                                                   double py, double *rx,
+                                                                   double *ry);
+
+typedef void (*ky_scene_node_update_outputs_func_t)(struct ky_scene_node *node, int lx, int ly,
+                                                    struct wl_list *outputs,
+                                                    struct ky_scene_output *ignore,
+                                                    struct ky_scene_output *force);
+
+typedef void (*ky_scene_node_collect_damage_func_t)(struct ky_scene_node *node, int lx, int ly,
+                                                    bool parent_enabled, uint32_t damage_type,
+                                                    pixman_region32_t *damage,
+                                                    pixman_region32_t *invisible,
+                                                    pixman_region32_t *affected);
+
+typedef void (*ky_scene_node_get_bounding_box_func_t)(struct ky_scene_node *node,
+                                                      struct wlr_box *box);
+
+typedef void (*ky_scene_node_push_damage_func_t)(struct ky_scene_node *node,
+                                                 struct ky_scene_node *damage_node,
+                                                 uint32_t damage_type, pixman_region32_t *damage);
+
+typedef void (*ky_scene_node_render_func_t)(struct ky_scene_node *node, int lx, int ly,
+                                            struct ky_scene_render_target *target);
+
+struct ky_scene_node_interface {
+    /**
+     * Check the node is accepted input event in the box.
+     */
+    ky_scene_node_accept_input_func_t accept_input;
+    /**
+     * Update node output state.
+     */
+    ky_scene_node_update_outputs_func_t update_outputs;
+    /**
+     * Collect all nodes damage region.
+     */
+    ky_scene_node_collect_damage_func_t collect_damage;
+    /**
+     * Generate a rendering instance for the node and
+     * start the rendering instance generation function for the child nodes.
+     */
+    ky_scene_node_render_func_t render;
+    /**
+     * Get node bounding box.
+     */
+    ky_scene_node_get_bounding_box_func_t get_bounding_box;
+    /**
+     * Push damgae to output.
+     */
+    ky_scene_node_push_damage_func_t push_damage;
+    /**
+     * Private method, call it by ky_scene_node_destroy.
+     */
+    ky_scene_node_destroy_func_t destroy;
+};
+
+/* scene node type */
+enum ky_scene_node_type {
+    KY_SCENE_NODE_TREE,
+    KY_SCENE_NODE_RECT,
+    KY_SCENE_NODE_BUFFER,
+};
+
+/* scene role type */
+enum ky_scene_role_type {
+    KY_SCENE_ROLE_NONE = 0,
+    KY_SCENE_ROLE_ROOT,
+    KY_SCENE_ROLE_LAYER,
+    KY_SCENE_ROLE_WORKSPACE,
+    KY_SCENE_ROLE_VIEW,
+    KY_SCENE_ROLE_XDG_TOPLEVEL,
+    KY_SCENE_ROLE_XDG_POPUP,
+    KY_SCENE_ROLE_XWAYLAND,
+    KY_SCENE_ROLE_XWAYLAND_UNMANAGED,
+    KY_SCENE_ROLE_LAYER_SHELL,
+    KY_SCENE_ROLE_DRAG_ICON,
+    KY_SCENE_ROLE_SURFACE,
+    KY_SCENE_ROLE_SUBSURFACE,
+};
+
+enum ky_scene_damage_type {
+    KY_SCENE_DAMAGE_NONE = 0,
+    /* the damage will not affect the visible region of the node */
+    KY_SCENE_DAMAGE_HARMLESS = 1 << 0,
+    /* the damage will affect the visible region of the node */
+    KY_SCENE_DAMAGE_HARMFUL = 1 << 1,
+    KY_SCENE_DAMAGE_BOTH = (1 << 2) - 1,
+};
+
+enum ky_scene_round_corner {
+    KY_SCENE_ROUND_CORNER_RB, // right-bottom
+    KY_SCENE_ROUND_CORNER_RT, // right-top
+    KY_SCENE_ROUND_CORNER_LB, // left-bottom
+    KY_SCENE_ROUND_CORNER_LT, // left-top
+};
+
+struct blur_info {
+    float offset;
+    uint32_t iterations;
+    /* region that mark as blur area */
+    pixman_region32_t region;
+};
+
+struct ky_scene_node {
+    struct ky_scene_tree *parent;
+    struct wl_list link;
+
+    enum ky_scene_node_type type;
+    struct {
+        enum ky_scene_role_type type;
+        void *data;
+    } role;
+
+    bool enabled;
+    bool input_bypassed;
+    /* emit damage event for children if node is disabled */
+    bool force_damage_event;
+
+    int x, y;
+    /* round corner radius */
+    int radius[4];
+
+    /* node damage type after last collect_damage */
+    uint32_t damage_type;
+    /* enabled state after last collect_damage */
+    bool last_enabled;
+
+    bool has_blur;
+    struct blur_info blur;
+
+    pixman_region32_t visible_region;
+    /* region that can accept input */
+    pixman_region32_t input_region;
+    /* region that can render */
+    pixman_region32_t clip_region;
+
+    /* impl.xxx MUST not be NULL */
+    struct ky_scene_node_interface impl;
+
+    struct {
+        struct wl_signal damage;
+        struct wl_signal destroy;
+    } events;
+
+    struct wlr_addon_set addons;
+
+    void *data;
+
+    bool sent_dmabuf_feedback;
+};
+
+struct ky_scene_tree {
+    struct ky_scene_node node;
+    struct wl_list children;
+};
+
+struct ky_scene {
+    struct ky_scene_tree tree;
+    ky_scene_node_destroy_func_t tree_destroy;
+
+    struct wl_list outputs;
+
+    /* damage region after collect_damage based in node's visible region */
+    pixman_region32_t collected_damage;
+    /* damage region pushed by nodes */
+    pixman_region32_t pushed_damage;
+
+    // May be NULL
+    struct wlr_presentation *presentation;
+    struct wl_listener presentation_destroy;
+    struct wlr_linux_dmabuf_v1 *linux_dmabuf_v1;
+    struct wl_listener linux_dmabuf_v1_destroy;
+    struct wlr_tearing_control_manager_v1 *tearing_control_v1;
+    struct wl_listener tearing_control_v1_destroy;
+};
+
+struct ky_scene_rect {
+    struct ky_scene_node node;
+    ky_scene_node_destroy_func_t node_destroy;
+
+    int width, height;
+    float color[4];
+};
+
+typedef bool (*ky_scene_buffer_point_accepts_input_func_t)(struct ky_scene_buffer *buffer,
+                                                           double *sx, double *sy);
+
+struct ky_scene_outputs_update_event {
+    struct ky_scene_output **active;
+    size_t size;
+};
+
+struct ky_scene_output_sample_event {
+    struct ky_scene_output *output;
+    bool direct_scanout;
+};
+
+struct ky_scene_buffer {
+    struct ky_scene_node node;
+    ky_scene_node_destroy_func_t node_destroy;
+
+    /* May be NULL */
+    struct wlr_buffer *buffer;
+    /* May be NULL */
+    struct wlr_texture *texture;
+
+    struct wlr_fbox src_box;
+    int dst_width, dst_height;
+    enum wl_output_transform transform;
+
+    bool repeated;
+    float opacity;
+    pixman_region32_t opaque_region;
+
+    /**
+     * The output that the largest area of this buffer is displayed on.
+     * This may be NULL if the buffer is not currently displayed on any
+     * outputs. This is the output that should be used for frame callbacks,
+     * presentation feedback, etc.
+     */
+    struct ky_scene_output *primary_output;
+    uint64_t active_outputs;
+
+    ky_scene_buffer_point_accepts_input_func_t point_accepts_input;
+
+    struct {
+        struct wl_signal outputs_update; // ky_scene_outputs_update_event
+        struct wl_signal output_enter;   // struct ky_scene_output
+        struct wl_signal output_leave;   // struct ky_scene_output
+        struct wl_signal output_sample;  // ky_scene_output_sample_event
+        struct wl_signal frame_done;     // struct timespec
+    } events;
+
+    struct wlr_linux_dmabuf_feedback_v1_init_options prev_feedback_options;
+};
+
+struct ky_scene_output {
+    struct wlr_output *output;
+    struct wl_list link;
+
+    struct ky_scene *scene;
+    struct wlr_addon addon;
+
+    struct wlr_buffer *buffer;
+    bool commit_failed;
+
+    struct wlr_damage_ring damage_ring;
+    pixman_region32_t collected_damage;
+
+    int x, y;
+
+    /**
+     * The viewport is selects a portion from the scene and displays it on the output.
+     * If has_src is true, the scene content is cropped to the provided
+     * rectangle. If has_dst is true, the scene content is scaled to the
+     * provided rectangle.
+     */
+    struct {
+        bool has_src, has_dst;
+        struct wlr_box src;
+        int dst_width, dst_height;
+    } viewport;
+
+    struct {
+        /* emit if viewport changed */
+        struct wl_signal viewport;
+        struct wl_signal frame;
+        struct wl_signal destroy;
+    } events;
+
+    uint8_t index;
+    bool prev_scanout;
+    bool direct_scanout;
+
+    struct wl_listener output_commit;
+    struct wl_listener output_damage;
+    struct wl_listener output_needs_frame;
+};
+
+void ky_scene_node_destroy(struct ky_scene_node *node);
+
+struct ky_scene *ky_scene_create(void);
+
+void ky_scene_set_linux_dmabuf_v1(struct ky_scene *scene,
+                                  struct wlr_linux_dmabuf_v1 *linux_dmabuf_v1);
+
+void ky_scene_set_tearing_control_v1(struct ky_scene *scene,
+                                     struct wlr_tearing_control_manager_v1 *tearing_control_v1);
+
+bool ky_scene_surface_is_tearing_allowed(struct ky_scene *scene, struct wlr_surface *surface);
+
+bool ky_scene_is_tearing_needed(struct ky_scene *scene);
+
+struct ky_scene *ky_scene_from_node(struct ky_scene_node *node);
+
+void ky_scene_damage_whole(struct ky_scene *scene);
+
+void ky_scene_add_damage(struct ky_scene *scene, const pixman_region32_t *damage);
+
+struct ky_scene_tree *ky_scene_tree_create(struct ky_scene_tree *parent);
+
+struct ky_scene_tree *ky_scene_tree_from_node(struct ky_scene_node *node);
+
+void ky_scene_node_set_enabled(struct ky_scene_node *node, bool enabled);
+
+void ky_scene_node_set_input_bypassed(struct ky_scene_node *node, bool bypassed);
+
+void ky_scene_node_force_damage_event(struct ky_scene_node *node, bool force);
+
+void ky_scene_node_set_position(struct ky_scene_node *node, int x, int y);
+
+void ky_scene_node_place_above(struct ky_scene_node *node, struct ky_scene_node *sibling);
+
+void ky_scene_node_place_below(struct ky_scene_node *node, struct ky_scene_node *sibling);
+
+void ky_scene_node_raise_to_top(struct ky_scene_node *node);
+
+void ky_scene_node_lower_to_bottom(struct ky_scene_node *node);
+
+void ky_scene_node_reparent(struct ky_scene_node *node, struct ky_scene_tree *new_parent);
+
+bool ky_scene_node_coords(struct ky_scene_node *node, int *lx_ptr, int *ly_ptr);
+
+struct ky_scene_node *ky_scene_node_at(struct ky_scene_node *node, double lx, double ly, double *nx,
+                                       double *ny);
+
+void ky_scene_node_set_input_region(struct ky_scene_node *node, const pixman_region32_t *region);
+
+void ky_scene_node_set_clip_region(struct ky_scene_node *node, const pixman_region32_t *region);
+
+void ky_scene_node_set_blur_region(struct ky_scene_node *node, const pixman_region32_t *region);
+
+void ky_scene_node_set_blur_level(struct ky_scene_node *node, uint32_t iterations, float offset);
+
+/* if node hasn't blur, bur region is empty. */
+void ky_scene_node_get_blur_info(struct ky_scene_node *node, struct blur_info *info);
+
+void ky_scene_node_set_radius(struct ky_scene_node *node, const int radius[static 4]);
+
+/* radius on bounding box */
+void ky_scene_node_get_radius(struct ky_scene_node *node, int radius[static 4]);
+
+bool ky_scene_node_is_visible(struct ky_scene_node *node);
+
+void ky_scene_node_push_damage(struct ky_scene_node *node, enum ky_scene_damage_type damage_type,
+                               const pixman_region32_t *damage);
+
+// TODO: is removed in wlroots
+struct wlr_presentation;
+void ky_scene_set_presentation(struct ky_scene *scene, struct wlr_presentation *presentation);
+
+/**
+ * scene rect
+ */
+struct ky_scene_rect *ky_scene_rect_create(struct ky_scene_tree *parent, int width, int height,
+                                           const float color[static 4]);
+
+void ky_scene_rect_set_size(struct ky_scene_rect *rect, int width, int height);
+
+void ky_scene_rect_set_color(struct ky_scene_rect *rect, const float color[static 4]);
+
+struct ky_scene_rect *ky_scene_rect_from_node(struct ky_scene_node *node);
+
+bool ky_scene_rect_render(struct ky_scene_node *node, struct kywc_box geo, float color[4],
+                          bool render_with_visibility, struct ky_scene_render_target *target);
+
+/**
+ * scene buffer
+ */
+struct ky_scene_buffer *ky_scene_buffer_create(struct ky_scene_tree *parent,
+                                               struct wlr_buffer *buffer);
+
+struct ky_scene_buffer *ky_scene_buffer_from_node(struct ky_scene_node *node);
+
+void ky_scene_buffer_set_buffer(struct ky_scene_buffer *scene_buffer, struct wlr_buffer *buffer);
+
+void ky_scene_buffer_set_buffer_with_damage(struct ky_scene_buffer *scene_buffer,
+                                            struct wlr_buffer *buffer,
+                                            const pixman_region32_t *region);
+
+void ky_scene_buffer_set_opacity(struct ky_scene_buffer *scene_buffer, float opacity);
+
+void ky_scene_buffer_set_opaque_region(struct ky_scene_buffer *scene_buffer,
+                                       const pixman_region32_t *region);
+
+void ky_scene_buffer_set_source_box(struct ky_scene_buffer *scene_buffer,
+                                    const struct wlr_fbox *box);
+
+void ky_scene_buffer_set_dest_size(struct ky_scene_buffer *scene_buffer, int width, int height);
+
+void ky_scene_buffer_set_transform(struct ky_scene_buffer *scene_buffer,
+                                   enum wl_output_transform transform);
+
+void ky_scene_buffer_set_repeated(struct ky_scene_buffer *scene_buffer, bool repeated);
+
+void ky_scene_buffer_send_dmabuf_feedback(
+    const struct ky_scene *scene, struct ky_scene_buffer *scene_buffer,
+    const struct wlr_linux_dmabuf_feedback_v1_init_options *options);
+
+/**
+ * scene output
+ */
+struct ky_scene_output *ky_scene_get_scene_output(struct ky_scene *scene,
+                                                  struct wlr_output *output);
+
+void ky_scene_output_damage_whole(struct ky_scene_output *scene_output);
+
+void ky_scene_output_set_viewport_source_box(struct ky_scene_output *scene_output,
+                                             const struct wlr_box *src_box);
+
+struct ky_scene_output_layout *
+ky_scene_attach_output_layout(struct ky_scene *scene, struct wlr_output_layout *output_layout);
+
+bool ky_scene_output_commit(struct ky_scene_output *scene_output,
+                            const struct ky_scene_output_state_options *options);
+
+void ky_scene_output_send_frame_done(struct ky_scene_output *scene_output, struct timespec *now);
+
+struct ky_scene_output *ky_scene_output_create(struct ky_scene *scene, struct wlr_output *output);
+
+void ky_scene_output_layout_add_output(struct ky_scene_output_layout *sol,
+                                       struct wlr_output_layout_output *lo,
+                                       struct ky_scene_output *so);
+
+void ky_scene_output_destroy(struct ky_scene_output *scene_output);
+
+#endif

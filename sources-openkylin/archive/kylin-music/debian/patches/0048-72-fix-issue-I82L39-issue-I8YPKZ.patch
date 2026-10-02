@@ -1,0 +1,200 @@
+From: zhoudisi <zhoudisi@kylinos.cn>
+Date: Mon, 24 Jun 2024 02:06:33 +0000
+Subject: =?utf-8?q?!72_fix=3Aissue=23I82L39=E3=80=81issue=23I8YPKZ_Merge_pu?=
+ =?utf-8?q?ll_request_!72_from_zhoudisi/openkylin/nile?=
+
+---
+ UI/mainwidget.cpp                              |  2 +-
+ UI/tableview/tableone.cpp                      |  2 +-
+ UIControl/player/coreplayer/mmediaplayer.cpp   |  8 ++++
+ UIControl/player/coreplayer/mmediaplaylist.cpp | 56 ++++++++++++++++++++------
+ UIControl/player/coreplayer/mmediaplaylist.h   |  1 +
+ 5 files changed, 54 insertions(+), 15 deletions(-)
+
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index b6de50d..40f1db2 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -616,7 +616,7 @@ void Widget::initMusic()
+ void Widget::initAllComponent()
+ {
+ 
+-//    this->setProperty("useSystemStyleBlur", true);
++    this->setProperty("useSystemStyleBlur", true);
+     this->setAttribute(Qt::WA_TranslucentBackground, true);
+ 
+ //    this->setWindowFlag(Qt::FramelessWindowHint);
+diff --git a/UI/tableview/tableone.cpp b/UI/tableview/tableone.cpp
+index efa2321..aa350a2 100644
+--- a/UI/tableview/tableone.cpp
++++ b/UI/tableview/tableone.cpp
+@@ -677,7 +677,7 @@ void TableOne::deleteLocalSongsWayland()
+ void TableOne::playSongs()
+ {
+     int index = tableView->currentIndex().row();
+-    musicDataStruct date = m_model->getItem(index);
++    m_model->getItem(index);
+     playMusicforIndex(nowListName,index);
+ }
+ void TableOne::playMusicforIndex(QString listName, int index)
+diff --git a/UIControl/player/coreplayer/mmediaplayer.cpp b/UIControl/player/coreplayer/mmediaplayer.cpp
+index 6788d28..3809d9e 100644
+--- a/UIControl/player/coreplayer/mmediaplayer.cpp
++++ b/UIControl/player/coreplayer/mmediaplayer.cpp
+@@ -34,14 +34,21 @@ void MMediaPlayer::truePlay(QString startTime)
+     if (m_playList == nullptr) {
+         return;
+     }
++
++    qDebug() << "startTime: " << startTime;
++
+     QString filePath = m_playList->getPlayFileName();
++    qDebug() << "play filePath : " << filePath << QUrl(filePath).toLocalFile();;
++
+     //异常情况：本地文件不存在
+     if (!QFileInfo::exists(QUrl(filePath).toLocalFile())) {
++        qDebug() << "当前播放文件不存在！" << filePath << QUrl(filePath).toLocalFile();
+         Q_EMIT playErrorMsg(NotFound);
+         Q_EMIT playError();
+         return;
+     }
+ 
++    qDebug() << "当前播放文件存在： " << filePath;
+     const QByteArray c_filename = filePath.toUtf8();
+     //如果文件名和上次一样，且不是因为拖动进度条播放，说明上次是暂停
+     if (c_filename == filenameBack && m_positionChangeed == false) {
+@@ -55,6 +62,7 @@ void MMediaPlayer::truePlay(QString startTime)
+     m_position = 0;
+     m_positionChangeed = false;
+     setProperty("start",startTime);
++    setProperty("force-seekable", "yes");
+     const char *args[] = {"loadfile",c_filename, NULL};
+     mpv_command_async(m_mpvPlayer, 0, args);
+ 
+diff --git a/UIControl/player/coreplayer/mmediaplaylist.cpp b/UIControl/player/coreplayer/mmediaplaylist.cpp
+index 7c8a497..3a6e756 100644
+--- a/UIControl/player/coreplayer/mmediaplaylist.cpp
++++ b/UIControl/player/coreplayer/mmediaplaylist.cpp
+@@ -27,6 +27,13 @@ int MMediaPlaylist::currentIndex() const
+ 
+ bool MMediaPlaylist::addMedia(const QUrl &items)
+ {
++    bool isExists = QFileInfo::exists(items.toLocalFile());
++    if (isExists) {
++        // 单修改此处，会导致界面点击和实际播放不一致问题
++//        m_playerList.append(items);
++        notExistFileNumber++;
++    }
++
+     m_playerList.append(items);
+     return true;
+ }
+@@ -44,6 +51,11 @@ void MMediaPlaylist::next()
+     switch (m_playbackMode) {
+     case Random:
+         m_index=randomIndex();
++        //异常情况：无当前播放媒体
++        if (m_index < 0) {
++            return;
++        }
++
+         break;
+     case Sequential:
+         m_index++;
+@@ -72,6 +84,10 @@ void MMediaPlaylist::previous()
+     switch (m_playbackMode) {
+     case Random:
+         m_index=randomIndex();
++        //异常情况：无当前播放媒体，或当前播放列表为空
++        if (m_index < 0) {
++            return;
++        }
+         break;
+     case Sequential:
+         m_index--;
+@@ -97,10 +113,10 @@ void MMediaPlaylist::setCurrentIndex(int index)
+ //        return;
+ //    }
+     //异常情况：要设置的媒体位置超过列表总长度
+-    if (index >= m_playerList.length()) {
+-        qDebug()<<"指定位置超过列表元素数量";
+-        return;
+-    }
++//    if (index >= m_playerList.length()) {
++//        qDebug()<<"指定位置超过列表元素数量";
++//        return;
++//    }
+     //统一所有非正常情况
+     if (index < 0) {
+         index = -1;
+@@ -172,16 +188,18 @@ void MMediaPlaylist::playError()
+ void MMediaPlaylist::playErrorMsg(int Damage)
+ {
+     if (Damage == -2) {
+-        //如果是列表循环则切换下一首
+-        if (m_playbackMode == Loop) {
+-            next();
+-        } else if(m_playbackMode == Random) {
+-            m_index = randomIndex();
+-            Q_EMIT currentIndexChanged(m_index);
+-            Q_EMIT stop();
++        if (mediaCount() == 0) {
++               return;
+         }
+-
+-        Q_EMIT autoPlay(m_playbackMode);
++        if (m_playerList.isEmpty()) {
++               return;
++           }
++        if (m_index < 0) {
++               return;
++           }
++        if (m_index >= m_playerList.length()) {
++               m_index = 0;
++           }
+     }
+ }
+ 
+@@ -191,11 +209,18 @@ void MMediaPlaylist::palyFinish()
+     if (m_index < 0) {
+         return;
+     }
++
+     //如果循环模式不是单曲循环则切换下一首
+     if (m_playbackMode != CurrentItemInLoop) {
+         next();
+         Q_EMIT currentIndexChanged(m_index);
+     }
++
++    if(m_playbackMode = CurrentItemInLoop){
++        if(!QFileInfo::exists(QUrl(getPlayFileName()).toLocalFile()))
++            next();
++    }
++
+     Q_EMIT autoPlay(m_playbackMode);
+ }
+ 
+@@ -207,6 +232,11 @@ MMediaPlaylist::PlaybackMode MMediaPlaylist::playbackMode() const
+ int MMediaPlaylist::randomIndex()
+ {
+     qsrand(QDateTime::currentDateTime().toMSecsSinceEpoch());
++    int lenPlaylist = m_playerList.length();
++    if (lenPlaylist == 0) {
++        // 播放列表沒有歌曲，此时不应有可用值
++        return -1;
++    }
+     return qrand()%(m_playerList.length());
+ }
+ 
+diff --git a/UIControl/player/coreplayer/mmediaplaylist.h b/UIControl/player/coreplayer/mmediaplaylist.h
+index fe1a3f2..7157b74 100644
+--- a/UIControl/player/coreplayer/mmediaplaylist.h
++++ b/UIControl/player/coreplayer/mmediaplaylist.h
+@@ -46,6 +46,7 @@ private:
+     int randomIndex(); //生成随机数
+     QList<QUrl> m_playerList; //实际的播放队列
+     int m_index = 0; //当前播放的歌曲位置
++    int notExistFileNumber = 0; // 播放列表中不存在的文件数目，用于判断当前歌单列表在“循环”或“随机”模式下是否需要继续播放
+     PlaybackMode m_playbackMode = Loop; //当前列表的循环模式
+ Q_SIGNALS:
+     void currentIndexChanged(int); //媒体切换信号

@@ -1,0 +1,1179 @@
+From: yusq77 <5556133+yusq77@user.noreply.gitee.com>
+Date: Sat, 16 Jul 2022 13:56:20 +0000
+Subject: =?utf-8?b?ITYgdmVyc2lvbjogMS4xLjAuNDctb2s1fjA3MTYsIGNsb3NlLWNkOiAj?=
+ =?utf-8?b?MTI4Nzcy77yMICMxMjc3NDcgKiBGaXggIzEyODc3Miwg6Kej5Yaz6Z+z5LmQ5Y+z?=
+ =?utf-8?b?6ZSu5Yig6Zmk5aSa5Liq5q2M5puy6YeN5aSN5by55Ye65Yig6Zmk56qX5Y+j6Zeu?=
+ =?utf-8?b?6aKYICogRml4ICMxMjc3NDfvvIzop6PlhrPlpJzpl7TmqKHlvI/kuIvvvIzpn7M=?=
+ =?utf-8?b?5LmQ55WM6Z2i5Lit5q2M5Y2V5Yy65Z+f5ZKM5q2M5puy5bCP5qCH6aKY6IOM5pmv?=
+ =?utf-8?b?6Imy5pi+56S65LiN5a+56Zeu6aKY?=
+
+---
+ UI/base/widgetstyle.cpp           |   2 +
+ UI/base/widgetstyle.h             |   1 +
+ UI/mainwidget.cpp                 |   5 +
+ UI/mainwidget.h                   |   2 +
+ UI/player/playsongarea.cpp        |  51 ++++++---
+ UI/player/sliderwidget.cpp        |   9 +-
+ UI/sidebar/mytoolbutton.cpp       |  42 ++++++-
+ UI/sidebar/mytoolbutton.h         |   2 +
+ UI/sidebar/sidebarwidget.cpp      |   4 +-
+ UI/tableview/tableone.cpp         | 186 +++++++++++++++++++++++++------
+ UI/tableview/tableone.h           |   1 +
+ translations/kylin-music_bo_CN.ts |  11 ++
+ translations/kylin-music_zh_CN.qm | Bin 7895 -> 7982 bytes
+ translations/kylin-music_zh_CN.ts | 229 +++++++++++++++++++++-----------------
+ 14 files changed, 384 insertions(+), 161 deletions(-)
+
+diff --git a/UI/base/widgetstyle.cpp b/UI/base/widgetstyle.cpp
+index 86ea1a2..b6d52ea 100644
+--- a/UI/base/widgetstyle.cpp
++++ b/UI/base/widgetstyle.cpp
+@@ -19,4 +19,6 @@
+ 
+ int WidgetStyle::themeColor = 0;
+ 
++bool WidgetStyle::isWayland = false;
++
+ //const QColor highlightTextColor = QColor(55,144,250);
+diff --git a/UI/base/widgetstyle.h b/UI/base/widgetstyle.h
+index 95667ff..c2a39a6 100644
+--- a/UI/base/widgetstyle.h
++++ b/UI/base/widgetstyle.h
+@@ -31,6 +31,7 @@ public:
+     WidgetStyle() {}
+ 
+     static int themeColor;   //test  ä¸»é¢˜é¢œè‰²é€‚é…--æµ…è‰²
++    static bool isWayland;
+ //    const QColor highlightTextColor;
+ 
+ };
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index 207bac1..e661d22 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -12,10 +12,15 @@
+ #define UKUI_FONT_SIZE "systemFontSize"
+ 
+ Widget *Widget::mutual = nullptr;
++
++
+ Widget::Widget(QStringList str, QWidget *parent)
+     : QWidget(parent)
+ {
+     mutual = this;
++    if(QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
++        WidgetStyle::isWayland = true;
++    }
+ 
+     //å•ä¾‹
+     Single(str);
+diff --git a/UI/mainwidget.h b/UI/mainwidget.h
+index 34d520e..c29042d 100644
+--- a/UI/mainwidget.h
++++ b/UI/mainwidget.h
+@@ -63,6 +63,8 @@ public:
+     void transparencyChange();
+ 
+     static Widget *mutual;          //æŒ‡é’ˆç±»å‹é™æ€æˆå‘˜å˜é‡
++
++
+     QProcess *process;
+ 
+     QGSettings *m_transparencyGSettings = nullptr; // æ§åˆ¶é¢æ¿é€æ˜åº¦
+diff --git a/UI/player/playsongarea.cpp b/UI/player/playsongarea.cpp
+index bb30f5d..68b881d 100644
+--- a/UI/player/playsongarea.cpp
++++ b/UI/player/playsongarea.cpp
+@@ -4,6 +4,9 @@
+ #include "UI/base/widgetstyle.h"
+ #include "UI/base/xatom-helper.h"
+ #include "UIControl/base/musicDataBase.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
++
+ #define VOLUME 5
+ #define PT_9 9
+ 
+@@ -75,19 +78,24 @@ void PlaySongArea::initWidget()
+     }
+ 
+     m_volSliderWid = new SliderWidget(this);
+-    MotifWmHints hint;
+-    hint.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+-    hint.functions = MWM_FUNC_ALL;
+-    hint.decorations = MWM_DECOR_BORDER;
+-    XAtomHelper::getInstance()->setWindowMotifHint(m_volSliderWid->winId(), hint);
++
++    if (! WidgetStyle::isWayland) {
++        MotifWmHints hint;
++        hint.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
++        hint.functions = MWM_FUNC_ALL;
++        hint.decorations = MWM_DECOR_BORDER;
++        XAtomHelper::getInstance()->setWindowMotifHint(m_volSliderWid->winId(), hint);
++    }
+     m_volSliderWid->hide();
+ 
+     m_playBackModeWid = new PlayBackModeWidget(this);
+-    MotifWmHints hints;
+-    hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+-    hints.functions = MWM_FUNC_ALL;
+-    hints.decorations = MWM_DECOR_BORDER;
+-    XAtomHelper::getInstance()->setWindowMotifHint(m_playBackModeWid->winId(), hints);
++    if (! WidgetStyle::isWayland) {
++        MotifWmHints hints;
++        hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
++        hints.functions = MWM_FUNC_ALL;
++        hints.decorations = MWM_DECOR_BORDER;
++        XAtomHelper::getInstance()->setWindowMotifHint(m_playBackModeWid->winId(), hints);
++    }
+     m_playBackModeWid->hide();
+ 
+     hSlider = new MusicSlider(this);
+@@ -141,6 +149,7 @@ void PlaySongArea::initWidget()
+     default:
+         break;
+     }
++
+     m_playMode = new QMenu(this);
+     loopAct = new QAction(tr("Loop"));
+     loopAct->setIcon(QIcon::fromTheme("media-playlist-repeat-symbolic"));
+@@ -363,9 +372,9 @@ void PlaySongArea::slotVolSliderWidget()
+     }
+     else
+     {
+-        moveVolSliderWid();
+         m_volSliderWid->show();
+         m_volSliderWid->raise();
++        moveVolSliderWid();
+     }
+ }
+ 
+@@ -678,7 +687,10 @@ void PlaySongArea::resizeEvent(QResizeEvent *event)
+ 
+ void PlaySongArea::moveVolSliderWid()
+ {
+-    QPoint volumePos = volumeBtn->mapToGlobal(volumeBtn->rect().center());
++//    QPoint volumePos = volumeBtn->mapToGlobal(volumeBtn->rect().center());
++    QPoint volumePos = QPoint(40, 40);
++    qDebug() << "volumePos: " << volumePos;
++
+     m_volSliderWid->adjustSize();
+     QSize size = m_volSliderWid->size();
+     volumePos.setX(volumePos.x() - size.width() / 2);
+@@ -686,13 +698,26 @@ void PlaySongArea::moveVolSliderWid()
+     QSize volumSize = volumeBtn->size();
+     int newPosX = volumePos.x() + size.width() / 2 - volumSize.width() / 2 + 1;
+     int newPosY = volumePos.y() + 25 + size.height() - volumSize.height() / 2 + 1;
++
+     m_volSliderWid->changeVolumePos(newPosX, newPosY, volumSize.width(), volumSize.height());
+-    m_volSliderWid->move(volumePos);
++
++    if (WidgetStyle::isWayland) {
++        qDebug() << "isWayland env";
++        m_volSliderWid->show();
++//        m_volSliderWid->raise();
++//        kdk::WindowManager::setGeometry(m_volSliderWid->windowHandle(), QRect(volumePos.x(), volumePos.y(), volumSize.width(), volumSize.height()));
++        kdk::WindowManager::setGeometry(m_volSliderWid->windowHandle(), QRect(500, 500, volumSize.width(), volumSize.height()));
++    } else {
++        qDebug() << "x11 env";
++        m_volSliderWid->move(volumePos);
++    }
+ }
+ 
+ void PlaySongArea::movePlayModeWid()
+ {
+     QPoint modePos = playModeBtn->mapToGlobal(playModeBtn->rect().center());
++    qDebug() << "modePos " << modePos;
++
+     m_playBackModeWid->adjustSize();
+     QSize size = m_playBackModeWid->size();
+     modePos.setX(modePos.x() - size.width() / 2);
+diff --git a/UI/player/sliderwidget.cpp b/UI/player/sliderwidget.cpp
+index 19080cb..aede6d5 100644
+--- a/UI/player/sliderwidget.cpp
++++ b/UI/player/sliderwidget.cpp
+@@ -1,14 +1,17 @@
+ #include "sliderwidget.h"
+ #include "UI/base/widgetstyle.h"
+ #include "UIControl/player/player.h"
+-//#include "UI/player/xatom-helper.h" 
++//#include "UI/player/xatom-helper.h"
+ 
+ SliderWidget::SliderWidget(QWidget *parent) : QDialog(parent)
+ {
+     installEventFilter(this);
++    setWindowFlags(Qt::Popup | Qt::FramelessWindowHint | Qt::NoDropShadowWindowHint);
++//    setAttribute(Qt::WA_StyledBackground,true);
++    setAttribute(Qt::WA_TranslucentBackground, true);
+ //    this->setAttribute(Qt::WA_DeleteOnClose);
+-    this->setAutoFillBackground(true);
+-    this->setBackgroundRole(QPalette::Base);
++//    this->setAutoFillBackground(true);
++//    this->setBackgroundRole(QPalette::Base);
+     initUi(); //åˆå§‹åŒ–æ ·å¼
+     initColor();
+ }
+diff --git a/UI/sidebar/mytoolbutton.cpp b/UI/sidebar/mytoolbutton.cpp
+index 92d1c99..2e261a3 100644
+--- a/UI/sidebar/mytoolbutton.cpp
++++ b/UI/sidebar/mytoolbutton.cpp
+@@ -2,9 +2,17 @@
+ #include "UI/base/widgetstyle.h"
+ #include "UIControl/base/musicDataBase.h"
+ #include <QDebug>
++#include <QGSettings>
++#include <QStyleOption>
++#include <QPainter>
++#define PERSONALSIE_SCHEMA     "org.ukui.control-center.personalise"
++#define PERSONALSIE_TRAN_KEY   "transparency"
++#define CONTAIN_PERSONALSIE_TRAN_KEY   "transparency"
+ 
+ MyToolButton::MyToolButton()
+ {
++    initGsettings();
++
+     //åœ¨æŒ‰é’®æ²¡æœ‰é»˜è®¤é€‰ä¸­æ—¶ï¼Œå®ä¾‹åŒ–æ—¶å…ˆè°ƒç”¨ï¼ˆæ•…æ³¨é‡Šï¼‰
+ //    defaultStyle();
+     this->setFixedSize(162,32);
+@@ -71,10 +79,17 @@ void MyToolButton::defaultStyle()
+     }
+     else if(this->statusTip() != IS_SELECT)
+     {
++        initGsettings();
++
++        QColor color = palette().color(QPalette::Window);
++        color.setAlpha(transparency);
++        QPalette pal;
++        pal.setColor(QPalette::Window,QColor(color));
++
+         if(WidgetStyle::themeColor == 0)
+         {
+             //padding-left:15px;  å·¦å†…è¾¹è·
+-            this->setStyleSheet("QToolButton{padding-left:14px; background-color:#FFFFFF;color:#303133;border-radius:4px;}"
++            this->setStyleSheet("QToolButton{padding-left:14px; background-color:#f9f9f9;color:#303133;border-radius:4px;}"
+                                 "QToolButton::hover{background-color:#EEEEEE;border-radius:4px;}");
+             if(buttonListName == ALLMUSIC)
+             {
+@@ -92,8 +107,10 @@ void MyToolButton::defaultStyle()
+ 
+         else if(WidgetStyle::themeColor == 1)
+         {
+-            this->setStyleSheet("QToolButton{padding-left:14px;background-color:#252526;color:#f9f9f9;border-radius:4px;}"
+-                                "QToolButton::hover{background-color:#303032;border-radius:4px;}");
++//            this->setStyleSheet("QToolButton{padding-left:14px;background-color:#252526;color:#f9f9f9;border-radius:4px;}"
++//                                "QToolButton::hover{background-color:#303032;border-radius:4px;}");
++            this->setStyleSheet("QToolButton{padding-left:14px;color:#f9f9f9;border-radius:4px;}"
++                                "QToolButton::hover{background-color:gray;border-radius:4px;}");
+             if(buttonListName == ALLMUSIC)
+             {
+                 this->setIcon(QIcon(":/img/dark/ukui-folder-music-symbolic.svg"));
+@@ -165,3 +182,22 @@ void MyToolButton::requestCustomContextMenu(const QPoint &pos)
+     delete deleteAct;
+ }
+ 
++void MyToolButton::initGsettings()
++{
++    QGSettings *personalQgsettings = nullptr;
++    if (QGSettings::isSchemaInstalled(PERSONALSIE_SCHEMA)) {
++        personalQgsettings = new QGSettings(PERSONALSIE_SCHEMA, QByteArray(), this);
++        transparency = personalQgsettings->get(PERSONALSIE_TRAN_KEY).toDouble() * 255;
++        connect(personalQgsettings,&QGSettings::changed,this,[=](QString changedKey) {  //ç›‘å¬é€æ˜åº¦å˜åŒ–
++                        if (changedKey == CONTAIN_PERSONALSIE_TRAN_KEY) {
++                           transparency = personalQgsettings->get(PERSONALSIE_TRAN_KEY).toDouble() * 255;
++                           this->repaint();
++                        }
++                });
++    } else {
++        personalQgsettings = nullptr;
++        qDebug()<<PERSONALSIE_SCHEMA<<" not installed";
++    }
++
++}
++
+diff --git a/UI/sidebar/mytoolbutton.h b/UI/sidebar/mytoolbutton.h
+index db35afa..6e6e75c 100644
+--- a/UI/sidebar/mytoolbutton.h
++++ b/UI/sidebar/mytoolbutton.h
+@@ -18,6 +18,7 @@ public:
+      void selectChanged();
+      void defaultStyle();
+      void requestCustomContextMenu(const QPoint &pos);
++     void initGsettings();
+ public:
+     QAction *deleteAct = nullptr;
+     QAction *renameAct = nullptr;
+@@ -31,6 +32,7 @@ Q_SIGNALS:
+ public Q_SLOTS:
+ 
+ private:
++    int transparency = 0;
+ 
+ };
+ 
+diff --git a/UI/sidebar/sidebarwidget.cpp b/UI/sidebar/sidebarwidget.cpp
+index 3858012..814864b 100644
+--- a/UI/sidebar/sidebarwidget.cpp
++++ b/UI/sidebar/sidebarwidget.cpp
+@@ -7,6 +7,7 @@
+ 
+ SideBarWidget::SideBarWidget(QWidget *parent) : LeftsiderbarWidget(parent)
+ {
++    setFocusPolicy(Qt::StrongFocus);
+ //    setFixedSize(210, 640);
+     resize(210, 640);
+     this->setObjectName("SideBarWidget");
+@@ -67,9 +68,10 @@ void SideBarWidget::initWidget()
+     //æˆ‘çš„æ­Œå•
+     QHBoxLayout *myPlayListLayout = new QHBoxLayout();
+     myPlayListLabel = new QLabel(this);
+-    myPlayListBtn = new QPushButton(this);
+     myPlayListLabel->setText(tr("My PlayList"));
+     myPlayListLabel->setFixedHeight(28);
++
++    myPlayListBtn = new QPushButton();
+     myPlayListBtn->setFixedSize(20,20);
+     myPlayListBtn->setIcon(QIcon::fromTheme("list-add-symbolic"));
+     myPlayListBtn->setProperty("isWindowButton", 0x1);
+diff --git a/UI/tableview/tableone.cpp b/UI/tableview/tableone.cpp
+index 3cb110c..15da958 100644
+--- a/UI/tableview/tableone.cpp
++++ b/UI/tableview/tableone.cpp
+@@ -4,6 +4,7 @@
+ #include <ukui-log4qt.h>
+ #include "tableone.h"
+ #include "UI/mainwidget.h"
++#include "UI/base/widgetstyle.h"
+ 
+ #define PT_18 18
+ 
+@@ -366,8 +367,8 @@ void TableOne::isDeleteSongs()
+     //ç¡®è®¤å°†é€‰ä¸­çš„æ­Œæ›²ä»æ­Œå•ä¸­åˆ é™¤ï¼Ÿ
+     QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Confirm that the selected song will be deleted from the song list?"),QMessageBox::Yes | QMessageBox::No);
+     warn->setWindowTitle(tr("kylin-music"));
+-//    warn->button(QMessageBox::Yes)->setText("ç¡®å®š");
+-//    warn->button(QMessageBox::No)->setText("å–æ¶ˆ");
++    warn->button(QMessageBox::Yes)->setText(tr("Yes"));
++    warn->button(QMessageBox::No)->setText(tr("No"));
+     int result = warn->exec();
+     if(result == QMessageBox::Yes)
+     {
+@@ -383,21 +384,26 @@ void TableOne::isDeleteSongs()
+ 
+ void TableOne::isDeleteLocalSongs()
+ {
+-    //æ­Œæ›²ä»æœ¬åœ°åˆ é™¤åä¸å¯æ¢å¤ï¼Œæ˜¯å¦ç¡®å®šåˆ é™¤ï¼Ÿ
+-//    QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("After the song is deleted from the local, it cannot be resumed. Is it sure to delete?"),QMessageBox::Yes | QMessageBox::No);
+-////    warn->button(QMessageBox::Yes)->setText("ç¡®å®š");
+-////    warn->button(QMessageBox::No)->setText("å–æ¶ˆ");
+-//    int result = warn->exec();
+-//    if(result == QMessageBox::Yes)
+-//    {
++
++    if (! WidgetStyle::isWayland) {
+         deleteLocalSongs();
+-//        qDebug() << "QMessageBox::Yes";
+-//    }
+-//    else
+-//    {
+-//        qDebug() << "QMessageBox::No";
+-//        return;
+-//    }
++
++        return;
++    }
++
++    //æ­Œæ›²ä»æœ¬åœ°åˆ é™¤åä¸å¯æ¢å¤ï¼Œæ˜¯å¦ç¡®å®šåˆ é™¤ï¼Ÿ
++    QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("After the song is deleted from the local, it cannot be resumed. Is it sure to delete?"),QMessageBox::Yes | QMessageBox::No);
++    warn->button(QMessageBox::Yes)->setText(tr("Yes"));
++    warn->button(QMessageBox::No)->setText(tr("No"));
++    int result = warn->exec();
++
++    if(result == QMessageBox::Yes) {
++        deleteLocalSongsWayland();
++        qDebug() << "QMessageBox::Yes";
++    } else {
++        qDebug() << "QMessageBox::No";
++        return;
++    }
+ }
+ 
+ void TableOne::deleteSongs()
+@@ -450,8 +456,20 @@ void TableOne::deleteSongs()
+ void TableOne::deleteLocalSongs()
+ {
+     m_map = getSelectedTaskIdList();
++
++    QStringList trashFilenames;
++    for (int key: m_map.keys()) {
++        QString value = m_map.value(key);
++        QString urlFile = "file://" + value;
++        qDebug() << "filename: " << urlFile;
++        trashFilenames << urlFile;
++    }
++    qDebug() << "trashFilenames: " << trashFilenames;
++
++
+     for (int key : m_map.keys()) {
+         QString value = m_map.value(key);
++
+         QFile file(value);
+         if(file.exists())
+         {
+@@ -502,43 +520,37 @@ void TableOne::deleteLocalSongs()
+         } else {
+                 QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("After the song is deleted from the local, it cannot be resumed. Is it sure to delete?"),QMessageBox::Yes | QMessageBox::No);
+                 warn->setWindowTitle(tr("kylin-music"));
++                warn->button(QMessageBox::Yes)->setText(tr("Yes"));
++                warn->button(QMessageBox::No)->setText(tr("No"));
+                 int result = warn->exec();
+                 if(result == QMessageBox::Yes)
+                 {
+                     int ret;
+                     int index = -1;
+-                    if(nowListName != nowPlayListName && nowListName == ALLMUSIC)
+-                    {
++                    if(nowListName != nowPlayListName && nowListName == ALLMUSIC) {
+                         index = MusicFileInformation::getInstance().findIndexFromPlayList(nowPlayListName,value);
+                     }
+-                    if(nowListName != ALLMUSIC)
+-                    {
++
++                    if(nowListName != ALLMUSIC) {
+                        ret = g_db->delMusicFromPlayList(value,nowListName);
+-                    }
+-                    else
+-                    {
++                    } else {
+                        ret = g_db->delSongFromEveryWhere(value);
+                     }
+-                    if(ret == 0)
+-                    {
++
++                    if(ret == 0) {
+                         if((nowListName != nowPlayListName) && nowListName == ALLMUSIC && index != -1)
+                         {
+                             playController::getInstance().removeSongFromCurList(nowPlayListName,index);
+-                        }
+-                        else
+-                        {
++                        } else {
+                             playController::getInstance().removeSongFromCurList(nowListName,key);
+                         }
+ 
+-                        if(nowListName == FAV)
+-                        {
++                        if(nowListName == FAV) {
+                             Q_EMIT removeILoveFilepathSignal(value);
+                         }
+ 
+                         m_map.remove(key);
+-                    }
+-                    else
+-                    {
++                    } else {
+                         qDebug() << "delete failed" << value;
+                     }
+                     selectListChanged(nowListName);
+@@ -551,6 +563,105 @@ void TableOne::deleteLocalSongs()
+ 
+ }
+ 
++/**
++ * @brief TableOne::deleteLocalSongsWayland
++ */
++void TableOne::deleteLocalSongsWayland()
++{
++    m_map = getSelectedTaskIdList();
++
++    QStringList trashFilenames;
++    for (int key: m_map.keys()) {
++        QString value = m_map.value(key);
++        QString urlFile = "file://" + value;
++        qDebug() << "filename: " << urlFile;
++        trashFilenames << urlFile;
++    }
++    qDebug() << "trashFilenames: " << trashFilenames;
++
++
++    for (int key : m_map.keys()) {
++        QString value = m_map.value(key);
++        QFile file(value);
++
++        if(file.exists()) {
++            file.remove();
++
++            int ret;
++            int index = -1;
++            if(nowListName != nowPlayListName && nowListName == ALLMUSIC) {
++                index = MusicFileInformation::getInstance().findIndexFromPlayList(nowPlayListName,value);
++            }
++
++            if(nowListName != ALLMUSIC) {
++                ret = g_db->delMusicFromPlayList(value,nowListName);
++            } else {
++                ret = g_db->delSongFromEveryWhere(value);
++            }
++
++            if(ret == 0) {
++                if((nowListName != nowPlayListName) && nowListName == ALLMUSIC && index != -1)
++                {
++                    playController::getInstance().removeSongFromCurList(nowPlayListName,index);
++                } else {
++                    playController::getInstance().removeSongFromCurList(nowListName,key);
++                }
++
++                if(nowListName == FAV) {
++                    Q_EMIT removeILoveFilepathSignal(value);
++                }
++
++                m_map.remove(key);
++            } else {
++                qDebug() << "delete failed" << value;
++            }
++            selectListChanged(nowListName);
++            Q_EMIT refreshHistoryListSignal();
++
++        } else {
++                QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("After the song is deleted from the local, it cannot be resumed. Is it sure to delete?"),QMessageBox::Yes | QMessageBox::No);
++                warn->setWindowTitle(tr("kylin-music"));
++                warn->button(QMessageBox::Yes)->setText(tr("Yes"));
++                warn->button(QMessageBox::No)->setText(tr("No"));
++                int result = warn->exec();
++
++                if(result == QMessageBox::Yes) {
++                    int ret;
++                    int index = -1;
++                    if(nowListName != nowPlayListName && nowListName == ALLMUSIC) {
++                        index = MusicFileInformation::getInstance().findIndexFromPlayList(nowPlayListName,value);
++                    }
++
++                    if(nowListName != ALLMUSIC) {
++                       ret = g_db->delMusicFromPlayList(value,nowListName);
++                    } else {
++                       ret = g_db->delSongFromEveryWhere(value);
++                    }
++
++                    if(ret == 0) {
++                        if((nowListName != nowPlayListName) && nowListName == ALLMUSIC && index != -1) {
++                            playController::getInstance().removeSongFromCurList(nowPlayListName,index);
++                        } else {
++                            playController::getInstance().removeSongFromCurList(nowListName,key);
++                        }
++
++                        if(nowListName == FAV) {
++                            Q_EMIT removeILoveFilepathSignal(value);
++                        }
++
++                        m_map.remove(key);
++                    } else {
++                        qDebug() << "delete failed" << value;
++                    }
++                    selectListChanged(nowListName);
++                    Q_EMIT refreshHistoryListSignal();
++                } else {
++                    return;
++                }
++        }
++    }
++}
++
+ void TableOne::playSongs()
+ {
+     int index = tableView->currentIndex().row();
+@@ -817,7 +928,8 @@ void TableOne::importFinished(int successCount, int m_failCount, int allCount)
+         }
+         QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Success add %1 songs").arg(successCount),QMessageBox::Yes,Widget::mutual);
+         warn->setWindowTitle(tr("kylin-music"));
+-        warn->button(QMessageBox::Yes)->setText("ç¡®å®š");
++        warn->button(QMessageBox::Yes)->setText(tr("Yes"));
++//        warn->button(QMessageBox::No)->setText(tr("No")); // Add this will segment error
+         warn->exec();
+     }
+     else
+@@ -829,7 +941,7 @@ void TableOne::importFinished(int successCount, int m_failCount, int allCount)
+         }
+         QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Add failed"),QMessageBox::Yes,Widget::mutual);
+         warn->setWindowTitle(tr("kylin-music"));
+-        warn->button(QMessageBox::Yes)->setText("ç¡®å®š");
++        warn->button(QMessageBox::Yes)->setText(tr("Yes"));
+         warn->exec();
+     }
+ }
+@@ -840,7 +952,7 @@ void TableOne::importFailed(int successCount, int m_failCount, int allCount)
+     {
+         QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Success add %1 songs").arg(successCount),QMessageBox::Yes,Widget::mutual);
+         warn->setWindowTitle(tr("kylin-music"));
+-        warn->button(QMessageBox::Yes)->setText("ç¡®å®š");
++        warn->button(QMessageBox::Yes)->setText(tr("Yes"));
+         warn->exec();
+     }
+     else
+@@ -848,7 +960,7 @@ void TableOne::importFailed(int successCount, int m_failCount, int allCount)
+         if (m_failCount > 0) {
+             QMessageBox *warn = new QMessageBox(QMessageBox::Warning,tr("Prompt information"),tr("Repeat add"),QMessageBox::Yes,Widget::mutual);
+             warn->setWindowTitle(tr("kylin-music"));
+-            warn->button(QMessageBox::Yes)->setText("ç¡®å®š");
++            warn->button(QMessageBox::Yes)->setText(tr("Yes"));
+             warn->exec();
+         }
+     }
+diff --git a/UI/tableview/tableone.h b/UI/tableview/tableone.h
+index 10f4242..45d6722 100644
+--- a/UI/tableview/tableone.h
++++ b/UI/tableview/tableone.h
+@@ -84,6 +84,7 @@ private:
+     void isDeleteLocalSongs(); //æ˜¯å¦ä»æœ¬åœ°åˆ é™¤æ­Œæ›²
+     void deleteSongs();  //ä»æ­Œå•ä¸­åˆ é™¤æ­Œæ›²
+     void deleteLocalSongs(); //ä»æœ¬åœ°ä»¥åŠæ­Œå•ä¸­åˆ é™¤æ­Œæ›²
++    void deleteLocalSongsWayland(); //ä»æœ¬åœ°ä»¥åŠæ­Œå•ä¸­åˆ é™¤æ­Œæ›²
+ 
+     void playSongs();
+     void showInfo();
+diff --git a/translations/kylin-music_bo_CN.ts b/translations/kylin-music_bo_CN.ts
+index 612a014..cf644d3 100644
+--- a/translations/kylin-music_bo_CN.ts
++++ b/translations/kylin-music_bo_CN.ts
+@@ -467,6 +467,17 @@
+         <source>kylin-music</source>
+         <translation type="unfinished"></translation>
+     </message>
++<<<<<<< HEAD
++    <message>
++        <source>Yes</source>
++        <translation type="unfinished"></translation>
++    </message>
++    <message>
++        <source>No</source>
++        <translation type="unfinished"></translation>
++    </message>
++=======
++>>>>>>> 0c4fd5ef741482ae9a56e4128533eddb854641f0
+ </context>
+ <context>
+     <name>TitleBar</name>
+diff --git a/translations/kylin-music_zh_CN.qm b/translations/kylin-music_zh_CN.qm
+index dafb9f1..0ea5694 100644
+--- a/translations/kylin-music_zh_CN.qm
++++ b/translations/kylin-music_zh_CN.qm
+@@ -1,14 +1,15 @@
+-<¸dÊïœ•Í!¿`¡½İ§   zh_CNB  ğ Œ¯  ô ¨‹   ì0  F 6`  > 6`  ¶ 6`  < <U  • Lô  	 r‰  v r‰  À r‰  + Œ  Ú ¦G   °5  É ‡›  N E•   >’   à >’  ¦ >’  ã >’  > >’   >’  ¼ >’  g G–Ä  Ì H)½  E H)½  
+-b LG¹  f Rıô  m TÉó  
+-Œ VŒ•  L Zì5  C \t³  Ù j6•  s ÖT   /WÊó  ®WÊó  †·%„  úå:  ÇB  	Z„  zdã  Êzdã  Ş‹C\  P›÷@  ò»$  ³Ú¥Ô  pùˆÉ      ß    ™]DL  ´7€ä  M•ŠÄ  Ì•ŠÄ  —•ŠÄ  M˜I¼    ˜I¼  $¬,¥  ô¬,¥  ;µ6Å  µ6Å  ‰µ6Å  
+-áµ6Å  µ6Å  ÜÀ  ÚàÄ  ˜#C$  ²ˆK]  qˆK]  	 ˆK]  –ŒH5  ŸŒH5   MÂ  q MÂ  
+-¶¸ˆƒ  `Ö<5  	Ïºq  ¾TS  |Ã˜Ô  ªÄÅÔ  ¥Z3  DZ3  GoÕ  Oùo  ù‹  ëµ‡„  	?½ş  ìÍ³  	qğH5  ÁğH5  {	Vñ  É	—À  	    k	È.´  ä
++<¸dÊïœ•Í!¿`¡½İ§   zh_CNB     O  +  _Ã  © Œ¯  ; ¨‹  f ì0   6`  > 6`  ¶ 6`  ƒ <U  Ü Lô  	 r‰  v r‰  À r‰  N Œ  ! ¦G   °5  É ‡›  • E•   >’   à >’  ¦ >’  ã >’  > >’  b >’   >’  ® G–Ä   H)½  E H)½  
++b LG¹  f Rıô  ´ TÉó  
++Œ VŒ•  L Zì5  Š \t³  Ù j6•  º ÖT   /WÊó  ®WÊó  Í·%„  å:  ÇB  	Z„  zdã  Êzdã  Ş‹C\  s›÷@  ò»$  ³Ú¥Ô  pùˆÉ      ß    à]DL  ×7€ä  M•ŠÄ  Ì•ŠÄ  —•ŠÄ  p˜I¼    ˜I¼  $¬,¥  ô¬,¥  ;µ6Å  µ6Å  ‰µ6Å  
++áµ6Å  µ6Å  XÜÀ  ÚàÄ  ˜#C$  ùˆK]  qˆK]  	 ˆK]  İŒH5  ŸŒH5   MÂ  q MÂ  
++¶¸ˆƒ  `Ö<5  	Ïºq  áTS  |Ã˜Ô  ªÄÅÔ  ¥Z3  DZ3  GoÕ  cOùo  ù‹  2µ‡„  	?½ş  3Í³  	qğH5  ğH5  Â	Vñ  É	—À  H	    ²	È.´  ä
+ /º  
+ dĞÍ   +
+ dĞÍ  R
+-Ã™a  EKµ  éuü  ìƒëÄ  ìºØî  ¤À3ü  ¦/‡N  ]/‡N  2/‡N  Û/‡N  %/‡N  }/‡N  F4#Ä  
+-.4#Ä  6-  uiØä  ™lÜ%  [r˜ÿ  ƒò÷   şò÷   !ò÷   Ù$*Î  i3T  õ6ıÌ   Wœ	“  {Á9  HàT  »
+-¶Ù  ¯{¯  LëR  	úi  Ã   SÖmˆ       Cancel   AllPupWindow   xn‹¤       Confirm   AllPupWindow   8N€ıST+NåN[W{&ÿ \   /   :   *   ?   "   &   <   >   |       0Could not contain characters:  / : * ? " & < > |   AllPupWindow   —óNP       Music Player   AllPupWindow   ‹÷“QekLSUTyğÿ       Please input playlist name:   AllPupWindow   cĞy:Oá`o       Prompt information   AllPupWindow   ]ò¾R0[W{&N
++Ã™a  EKµ  éuü  3ƒëÄ  ºØî  ëÀ3ü  ¦/‡N  ]/‡N  2/‡N  Û/‡N  %/‡N   /‡N  4#Ä  
++.4#Ä  >6-  uiØä  àlÜ%  [r˜ÿ  ƒò÷   şò÷   !ò÷    $*Î  i3T  õ6ıÌ   Wœ	“  Á9  kàT  »
++¶Ù  ¯{¯  LëR  	úi  
++   SÖmˆ       Cancel   AllPupWindow   xn‹¤       Confirm   AllPupWindow   8N€ıST+NåN[W{&ÿ \   /   :   *   ?   "   &   <   >   |       0Could not contain characters:  / : * ? " & < > |   AllPupWindow   —óNP       Music Player   AllPupWindow   ‹÷“QekLSUTyğÿ       Please input playlist name:   AllPupWindow   cĞy:Oá`o       Prompt information   AllPupWindow   ]ò¾R0[W{&N
+ –P       Reached upper character limit   AllPupWindowÿÿÿÿ       %Add failed, no valid music file found   MusicFileInformation   cĞy:Oá`o       Prompt information   MusicFileInformation   g*wåN‘       Unknown album   MusicFileInformation   g*wåkLbK       Unknown singer   MusicFileInformation   N‘ÿ       Album :    MusicInfoDialog   SÖmˆ       Cancel   MusicInfoDialog   xn‹¤       Confirm   MusicInfoDialog   
+ e‡Nöï_„ÿ       File Path :    MusicInfoDialog   
+ e‡NöY'\ÿ       File Size :    MusicInfoDialog   
+@@ -21,9 +22,9 @@ SearchEdit   N
+ NN ™–d­e>       Play the next one   TableHistory   cĞy:Oá`o       Prompt information   TableHistory   d­e>RˆhØl¡g	kLfòTæ       The playlist has no songs   TableHistory   —óNP       kylin-music   TableHistory     ™–kLfò        songs   TableOne   mûR g,W0e‡NöY9       Add Local Folder   TableOne   mûR g,W0—óNP       Add Local Songs   TableOne   mûR —óNP       	Add Music   TableOne   mûR Y1%       
+ Add failed   TableOne   mûR g,W0e‡NöY9       Add local folders   TableOne   mûR g,W0—óNP       Add local songs   TableOne   
+ mûR R0kLSU       Add to songlist   TableOne   (kLfòNÎg,W0R –dTNSï`bYÿf/T&xn[šR –dÿ       UAfter the song is deleted from the local, it cannot be resumed. Is it sure to delete?   TableOne   —ó˜‘e‡Nö       
+-Audio File   TableOne   xn‹¤\	N-v„kLfòNÎkLSUN-R –dÿ       BConfirm that the selected song will be deleted from the song list?   TableOne   NÎkLSUN-R –d       Delete from list   TableOne   bUœk"       I Love   TableOne   d­e>       Play   TableOne   d­e>Qhè       Play All   TableOne   cĞy:Oá`o       Prompt information   TableOne   
++Audio File   TableOne   xn‹¤\	N-v„kLfòNÎkLSUN-R –dÿ       BConfirm that the selected song will be deleted from the song list?   TableOne   NÎkLSUN-R –d       Delete from list   TableOne   bUœk"       I Love   TableOne   SÖmˆ       No   TableOne   d­e>       Play   TableOne   d­e>Qhè       Play All   TableOne   cĞy:Oá`o       Prompt information   TableOne   
+ NÎg,W0R –d       Remove from local   TableOne   ‘ÍYmûR        
+-Repeat add   TableOne   d}"~Ógœ       Search Result   TableOne   kLfòRˆh       	Song List   TableOne   bRŸmûR  % 1™–kLfò       Success add %1 songs   TableOne   Øl¡g	kLfòÿ       There are no songs!   TableOne   Ne/ckdh<_e‡Nö       !This format file is not supported   TableOne   gåwkLfòOá`o       View song information   TableOne   —óNP       kylin-music   TableOne   
++Repeat add   TableOne   d}"~Ógœ       Search Result   TableOne   kLfòRˆh       	Song List   TableOne   bRŸmûR  % 1™–kLfò       Success add %1 songs   TableOne   Øl¡g	kLfòÿ       There are no songs!   TableOne   Ne/ckdh<_e‡Nö       !This format file is not supported   TableOne   gåwkLfòOá`o       View song information   TableOne   xn[š       Yes   TableOne   —óNP       kylin-music   TableOne   
+ ï_„N[XW(       path does not exist   TableOne   g*v{_U       Not logged in   TitleBar   g \S       To minimize the   TitleBar   T        back   TitleBar   Qs•í       close   TitleBar   RMÛ       forward   TitleBar   g Y'S       maximize   TitleBar   |¾{€j!_       
+ mini model   TitleBar   —óNP       Music Player   Widget   cĞy:Oá`o       Prompt information   Widget   g Y'S       maximize   Widget   ØSŸ       	reduction   Widget   QsN       About   
+ menuModule   ß–N;˜˜       Auto   
+diff --git a/translations/kylin-music_zh_CN.ts b/translations/kylin-music_zh_CN.ts
+index d88e7c8..c11bb44 100644
+--- a/translations/kylin-music_zh_CN.ts
++++ b/translations/kylin-music_zh_CN.ts
+@@ -165,36 +165,36 @@
+ <context>
+     <name>MyToolButton</name>
+     <message>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="125"/>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="138"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="142"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="155"/>
+         <source>Play</source>
+         <translation>æ’­æ”¾</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="126"/>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="142"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="143"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="159"/>
+         <source>Pause</source>
+         <translation>æš‚åœ</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="127"/>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="146"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="144"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="163"/>
+         <source>Rename</source>
+         <translation>é‡å‘½å</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="128"/>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="150"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="145"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="167"/>
+         <source>Delete</source>
+         <translation>åˆ é™¤</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="156"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="173"/>
+         <source>Song List</source>
+         <translation>æ­Œæ›²åˆ—è¡¨</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/mytoolbutton.cpp" line="156"/>
++        <location filename="../UI/sidebar/mytoolbutton.cpp" line="173"/>
+         <source>I Love</source>
+         <translation>æˆ‘å–œæ¬¢</translation>
+     </message>
+@@ -225,64 +225,64 @@
+ <context>
+     <name>PlaySongArea</name>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="29"/>
++        <location filename="../UI/player/playsongarea.cpp" line="32"/>
+         <source>Previous</source>
+         <translation>ä¸Šä¸€é¦–</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="41"/>
++        <location filename="../UI/player/playsongarea.cpp" line="44"/>
+         <source>Next</source>
+         <translation>ä¸‹ä¸€é¦–</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="46"/>
++        <location filename="../UI/player/playsongarea.cpp" line="49"/>
+         <source>Volume</source>
+         <translation>éŸ³é‡</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="102"/>
++        <location filename="../UI/player/playsongarea.cpp" line="110"/>
+         <source>Favourite</source>
+         <translation>æ”¶è—</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="130"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="145"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="466"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="512"/>
++        <location filename="../UI/player/playsongarea.cpp" line="138"/>
++        <location filename="../UI/player/playsongarea.cpp" line="154"/>
++        <location filename="../UI/player/playsongarea.cpp" line="475"/>
++        <location filename="../UI/player/playsongarea.cpp" line="521"/>
+         <source>Loop</source>
+         <translation>åˆ—è¡¨å¾ªç¯</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="166"/>
++        <location filename="../UI/player/playsongarea.cpp" line="175"/>
+         <source>Play List</source>
+         <translation>æ’­æ”¾å†å²</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="186"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="538"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="540"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="635"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="861"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="889"/>
++        <location filename="../UI/player/playsongarea.cpp" line="195"/>
++        <location filename="../UI/player/playsongarea.cpp" line="547"/>
++        <location filename="../UI/player/playsongarea.cpp" line="549"/>
++        <location filename="../UI/player/playsongarea.cpp" line="644"/>
++        <location filename="../UI/player/playsongarea.cpp" line="886"/>
++        <location filename="../UI/player/playsongarea.cpp" line="914"/>
+         <source>Music Player</source>
+         <translation>éŸ³ä¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="187"/>
++        <location filename="../UI/player/playsongarea.cpp" line="196"/>
+         <source>00:00/00:00</source>
+         <translation>00:00/00:00</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="409"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="426"/>
++        <location filename="../UI/player/playsongarea.cpp" line="418"/>
++        <location filename="../UI/player/playsongarea.cpp" line="435"/>
+         <source>I Love</source>
+         <translation>æˆ‘å–œæ¬¢</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="138"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="147"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="475"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="517"/>
++        <location filename="../UI/player/playsongarea.cpp" line="146"/>
++        <location filename="../UI/player/playsongarea.cpp" line="156"/>
++        <location filename="../UI/player/playsongarea.cpp" line="484"/>
++        <location filename="../UI/player/playsongarea.cpp" line="526"/>
+         <source>Random</source>
+         <translation>éšæœºæ’­æ”¾</translation>
+     </message>
+@@ -291,10 +291,10 @@
+         <translation type="vanished">é¡ºåºæ’­æ”¾</translation>
+     </message>
+     <message>
+-        <location filename="../UI/player/playsongarea.cpp" line="122"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="149"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="492"/>
+-        <location filename="../UI/player/playsongarea.cpp" line="502"/>
++        <location filename="../UI/player/playsongarea.cpp" line="130"/>
++        <location filename="../UI/player/playsongarea.cpp" line="158"/>
++        <location filename="../UI/player/playsongarea.cpp" line="501"/>
++        <location filename="../UI/player/playsongarea.cpp" line="511"/>
+         <source>CurrentItemInLoop</source>
+         <translation>å•æ›²å¾ªç¯</translation>
+     </message>
+@@ -336,17 +336,17 @@
+ <context>
+     <name>SideBarWidget</name>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="31"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="32"/>
+         <source>Music Player</source>
+         <translation>éŸ³ä¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="49"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="50"/>
+         <source>Library</source>
+         <translation>éŸ³ä¹åº“</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="58"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="59"/>
+         <source>Song List</source>
+         <translation>æ­Œæ›²åˆ—è¡¨</translation>
+     </message>
+@@ -356,30 +356,30 @@
+         <translation>æˆ‘çš„æ­Œå•</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="113"/>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="319"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="115"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="321"/>
+         <source>New Playlist</source>
+         <translation>æ–°å»ºæ­Œå•</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="117"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="119"/>
+         <source>Rename</source>
+         <translation>é‡å‘½å</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="227"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="229"/>
+         <source>I Love</source>
+         <translation>æˆ‘å–œæ¬¢</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="278"/>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="366"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="280"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="368"/>
+         <source>Prompt information</source>
+         <translation>æç¤ºä¿¡æ¯</translation>
+     </message>
+     <message>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="278"/>
+-        <location filename="../UI/sidebar/sidebarwidget.cpp" line="366"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="280"/>
++        <location filename="../UI/sidebar/sidebarwidget.cpp" line="368"/>
+         <source>Single song name already exists!!!</source>
+         <translation>æ­Œå•åå·²å­˜åœ¨ï¼</translation>
+     </message>
+@@ -476,121 +476,141 @@
+         <translation type="vanished">æ—¶é•¿</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="258"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="983"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="1024"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="1096"/>
++        <location filename="../UI/tableview/tableone.cpp" line="259"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1001"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1042"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1114"/>
+         <source>Song List</source>
+         <translation>æ­Œæ›²åˆ—è¡¨</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="190"/>
++        <location filename="../UI/tableview/tableone.cpp" line="191"/>
+         <source>There are no songs!</source>
+         <translation>è¿˜æ²¡æœ‰æ­Œæ›²ï¼</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="146"/>
++        <location filename="../UI/tableview/tableone.cpp" line="147"/>
+         <source>Play All</source>
+         <translation>æ’­æ”¾å…¨éƒ¨</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="149"/>
++        <location filename="../UI/tableview/tableone.cpp" line="150"/>
+         <source>Add Music</source>
+         <translation>æ·»åŠ éŸ³ä¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="155"/>
++        <location filename="../UI/tableview/tableone.cpp" line="156"/>
+         <source>Add local songs</source>
+         <translation>æ·»åŠ æœ¬åœ°éŸ³ä¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="156"/>
++        <location filename="../UI/tableview/tableone.cpp" line="157"/>
+         <source>Add local folders</source>
+         <translation>æ·»åŠ æœ¬åœ°æ–‡ä»¶å¤¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="192"/>
++        <location filename="../UI/tableview/tableone.cpp" line="193"/>
+         <source>Add Local Songs</source>
+         <translation>æ·»åŠ æœ¬åœ°éŸ³ä¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="193"/>
++        <location filename="../UI/tableview/tableone.cpp" line="194"/>
+         <source>Add Local Folder</source>
+         <translation>æ·»åŠ æœ¬åœ°æ–‡ä»¶å¤¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="260"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="343"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="587"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="985"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="1026"/>
++        <location filename="../UI/tableview/tableone.cpp" line="261"/>
++        <location filename="../UI/tableview/tableone.cpp" line="344"/>
++        <location filename="../UI/tableview/tableone.cpp" line="604"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1003"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1044"/>
+         <source>I Love</source>
+         <translation>æˆ‘å–œæ¬¢</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="262"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="987"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="1028"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="1073"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="1122"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="1151"/>
++        <location filename="../UI/tableview/tableone.cpp" line="263"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1005"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1046"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1091"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1140"/>
++        <location filename="../UI/tableview/tableone.cpp" line="1169"/>
+         <source>Search Result</source>
+         <translation>æœç´¢ç»“æœ</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="290"/>
++        <location filename="../UI/tableview/tableone.cpp" line="291"/>
+         <source>Play</source>
+         <translation>æ’­æ”¾</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="291"/>
++        <location filename="../UI/tableview/tableone.cpp" line="292"/>
+         <source>Delete from list</source>
+         <translation>ä»æ­Œå•ä¸­åˆ é™¤</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="292"/>
++        <location filename="../UI/tableview/tableone.cpp" line="293"/>
+         <source>Remove from local</source>
+         <translation>ä»æœ¬åœ°åˆ é™¤</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="367"/>
++        <location filename="../UI/tableview/tableone.cpp" line="368"/>
+         <source>Confirm that the selected song will be deleted from the song list?</source>
+         <translation>ç¡®è®¤å°†é€‰ä¸­çš„æ­Œæ›²ä»æ­Œå•ä¸­åˆ é™¤ï¼Ÿ</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="368"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="504"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="617"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="693"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="819"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="831"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="842"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="850"/>
++        <location filename="../UI/tableview/tableone.cpp" line="369"/>
++        <location filename="../UI/tableview/tableone.cpp" line="519"/>
++        <location filename="../UI/tableview/tableone.cpp" line="634"/>
++        <location filename="../UI/tableview/tableone.cpp" line="710"/>
++        <location filename="../UI/tableview/tableone.cpp" line="836"/>
++        <location filename="../UI/tableview/tableone.cpp" line="849"/>
++        <location filename="../UI/tableview/tableone.cpp" line="860"/>
++        <location filename="../UI/tableview/tableone.cpp" line="868"/>
+         <source>kylin-music</source>
+         <translation>éŸ³ä¹</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="503"/>
++        <location filename="../UI/tableview/tableone.cpp" line="370"/>
++        <location filename="../UI/tableview/tableone.cpp" line="389"/>
++        <location filename="../UI/tableview/tableone.cpp" line="520"/>
++        <location filename="../UI/tableview/tableone.cpp" line="837"/>
++        <location filename="../UI/tableview/tableone.cpp" line="850"/>
++        <location filename="../UI/tableview/tableone.cpp" line="861"/>
++        <location filename="../UI/tableview/tableone.cpp" line="869"/>
++        <source>Yes</source>
++        <translation>ç¡®å®š</translation>
++    </message>
++    <message>
++        <location filename="../UI/tableview/tableone.cpp" line="371"/>
++        <location filename="../UI/tableview/tableone.cpp" line="390"/>
++        <location filename="../UI/tableview/tableone.cpp" line="521"/>
++        <location filename="../UI/tableview/tableone.cpp" line="838"/>
++        <source>No</source>
++        <translation>å–æ¶ˆ</translation>
++    </message>
++    <message>
++        <location filename="../UI/tableview/tableone.cpp" line="388"/>
++        <location filename="../UI/tableview/tableone.cpp" line="518"/>
+         <source>After the song is deleted from the local, it cannot be resumed. Is it sure to delete?</source>
+         <translation>æ­Œæ›²ä»æœ¬åœ°åˆ é™¤åä¸å¯æ¢å¤ï¼Œæ˜¯å¦ç¡®å®šåˆ é™¤ï¼Ÿ</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="663"/>
++        <location filename="../UI/tableview/tableone.cpp" line="680"/>
+         <source>Audio File</source>
+         <translation>éŸ³é¢‘æ–‡ä»¶</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="809"/>
++        <location filename="../UI/tableview/tableone.cpp" line="826"/>
+         <source>This format file is not supported</source>
+         <translation>ä¸æ”¯æŒæ­¤æ ¼å¼æ–‡ä»¶</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="849"/>
++        <location filename="../UI/tableview/tableone.cpp" line="867"/>
+         <source>Repeat add</source>
+         <translation>é‡å¤æ·»åŠ </translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="885"/>
++        <location filename="../UI/tableview/tableone.cpp" line="903"/>
+         <source>path does not exist</source>
+         <translation>è·¯å¾„ä¸å­˜åœ¨</translation>
+     </message>
+@@ -599,13 +619,13 @@
+         <translation type="vanished">æ‚¨ç¡®å®šä»æœ¬åœ°åˆ é™¤å—ï¼Ÿ</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="818"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="841"/>
++        <location filename="../UI/tableview/tableone.cpp" line="835"/>
++        <location filename="../UI/tableview/tableone.cpp" line="859"/>
+         <source>Success add %1 songs</source>
+         <translation>æˆåŠŸæ·»åŠ %1é¦–æ­Œæ›²</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="830"/>
++        <location filename="../UI/tableview/tableone.cpp" line="848"/>
+         <source>Add failed</source>
+         <translation>æ·»åŠ å¤±è´¥</translation>
+     </message>
+@@ -614,22 +634,23 @@
+         <translation type="vanished">åˆ é™¤</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="293"/>
++        <location filename="../UI/tableview/tableone.cpp" line="294"/>
+         <source>View song information</source>
+         <translation>æŸ¥çœ‹æ­Œæ›²ä¿¡æ¯</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="294"/>
++        <location filename="../UI/tableview/tableone.cpp" line="295"/>
+         <source>Add to songlist</source>
+         <translation>æ·»åŠ åˆ°æ­Œå•</translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="367"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="503"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="818"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="830"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="841"/>
+-        <location filename="../UI/tableview/tableone.cpp" line="849"/>
++        <location filename="../UI/tableview/tableone.cpp" line="368"/>
++        <location filename="../UI/tableview/tableone.cpp" line="388"/>
++        <location filename="../UI/tableview/tableone.cpp" line="518"/>
++        <location filename="../UI/tableview/tableone.cpp" line="835"/>
++        <location filename="../UI/tableview/tableone.cpp" line="848"/>
++        <location filename="../UI/tableview/tableone.cpp" line="859"/>
++        <location filename="../UI/tableview/tableone.cpp" line="867"/>
+         <source>Prompt information</source>
+         <translation>æç¤ºä¿¡æ¯</translation>
+     </message>
+@@ -646,7 +667,7 @@
+         <translation type="vanished">å…± </translation>
+     </message>
+     <message>
+-        <location filename="../UI/tableview/tableone.cpp" line="921"/>
++        <location filename="../UI/tableview/tableone.cpp" line="939"/>
+         <source> songs</source>
+         <translation> é¦–æ­Œæ›²</translation>
+     </message>
+@@ -700,7 +721,7 @@
+ <context>
+     <name>Widget</name>
+     <message>
+-        <location filename="../UI/mainwidget.cpp" line="593"/>
++        <location filename="../UI/mainwidget.cpp" line="598"/>
+         <source>Music Player</source>
+         <translation>éŸ³ä¹</translation>
+     </message>
+@@ -709,19 +730,19 @@
+         <translation type="vanished">æ­Œæ›²åˆ—è¡¨</translation>
+     </message>
+     <message>
+-        <location filename="../UI/mainwidget.cpp" line="841"/>
+-        <location filename="../UI/mainwidget.cpp" line="1032"/>
++        <location filename="../UI/mainwidget.cpp" line="846"/>
++        <location filename="../UI/mainwidget.cpp" line="1037"/>
+         <source>reduction</source>
+         <translation>è¿˜åŸ</translation>
+     </message>
+     <message>
+-        <location filename="../UI/mainwidget.cpp" line="847"/>
+-        <location filename="../UI/mainwidget.cpp" line="1021"/>
++        <location filename="../UI/mainwidget.cpp" line="852"/>
++        <location filename="../UI/mainwidget.cpp" line="1026"/>
+         <source>maximize</source>
+         <translation>æœ€å¤§åŒ–</translation>
+     </message>
+     <message>
+-        <location filename="../UI/mainwidget.cpp" line="1157"/>
++        <location filename="../UI/mainwidget.cpp" line="1162"/>
+         <source>Prompt information</source>
+         <translation>æç¤ºä¿¡æ¯</translation>
+     </message>

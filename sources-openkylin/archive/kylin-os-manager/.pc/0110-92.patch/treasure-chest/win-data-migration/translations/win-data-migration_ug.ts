@@ -1,0 +1,151 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="ug">
+<context>
+    <name>QApplication</name>
+    <message>
+        <source>Win Data Migration</source>
+        <translation>Win يۆتكەش قورالى</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <source>Win Data Migration</source>
+        <translation>Win يۆتكەش قورالى</translation>
+    </message>
+    <message>
+        <source>ok</source>
+        <translation>جەزملەشتۈرۈش</translation>
+    </message>
+    <message>
+        <source>cancel</source>
+        <translation>بىكار قىلىش</translation>
+    </message>
+    <message>
+        <source>retry</source>
+        <translation>قايتا سىناش</translation>
+    </message>
+    <message>
+        <source>failed to migrate files</source>
+        <translation>مۇۋەپپەقىيەتلىك يۆتكەلمىگەن ھۆججەت</translation>
+    </message>
+    <message>
+        <source>view</source>
+        <translation>تەكشۈرۈش</translation>
+    </message>
+    <message>
+        <source>failed to read the migration log:</source>
+        <translation>يۆتكەش خاتىرىسىنى ئوقۇش مەغلۇپ بولدى :</translation>
+    </message>
+    <message>
+        <source>migration log</source>
+        <translation>يۆتكەش خاتىرىسى</translation>
+    </message>
+    <message>
+        <source>how to set the win</source>
+        <translation>Win ئۇچىنى قانداق تەڭشەش</translation>
+    </message>
+    <message>
+        <source>how to set the win (required reading)</source>
+        <translation>Win ئۇچى قانداق تەڭشىلىدۇ ( زۆرۈر ئوقۇشلۇق )</translation>
+    </message>
+    <message>
+        <source>IP address</source>
+        <translation>IP ئادرېسى</translation>
+    </message>
+    <message>
+        <source>win work group</source>
+        <translation>Win ئىشلەتكۈچىلەر گۇرۇپپىسى</translation>
+    </message>
+    <message>
+        <source>win user name</source>
+        <translation>ئابونت نامى win</translation>
+    </message>
+    <message>
+        <source>win password</source>
+        <translation>Win مەخپىي نومۇرى</translation>
+    </message>
+    <message>
+        <source>establish connection</source>
+        <translation>ئۇلاشنى قۇرۇش</translation>
+    </message>
+    <message>
+        <source>successful connection</source>
+        <translation>ئۇلاش مۇۋەپپەقىيەتلىك بولدى</translation>
+    </message>
+    <message>
+        <source>connecting...</source>
+        <translation>ئۇلىنىۋاتىدۇ...</translation>
+    </message>
+    <message>
+        <source>connection failed, please try again</source>
+        <translation>ئۇلاش مەغلۇپ بولدى، قايتا سىناڭ</translation>
+    </message>
+    <message>
+        <source>select the files you want to migrate</source>
+        <translation>يۆتكەشكە كېرەكلىك بولغان ھۆججەتنى تاللاش</translation>
+    </message>
+    <message>
+        <source>file migration to</source>
+        <translation>ھۆججەتنى يۆتكىگىچە</translation>
+    </message>
+    <message>
+        <source>start migration</source>
+        <translation>يۆتكەنشنى باشلاش</translation>
+    </message>
+    <message>
+        <source>select migration directory</source>
+        <translation>مۇندەرىجىنى يۆتكەشنى تاللاش</translation>
+    </message>
+    <message>
+        <source>migration success</source>
+        <translation>يۆتكەش تاماملاندى</translation>
+    </message>
+    <message>
+        <source>failed to create migration logs</source>
+        <translation>كۆچۈش خاتىرىسى بەرپا قىلىش مەغلۇپ بولدى</translation>
+    </message>
+    <message>
+        <source>files failed to be migrated</source>
+        <translation>ئايرىم ھۆججەتنى يۆتكەش مەغلۇپ بولدى</translation>
+    </message>
+    <message>
+        <source>no migration items are selected</source>
+        <translation>تاللانمىغان ھەرقانداق كۆچۈش تۈرى</translation>
+    </message>
+    <message>
+        <source>save path is invalid or unauthorized</source>
+        <translation>ساقلاش يولى تەلەپكە ئۇيغۇن ئەمەس ياكى ھوقۇق دائىرىسى يوق</translation>
+    </message>
+    <message>
+        <source>file creation failure</source>
+        <translation>ھۆججەت قۇرۇش مەغلۇپ بولدى</translation>
+    </message>
+    <message>
+        <source>file integrity check fails</source>
+        <translation>ھۆججەت مۇكەممەللىكىنى تەكشۈرۈش ئارقىلىق ئەمەس</translation>
+    </message>
+    <message>
+        <source>[loading]</source>
+        <translation>【يۈكلىنىۋاتىدۇ】</translation>
+    </message>
+    <message>
+        <source>smb disconnected abnormally</source>
+        <translation>Smb ئۇلىنىش ئۈزۈلۈپ قالدى</translation>
+    </message>
+    <message>
+        <source>loading migration file tree</source>
+        <translation>ھۆججەت يۆتكەش دائىرىسىنى ئوقۇش</translation>
+    </message>
+    <message>
+        <source>&lt;h2&gt;win Settings &lt;/h2&gt;&lt;p&gt; Step 1: Both computers need to be in the same LAN network &lt;/p&gt;&lt;p&gt; Step 2: win computer needs to set the folder or file as a shared folder &lt;/p&gt;&lt;div&gt;1. Select the folder to share.&lt;/div&gt;&lt;div&gt;2. Right click on Properties and select the Sharing tab. Click on Advanced Sharing Settings, check Share this folder, and then click Apply.&lt;/div&gt;</source>
+        <translation>Win كومپيۇتېر ھۆججەت قىسقۇچ ياكى ھۆججەتنى ئورتاق بەھرىلىنىدىغان ھۆججەت قىسقۇچ &lt; /p&gt;&lt;div&gt;1 قىلىپ تەڭشەپ، ئورتاق بەھرىلىنىدىغان ھۆججەت قىسقۇچنى تاللايدۇ. &lt; /div&gt;&lt;div&gt;2، مائۇسنىڭ ئوڭ كۇنۇپكىسىنى بېسىپ خاسلىقنى چېكىمىز، ھەمدە ئورتاق بەھرىلىنىدىغان بەت ئىمزاسىنى تاللايمىز، يۇقىرى دەرىجىلىك ئورتاق بەھرىلىنىدىغان بەلگىلەشنى چېكىمىز، ئورتاق بەھرىلىنىدىغان بۇ ھۆججەت قىسقۇچنى تاللايمىز، قوللىنىشنى چېكىمىز.
+&lt;/div&gt;</translation>
+    </message>
+    <message>
+        <source>Canceling file migration, please wait ……</source>
+        <translation>ھۆججەت يۆتكەش ئەمەلدىن قالدۇرۇلماقتا، سەل ساقلاڭ...</translation>
+    </message>
+</context>
+</TS>

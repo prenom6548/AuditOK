@@ -1,0 +1,553 @@
+#!/bin/bash
+
+set -e
+
+automatic=$(get_value automatic-installation)
+if [[ $automatic -eq 0 ]]; then
+	echo "this is custom-ui installer"
+else
+	return 0
+fi
+
+CONFIG_FILE=/var/log/installer/ky-installer.cfg
+
+mount_list=$(cat "$CONFIG_FILE" | grep ^partitions\=)
+mount_list=${mount_list#*=}
+mount_list=$(echo "${mount_list}" | sed 's/\"//g')
+mount_list=${mount_list//;/|}
+mount_list=${mount_list//:/=}
+echo "${mount_list}"
+
+part_list=$(cat "$CONFIG_FILE" | grep ^custom-info) || return 0
+
+do_mkfs_efi(){
+  part_efi=$1
+  if [[ "${is_990_9a0}" == "true" ]]; then
+    sudo mkfs.vfat -s1 -n ESP "${part_efi}" || sudo mkfs.vfat -n ESP "${part_efi}"
+  else
+    sudo mkfs.vfat -n ESP "${part_efi}" || sudo mkfs.vfat -F16 -n ESP "${part_efi}"
+  fi
+}
+
+do_prepare_sw() {
+  umount -l /media/*/* || true
+  dmsetup remove_all -f
+  #gsettings set org.ukui.flash-disk.autoload ifautoload false
+}
+
+do_mkfs_boot() {
+  boot_part=$1
+  if [[ "$(archdetect)" == "sw64/generic" ]]; then
+#    do_prepare_sw
+    mkfs.ext3 -Fq -L SYSBOOT "${boot_part}"
+  else
+    mkfs.ext4 -Fq -L SYSBOOT "${boot_part}"
+  fi
+}
+
+
+do_mkfs() {
+	part_path=$1
+	fs=$2
+	part_label=$3
+	part_label_win=$4
+
+	case "$fs" in
+        	fat32|fat16)
+             		mkfs.vfat -n "${part_label_win}" "${part_path}";;
+                ext4)
+                        mkfs.ext4 -Fq -L "${part_label}" "${part_path}";;
+                xfs)
+                        mkfs.xfs -fq -L "${part_label}" "${part_path}";;
+                btrfs)
+                        mkfs.btrfs -fq -L "${part_label}" "${part_path}";;
+                ntfs)
+                        mkfs.ntfs -fq -L "${part_label_win}" "${part_path}";;
+                *)
+                        mkfs.${fs} -Fq -L "${part_label}" "${part_path}" ||  mkfs.${fs} -fq -L "${part_label}" "${part_path}";;
+         esac
+}
+
+do_mkfs_nolabel() {
+	part_path=$1
+	fs=$2
+
+	case "$fs" in
+        	fat32|fat16)
+             		mkfs.vfat "${part_path}";;
+                ext4)
+                        mkfs.ext4 -Fq "${part_path}";;
+                xfs)
+                        mkfs.xfs -fq "${part_path}";;
+                btrfs)
+                        mkfs.btrfs -fq "${part_path}";;
+                ntfs)
+                        mkfs.ntfs -fq "${part_path}";;
+                *)
+                        mkfs.${fs} -Fq "${part_path}" ||  mkfs.${fs} -fq "${part_path}";;
+         esac
+}
+
+do_error_part() {
+	#${part_path} ${part_start} ${part_end} ${fs} ${part_type}
+        part_start1=$2
+	part_start1=$((part_start1 + 1))
+	parted -s $1 mkpart $5 $4 "${part_start1}"MiB "$3"MiB
+}
+
+
+do_format_part() {
+
+	part_info1=$1
+	part_path1=$2
+
+	fs=
+        fs=$(echo ${part_info1#*fs=})
+        fs=$(echo ${fs%%|*})
+
+        mount_point=
+        if echo ${mount_list} | grep -q ${part_path1}; then
+        	mount_point=$(echo ${mount_list%%=${part_path1}*})
+                mount_point=$(echo ${mount_point##*|})
+                echo "mount_point=${mount_point}"
+        fi
+	case "${fs}" in
+        	'efi')
+                	mount_point="/boot/efi"
+        		;;
+        	'kylin-data')
+                	mount_point="kylin-data"
+        	;;
+        	'linux-swap')
+                	mount_point="linux-swap"
+        	;;
+        esac
+
+        part_label=
+	if [[ -n ${mount_point} ]]; then
+        	case "${mount_point}" in
+                	'/')
+                        	part_label=SYSROOT
+                                do_mkfs ${part_path1} ${fs} ${part_label} root
+                                ;;
+                        '/boot')
+                                 part_label=SYSBOOT
+                                 do_mkfs_boot ${part_path1}
+                                 ;;
+                        '/boot/efi')
+                                 part_label=ESP
+                                 do_mkfs_efi ${part_path1}
+                                 ;;
+                        'kylin-data')
+                                 part_label=DATA
+                                 fs=ext4
+                                 do_mkfs ${part_path1} ${fs} ${part_label} data
+                                 ;;
+                        'linux-swap')
+                                 part_label=SYSROOT
+                                 mkswap -L SWAP "${part_path1}"
+                                # swapon "${part_path1}"
+                                 ;;
+                         '/backup')
+                                 part_label=KYLIN-BACKUP
+                                 do_mkfs ${part_path1} ${fs} ${part_label} backup
+                                 ;;
+                         'empty')
+                                 part_label=
+                                 do_mkfs_nolabel ${part_path1} ${fs}
+                                 ;;
+                         *)
+                                 part_label=$(echo ${mount_point##*/})
+                                 do_mkfs ${part_path1} ${fs} ${part_label} ${part_label}
+                                 ;;
+                  esac
+                  echo "part_label=${part_label}"
+            else
+                  do_mkfs_nolabel ${part_path1} ${fs}
+            fi
+}
+
+dev_path_bc=
+part_start_bc=
+part_end_bc=
+
+vg_part_list=
+for part_info in ${part_list}; do
+
+	echo "${part_info}"
+
+	part_info=${part_info#*=}
+	part_info=$(echo "${part_info}" | sed 's/\"//g')
+        part_info=${part_info//;/|}
+	
+	operator=
+	operator=$(echo ${part_info#*operator=})
+        operator=$(echo ${operator%%|*})
+
+	part_path=
+	part_path=$(echo ${part_info#*partPath=})
+	part_path=$(echo ${part_path%%|*})
+
+	
+	echo "${operator}"
+	case "$operator" in
+        	format)
+			fs1=
+                        if echo ${part_info} | grep -q "fs="; then
+                                fs1=$(echo ${part_info#*fs=})
+                                fs1=$(echo ${fs1%%|*})
+                                if [[ "${fs1}" == "extend" ]]; then
+                                        fs1=
+                                fi
+                        fi
+			if [[ "${fs1}" == "lvm-pv" ]]; then
+				sync
+				sleep 1
+                                pvcreate -ffy ${part_path}
+        			vg_part_list="${vg_part_list} ${part_path}"
+                                continue
+			else
+                                if [[ -n ${vg_part_list} ]];then
+                                        vg_part_list_bc=$( echo "${vg_part_list}"| tr ' ' '\n' |  sort)
+                                        echo "${vg_part_list}"
+                                        echo "${vg_part_list_bc}"
+                                        vg_part_list=
+                                        for vg_part in ${vg_part_list_bc}; do
+                                                if [[ "${vg_part}" == "${part_path}" ]]; then
+                                                        continue
+                                                else
+                                                        vg_part_list="${vg_part_list} ${vg_part}"
+                                                        continue
+                                                fi
+                                        done
+                                        echo "vg_part_list=${vg_part_list}"
+                                fi
+                        fi
+
+			do_format_part ${part_info}  ${part_path}			
+			continue
+			;;
+                delete)
+			dev_path_bc=
+                        part_start_bc=
+                        part_end_bc=
+
+			num=
+			num=$(echo ${part_info#*num=})
+        		num=$(echo ${num%%|*})
+			dev_path=
+                        dev_path=$(echo ${part_info#*devPath=})
+                        dev_path=$(echo ${dev_path%%|*})
+			parted -s ${dev_path} rm ${num}
+			
+			if [[ -n ${vg_part_list} ]];then
+                                vg_part_list_bc=$( echo "${vg_part_list}"| tr ' ' '\n' |  sort)
+                                echo "${vg_part_list}"
+                                echo "${vg_part_list_bc}"
+                                vg_part_list=
+                                for vg_part in ${vg_part_list_bc}; do
+                                        if [[ "${vg_part}" == "${part_path}" ]]; then
+                                                continue
+                                        else
+                                                vg_part_list="${vg_part_list} ${vg_part}"
+                                                continue
+                                        fi
+                                done
+                                echo "vg_part_list=${vg_part_list}"
+                        fi
+			continue
+			;;
+                create)
+			fs1=
+        		if echo ${part_info} | grep -q "fs="; then
+                        	fs1=$(echo ${part_info#*fs=})
+                        	fs1=$(echo ${fs1%%|*})
+				if [[ "${fs1}" == "extend" ]]; then
+					fs1=
+				fi
+			fi
+			
+			dev_path=
+                        dev_path=$(echo ${part_info#*devPath=})
+                        dev_path=$(echo ${dev_path%%|*})
+			
+			part_start=
+                        part_start=$(echo ${part_info#*partStart=})
+                        part_start=$(echo ${part_start%%|*})
+
+			part_end=
+                        part_end=$(echo ${part_info#*partEnd=})
+                        part_end=$(echo ${part_end%%|*})
+		
+			part_type=
+                        part_type=$(echo ${part_info#*partType=})
+                        part_type=$(echo ${part_type%%|*})
+
+			#增加判断,当分区无文件系统时,前端目前会写入两个分区不同,其余分区信息一样的分区操作	
+			if [[ "${dev_path}" == "${dev_path_bc}" ]]&&[[ "${part_start}" == "${part_start_bc}" ]]&&[[ "${part_end}" == "${part_end_bc}" ]]; then
+				continue
+			else
+				dev_path_bc=${dev_path}
+				part_start_bc=${part_start}
+				part_end_bc=${part_end}
+			fi
+
+        		mount_point1=
+        		if echo ${mount_list} | grep -q ${part_path}; then
+        			mount_point1=$(echo ${mount_list%%=${part_path}*})
+                		mount_point1=$(echo ${mount_point1##*|})
+                		echo "mount_point=${mount_point1}"
+        		fi
+
+			if [[ "${fs1}" == "lvm-pv" ]]; then
+                                parted -s ${dev_path} mkpart ${part_type} ext4 "${part_start}"MiB "${part_end}"MiB || do_error_part ${dev_path} ${part_start} ${part_end} "ext4" ${part_type}
+				partprobe "${dev_path}"
+				sync
+				sleep 1
+                                pvcreate -ffy ${part_path}
+        			vg_part_list="${vg_part_list} ${part_path}"
+                                continue
+                        fi
+
+                        if [[ "${dev_path}" == "lvm-vg" ]]; then
+                                continue
+                        fi
+        		
+			part_label=
+
+        		case "${fs1}" in
+                        	'efi')
+					fs1=fat32
+					part_type=EFI
+					;;
+                        	'kylin-data')
+					fs1=ext4
+					;;
+                        	'linux-swap')
+					part_type=logical
+					if [[ "${is_efi}" == "false" ]]; then
+						num=
+						num=$(echo ${part_info#*num=})
+        					num=$(echo ${num%%|*})
+						if [ $num -lt 4 ]; then
+							part_type=primary
+						fi
+					fi
+					;;
+                  	esac
+
+			if [[ "${part_type}" == "extended" ]]; then
+				parted -s ${dev_path} mkpart "${part_type}" "${part_start}"MiB 100%
+				partprobe "${dev_path}"
+				sync
+				sleep 1
+                                continue
+			fi
+
+			parted -s ${dev_path} mkpart "${part_type}" "${fs1}" "${part_start}"MiB "${part_end}"MiB ||do_error_part ${dev_path} ${part_start} ${part_end} ${fs1} "${part_type}"
+			if [[ -n ${mount_point1} ]]; then
+        			case "${mount_point1}" in
+                        		'/boot/efi')
+						num=
+                        			num=$(echo ${part_info#*num=})
+                        			num=$(echo ${num%%|*})
+						parted -s "${dev_path}" set "${num}" esp on
+						;;
+                        		'/boot')
+        					if echo ${mount_list} | grep -q "/boot/efi"; then
+                                 			echo "efi is exit,do not to set boot"
+						else
+							num=
+                        				num=$(echo ${part_info#*num=})
+                        				num=$(echo ${num%%|*})
+							parted -s "${dev_path}" set "${num}" boot on
+						fi
+						;;
+                  		esac
+                                echo "part_label=${part_label}"
+            		fi
+			partprobe "${dev_path}"
+			sync
+			sleep 1
+			if [[ -n ${fs1} ]]; then
+				do_format_part ${part_info}  ${part_path}
+			fi			
+			
+			continue
+			;;
+                newPartTable)
+			part_table=
+                        part_table=$(echo ${part_info#*partTableType=})
+                        part_table=$(echo ${part_table%%|*})
+			
+			case "${part_table}" in
+                		'GPT')
+					parted -s "${part_path}" mktable gpt
+					;;
+                		'MsDos')
+					parted -s "${part_path}" mktable msdos
+					;;
+			esac
+			continue
+			;;
+        	*)
+			continue
+			;;
+        esac
+
+done
+
+
+pv_part_list=$(cat "$CONFIG_FILE" | grep ^custom-info | grep "lvm-pv") || true
+if [[ -n ${pv_part_list} ]];then
+        echo "start lvm-vg partitions"
+else
+        return 0
+fi
+
+if [[ -n ${vg_part_list} ]];then
+	vg_part_list_bc=$( echo "${vg_part_list}"| tr ' ' '\n' |  sort -u)
+        vg_part_list=
+        for vg_part in ${vg_part_list_bc}; do
+                vg_part_list="${vg_part_list} ${vg_part}"
+        done
+        echo "vg_part_list=${vg_part_list}"
+fi
+
+if [[ -n ${vg_part_list} ]];then
+        vgcreate kylin-vg ${vg_part_list}
+else
+        return 0
+fi
+
+
+
+
+lv_part_list=
+lv_part_list=$(cat "$CONFIG_FILE" | grep ^custom-info | grep "lvm-lv") || true
+if [[ -n ${pv_part_list} ]];then
+        echo "start lvm-lv partitions"
+else
+        return 0
+fi
+
+dev_path_bc=
+part_start_bc=
+part_end_bc=
+nofs_num=1
+empty_num=1
+for part_info in ${lv_part_list}; do
+        echo "${part_info}"
+        part_info=${part_info#*=}
+        part_info=$(echo "${part_info}" | sed 's/\"//g')
+        part_info=${part_info//;/|}
+        operator=
+        operator=$(echo ${part_info#*operator=})
+        operator=$(echo ${operator%%|*})
+        part_path=
+        part_path=$(echo ${part_info#*partPath=})
+        part_path=$(echo ${part_path%%|*})
+        fs1=
+        if echo ${part_info} | grep -q "fs="; then
+                fs1=$(echo ${part_info#*fs=})
+                fs1=$(echo ${fs1%%|*})
+                if [[ "${fs1}" == "extend" ]]; then
+                        fs1=
+                fi
+        fi
+        dev_path=
+        dev_path=$(echo ${part_info#*devPath=})
+        dev_path=$(echo ${dev_path%%|*})
+        part_start=
+        part_start=$(echo ${part_info#*partStart=})
+        part_start=$(echo ${part_start%%|*})
+        part_end=
+        part_end=$(echo ${part_info#*partEnd=})
+        part_end=$(echo ${part_end%%|*})
+        part_size=
+        part_size=$(( part_end - part_start + 1 ))
+        part_small_size=$(( part_end - part_start ))
+	
+	pe_size=$(vgdisplay kylin-vg | grep "PE Size" |awk '{print $3}')
+	pe_size=$(echo ${pe_size%.*})
+
+	pe_free=$(vgdisplay kylin-vg | grep "PE" |grep Free |awk '{print $5}')
+	vg_free_size=$(( pe_size * pe_free ))
+	if [ $part_size -gt $vg_free_size ]; then
+		part_size=$vg_free_size		
+	fi
+        
+	#增加判断,当分区无文件系统时,前端目前会写入两个分区不同,其余分区信息一样的分区操作      
+        if [[ "${dev_path}" == "${dev_path_bc}" ]]&&[[ "${part_start}" == "${part_start_bc}" ]]&&[[ "${part_end}" == "${part_end_bc}" ]]; then
+                continue
+        else
+                dev_path_bc=${dev_path}
+                part_start_bc=${part_start}
+                part_end_bc=${part_end}
+        fi
+	
+	num=
+	num=$(echo ${part_info#*num=})
+        num=$(echo ${num%%|*})
+        mount_point1=
+	mount_dev="${dev_path}${num}"
+        if echo ${mount_list} | grep -q "${mount_dev}"; then
+                mount_point1=$(echo ${mount_list%%=${mount_dev}*})
+                mount_point1=$(echo ${mount_point1##*|})
+                echo "mount_point=${mount_point1}"
+        fi
+
+        if [[ "${dev_path}" == "lvm-vg" ]]; then
+                if [[ -n ${mount_point1} ]]; then
+                        case "${mount_point1}" in
+                        'kylin-data')
+                                fs1=ext4
+                                part_label=DATA
+                                lvcreate --wipesignatures n -L "${part_size}" -n data kylin-vg || lvcreate --wipesignatures n -L "${part_small_size}" -n data kylin-vg
+                                part_path1=/dev/kylin-vg/data
+                                do_mkfs ${part_path1} ${fs1} ${part_label} data
+                                ;;
+                        'linux-swap')
+                                lvcreate --wipesignatures n -L "${part_size}" -n swap kylin-vg || lvcreate --wipesignatures n -L "${part_small_size}" -n swap kylin-vg
+                                part_path1=/dev/kylin-vg/swap
+                                mkswap -L SWAP "${part_path1}"
+                                ;;
+                        '/backup')
+                                part_label=KYLIN-BACKUP
+                                lvcreate --wipesignatures n -L "${part_size}" -n backup kylin-vg || lvcreate --wipesignatures n -L "${part_small_size}" -n backup kylin-vg
+                                part_path1=/dev/kylin-vg/backup
+                                do_mkfs ${part_path1} ${fs1} ${part_label} backup
+                                ;;
+                         '/')
+                                part_label=SYSROOT
+                                lvcreate --wipesignatures n -L "${part_size}" -n root kylin-vg || lvcreate --wipesignatures n -L "${part_small_size}" -n root kylin-vg
+                                part_path1=/dev/kylin-vg/root
+                                do_mkfs ${part_path1} ${fs1} ${part_label} root
+                                ;;
+                         *)
+                                part_label=$(echo ${mount_point1##*/})
+				if echo "${part_label}" | grep -q empty; then
+                                        part_label=kylin${empty_num}
+                                        empty_num=$(( empty_num + 1 ))
+                                fi
+
+                                lvcreate --wipesignatures n -L "${part_size}" -n "${part_label}" kylin-vg || lvcreate --wipesignatures n -L "${part_small_size}" -n "${part_label}" kylin-vg
+                                part_path1=/dev/kylin-vg/${part_label}
+                                do_mkfs ${part_path1} ${fs1} ${part_label} ${part_label}
+                                ;;
+                        esac
+                else
+                        lvcreate --wipesignatures n -L "${part_size}" -n "nofs${nofs_num}" kylin-vg
+                        nofs_num=$(( nofs_num + 1 ))
+                fi
+        else
+                continue
+        fi
+        sync
+        sleep 1
+done
+
+
+
+
+

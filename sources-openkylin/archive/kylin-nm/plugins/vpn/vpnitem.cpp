@@ -1,0 +1,204 @@
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ *
+ * Copyright (C) 2022 Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
+ */
+#include "vpnitem.h"
+#include <kysdk/applications/accessinfohelper.h>
+#include <QPainter>
+#include <QPainterPath>
+#include <QApplication>
+#include "klabel.h"
+#define FRAME_SPEED 150
+#define LIMIT_TIME 60*1000
+#define TOTAL_PAGE 8
+#define RADIUS 6.0
+
+#define THEME_QT_SCHEMA  "org.ukui.style"
+#define MODE_QT_KEY      "style-name"
+
+using namespace kdk;
+
+VpnItem::VpnItem(bool bAcitve, QWidget *parent)
+    : m_isAcitve(bAcitve), QPushButton(parent)
+{
+    this->setMinimumSize(550, 58);
+    this->setProperty("useButtonPalette", true);
+    this->setFlat(true);
+    QHBoxLayout *mLanLyt = new QHBoxLayout(this);
+    mLanLyt->setContentsMargins(16,0,16,0);
+    mLanLyt->setSpacing(16);
+    m_iconLabel = new QLabel(this);
+    m_iconLabel->setProperty("useIconHighlightEffect", 0x2);
+    m_titileLabel = new KLabel(this);
+    m_statusLabel = new QLabel(this);
+    m_statusLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_infoLabel = new GrayInfoButton(this);
+    KDK_EXTEND_ALL_INFO_FORMAT(m_infoLabel, "VPN", "", "details button of VPN");
+
+    m_moreButton = new QPushButton(this);
+    m_moreButton->setProperty("useButtonPalette", true);
+    m_moreButton->setFlat(true);
+    m_moreButton->setFixedSize(36, 36);
+    m_moreButton->setIcon(QIcon::fromTheme("view-more-horizontal-symbolic"));
+    m_moreMenu = new QMenu(m_moreButton);
+    m_connectAction = new QAction(m_moreMenu);
+    m_deleteAction = new QAction(tr("Delete"), m_moreMenu);
+    setConnectActionText(m_isAcitve);
+
+    m_moreMenu->addAction(m_connectAction);
+    m_moreMenu->addAction(m_deleteAction);
+
+    mLanLyt->addWidget(m_iconLabel);
+    mLanLyt->addWidget(m_titileLabel,Qt::AlignLeft);
+    mLanLyt->addStretch();
+    mLanLyt->addWidget(m_statusLabel);
+    mLanLyt->addWidget(m_infoLabel);
+    mLanLyt->addWidget(m_moreButton);
+
+    m_loadIcons.append(QIcon::fromTheme("ukui-loading-1-symbolic"));
+    m_loadIcons.append(QIcon::fromTheme("ukui-loading-2-symbolic"));
+    m_loadIcons.append(QIcon::fromTheme("ukui-loading-3-symbolic"));
+    m_loadIcons.append(QIcon::fromTheme("ukui-loading-4-symbolic"));
+    m_loadIcons.append(QIcon::fromTheme("ukui-loading-5-symbolic"));
+    m_loadIcons.append(QIcon::fromTheme("ukui-loading-6-symbolic"));
+    m_loadIcons.append(QIcon::fromTheme("ukui-loading-7-symbolic"));
+
+    m_waitTimer = new QTimer(this);
+    connect(m_waitTimer, &QTimer::timeout, this, &VpnItem::updateIcon);
+
+    m_iconLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_titileLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+    m_statusLabel->setAttribute(Qt::WA_TransparentForMouseEvents, true);
+
+    connect(m_connectAction, &QAction::triggered, this, &VpnItem::onConnectTriggered);
+    connect(m_deleteAction, &QAction::triggered, this, &VpnItem::onDeletetTriggered);
+    connect(m_moreButton, &QPushButton::clicked, this, &VpnItem::onMoreButtonClicked);
+    m_moreMenu->installEventFilter(this);
+}
+
+void VpnItem::updateIcon()
+{
+    if (m_currentIconIndex > 6) {
+        m_currentIconIndex = 0;
+    }
+    m_statusLabel->setPixmap(m_loadIcons.at(m_currentIconIndex).pixmap(16,16));
+    m_currentIconIndex ++;
+}
+
+void VpnItem::startLoading()
+{
+    m_waitTimer->start(FRAME_SPEED);
+    m_loading = true;
+}
+
+void VpnItem::stopLoading(){
+    m_waitTimer->stop();
+    m_loading = false;
+}
+
+void VpnItem::setConnectActionText(bool isAcitve)
+{
+    if (isAcitve) {
+        m_connectAction->setText(tr("Disconnect"));
+    } else {
+        m_connectAction->setText(tr("Connect"));
+    }
+}
+
+void VpnItem::onConnectTriggered()
+{
+    if (!m_connectAction) {
+        return;
+    }
+    if (m_connectAction->text() == tr("Connect")) {
+        Q_EMIT connectActionTriggered();
+    } else if (m_connectAction->text() == tr("Disconnect")) {
+        Q_EMIT disconnectActionTriggered();
+    }
+}
+
+void VpnItem::onDeletetTriggered()
+{
+    if (!m_deleteAction) {
+        return;
+    }
+    Q_EMIT deleteActionTriggered();
+}
+
+void VpnItem::onMoreButtonClicked()
+{
+    if (!m_moreMenu || !m_moreButton) {
+        return;
+    }
+    
+    // 计算菜单显示位置，使菜单右边界与按钮右边界对齐
+    QPoint buttonPos = m_moreButton->mapToGlobal(QPoint(0, 0));
+    int menuWidth = m_moreMenu->sizeHint().width();
+    int buttonWidth = m_moreButton->width();
+    int buttonHeight = m_moreButton->height();
+    
+    QPoint menuPos = QPoint(buttonPos.x() + buttonWidth - menuWidth, buttonPos.y() + buttonHeight);
+    m_moreMenu->popup(menuPos);
+}
+
+void VpnItem::paintEvent(QPaintEvent *event)
+{
+    QPainter painter(this);
+    painter.setRenderHint(QPainter::Antialiasing, true);  //设置渲染,启动反锯齿
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(this->palette().base().color());
+
+    QPalette pal = qApp->palette();
+    QColor color = pal.color(QPalette::Button);
+    color.setAlphaF(0.5);
+    pal.setColor(QPalette::Button, color);
+    this->setPalette(pal);
+
+    QRect rect = this->rect();
+    QPainterPath path;
+    const qreal radius = 8.0;
+
+    if (m_cornerType == Top) {
+        // 左上右上圆角
+        path.moveTo(rect.left() + radius, rect.top());
+        path.lineTo(rect.right() - radius, rect.top());
+        path.quadTo(rect.right(), rect.top(), rect.right(), rect.top() + radius);
+        path.lineTo(rect.right(), rect.bottom());
+        path.lineTo(rect.left(), rect.bottom());
+        path.lineTo(rect.left(), rect.top() + radius);
+        path.quadTo(rect.left(), rect.top(), rect.left() + radius, rect.top());
+    } else {
+        path.addRect(rect);
+    }
+
+    painter.fillPath(path, this->palette().base().color());
+    QPushButton::paintEvent(event);
+}
+
+bool VpnItem::eventFilter(QObject *watched, QEvent *event)
+{
+    Q_UNUSED(watched)
+    Q_UNUSED(event)
+    return false;
+}
+
+void VpnItem::setCornerType(CornerType type) 
+{
+    m_cornerType = type; 
+    update(); 
+}

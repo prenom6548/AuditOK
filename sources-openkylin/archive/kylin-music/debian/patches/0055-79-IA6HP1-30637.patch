@@ -1,0 +1,273 @@
+From: xuxinrong01 <xuxinrong@kylinos.cn>
+Date: Wed, 24 Jul 2024 09:08:25 +0000
+Subject: =?utf-8?b?ITc5ICNJQTZIUDEg44CQ5Li76KaB44CR44CQ6ZSB5bGP44CR44CQ6ZyA?=
+ =?utf-8?b?5rGCMzA2MzfjgJHkvb/nlKjpn7PkuZDlupTnlKjmkq3mlL7pn7PkuZDvvIzov5s=?=
+ =?utf-8?b?5YWl6ZSB5bGP77yM5peg5rOV6I635Y+W5Yiw5LiT6L6R5Zu+54mH44CB5q2M5puy?=
+ =?utf-8?b?5ZCN44CB5q2M5omL5ZCN77yM5pKt5pS+5oyJ6ZKu5pi+56S65pqC5YGcIE1lcmdl?=
+ =?utf-8?b?IHB1bGwgcmVxdWVzdCAhNzkgZnJvbSB4dXhpbnJvbmcwMS9vcGVua3lsaW4vbmls?=
+ =?utf-8?b?ZQ==?=
+
+---
+ UI/dbusadapter.cpp          | 32 ++++++++++++++++++++------------
+ UI/dbusadapter.h            | 12 ++++++++----
+ UI/mainwidget.cpp           | 40 ++++++++++++++++++++++++++++++++++++++++
+ UI/mainwidget.h             |  4 ++++
+ UIControl/player/player.cpp |  8 ++++++++
+ UIControl/player/player.h   |  1 +
+ 6 files changed, 81 insertions(+), 16 deletions(-)
+
+diff --git a/UI/dbusadapter.cpp b/UI/dbusadapter.cpp
+index bf49c87..f8d67d5 100644
+--- a/UI/dbusadapter.cpp
++++ b/UI/dbusadapter.cpp
+@@ -8,7 +8,7 @@ DbusAdapter::DbusAdapter(QObject *parent) : QObject(parent)
+     QDBusConnection::sessionBus().registerObject("/org/mpris/MediaPlayer2", "org.mpris.MediaPlayer2.Player", this, QDBusConnection::ExportAllContents);
+ 
+     this->setProperty("CanControl", false);
+-    initMetadata();
++//    initMetadata();
+ }
+ 
+ QString DbusAdapter::getPlaybackState()
+@@ -26,6 +26,10 @@ void DbusAdapter::setLoopStatus(QString s)
+     Widget::mutual->setPlayMode(s);
+ }
+ 
++QVariantMap DbusAdapter::getMetadata()
++{
++    return Widget::mutual->getMetadata();
++}
+ 
+ void DbusAdapter::updateMetadata(const QVariantMap input)
+ {
+@@ -57,8 +61,9 @@ void DbusAdapter::setVolume(double d)
+ 
+     Widget::mutual->setVolume(d*100);
+ 
+-    QStringList changeList { QString::number(d) };
+-    notify("Volume", changeList);
++    QVariantMap changedProperties;
++    changedProperties.insert("Volume",QVariant::fromValue(QDBusVariant(d)));
++    notify("org.mpris.MediaPlayer2.Player",changedProperties,QStringList());
+ }
+ 
+ long long DbusAdapter::getPosition()
+@@ -117,9 +122,13 @@ void DbusAdapter::Pause() const
+     Widget::mutual->Pause();
+ }
+ 
+-void DbusAdapter::PlayPause() const
++void DbusAdapter::PlayPause()
+ {
++    qDebug() << "into PlayPause throught mpris.";
+     Widget::mutual->PlayPause();
++    QVariantMap changedProperties;
++    changedProperties.insert("PlaybackStatus",QVariant::fromValue(QDBusVariant(m_playbackStatus)));
++    notify("org.mpris.MediaPlayer2.Player",changedProperties,QStringList());
+ }
+ 
+ void DbusAdapter::Previous() const
+@@ -172,16 +181,14 @@ void DbusAdapter::OpenUri(const QString &Uri)
+ 
+ }
+ 
+-void DbusAdapter::notify(const QString &changedPropertie, const QStringList &invalidatedProperties)
++void DbusAdapter::notify(const QString &interfaceName, const QVariantMap &changedProperties, const QStringList &invalidatedProperties)
+ {
+-    QVariantMap changedProperties;
+-
+     QDBusConnection connection = QDBusConnection::sessionBus();
+     QString objectPath = "/org/mpris/MediaPlayer2";
+     QDBusMessage signalMessage= QDBusMessage::createSignal(objectPath,"org.freedesktop.DBus.Properties","PropertiesChanged");
+-
+-    changedProperties["property"] = changedPropertie;
+-    signalMessage << "org.mpris.MediaPlayer2.Player" << changedProperties << invalidatedProperties;
++//    QVariantMap changed;
++//    changed.insert("PlaybackStatus",QVariant(PlaybackStatus));
++    signalMessage << interfaceName << changedProperties << invalidatedProperties;
+     connection.send(signalMessage);
+ }
+ 
+@@ -200,6 +207,7 @@ void DbusAdapter::setRate(double d)
+     } else {
+         qWarning() << "dbus set rate error, rate is :" << d;
+     }
+-    QStringList changeList { QString::number(d) };
+-    notify("Rate", changeList);
++    QVariantMap changedProperties;
++    changedProperties.insert("Rate",QVariant::fromValue(QDBusVariant(d)));
++    notify("org.mpris.MediaPlayer2.Player",changedProperties,QStringList());
+ }
+diff --git a/UI/dbusadapter.h b/UI/dbusadapter.h
+index 18978de..cbfbc25 100644
+--- a/UI/dbusadapter.h
++++ b/UI/dbusadapter.h
+@@ -51,7 +51,7 @@ public:
+     void setShuffle(bool b) { m_shuffle = b; }
+ 
+     QVariantMap m_metadata;
+-    QVariantMap getMetadata() { return m_metadata; }
++    QVariantMap getMetadata();
+     void updateMetadata(const QVariantMap input);
+ 
+     double getVolume();
+@@ -91,7 +91,7 @@ public Q_SLOTS:
+     void Next() const;
+     void Play() const;
+     void Pause() const;
+-    void PlayPause() const;
++    void PlayPause();
+     void Previous() const;
+     void Seek(const qint64 Offset);
+     void SetPosition(const QString& TrackId, const long long Position);
+@@ -101,12 +101,16 @@ public Q_SLOTS:
+     void VolumeDown() const;
+     void FullScreen() const;
+     void Exit() const;
++
++    void notify(const QString &interfaceName, const QVariantMap &changedProperties, const QStringList &invalidatedProperties);
++
+ Q_SIGNALS:
+     void Seeked(const qint64 url);
+-
++    void PropertiesChanged(const QString &interface_name, const QVariantMap &change_properties, const QStringList &invalidate_properties);
+ 
+ private:
+-    void notify(const QString &changedProperties, const QStringList &invalidatedProperties);
++    QString m_playbackStatus = "Stopped";
++//    void notify(const QString &changedProperties, const QStringList &invalidatedProperties);
+ };
+ 
+ #endif // DBUSADAPTER_H
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index 0b901e8..b57ab11 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -10,6 +10,7 @@
+ #include "UIControl/global/global.h"
+ #include "UI/globalsignal.h"
+ #include <KF5/KWindowSystem/kwindowsystem.h>
++#include "UIControl/base/musicDataBase.h"
+ 
+ #include <ukui-log4qt.h>
+ 
+@@ -1313,6 +1314,45 @@ void Widget::Seek(const qint64 offset) const
+     }
+ }
+ 
++QVariantMap Widget::getMetadata() const
++{
++    QVariantMap metadata;
++    QString playPath = playController::getInstance().getPath();
++    if(playPath != "")
++    {
++        musicDataStruct musicStruct;
++        QString filePath = playPath.remove("file://");
++        g_db->getSongInfoFromDB(filePath, musicStruct);
++
++        metadata["xesam:title"] = musicStruct.title;
++        metadata["xesam:artist"] = musicStruct.singer;
++        metadata["xesam:album"] = musicStruct.album;
++        metadata["mpris:artUrl"] = "";
++
++    }
++    else
++    {
++        metadata["xesam:title"] = "";
++        metadata["xesam:artist"] = "";
++        metadata["xesam:album"] = "";
++        metadata["mpris:artUrl"] = "";
++    }
++
++    metadata["mpris:trackid"] = 0;
++    metadata["mpris:length"] = 0;
++    metadata["xesam:albumArtist"] = "";
++    metadata["xesam:asText"] = "";
++    metadata["xesam:audioBPM"] = 0;
++    metadata["xesam:autoRating"] = 0.0;
++    metadata["xesam:trackNumber"] = 0;
++    metadata["xesam:url"] = "";
++    metadata["xesam:useCount"] = 0;
++    metadata["xesam:userRating"] = 0.0;
++//    qDebug() << metadata["xesam:title"] << metadata["xesam:artist"] << metadata["xesam:album"];
++
++    return metadata;
++}
++
+ void Widget::setPlayRate(double s) const
+ {
+     playController::getInstance().getPlayer()->setPlayRate(s);
+diff --git a/UI/mainwidget.h b/UI/mainwidget.h
+index 3284dfe..b3dafa0 100644
+--- a/UI/mainwidget.h
++++ b/UI/mainwidget.h
+@@ -45,6 +45,7 @@
+ #include "UI/titlebar/titlebar.h"
+ #include "UI/player/miniwidget.h"
+ #include "UIControl/base/daemonipcdbus.h"
++#include "UI/player/miniwidget.h"
+ 
+ class Widget : public QWidget
+ {
+@@ -110,6 +111,9 @@ public Q_SLOTS:
+     // 调整播放位置
+     void Seek(const qint64 Offset) const;
+ 
++    //
++    QVariantMap getMetadata() const;
++
+     // 调整播放速度
+     void setPlayRate(double s) const;
+ 
+diff --git a/UIControl/player/player.cpp b/UIControl/player/player.cpp
+index 5c8b774..32c7992 100644
+--- a/UIControl/player/player.cpp
++++ b/UIControl/player/player.cpp
+@@ -6,6 +6,7 @@
+ #include "UIControl/base/musicfileinformation.h"
+ #include "UI/player/playsongarea.h"
+ #include "UI/base/widgetstyle.h"
++#include "UI/dbusadapter.h"
+ 
+ bool playController::play(QString playlist, int index)
+ {
+@@ -354,6 +355,7 @@ playController::playController()
+     m_player->setPlaylist(m_playlist);
+     init();
+     initDbus();
++
+     m_playlist->setPlaybackMode(MMediaPlaylist::Loop);
+ //    m_playlist->setCurrentIndex(-1);
+     connect(m_playlist,&MMediaPlaylist::currentIndexChanged,this,&playController::slotIndexChange);
+@@ -412,6 +414,7 @@ void playController::init()
+ 
+     playModeSetting = new QGSettings(KYLINMUSIC);
+     m_mode = static_cast<PlayMode>(playModeSetting->get("playbackmode").toInt());
++
+ }
+ 
+ void playController::initDbus()
+@@ -534,6 +537,11 @@ void playController::slotStateChanged(MMediaPlayer::State newState)
+     else if(newState == MMediaPlayer::State::StoppedState)
+         Q_EMIT playerStateChange(playController::PlayState::STOP_STATE);
+ 
++    DbusAdapter *m_adapter = new DbusAdapter;
++    QVariantMap changedProperties;
++    changedProperties.insert("PlaybackStatus",QVariant::fromValue(QDBusVariant(m_playbackStatus)));
++    m_adapter->notify("org.mpris.MediaPlayer2.Player",changedProperties,QStringList());
++    delete m_adapter;
+ }
+ 
+ void playController::slotPlayModeChange(MMediaPlaylist::PlaybackMode mode)
+diff --git a/UIControl/player/player.h b/UIControl/player/player.h
+index bc244d2..bab98f9 100644
+--- a/UIControl/player/player.h
++++ b/UIControl/player/player.h
+@@ -48,6 +48,7 @@ public:
+     bool pause();
+     bool pauseOnly();
+     bool stop();
++    QString m_playbackStatus = "Stopped";
+ 
+     int volume();
+ 

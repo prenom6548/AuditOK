@@ -1,0 +1,12 @@
+#ifndef KNETCONNECT_GLOBAL_H
+#define KNETCONNECT_GLOBAL_H
+
+#include <QtCore/qglobal.h>
+
+#if defined(KNETCONNECT_LIBRARY)
+#  define KNETCONNECT_EXPORT Q_DECL_EXPORT
+#else
+#  define KNETCONNECT_EXPORT Q_DECL_IMPORT
+#endif
+
+#endif // KNETCONNECT_GLOBAL_H

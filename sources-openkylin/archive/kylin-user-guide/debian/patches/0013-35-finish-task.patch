@@ -1,0 +1,124 @@
+From: xie_klve <xie_klve@163.com>
+Date: Thu, 29 Aug 2024 03:05:18 +0000
+Subject: !35 finish task Merge pull request !35 from xie_klve/openkylin/nile
+
+---
+ src/CMakeLists.txt   |  4 ++++
+ src/bridge.cpp       | 25 +++++++++++++++++++++++++
+ src/bridge.h         |  2 +-
+ src/guide-widget.cpp |  5 +++--
+ src/web/js/guide.js  |  2 ++
+ 5 files changed, 35 insertions(+), 3 deletions(-)
+
+diff --git a/src/CMakeLists.txt b/src/CMakeLists.txt
+index dfcbbd3..4ee48d5 100644
+--- a/src/CMakeLists.txt
++++ b/src/CMakeLists.txt
+@@ -47,6 +47,7 @@ find_package(Qt5 COMPONENTS Widgets REQUIRED)
+ find_package(PkgConfig REQUIRED)
+ pkg_check_modules(KYSDKQTWIDGETS_PKG kysdk-qtwidgets)
+ pkg_check_modules(KYSDKWAYLANDHELPER_PKG kysdk-waylandhelper)
++pkg_check_modules(KYSDKDATACOLLECT_PKG kysdk-datacollect)
+ #target_include_directories(kylin-user-guide PRIVATE ${KYSDKQTWIDGETS_PKG_INCLUDE_DIRS})
+ #target_link_directories(kylin-user-guide PRIVATE ${KYSDKQTWIDGETS_PKG_LIBRARY_DIRS})
+ #target_link_libraries(kylin-user-guide Qt5::Widgets ${KYSDKQTWIDGETS_PKG_LIBRARIES})
+@@ -107,6 +108,9 @@ target_link_directories(kylin-user-guide PRIVATE ${KYSDKQTWIDGETS_PKG_LIBRARY_DI
+ target_link_libraries(kylin-user-guide Qt5::Widgets ${KYSDKQTWIDGETS_PKG_LIBRARIES})
+ target_include_directories(kylin-user-guide PRIVATE ${KYSDKWAYLANDHELPER_PKG_INCLUDE_DIRS})
+ target_link_directories(kylin-user-guide PRIVATE ${KYSDKWAYLANDHELPER_PKG_LIBRARY_DIRS})
++target_include_directories(kylin-user-guide PRIVATE ${KYSDKDATACOLLECT_PKG_INCLUDE_DIRS})
++target_link_directories(kylin-user-guide PRIVATE ${KYSDKDATACOLLECT_PKG_LIBRARY_DIRS})
++target_link_libraries(kylin-user-guide Qt5::Widgets ${KYSDKDATACOLLECT_PKG_LIBRARIES})
+ 
+ set(pkgLibdir 	/usr/lib/${DEB_BUILD_GNU_CPU})
+ set(pkgbindir 	/usr/bin/)
+diff --git a/src/bridge.cpp b/src/bridge.cpp
+index 65e63a4..9de9f22 100644
+--- a/src/bridge.cpp
++++ b/src/bridge.cpp
+@@ -2,6 +2,7 @@
+ #include <QMessageBox>
+ #include <QFile>
+ #include <QProcess>
++#include "libkydatacollect.h"
+ 
+ Bridge* Bridge::instance()
+ {
+@@ -239,3 +240,27 @@ void Bridge::js_executeCommand(QString cmd)
+     qDebug() << Q_FUNC_INFO << cmd;
+     QProcess::startDetached(cmd, QStringList());
+ }
++
++void Bridge::js_buriedPoint(QString appName)
++{
++    qDebug() << Q_FUNC_INFO;
++    // 埋点数据
++
++    QString app = "kylin-user-guide";
++    char *appCstr = strdup(app.toUtf8().constData());
++
++    QString action = "user_guide_search_event";
++    char *actionCstr = strdup(action.toUtf8().constData());
++
++    KCustomProperty property[1];
++    QString appKey= "application";
++    char *keyCstr = strdup(appKey.toUtf8().constData());
++    property[0].key = keyCstr;
++    char *valueCstr = strdup(appName.toUtf8().constData());
++    property[0].value = valueCstr;
++
++    KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP,KEVENT_CLICK);
++    kdk_dia_append_custom_property(node,property,1);
++    kdk_dia_upload_default(node,actionCstr,appCstr);
++    kdk_dia_data_free(node);
++}
+\ No newline at end of file
+diff --git a/src/bridge.h b/src/bridge.h
+index 408b4ba..d9e59a0 100644
+--- a/src/bridge.h
++++ b/src/bridge.h
+@@ -86,7 +86,7 @@ public slots:
+     void getMdPathOther(QString attr);
+     void getMdContent(QString attr);
+     void getThemeColor(QString color);
+-
++    void js_buriedPoint(QString appName);
+ 
+ signals:
+     void mdPathOtherChanged(QString attr);   //信号传参
+diff --git a/src/guide-widget.cpp b/src/guide-widget.cpp
+index 67c3f0b..ca35790 100644
+--- a/src/guide-widget.cpp
++++ b/src/guide-widget.cpp
+@@ -94,8 +94,9 @@ GuideWidget::GuideWidget(QWidget *parent) :QWidget(parent)
+ 
+ GuideWidget::~GuideWidget()
+ {
+-    delete m_pWebEngineView->page(); // 删除WebEnginePage对象
+-    m_pWebEngineView->setPage(nullptr); // 确保不再使用已删除的WebEnginePage对象
++    if (m_pWebEngineView) {
++        delete m_pWebEngineView->page();
++    }
+ }
+ 
+ void GuideWidget::paintEvent(QPaintEvent *event)
+diff --git a/src/web/js/guide.js b/src/web/js/guide.js
+index c2e21ac..037d88c 100644
+--- a/src/web/js/guide.js
++++ b/src/web/js/guide.js
+@@ -505,6 +505,7 @@ function qt_jumpApp(appName) {
+ // 默认侧边栏展示比例
+ var oriScrollbarW = 24;
+ function onclickButton(str) {
++    bridge.js_buriedPoint(str);
+     document.getElementById("mainUI").style.display = "none";
+     document.getElementById("pageContent").style.display = "inline";
+     bridge.js_getPageContent(str);
+@@ -1090,6 +1091,7 @@ function resizeEvent() {
+ }
+ 
+ function jumpIntroduce(cmd){
++    bridge.js_buriedPoint(cmd);
+     if(cmd.length != 0)
+         bridge.js_executeCommand(cmd);
+ }

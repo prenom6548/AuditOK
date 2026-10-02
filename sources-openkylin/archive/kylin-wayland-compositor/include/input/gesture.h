@@ -1,0 +1,49 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _GESTURE_H_
+#define _GESTURE_H_
+
+#include <wayland-server-core.h>
+
+#include <kywc/binding.h>
+
+struct gesture_state {
+    struct seat *seat;
+    enum gesture_type type;
+    enum gesture_stage stage;
+    enum gesture_device device;
+    enum gesture_edge edge;
+    uint8_t fingers;
+    uint32_t directions;
+    uint32_t follow_direction;
+    struct gesture_binding *active_binding;
+    struct wl_listener active_binding_cancel;
+
+    double dx, dy;
+    double follow_dx, follow_dy;
+    double scale;
+    double rotation;
+    bool triggered;
+    bool handled;
+
+    /* timer for hold gesture */
+    struct wl_event_source *timer;
+};
+
+void gesture_state_init(struct gesture_state *state, void *display);
+
+void gesture_state_finish(struct gesture_state *state);
+
+void gesture_state_begin(struct gesture_state *state, struct seat *seat, enum gesture_type type,
+                         enum gesture_device device, enum gesture_edge edge, uint8_t fingers);
+
+void gesture_state_update(struct gesture_state *state, enum gesture_type type,
+                          enum gesture_device device, double dx, double dy, double scale,
+                          double rotation);
+
+bool gesture_state_end(struct gesture_state *state, enum gesture_type type,
+                       enum gesture_device device, bool cancelled);
+
+#endif /* _GESTURE_H_ */

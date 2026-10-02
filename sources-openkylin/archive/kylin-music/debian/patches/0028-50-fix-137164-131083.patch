@@ -1,0 +1,303 @@
+From: shangxiaoyang <shangxiaoyang@kylinos.cn>
+Date: Mon, 6 Nov 2023 02:00:16 +0000
+Subject: !50 fix 137164 131083 Merge pull request !50 from
+ limeiqi/openkylin/yangtze
+
+---
+ UI/mainwidget.cpp              | 17 ++++++++++++++++-
+ UI/player/miniwidget.cpp       |  4 ++++
+ UI/player/searchedit.cpp       |  4 ++--
+ UI/player/searchresult.cpp     | 12 ++++++++----
+ UI/sidebar/sidebarwidget.cpp   |  7 +++++++
+ UI/sidebar/sidebarwidget.h     |  3 +++
+ UI/tableview/tablebaseview.cpp |  9 +++++++++
+ UI/tableview/tablebaseview.h   |  1 +
+ UI/tableview/tableone.cpp      |  9 +++++++++
+ UI/tableview/tableone.h        |  1 +
+ UI/titlebar/titlebar.cpp       |  5 +++++
+ 11 files changed, 65 insertions(+), 7 deletions(-)
+
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index 397c16e..9ba2c23 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -8,7 +8,7 @@
+ #include <KWindowEffects>
+ #include "UI/globalsignal.h"
+ #include "UIControl/global/global.h"
+-
++#include "UI/globalsignal.h"
+ 
+ #include <ukui-log4qt.h>
+ 
+@@ -1058,6 +1058,7 @@ void Widget::mousePressEvent(QMouseEvent *event)
+ 
+ void Widget::slotShowMiniWidget()
+ {
++    g_user_signal->hideSearchResult();
+     // 添加过渡动画
+     QPropertyAnimation *animation = new QPropertyAnimation(this, "windowOpacity");
+     animation->setDuration(200);
+@@ -1086,6 +1087,13 @@ void Widget::slotShowMiniWidget()
+ 
+     m_miniWidget->setWindowOpacity(0);
+     m_miniWidget->showNormal();
++
++    if (Global::isWayland) {
++        int sw = QGuiApplication::primaryScreen()->availableGeometry().width();
++        int sh = QGuiApplication::primaryScreen()->availableGeometry().height();
++        kdk::WindowManager::setGeometry(m_miniWidget->windowHandle(), QRect((sw-m_miniWidget->width())/2, (sh-m_miniWidget->height())/2, m_miniWidget->width(),m_miniWidget->height() ));
++    }
++
+     m_miniWidget->activateWindow();
+     animation->start(QAbstractAnimation::DeleteWhenStopped);
+     animation_mini->start(QAbstractAnimation::DeleteWhenStopped);
+@@ -1121,6 +1129,7 @@ void Widget::slotShowMinimized()
+ 
+ void Widget::slotShowMaximized()
+ {
++    g_user_signal->hideSearchResult();
+     if (Global::isWayland) {
+         kdk::UkuiStyleHelper::self()->removeHeader(this);
+         kdk::UkuiStyleHelper::self()->removeHeader(m_miniWidget);
+@@ -1233,6 +1242,12 @@ void Widget::slotRecoverNormalWidget()
+         this->showMaximized();
+     } else {
+         this->showNormal();
++        if (Global::isWayland) {
++            int sw = QGuiApplication::primaryScreen()->availableGeometry().width();
++            int sh = QGuiApplication::primaryScreen()->availableGeometry().height();
++            resize(960,640);
++            kdk::WindowManager::setGeometry(this->windowHandle(), QRect((sw-this->width())/2, (sh-this->height())/2, this->width(),this->height() ));
++        }
+     }
+     m_miniWidget->hide();
+ }
+diff --git a/UI/player/miniwidget.cpp b/UI/player/miniwidget.cpp
+index 48bfdc2..d1588e4 100644
+--- a/UI/player/miniwidget.cpp
++++ b/UI/player/miniwidget.cpp
+@@ -308,6 +308,10 @@ void miniWidget::minicolor()
+ 
+ void miniWidget::init_miniWidget()
+ {
++    //窗体显示在中间
++    QRect availableGeometry = qApp->primaryScreen()->availableGeometry();
++    this->move((availableGeometry.width() - this->width())/2, (availableGeometry.height() - this->height())/2);
++
+     this->setAutoFillBackground(true);
+     this->setBackgroundRole(QPalette::Base);
+ 
+diff --git a/UI/player/searchedit.cpp b/UI/player/searchedit.cpp
+index 7e8cd08..3d4f340 100644
+--- a/UI/player/searchedit.cpp
++++ b/UI/player/searchedit.cpp
+@@ -55,7 +55,7 @@ void SearchEdit::keyPressEvent(QKeyEvent *event)
+ void SearchEdit::focusInEvent(QFocusEvent *event)
+ {
+     this->setFocus();
+-
++    slotTextChanged();
+     return QLineEdit::focusInEvent(event);
+ }
+ 
+@@ -129,7 +129,7 @@ void SearchEdit::setWidget(QWidget *mainWidget)
+ void SearchEdit::moveSearchResult()
+ {
+     m_result->show();
+-    m_result->raise();
++//    m_result->raise();
+     m_result->setFixedWidth(240);
+ 
+     QPoint resultPos = this->mapToGlobal(this->rect().bottomLeft());
+diff --git a/UI/player/searchresult.cpp b/UI/player/searchresult.cpp
+index d5d7955..97fff45 100644
+--- a/UI/player/searchresult.cpp
++++ b/UI/player/searchresult.cpp
+@@ -12,6 +12,7 @@
+ #include "ukuistylehelper/ukuistylehelper.h"
+ #include "windowmanager/windowmanager.h"
+ #include "UIControl/global/global.h"
++#include "UI/globalsignal.h"
+ 
+ SearchResult::SearchResult(QWidget *parent) : QWidget(parent)
+ {
+@@ -102,11 +103,14 @@ SearchResult::SearchResult(QWidget *parent) : QWidget(parent)
+     sideLayout->setSpacing(0);
+     this->setLayout(sideLayout);
+ 
+-//    autoResize();
++    autoResize();
+ 
+     connect(m_MusicView,&MusicSearchListview::clicked,this,&SearchResult::slotMusicItemClicked);
+     connect(m_SingerView,&MusicSearchListview::clicked,this,&SearchResult::slotSingerItemClicked);
+     connect(m_AlbumView,&MusicSearchListview::clicked,this,&SearchResult::slotAlbumItemClicked);
++    connect(g_user_signal, &GlobalUserSignal::sigHideSearchResult, [this]{
++            this->hide();
++        });
+ }
+ 
+ SearchResult::~SearchResult()
+@@ -123,7 +127,7 @@ void SearchResult::keyPressEvent(QKeyEvent *event)
+ //        kdk::WindowManager::activateWindow(m_searchEdit->winId());
+ 
+     } else {
+-        m_searchEdit->activateWindow();
++//        m_searchEdit->activateWindow();
+     }
+ //    QApplication::sendEvent(m_searchEdit,event);
+ 
+@@ -214,12 +218,12 @@ void SearchResult::autoResize()
+     if (m_searchEdit != nullptr) {
+         if (m_searchEdit->text() != "") {
+             this->show();
+-            this->raise();
++//           this->raise();
+ 
+             if (Global::isWayland) {
+ //                kdk::WindowManager::activateWindow(kdk::WindowManager::currentActiveWindow());
+             } else {
+-                this->activateWindow();
++//                this->activateWindow();
+             }
+         }
+     }
+diff --git a/UI/sidebar/sidebarwidget.cpp b/UI/sidebar/sidebarwidget.cpp
+index 54ed43b..65dfbbe 100644
+--- a/UI/sidebar/sidebarwidget.cpp
++++ b/UI/sidebar/sidebarwidget.cpp
+@@ -4,6 +4,7 @@
+ #include "UI/base/widgetstyle.h"
+ #include "UI/mainwidget.h"
+ #include <ukui-log4qt.h>
++#include "UI/globalsignal.h"
+ 
+ SideBarWidget::SideBarWidget(QWidget *parent) : LeftsiderbarWidget(parent)
+ {
+@@ -485,3 +486,9 @@ void SideBarWidget::slotSongListHigh()
+     playListBtn->buttonListName = ALLMUSIC;
+     playListBtn->defaultStyle();
+ }
++
++void SideBarWidget::mousePressEvent(QMouseEvent *event)
++{
++    g_user_signal->hideSearchResult();
++    QWidget::mousePressEvent(event);
++}
+diff --git a/UI/sidebar/sidebarwidget.h b/UI/sidebar/sidebarwidget.h
+index 448bfd1..ef6b12c 100644
+--- a/UI/sidebar/sidebarwidget.h
++++ b/UI/sidebar/sidebarwidget.h
+@@ -50,6 +50,9 @@ public Q_SLOTS:
+     void slotListSearch();
+     //高亮歌曲列表按钮
+     void slotSongListHigh();
++protected:
++    void mousePressEvent(QMouseEvent *event) Q_DECL_OVERRIDE;
++
+ Q_SIGNALS:
+     void playListBtnCliced(QString listname);
+     void playListRemoved(QString listname);
+diff --git a/UI/tableview/tablebaseview.cpp b/UI/tableview/tablebaseview.cpp
+index e1b6082..e8f4ed0 100644
+--- a/UI/tableview/tablebaseview.cpp
++++ b/UI/tableview/tablebaseview.cpp
+@@ -1,6 +1,7 @@
+ 
+ #include "tablebaseview.h"
+ #include "UI/base/widgetstyle.h"
++#include "UI/globalsignal.h"
+ 
+ TableBaseView::TableBaseView(QTableView *parent)
+ {
+@@ -63,6 +64,14 @@ void TableBaseView::mouseMoveEvent(QMouseEvent *event)
+     QModelIndex index = this->indexAt(event->pos());
+     Q_EMIT hoverIndexChanged(index);
+ }
++
++void TableBaseView::mousePressEvent(QMouseEvent *event)
++{
++    g_user_signal->hideSearchResult();
++
++    QWidget::mousePressEvent(event);
++}
++
+ void TableBaseView::leaveEvent(QEvent *event)
+ {
+     Q_EMIT leaveFromItem();
+diff --git a/UI/tableview/tablebaseview.h b/UI/tableview/tablebaseview.h
+index 2eb2430..5185f0f 100644
+--- a/UI/tableview/tablebaseview.h
++++ b/UI/tableview/tablebaseview.h
+@@ -27,6 +27,7 @@ public Q_SLOTS:
+     void setNowPlayListName(QString listName);
+ protected:
+     void mouseMoveEvent(QMouseEvent *event) Q_DECL_OVERRIDE;
++    void mousePressEvent(QMouseEvent *event) Q_DECL_OVERRIDE;
+     void leaveEvent(QEvent *event) Q_DECL_OVERRIDE;
+ Q_SIGNALS:
+     void hoverIndexChanged(QModelIndex index);
+diff --git a/UI/tableview/tableone.cpp b/UI/tableview/tableone.cpp
+index 535721c..aad7709 100644
+--- a/UI/tableview/tableone.cpp
++++ b/UI/tableview/tableone.cpp
+@@ -5,6 +5,7 @@
+ #include "tableone.h"
+ #include "UI/mainwidget.h"
+ #include "UI/base/widgetstyle.h"
++#include "UI/globalsignal.h"
+ 
+ #define PT_18 18
+ 
+@@ -1336,6 +1337,14 @@ void TableOne::mouseMoveEvent(QMouseEvent *event)
+     Q_EMIT hoverIndexChanged(index);
+ }
+ 
++
++void TableOne::mousePressEvent(QMouseEvent *event)
++{
++    g_user_signal->hideSearchResult();
++
++    QWidget::mousePressEvent(event);
++}
++
+ void TableOne::resizeEvent(QResizeEvent *event)
+ {
+     // 使用变量保存tableView一页最多可以完全显示多少条目，实时刷新，实现滑动条的显示和隐藏
+diff --git a/UI/tableview/tableone.h b/UI/tableview/tableone.h
+index 45d6722..bb4f993 100644
+--- a/UI/tableview/tableone.h
++++ b/UI/tableview/tableone.h
+@@ -144,6 +144,7 @@ protected:
+     void dragEnterEvent(QDragEnterEvent *event)Q_DECL_OVERRIDE;
+     void dropEvent(QDropEvent *event)Q_DECL_OVERRIDE;
+     void mouseMoveEvent(QMouseEvent *event)Q_DECL_OVERRIDE;
++    void mousePressEvent(QMouseEvent *event)Q_DECL_OVERRIDE;
+     void resizeEvent(QResizeEvent *event) Q_DECL_OVERRIDE;
+     void keyPressEvent(QKeyEvent *event) Q_DECL_OVERRIDE;
+ private:
+diff --git a/UI/titlebar/titlebar.cpp b/UI/titlebar/titlebar.cpp
+index c51d024..0b4d5e9 100644
+--- a/UI/titlebar/titlebar.cpp
++++ b/UI/titlebar/titlebar.cpp
+@@ -21,6 +21,7 @@
+ #include "titlebar.h"
+ #include "UI/mainwidget.h"
+ #include "UI/base/xatom-helper.h"
++#include "UI/globalsignal.h"
+ 
+ TitleBar::TitleBar(QWidget *parent) : QFrame(parent)
+ {
+@@ -228,8 +229,12 @@ bool TitleBar::eventFilter(QObject *watched, QEvent *event)
+             if (mouseEvent->button() == Qt::LeftButton) //判断左键
+             {
+                 Widget::mutual->slotShowMaximized();
++                g_user_signal->hideSearchResult();
+             }
+         }
++        if (event->type() == QEvent::MouseButtonPress) {
++                    g_user_signal->hideSearchResult();
++        }
+     }
+ 
+     return QWidget::eventFilter(watched,event);

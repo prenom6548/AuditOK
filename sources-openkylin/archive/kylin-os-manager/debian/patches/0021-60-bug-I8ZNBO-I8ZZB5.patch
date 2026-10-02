@@ -1,0 +1,601 @@
+From: snowsi <348240162@qq.com>
+Date: Tue, 27 Feb 2024 09:27:44 +0000
+Subject: =?utf-8?b?ITYwIOS/ruWkjWJ1ZyAjSThaTkJPICNJOFpaQjUgTWVyZ2UgcHVsbCBy?=
+ =?utf-8?b?ZXF1ZXN0ICE2MCBmcm9tIOiMg+aYsei+sC9vcGVua3lsaW4vbmlsZQ==?=
+
+---
+ daemons/sessionservice/sessionclient.cpp           |   5 +-
+ plugins/driver-controller/CMakeLists.txt           |   2 +
+ .../driver-controller/src/drivergetfailwidget.cpp  |   1 +
+ .../src/driverinstallmainwidget.cpp                |  22 ++-
+ .../src/driverinstallmainwidget.h                  |   4 +
+ .../src/hardwareinfogetfailwidget.cpp              |   1 +
+ .../driver-controller/src/hardwareinfogetter.cpp   |  26 +++
+ plugins/driver-controller/src/hardwareinfogetter.h |   3 +
+ .../driver-controller/src/hardwareinfowidget.cpp   | 216 +++++++++++++++++++--
+ plugins/driver-controller/src/hardwareinfowidget.h |   9 +-
+ .../src/hotplug/hotplugclient.cpp                  |   9 +-
+ plugins/driver-controller/src/selectionwidget.cpp  |  15 +-
+ 12 files changed, 282 insertions(+), 31 deletions(-)
+
+diff --git a/daemons/sessionservice/sessionclient.cpp b/daemons/sessionservice/sessionclient.cpp
+index 12337ee..7dea0ca 100644
+--- a/daemons/sessionservice/sessionclient.cpp
++++ b/daemons/sessionservice/sessionclient.cpp
+@@ -19,11 +19,14 @@ void SessionClient::initHotplugClient() {
+ 
+ 
+ void SessionClient::onNewDeviceConnectSlot(QString devString) {
++    if(!devString.contains("upgradeable")){
++        return;
++    }
+     QJsonDocument jsonDoc = QJsonDocument::fromJson(devString.toUtf8());
+     QJsonArray jsonArray = jsonDoc.array();
+     for (const QJsonValue &jsonValue: jsonArray) {
+         QJsonObject devJson = jsonValue.toObject();
+-        if (!devJson["upgradeable"].toBool()){
++        if (!(devJson["upgradeable"].toBool())){
+             return;
+         }
+     }
+diff --git a/plugins/driver-controller/CMakeLists.txt b/plugins/driver-controller/CMakeLists.txt
+index 4076ed0..59ec721 100644
+--- a/plugins/driver-controller/CMakeLists.txt
++++ b/plugins/driver-controller/CMakeLists.txt
+@@ -62,6 +62,7 @@ set(SRCS
+         ${CMAKE_CURRENT_LIST_DIR}/src/hardwareinfogetfailwidget.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/src/hotplug/hotplugclient.cpp
+         ${CMAKE_CURRENT_LIST_DIR}/src/database/drivermanagerdatabase.cpp
++        ${CMAKE_CURRENT_LIST_DIR}/src/include/text_label.cpp
+ )
+ 
+ set(HEADERS
+@@ -106,6 +107,7 @@ set(HEADERS
+         ${CMAKE_CURRENT_LIST_DIR}/src/hardwareinfogetfailwidget.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/hotplug/hotplugclient.h
+         ${CMAKE_CURRENT_LIST_DIR}/src/database/drivermanagerdatabase.h
++        ${CMAKE_CURRENT_LIST_DIR}/src/include/text_label.h
+ )
+ 
+ SET(UI_PICTURE ${CMAKE_CURRENT_LIST_DIR}/src/img_src/image.qrc)
+diff --git a/plugins/driver-controller/src/drivergetfailwidget.cpp b/plugins/driver-controller/src/drivergetfailwidget.cpp
+index ab3a809..901b5b7 100644
+--- a/plugins/driver-controller/src/drivergetfailwidget.cpp
++++ b/plugins/driver-controller/src/drivergetfailwidget.cpp
+@@ -43,6 +43,7 @@ void DriverGetFailWidget::initGUi() {
+     m_mainLayout->addWidget(m_failLabel);
+     m_mainLayout->addSpacing(24);
+     m_mainLayout->addWidget(m_retryBtn, 0, Qt::AlignCenter);
++    m_mainLayout->addSpacing(80);
+     m_mainLayout->addStretch();
+ 
+     this->setLayout(m_mainLayout);
+diff --git a/plugins/driver-controller/src/driverinstallmainwidget.cpp b/plugins/driver-controller/src/driverinstallmainwidget.cpp
+index ef20ee3..78e2507 100644
+--- a/plugins/driver-controller/src/driverinstallmainwidget.cpp
++++ b/plugins/driver-controller/src/driverinstallmainwidget.cpp
+@@ -7,15 +7,28 @@ DriverInstallMainWidget::DriverInstallMainWidget(QWidget *parent)
+           m_mainLayout(new QHBoxLayout()),
+           m_mainWidget(new QStackedWidget),
+           m_driverInstallWidget(new DriverInstallWidget),
+-          m_failWidget(new DriverGetFailWidget) {
++          m_driverIstallTopWidget(new QWidget),
++          m_driverInstallLayout(new QHBoxLayout),
++          m_failWidget(new DriverGetFailWidget),
++          m_driverInstallSrollArea(new QScrollArea()) {
+     initGui();
+     initConnect();
+ }
+ 
+ void DriverInstallMainWidget::initGui() {
+-    m_mainWidget->addWidget(m_driverInstallWidget);
++
++    m_driverInstallLayout->addWidget(m_driverInstallWidget);
++    m_driverIstallTopWidget->setLayout(m_driverInstallLayout);
++    m_driverInstallSrollArea->setWidget(m_driverIstallTopWidget);
++    m_driverInstallSrollArea->setWidgetResizable(true);
++    m_driverInstallSrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    m_driverInstallSrollArea->setFrameShape(QFrame::NoFrame);
++    m_driverInstallSrollArea->setContentsMargins(0, 0, 0, 0);
++    m_driverInstallWidget->adjustSize();
++
++    m_mainWidget->addWidget(m_driverInstallSrollArea);
+     m_mainWidget->addWidget(m_failWidget);
+-    m_mainWidget->setCurrentWidget(m_driverInstallWidget);
++    m_mainWidget->setCurrentWidget(m_driverInstallSrollArea);
+ 
+     m_mainLayout->setContentsMargins(0, 0, 0, 0);
+     m_mainLayout->setSpacing(0);
+@@ -25,6 +38,7 @@ void DriverInstallMainWidget::initGui() {
+ 
+ void DriverInstallMainWidget::initConnect() {
+ 
+-    connect(g_signal, &GlobalSignal::updateInstallContentSucceed, [=]() { m_mainWidget->setCurrentWidget(m_driverInstallWidget); });
++    connect(g_signal, &GlobalSignal::updateInstallContentSucceed,
++            [=]() { m_mainWidget->setCurrentWidget(m_driverInstallSrollArea); });
+     connect(g_signal, &GlobalSignal::getHwInfoFailed, [=]() { m_mainWidget->setCurrentWidget(m_failWidget); });
+ }
+diff --git a/plugins/driver-controller/src/driverinstallmainwidget.h b/plugins/driver-controller/src/driverinstallmainwidget.h
+index 81d4b26..bc07143 100644
+--- a/plugins/driver-controller/src/driverinstallmainwidget.h
++++ b/plugins/driver-controller/src/driverinstallmainwidget.h
+@@ -4,6 +4,7 @@
+ #include <QWidget>
+ #include <QStackedWidget>
+ #include <QHBoxLayout>
++#include <QScrollArea>
+ 
+ #include "driverinstallwidget.h"
+ #include "drivergetfailwidget.h"
+@@ -16,6 +17,9 @@ public:
+ private:
+     QHBoxLayout *m_mainLayout = nullptr;
+     QStackedWidget *m_mainWidget = nullptr;
++    QScrollArea *m_driverInstallSrollArea = nullptr;
++    QWidget *m_driverIstallTopWidget = nullptr;
++    QHBoxLayout *m_driverInstallLayout = nullptr;
+     DriverInstallWidget *m_driverInstallWidget = nullptr;
+     DriverGetFailWidget *m_failWidget = nullptr;
+ 
+diff --git a/plugins/driver-controller/src/hardwareinfogetfailwidget.cpp b/plugins/driver-controller/src/hardwareinfogetfailwidget.cpp
+index a4a5b85..fcd0b64 100644
+--- a/plugins/driver-controller/src/hardwareinfogetfailwidget.cpp
++++ b/plugins/driver-controller/src/hardwareinfogetfailwidget.cpp
+@@ -44,6 +44,7 @@ void HardwareInfoGetFailWidget::initGUi() {
+     m_mainLayout->addWidget(m_failLabel);
+     m_mainLayout->addSpacing(24);
+     m_mainLayout->addWidget(m_retryBtn, 0, Qt::AlignCenter);
++    m_mainLayout->addSpacing(80);
+     m_mainLayout->addStretch();
+ 
+     this->setLayout(m_mainLayout);
+diff --git a/plugins/driver-controller/src/hardwareinfogetter.cpp b/plugins/driver-controller/src/hardwareinfogetter.cpp
+index c6b67ab..30e2672 100644
+--- a/plugins/driver-controller/src/hardwareinfogetter.cpp
++++ b/plugins/driver-controller/src/hardwareinfogetter.cpp
+@@ -758,7 +758,33 @@ QList<DiskInfo> HardwareInfoGetter::getDiskInfo() {
+     return diskinfoList;
+ }
+ 
++void HardwareInfoGetter::genMonitorInfoDataFile()
++{
++    QString strMonitorInfoFile = "/tmp/youker-assistant-monitorinfo.dat";
++    QFile tmpFile(strMonitorInfoFile);
++    if (tmpFile.exists()){
++        tmpFile.remove();
++    }
++    QString cmd = "xrandr --prop";
++    QProcess *p = new QProcess();
++    p->start(cmd);
++    p->waitForFinished();
++    // 将monitor信息写入临时文件
++    if (!tmpFile.open(QIODevice::WriteOnly | QIODevice::Text))
++        return;
++    QTextStream tsFile(&tmpFile);
++    while(p->canReadLine()){
++        QString str = p->readLine();
++        str = str.left(str.length() - 1);
++        tsFile<<str<<endl;  //写入文件
++    }
++    tmpFile.close();
++    delete p;
++}
++
+ QList<MonitorInfo> HardwareInfoGetter::getMonitorInfo() {
++    genMonitorInfoDataFile();
++
+     QDBusConnection bus = QDBusConnection::systemBus();
+     QDBusInterface manager("com.kylin-driver-installer", "/tools", "tools.tool", bus);
+     QString result;
+diff --git a/plugins/driver-controller/src/hardwareinfogetter.h b/plugins/driver-controller/src/hardwareinfogetter.h
+index fb770e0..78a9857 100644
+--- a/plugins/driver-controller/src/hardwareinfogetter.h
++++ b/plugins/driver-controller/src/hardwareinfogetter.h
+@@ -91,6 +91,9 @@ private:
+     QList<HardWareInfo> convertJsonToHardWareList(const QString &jsonString, DeviceType type);
+ 
+     void uploadMapMessage(DeviceType type, HardWareInfo result);
++
++    void genMonitorInfoDataFile();
++
+ };
+ #define g_infogetter HardwareInfoGetter::getInstance()
+ #endif //HARDWAREINFOGETTER_H
+diff --git a/plugins/driver-controller/src/hardwareinfowidget.cpp b/plugins/driver-controller/src/hardwareinfowidget.cpp
+index 2eaa569..1e093a8 100644
+--- a/plugins/driver-controller/src/hardwareinfowidget.cpp
++++ b/plugins/driver-controller/src/hardwareinfowidget.cpp
+@@ -77,7 +77,7 @@ HardWareInfoWidget::HardWareInfoWidget(QWidget *parent)
+           m_cpuWidget(new QWidget),
+           m_cpuIconLabel(new QLabel),
+           m_cpuTextLabel(new QLabel),
+-          m_cpuModelLabel(new QLabel),
++          m_cpuModelLabel(new K::TextLabel),
+           m_cpuBtnStackedWidget(new QStackedWidget),
+           m_cpuSpreadOutBtn(new kdk::KBorderlessButton),
+           m_cpuSpreadInBtn(new kdk::KBorderlessButton),
+@@ -193,8 +193,7 @@ void HardWareInfoWidget::setBasicContentUi() {
+     m_sysVersionPic->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+     m_sysVersionLabel->setText(tr("Operation System Version"));
+ 
+-    m_kernelVersionPic->setPixmap(
+-            QIcon::fromTheme("ukui-zs-kernel-version-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
++    m_kernelVersionPic->setPixmap(QIcon::fromTheme("ukui-zs-kernel-version-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_kernelVersionPic->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+     m_kernelVersionLabel->setText(tr("Kernel Version"));
+ 
+@@ -446,8 +445,7 @@ void HardWareInfoWidget::setHWContetnUi() {
+     m_TreeWidget->setItemWidget(rootItem2, 0, m_memoryWidget);
+ 
+     // GraphicCard
+-    m_graphicCardIconLabel->setPixmap(
+-            QIcon::fromTheme("ukui-graphics-card-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
++    m_graphicCardIconLabel->setPixmap(QIcon::fromTheme("ukui-graphics-card-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_graphicCardIconLabel->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+ 
+     m_graphicCardTextLabel->setText(tr("Graphic Card"));
+@@ -473,8 +471,7 @@ void HardWareInfoWidget::setHWContetnUi() {
+     m_TreeWidget->setItemWidget(rootItem3, 0, m_graphicCardWidget);
+ 
+     // baseboard
+-    m_baseboardIconLabel->setPixmap(
+-            QIcon::fromTheme("ukui-mother-board-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
++    m_baseboardIconLabel->setPixmap(QIcon::fromTheme("ukui-mother-board-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_baseboardIconLabel->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+ 
+     m_baseboardTextLabel->setText(tr("Mother Board"));
+@@ -501,8 +498,7 @@ void HardWareInfoWidget::setHWContetnUi() {
+     m_TreeWidget->setItemWidget(rootItem4, 0, m_baseboardWidget);
+ 
+     // Network Card
+-    m_networkCardIconLabel->setPixmap(
+-            QIcon::fromTheme("ukui-graphics-card-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
++    m_networkCardIconLabel->setPixmap(QIcon::fromTheme("ukui-graphics-card-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_networkCardIconLabel->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+ 
+     m_networkCardTextLabel->setText(tr("Network Card"));
+@@ -580,8 +576,7 @@ void HardWareInfoWidget::setHWContetnUi() {
+     m_TreeWidget->setItemWidget(rootItem7, 0, m_monitorWidget);
+ 
+     // soundCard
+-    m_soundCardIconLabel->setPixmap(
+-            QIcon::fromTheme("audio-volume-high-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
++    m_soundCardIconLabel->setPixmap(QIcon::fromTheme("audio-volume-high-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_soundCardIconLabel->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+ 
+     m_soundCardTextLabel->setText(tr("Sound Card"));
+@@ -660,7 +655,7 @@ void HardWareInfoWidget::setHWContetnUi() {
+     m_TreeWidget->setItemWidget(rootItem10, 0, m_mouseWidget);
+ 
+     // Bluetooth
+-    m_bluetoothIconLabel->setPixmap(QIcon::fromTheme("input-keyboard-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
++    m_bluetoothIconLabel->setPixmap(QIcon::fromTheme("bluetooth-symbolic").pixmap(HARDWAREINFOWIDGETBUTTONSIZE));
+     m_bluetoothIconLabel->setFixedSize(HARDWAREINFOWIDGETBUTTONSIZE);
+ 
+     m_bluetoothTextLabel->setText(tr("Bluetooth"));
+@@ -857,6 +852,7 @@ void HardWareInfoWidget::initConnection() {
+ }
+ 
+ void HardWareInfoWidget::themeFontStyle() {
++    setIconColor();
+     float fontSize = kdk::GsettingMonitor::getSystemFontSize().toFloat();
+     int size = 18 * fontSize / 15;
+     QFont font;
+@@ -864,6 +860,7 @@ void HardWareInfoWidget::themeFontStyle() {
+     font.setBold(true);
+     m_pcInfoLabel->setFont(font);
+     m_hardwareDisplayLabel->setFont(font);
++
+ }
+ 
+ void HardWareInfoWidget::getPcInfo() {
+@@ -880,8 +877,7 @@ void HardWareInfoWidget::getPcInfo() {
+ 
+ void HardWareInfoWidget::getCpuInfo() {
+     // 设置内容
+-    m_cpuModelLabel->setText(g_infogetter->m_cpuinfo.model);
+-
++    m_cpuModelLabel->SetText(g_infogetter->m_cpuinfo.model);
+     TreeItem *item1 = new TreeItem(tr("Manufacturer"), g_infogetter->m_cpuinfo.vendor);
+     QTreeWidgetItem *childItem1 = new QTreeWidgetItem();
+     childItem1->setSizeHint(0, TREEWIDGETITEMSIZEHINT);
+@@ -1895,3 +1891,195 @@ void HardWareInfoWidget::setContent() {
+     getBluetoothInfo();
+ }
+ 
++void HardWareInfoWidget::setIconColor() {
++    QString styleName = kdk::GsettingMonitor::getSystemTheme().toString();
++    if (styleName == "ukui-black" || styleName == "ukui-dark") {
++        QIcon icon = QIcon::fromTheme("ukui-zs-host-symbolic");
++        QPixmap pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_hostPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-neicun-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_sysVersionPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-kernel-version-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_kernelVersionPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-kernel-architecture-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_archPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-system-bits-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_sysBitPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-manufacturer-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_manufactorPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-machine-model-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_modelPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-sn-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_serialPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-processor-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_cpuIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-memory-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_memoryIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-graphics-card-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_graphicCardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-mother-board-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_baseboardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-graphics-card-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_networkCardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("ukui-zs-hard-disk-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_diskIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("computer-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_monitorIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("audio-volume-high-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_soundCardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("input-keyboard-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_keyboardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("input-mouse-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_mouseIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++
++        icon = QIcon::fromTheme("bluetooth-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_bluetoothIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "white"));
++    }else{
++        QIcon icon = QIcon::fromTheme("ukui-zs-host-symbolic");
++        QPixmap pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_hostPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-neicun-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_sysVersionPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-kernel-version-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_kernelVersionPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-kernel-architecture-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_archPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-system-bits-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_sysBitPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-manufacturer-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_manufactorPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-machine-model-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_modelPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-sn-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_serialPic->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-processor-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_cpuIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-memory-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_memoryIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-graphics-card-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_graphicCardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-mother-board-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_baseboardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-graphics-card-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_networkCardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("ukui-zs-hard-disk-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_diskIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("computer-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_monitorIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("audio-volume-high-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_soundCardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("input-keyboard-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_keyboardIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("input-mouse-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_mouseIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++
++        icon = QIcon::fromTheme("bluetooth-symbolic");
++        pixmap = icon.pixmap(HARDWAREINFOWIDGETBUTTONSIZE);
++        m_bluetoothIconLabel->setPixmap(drawSymbolicColoredPixmap(pixmap, "black"));
++    }
++}
++
++QPixmap HardWareInfoWidget::drawSymbolicColoredPixmap(const QPixmap &source, QString cgColor)
++{
++    QImage img = source.toImage();
++    for (int x = 0; x < img.width(); x++) {
++        for (int y = 0; y < img.height(); y++) {
++            auto color = img.pixelColor(x, y);
++            if (color.alpha() > 0) {
++                if ( "white" == cgColor) {
++                    color.setRed(255);
++                    color.setGreen(255);
++                    color.setBlue(255);
++                    img.setPixelColor(x, y, color);
++                } else if( "black" == cgColor) {
++                    color.setRed(0);
++                    color.setGreen(0);
++                    color.setBlue(0);
++                    img.setPixelColor(x, y, color);
++                } else if ("gray"== cgColor) {
++                    color.setRed(152);
++                    color.setGreen(163);
++                    color.setBlue(164);
++                    img.setPixelColor(x, y, color);
++                } else if ("blue" == cgColor){
++                    color.setRed(61);
++                    color.setGreen(107);
++                    color.setBlue(229);
++                    img.setPixelColor(x, y, color);
++                } else {
++                    return source;
++                }
++            }
++        }
++    }
++    return QPixmap::fromImage(img);
++}
+\ No newline at end of file
+diff --git a/plugins/driver-controller/src/hardwareinfowidget.h b/plugins/driver-controller/src/hardwareinfowidget.h
+index 43b1c02..dffd76a 100644
+--- a/plugins/driver-controller/src/hardwareinfowidget.h
++++ b/plugins/driver-controller/src/hardwareinfowidget.h
+@@ -5,10 +5,12 @@
+ #include <QVBoxLayout>
+ #include <QHBoxLayout>
+ #include <QLabel>
++#include "include/text_label.h"
+ #include <QTreeWidget>
+ #include <QHeaderView>
+ #include <QStackedWidget>
+ #include <kborderlessbutton.h>
++#include <QPainter>
+ 
+ #include "hardwareinfogetter.h"
+ #include "hardwareinfo/pcinfo.h"
+@@ -111,7 +113,7 @@ private:
+     QTreeWidget *m_TreeWidget = nullptr;
+     QLabel *m_cpuIconLabel = nullptr;
+     QLabel *m_cpuTextLabel = nullptr;
+-    QLabel *m_cpuModelLabel = nullptr;
++    K::TextLabel *m_cpuModelLabel = nullptr;
+     QStackedWidget *m_cpuBtnStackedWidget = nullptr;
+     kdk::KBorderlessButton *m_cpuSpreadOutBtn = nullptr;
+     kdk::KBorderlessButton *m_cpuSpreadInBtn = nullptr;
+@@ -264,6 +266,11 @@ private:
+ 
+     void getBluetoothInfo();
+ 
++private:
++    void setIconColor();
++
++    QPixmap drawSymbolicColoredPixmap(const QPixmap &source, QString cgColor);
++
+ private slots:
+ 
+     void setContent();
+diff --git a/plugins/driver-controller/src/hotplug/hotplugclient.cpp b/plugins/driver-controller/src/hotplug/hotplugclient.cpp
+index 03f7adb..201d0b3 100644
+--- a/plugins/driver-controller/src/hotplug/hotplugclient.cpp
++++ b/plugins/driver-controller/src/hotplug/hotplugclient.cpp
+@@ -27,14 +27,17 @@ HotplugClient::HotplugClient(QObject *parent) : QObject(parent) {
+ void HotplugClient::plugoutEvent(const QString jsonString) {
+     qDebug() << "A New Dev Plug Out :" << jsonString;
+     auto hardwares = convertJsonToHardWareList(jsonString);
+-    emit g_signal->removeItem(hardwares);
+-
++    if (!hardwares.isEmpty()){
++        emit g_signal->removeItem(hardwares);
++    }
+ }
+ 
+ void HotplugClient::plugInEvent(const QString jsonString) {
+     qDebug() << "A New Dev Plug In :" << jsonString;
+     auto hardwares = convertJsonToHardWareList(jsonString);
+-    emit g_signal->addItem(hardwares);
++    if (!hardwares.isEmpty()){
++        emit g_signal->addItem(hardwares);
++    }
+ }
+ 
+ QList<HardWareInfo> HotplugClient::convertJsonToHardWareList(const QString &jsonString) {
+diff --git a/plugins/driver-controller/src/selectionwidget.cpp b/plugins/driver-controller/src/selectionwidget.cpp
+index 6d359e6..4830256 100644
+--- a/plugins/driver-controller/src/selectionwidget.cpp
++++ b/plugins/driver-controller/src/selectionwidget.cpp
+@@ -13,7 +13,6 @@ SelectionWidget::SelectionWidget(QWidget *parent) :
+         m_driverInstallWidget(new DriverInstallMainWidget()),
+         m_hardwareInfoMainWidget(new HardwareInfoMainWidget()),
+         m_driverUninstallWidget(new DriverUninstallMainWidget()),
+-        m_driverInstallSrollArea(new QScrollArea()),
+         m_driverUninstallSrollArea(new QScrollArea()),
+         m_mainLayout(new QVBoxLayout()),
+         m_buttonLayout(new QHBoxLayout()) {
+@@ -43,12 +42,12 @@ void SelectionWidget::initGui() {
+     m_hardwareInfoBtn->setText(tr("Hardware Info"));
+     m_hardwareInfoBtn->setFixedSize(FUNCTIONBUTTONSIZE);
+ 
+-    m_driverInstallSrollArea->setWidget(m_driverInstallWidget);
+-    m_driverInstallSrollArea->setWidgetResizable(true);
+-    m_driverInstallSrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+-    m_driverInstallSrollArea->setFrameShape(QFrame::NoFrame);
+-    m_driverInstallSrollArea->setContentsMargins(0, 0, 0, 0);
+-    m_driverInstallWidget->adjustSize();
++//    m_driverInstallSrollArea->setWidget(m_driverInstallWidget);
++//    m_driverInstallSrollArea->setWidgetResizable(true);
++//    m_driverInstallSrollArea->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++//    m_driverInstallSrollArea->setFrameShape(QFrame::NoFrame);
++//    m_driverInstallSrollArea->setContentsMargins(0, 0, 0, 0);
++//    m_driverInstallWidget->adjustSize();
+ 
+     m_driverUninstallSrollArea->setWidget(m_driverUninstallWidget);
+     m_driverUninstallSrollArea->setWidgetResizable(true);
+@@ -57,7 +56,7 @@ void SelectionWidget::initGui() {
+     m_driverUninstallSrollArea->setContentsMargins(0, 0, 0, 0);
+     m_driverUninstallWidget->adjustSize();
+ 
+-    m_stackWidget->addWidget(m_driverInstallSrollArea);
++    m_stackWidget->addWidget(m_driverInstallWidget);
+     m_stackWidget->addWidget(m_driverUninstallSrollArea);
+     m_stackWidget->addWidget(m_hardwareInfoMainWidget);
+ 

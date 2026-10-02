@@ -1,0 +1,411 @@
+#!/bin/bash
+
+set -e
+
+if [[ -f /home/oem/ky-installer.cfg ]]; then
+      sudo cp -a /home/oem/ky-installer.cfg /var/log/installer
+fi
+if [[ -f /home/oem/install.list ]]; then
+      sudo cp -a /home/oem/install.list /opt/apps-third
+fi
+
+cfgFile=/var/log/installer/ky-installer.cfg
+cfgFileTmp=/home/oem/ky-installer.cfg
+logFile=/var/log/installer/kylin-os-installer-oem.log
+
+if [[ -f /etc/xdg/autostart/oem-qc.desktop ]]; then
+      sudo rm -f /etc/xdg/autostart/oem-qc.desktop
+fi
+
+if [[ -d /var/log/installer/oemback ]]; then
+      sudo rm -rf /var/log/installer/oemback || true
+fi
+
+if [[ -f /var/log/installer/ky-installer.cfg ]]; then
+      cp /var/log/installer/ky-installer.cfg /var/log/installer/ky-installer-oem.cfg || echo "拷贝oem的ky-installer.cfg失败"
+fi
+
+
+userName=
+timeZone=
+password=
+autoLogin=
+userDefGroup=
+
+msg() {
+    echo "$(date +'%Y-%m-%d %H:%M:%S') $*" >> $logFile
+}
+
+get_is_990_9a0() {
+    ret=false
+    # 匹配 kirin 990 5g, kirin990, kirin 9006c
+    if egrep -qi 'kirin.?9[09]0' /proc/cpuinfo; then
+        ret=true
+    fi
+    if egrep -qi 'PANGU.M900' /proc/cpuinfo; then
+        ret=true
+    fi
+
+    echo $ret
+}
+is_990_9a0=$(get_is_990_9a0)
+
+
+get_value()
+{
+    indexStr=$1
+    valueStr=
+
+    valueStr=$(grep "^$indexStr=" "$cfgFile")
+    valueStr=${valueStr##*=}
+    echo "${valueStr}"
+}
+
+get_value_tmp()
+{
+    indexStr=$1
+    valueStr=
+
+    valueStr=$(grep "^$indexStr=" "$cfgFileTmp")
+    valueStr=${valueStr##*=}
+    echo "${valueStr}"
+}
+
+get_value_bytearray() {
+    local key=$1
+    local value
+    value=$(grep "^$key" "$cfgFile")
+
+    # TODO, 连续空格有问题
+    if ! egrep -q '^password=.?@ByteArray' $cfgFile; then
+        echo "${value#*=}"
+        return 0
+    fi
+
+    value1=$(echo "${value#*\(}")
+    echo "${value1%)*}"
+}
+
+set_timezone()
+{
+    timeZone=$(get_value "timezone")
+    #msg "Set timezone to $timeZone"
+    
+    echo "${timeZone}"  >/etc/.kytimezone
+    if echo "${timeZone}" | grep -q Beijing; then
+        timeZone=Asia/Shanghai
+    fi
+    if echo "${timeZone}" | grep -q Urumqi; then
+        timeZone=Asia/Shanghai
+    fi
+
+    echo "${timeZone}"  >/etc/timezone
+    ln -sf /usr/share/zoneinfo/$timeZone /etc/localtime
+    hwclock -w || true 
+}
+
+set_user()
+{
+    userName=$(get_value "username")
+    password=$(get_value_bytearray "password")
+    autoLogin=$(get_value "autologin")
+    KUID=1000
+
+    #msg "Set user $userName"
+    useradd -m -s /bin/bash -u "${KUID}" "${userName}" || useradd -m -s /bin/bash -u "1001" "${userName}"
+    usermod -c "${userName}" "${userName}"
+   # dbus-send --system --print-reply --type=method_call --dest=org.freedesktop.Accounts /org/freedesktop/Accounts org.freedesktop.Accounts.CreateUser string:"${userName}" string:"${userName}" int32:1
+    echo "$userName:$password" | chpasswd
+}
+
+add_groups()
+{
+    userName=$(get_value "username")
+    userDefGroup=(adm cdrom sudo dip plugdev users lpadmin sambashare debian-tor libvirtd lxd)
+
+    for item in ${userDefGroup[*]}; do
+        adduser $userName $item || true
+    done
+}
+
+set_auto_login()
+{
+    if [[ "${autoLogin}" == "1" ]]; then
+        if [[ -d /etc/lightdm ]]; then
+            LightDMCustomFile=/etc/lightdm/lightdm.conf
+            autoLoginParam="autologin-guest=false\n\
+autologin-user=$userName\n\
+autologin-user-timeout=0"
+
+            if ! grep -qs '^autologin-user' ${LightDMCustomFile}; then
+                if ! grep -qs '^\[Seat:\*\]' ${LightDMCustomFile}; then
+                    echo '[Seat:*]' >>${LightDMCustomFile}
+                fi
+                sed -i "s/\[Seat:\*\]/\[SeatDefaults]\n${AutologinParameters}/" ${LightDMCustomFile}
+            # oem config scenario
+            else
+                #sed -i "s/^\(\(str  *\)\?autologin-user\)=.*$/\1=${USERNAME}/g;" /etc/lightdm/lightdm.conf
+                sed -i "s/^autologin-user=.*$/autologin-user=${userName}/g" ${LightDMCustomFile}
+            fi
+        fi
+        if [[ -f /lib/systemd/system/accounts-daemon.service ]]; then
+        	systemctl restart accounts-daemon || true
+        fi
+    else
+        if [[ -f /etc/lightdm/lightdm.conf ]]; then
+            rm -f /etc/lightdm/lightdm.conf
+        fi
+    fi
+}
+
+set_language()
+{
+    language=$(get_value "language")
+
+    is_update_grub=false
+    if grep -q "LANG=${language}" /etc/default/locale; then
+    	is_update_grub=false
+    else
+    	is_update_grub=true
+    fi
+    
+    #msg "Set language $language"
+    echo "LANG=$language.UTF-8" > /etc/default/locale
+    if [[ "$language" == "zh_CN" ]]; then
+        echo "LANGUAGE=\"zh_CN:zh\"" >> /etc/default/locale
+    elif [[ "${language}" = "en_US" ]]; then
+    	echo "LANGUAGE=\"en\"" >>/etc/default/locale
+    elif [[ "${language}" = "bo_CN" ]]; then
+    	echo "LANGUAGE=\"bo_CN:zh_CN:zh\"" >>/etc/default/locale
+    elif [[ "${language}" = "zh_HK" ]]; then
+        echo "LANGUAGE=\"zh_HK:zh_CN:zh\"" >>/etc/default/locale
+    elif [[ "${language}" = "mn_MN" ]]; then
+        echo "LANGUAGE=\"mn_MN\"" >>/etc/default/locale
+    elif [[ "${language}" = "kk_KZ" ]]; then
+    	echo "LANGUAGE=\"kk_KZ\"" >>/etc/default/locale
+    elif [[ "${language}" = "ug_CN" ]]; then
+    	echo "LANGUAGE=\"ug_CN\"" >>/etc/default/locale
+    elif [[ "${language}" = "ky_KG" ]]; then
+    	echo "LANGUAGE=\"ky_KG\"" >>/etc/default/locale
+    elif [[ "${language}" = "de_DE" ]]; then
+    	echo "LANGUAGE=\"de_DE\"" >>/etc/default/locale
+    elif [[ "${language}" = "es_ES" ]]; then
+    	echo "LANGUAGE=\"es_ES\"" >>/etc/default/locale
+    elif [[ "${language}" = "fr_FR" ]]; then
+    	echo "LANGUAGE=\"fr_FR\"" >>/etc/default/locale
+    elif [[ "${language}" = "ar_AE" ]]; then
+    	echo "LANGUAGE=\"ar_AE\"" >>/etc/default/locale
+    elif [[ "${language}" = "vi_VN" ]]; then
+    	echo "LANGUAGE=\"vi_VN\"" >>/etc/default/locale
+    fi
+
+    locale-gen
+    update-locale
+    
+    if [[ -f /lib/systemd/system/accounts-daemon.service ]]; then
+        systemctl restart accounts-daemon || true
+    fi
+    #解决oem时设置的语言与用户配置的语言不一致时，grub语言未及时更新问题
+    if [[ "${is_update_grub}" == "true" ]]; then
+    	if [[ -f /usr/sbin/update-grub ]]; then
+    		update-grub || true
+    	fi
+    fi
+
+    if [[ "${is_990_9a0}" = "true" ]]; then
+        sed -i '/\/boot/s/rw,/ro,/g' /etc/fstab
+    fi
+
+}
+
+set_hostname()
+{
+    HOSTNAME=$(get_value "hostname")
+    echo "${HOSTNAME}" >/etc/hostname
+    hostnamectl set-hostname "${HOSTNAME}"
+
+    echo -e "127.0.0.1\tlocalhost
+
+127.0.1.1\t${HOSTNAME}
+# The following lines are desirable for IPv6 capable hosts
+::1     ip6-localhost ip6-loopback
+fe00::0 ip6-localnet
+ff00::0 ip6-mcastprefix
+ff02::1 ip6-allnodes
+ff02::2 ip6-allrouters
+" >/etc/hosts
+
+  # bug 39277, 重启蓝牙服务
+  if [[ -f /lib/systemd/system/bluetooth.service ]]; then
+    /bin/systemctl restart bluetooth.service || true
+  fi
+}
+
+remove_packages()
+{
+    # remove package list
+    packages_list_remove=(
+        kylin-os-installer
+        casper
+        ukui-installer-wayland
+    )
+    
+    for i in ${packages_list_remove[*]}; do
+        if dpkg -l | grep -q $i; then
+            msg "移除 $i"
+            apt purge -y $i || true
+        fi
+    done
+}
+
+remove_oem_service() {
+    if [[ -f /lib/systemd/system/oem-config.service ]]; then
+        /bin/systemctl disable oem-config.service || true
+        /bin/systemctl disable oem-config.target || true
+        rm -f /lib/systemd/system/oem-config.*
+        /bin/systemctl --no-block isolate graphical.target || true
+    fi
+
+ #   if [[ -f /etc/xdg/autostart/oem-qc.desktop ]]; then
+ #       rm -f /etc/xdg/autostart/oem-qc.desktop
+ #   fi
+
+    if [[ -f /usr/share/kylin-os-installer/data/oem-qc.desktop ]]; then
+        rm -f /usr/share/kylin-os-installer/data/oem-qc.desktop || true
+    fi
+    if [[ -f /etc/xdg/autostart/kylin-os-installer.desktop ]]; then
+        rm -f /etc/xdg/autostart/kylin-os-installer.desktop || true
+    fi
+
+    if [[ -f /usr/share/kylin-os-installer/data/oem-unlock.desktop ]]; then
+        rm -f /usr/share/kylin-os-installer/data/oem-unlock.desktop || true
+    fi
+
+    if [[ -f /etc/xdg/autostart/oem-unlock.desktop ]]; then
+        rm -f /etc/xdg/autostart/oem-unlock.desktop || true
+    fi
+    
+    if [[ -f /usr/sbin/oem-unlock ]]; then
+        rm -f /usr/sbin/oem-unlock || true
+    fi
+
+    if [[ -d /opt/apps-third ]]; then
+	if [[ -f /usr/share/applications/preinstall-app.desktop ]]; then
+        	cp -a /usr/share/applications/preinstall-app.desktop /etc/xdg/autostart || true
+        fi
+    fi
+
+    if [[ -e /usr/share/kylin-os-installer/ukui-new-function-introduction.desktop ]]; then
+        mv /usr/share/kylin-os-installer/ukui-new-function-introduction.desktop /etc/xdg/autostart || true
+    fi
+
+
+
+}
+
+delete_oem_user() {
+    if getent passwd 'oem' >/dev/null; then
+        if [[ -f /etc/sudoers.d/oem ]]; then
+            rm -f /etc/sudoers.d/oem
+        fi
+        pkill -u 'oem' || true
+        userdel --force --remove 'oem' || true
+    fi
+}
+
+set_test_mode() {
+    if grep -q 'test-mode=true' ${cfgFile}; then
+        userName=$(get_value "username")
+        # sudo 免密
+        echo "${userName} ALL=(ALL) NOPASSWD: ALL" >/etc/sudoers.d/${userName}
+
+        if [[ ! -z "$DISPLAY" ]]; then
+            xset s off -dpms
+        fi
+    fi
+}
+
+restart_lightdm()
+{
+    systemctl restart lightdm
+}
+
+set_language >>${logFile}
+set_timezone >>${logFile}
+
+#保留用户数据安装
+data_unformat=$(get_value data-unformat)
+if [[ "${data_unformat}" == "true" ]]; then
+	echo "this is data_unformat" >>${logFile}
+	if [[ -f /etc/hostnamebc ]]; then
+                mv /etc/hostnamebc /etc/hostname
+        fi
+        if [[ -f /etc/hostsbc ]]; then
+                mv /etc/hostsbc /etc/hosts
+        fi
+	if [[ -f /lib/systemd/system/accounts-daemon.service ]]; then
+        	systemctl restart accounts-daemon || true
+    	fi
+	if [[ -f /lib/systemd/system/systemd-hostnamed.service ]]; then
+        	systemctl restart systemd-hostnamed.service || true
+    	fi
+
+else
+	set_hostname >>${logFile}
+	set_user >>${logFile}
+	add_groups >>${logFile}
+	set_test_mode >>${logFile}
+	set_auto_login >>${logFile}
+fi
+
+if [[ -f /var/log/installer/ky-installer.cfg ]]; then
+        sed -i "/password/d" /var/log/installer/ky-installer.cfg || true
+        sed -i "/encryptyPWD/d" /var/log/installer/ky-installer.cfg || true
+fi
+
+
+remove_oem_service >>${logFile}
+#remove_packages >>${logFile}
+
+if [[ -f /run/udev/rules.d/90-udisks-inhibit.rules ]]; then
+	rm -f /run/udev/rules.d/90-udisks-inhibit.rules || echo "删除/run/udev/rules.d/90-udisks-inhibit.rules文件失败" >>${logFile}
+	systemctl restart udisks2 || echo "systemctl restart udisks2 failed" >>${logFile}
+fi
+
+echo "security=true" >/var/log/installer/oem-security.cfg
+m_security=$(get_value_tmp "security")
+while [[ "${m_security}" == "false" ]]
+do
+        echo "waiting for security"
+        sleep 1
+	m_security=$(get_value_tmp "security")
+done
+
+systemctl start delete-oem-user.service
+
+case $1 in
+'user')
+	set_user
+	;;
+'host')
+	set_hostname
+	;;
+'time')
+	set_timezone
+	;;
+'locale')
+	set_language
+	;;
+'autologin')
+	set_auto_login
+	;;
+'addgroup')
+	add_groups
+	;;
+'unload')
+	rm_ky_installer
+	;;
+'logout')
+	restart_lightdm
+	;;
+esac

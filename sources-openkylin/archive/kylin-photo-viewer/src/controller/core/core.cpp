@@ -1,0 +1,2672 @@
+/*
+ * Copyright (C) 2020, KylinSoft Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+#include "core.h"
+#include "./view/sizedate.h"
+Core::Core()
+{
+    initCore();
+}
+
+Core::~Core()
+{
+    m_loadedImageCache.clear();
+
+    m_albumModel->clear();
+    delete m_albumModel;
+    m_albumModel = nullptr;
+}
+
+void Core::initCore()
+{
+    connect(KylinImageCodec::getSignalObj(), &KylinImageCodecSignals::saveMovieFinish, this, &Core::saveMovieFinish);
+
+    m_imageList = nullptr;
+
+    m_albumModel = new QStandardItemModel;
+
+    qRegisterMetaType<ImageShowStatus::ChangeShowSizeType>("ImageShowStatus::ChangeShowSizeType");
+    qRegisterMetaType<QFileInfo>("QFileInfo");
+    qRegisterMetaType<Processing::FlipWay>("Processing::FlipWay");
+
+    m_playMovieTimer = new QTimer(this);
+    connect(m_playMovieTimer, &QTimer::timeout, this, &Core::playMovie);
+
+    m_canProcess = new QTimer(this);
+    m_canProcess->setSingleShot(true);
+
+    m_process = new QProcess(this);
+    connect(m_process, &QProcess::readyReadStandardError, this, &Core::processLog);
+
+    connect(&m_markTool, &Mark::MarkTool::saveFinish, this, &Core::openSaveImage);
+}
+
+QString Core::initDbus(const QStringList &arguments)
+{
+    m_dbus = new Dbus;
+
+    //获取注册Dbus服务是否成功
+    bool connectSeccess = m_dbus->getConnectSeccess();
+
+    //如果注册Dbus服务成功，接收命令
+    if (connectSeccess) {
+        connect(m_dbus, &Dbus::processingCommand, this, &Core::processingCommand);
+        connect(m_dbus, &Dbus::processingFullScreen, this, &Core::processingFullscreen);
+    }
+
+    //睡眠
+    QDBusConnection::systemBus().connect(
+                "org.freedesktop.login1",                  // service
+                "/org/freedesktop/login1",                 // path
+                "org.freedesktop.login1.Manager",          // interface
+                "PrepareForSleep",                         // signal name
+                this, SLOT(onSleep(bool))                  // slot
+                );
+
+    //没有参数不处理
+    if (arguments.length() < 2) {
+        return "";
+    }
+
+    //帮助命令则打印
+    if (arguments[1] == "-help" || arguments[1] == "--help" || arguments[1] == "-h") {
+        for (QString &key : Variable::SUPPORT_CMD.keys()) {
+            QString str = key + "   " + Variable::SUPPORT_CMD.value(key);
+            QStringList list = str.split("\n");
+            for (QString &tmpStr : list) {
+                qInfo() << tmpStr;
+            }
+        }
+#ifndef UNUI
+        exit(0);
+#endif
+        return "";
+    }
+
+    //如果是地址且文件存在则打开
+    QString path = arguments[1];
+    if (path.startsWith("file:///")) {
+        path.replace("file:///", "/");
+    }
+    if (QFileInfo::exists(path)) {
+        //不是支持的文件格式忽略
+        QString format = path;
+        format = format.split(".").last();
+        if (!Variable::SUPPORT_FORMATS.contains(format.toLower())) {
+            Variable::g_hasIllegalSuffix = true;
+        } else {
+            Variable::g_hasIllegalSuffix = false;
+        }
+
+        if (arguments.length() == 3) {
+            if (Variable::startAppNameList.contains(arguments[2])) {
+                Variable::startAppName = arguments[2];
+            }
+        }
+        return path;
+    }
+
+    if (arguments[1] == "-api") {
+        return processingApi(arguments);
+    }
+
+    //如果是命令
+    if (Variable::SUPPORT_CMD.keys().contains(arguments[1])) {
+#ifndef UNUI
+        if (connectSeccess) { //如果为首个实例不响应
+            return "";
+        }
+#endif
+        m_dbus->argumentsCommand(arguments);
+        return "";
+    }
+    return "";
+}
+
+void Core::onSleep(bool sleeping)
+{
+    if(!sleeping){
+        qDebug()<<"Core onSleep 睡眠唤醒和当前缩放率"<< sleeping <<Variable::g_devicePixelRatio;
+    }
+}
+
+void Core::processingCommand(const QStringList &cmd)
+{
+#ifndef UNUI
+    if (coreOperateTooOften()) {
+        return;
+    }
+#endif
+    if (cmd[0] == "-next") {
+        changeImage(NEXT_IMAGE);
+        return;
+    }
+    if (cmd[0] == "-back") {
+        changeImage(BACK_IMAGE);
+        return;
+    }
+    if (cmd[0] == "-big") {
+        changeImageShowSize(ImageShowStatus::BIG);
+        return;
+    }
+    if (cmd[0] == "-small") {
+        changeImageShowSize(ImageShowStatus::SMALL);
+        return;
+    }
+    if (cmd[0] == "-origin") {
+        changeImageShowSize(ImageShowStatus::ORIGIN);
+        return;
+    }
+    if (cmd[0] == "-auto") {
+        changeImageShowSize(ImageShowStatus::AUTO);
+        return;
+    }
+    if (cmd[0] == "-rotate") {
+        flipImage(Processing::FlipWay::clockwise);
+        return;
+    }
+}
+
+QString Core::processingApi(const QStringList &cmd)
+{
+    if (cmd.length() < 4) {
+        return "";
+    }
+
+    if (cmd[2] == "-flip") {
+        if (cmd.length() < 5) {
+            qInfo() << "参数不合规，使用-h查看帮助";
+            return "";
+        }
+        m_apiCmd.append(cmd[2]);
+        if (!QFileInfo::exists(cmd[3])) {
+            qInfo() << "文件不存在";
+            return "";
+        }
+        QString format = cmd[3];
+        format = format.split(".").last();
+        if (!Variable::SUPPORT_FORMATS.contains(format)) {
+            qInfo() << "不支持的格式";
+            return "";
+        }
+        m_apiCmd.append(cmd[3]);
+        QString flipCmd = cmd[4];
+        int hNum = flipCmd.count('h');
+        hNum = hNum % 2; //保留有效操作
+        int vNum = flipCmd.count('v');
+        vNum = vNum % 2;
+        int cNum = flipCmd.count('c');
+        cNum = cNum % 4;
+        QString flipCmdResult;
+        for (int i = 0; i < hNum; i++) {
+            flipCmdResult += "h";
+        }
+        for (int i = 0; i < vNum; i++) {
+            flipCmdResult += "v";
+        }
+        for (int i = 0; i < cNum; i++) {
+            flipCmdResult += "c";
+        }
+        m_apiCmd.append(flipCmdResult);
+
+        if (cmd.length() > 5) {
+            QString saveWay = cmd[5];
+            if (saveWay.indexOf('r') > 0) {
+                m_apiReplaceFile = true;
+            }
+        }
+
+        m_isApi = true;
+        return Variable::API_TYPE;
+    }
+    return "";
+}
+
+void Core::processingFullscreen()
+{
+    Q_EMIT fullScreen();
+}
+
+void Core::setHighLight(const QString &path)
+{
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        if (item->getPath() == path) {
+            Q_EMIT changeAlbumHighLight(item->index());
+            return;
+        }
+    }
+}
+
+void Core::initMainImageLoad(QString fullPath)
+{
+    m_nowRealFormat = File::realFormat(fullPath);
+    MainImageLoad *thread = new MainImageLoad(fullPath, m_nowRealFormat);
+    connect(thread, &MainImageLoad::finished, thread, &MainImageLoad::deleteLater);
+    connect(thread, &MainImageLoad::mainImageLoadFinish, this, &Core::initMainImageLoadFinish);
+    thread->start();
+}
+
+void Core::initMainImageLoadFinish(QString path, QVariant var1, QVariant var2)
+{
+    ImageAndFileinfo maf = var1.value<ImageAndFileinfo>();
+    m_nowPixmap = maf.image;
+    QPair<ImageAndFileinfo, QImage> imagePix;
+    imagePix.first = maf;
+    imagePix.second = m_nowPixmap;
+    if (m_loadedImageCache.find(path) == m_loadedImageCache.end()) {
+        m_loadedImageCache.insert(path, imagePix);
+        // 更新LRU顺序
+        m_cacheAccessOrder.removeAll(path);
+        m_cacheAccessOrder.append(path);
+        // 管理缓存大小
+        manageCacheSize();
+    }
+    ImageAndInfo package = var2.value<ImageAndInfo>();
+    QString fileName = package.info.absoluteFilePath();
+    if (!package.image.isNull() && m_bigImageCache.find(path) == m_bigImageCache.end()) {
+        m_bigImageCache.insert(fileName, package.image);
+    }
+}
+
+void Core::openImage(QString fullPath)
+{
+    // 1.文件路径为空；2.从外部删除文件夹下的所有图片时，传空图片列表，不展示图片，回到开始界面
+    if (fullPath.isEmpty()) {
+        showImage(QImage());
+        return;
+    }
+    if (m_isclose == true) {
+        return;
+    }
+
+    qDebug() << "[Core::openImage] 打开图片:" << fullPath;
+    qDebug() << "[Core::openImage] 当前缓存大小:" << m_loadedImageCache.size()
+             << ", 大图片缓存大小:" << m_bigImageCache.size()
+             << ", 相册加载线程数:" << m_albumThumbnailLists.size();
+
+    m_tiffPage = 1;
+    //判断图片状态
+    QFlags<QFileDevice::Permission> power = QFile::permissions(fullPath);
+    //判断文件所有者是否可写和是否可删除
+    if (power.testFlag(QFile::WriteOwner) && File::canDel(fullPath)) {
+        m_isCanDel = true;
+        //发送信号给前端--可删除
+        Q_EMIT canDelImage(true);
+    } else {
+        m_isCanDel = false;
+        //发送信号给前端--不可删除
+        Q_EMIT canDelImage(false);
+    }
+    m_willProcess.clear();
+    if (!Variable::g_needEnterSign) {
+        needSave();
+    }
+    m_nowRealFormat = File::realFormat(fullPath);
+    QFileInfo fileInfo(fullPath);
+    if (fileInfo.suffix().toLower() == m_nowRealFormat) {
+        Variable::g_hasIllegalSuffix = false;
+    } else {
+        Variable::g_hasIllegalSuffix = true;
+    }
+
+    m_nowpath = fullPath;
+
+    //首次打开，m_backpath为空，造成相册切换
+    if (m_backpath == nullptr) {
+        m_backpath = m_nowpath;
+    }
+
+    QHash<QString, QPair<ImageAndFileinfo, QImage>>::iterator iter = m_loadedImageCache.find(fullPath);
+    ImageAndFileinfo maf;
+    if (iter != m_loadedImageCache.end())
+    {
+        QPair<ImageAndFileinfo, QImage> imagePix = iter.value();
+        maf = imagePix.first;
+        m_nowPixmap = imagePix.second;
+        m_origPix = m_nowPixmap;
+        m_openSuccess = maf.openSuccess; //判断是否打开失败-损坏
+        if (!m_openSuccess) {
+            //更新侧栏图标
+            changeOpenIcon(Variable::g_themeStyle);
+            if (m_loadedImage.contains(fullPath)) {
+                m_loadedImage.removeAt(m_loadedImage.indexOf(fullPath));
+            }
+        }
+
+        //记录状态
+        changeMat(maf.image);
+        m_info = maf.info;
+        m_maxFrame = maf.maxFrame;
+        m_imageList = maf.imageList;
+        m_fps = maf.fps;
+
+        //如果正在保存，则显示等待
+        if (File::isSaving(fullPath) || (!m_tiffHasOperatedFinish && m_tiffProcessPath == m_nowpath)) {
+            //如果此图正在保存
+            m_thisImageIsSaving = true;
+            showImage(QImage());
+            return;
+        }
+        m_imageNeedUpdate = true;
+        creatImage(-1, true);
+    } else {
+        Q_EMIT showLoadingImageWid();
+        MainImageLoad *thread = new MainImageLoad(fullPath, m_nowRealFormat);
+        connect(thread, &MainImageLoad::finished, thread, &MainImageLoad::deleteLater);
+        connect(thread, &MainImageLoad::mainImageLoadFinish, this, &Core::mainImageLoadFinish);
+        thread->start();
+    }
+}
+
+void Core::mainImageLoadFinish(QString path, QVariant var1, QVariant var2)
+{
+    ImageAndFileinfo maf = var1.value<ImageAndFileinfo>();
+    m_nowPixmap = maf.image;
+    m_origPix = m_nowPixmap;
+    QPair<ImageAndFileinfo, QImage> imagePix;
+    imagePix.first = maf;
+    imagePix.second = m_nowPixmap;
+    if (m_loadedImageCache.find(path) == m_loadedImageCache.end()) {
+        m_loadedImageCache.insert(path, imagePix);
+        // 更新LRU顺序
+        m_cacheAccessOrder.removeAll(path);
+        m_cacheAccessOrder.append(path);
+        // 管理缓存大小
+        manageCacheSize();
+    }
+    ImageAndInfo package = var2.value<ImageAndInfo>();
+    QString fileName = package.info.absoluteFilePath();
+    if (!package.image.isNull() && m_bigImageCache.find(path) == m_bigImageCache.end()) {
+        m_bigImageCache.insert(fileName, package.image);
+    }
+
+    if (path == m_nowpath) {
+        m_openSuccess = maf.openSuccess; //判断是否打开失败-损坏
+        if (!m_openSuccess) {
+            //更新侧栏图标
+            changeOpenIcon(Variable::g_themeStyle);
+            if (m_loadedImage.contains(path)) {
+                m_loadedImage.removeAt(m_loadedImage.indexOf(path));
+            }
+        }
+
+        //记录状态
+        changeMat(maf.image);
+        m_info = maf.info;
+        m_maxFrame = maf.maxFrame;
+        m_imageList = maf.imageList;
+        m_fps = maf.fps;
+
+        //如果正在保存，则显示等待
+        if (File::isSaving(path) || (!m_tiffHasOperatedFinish && m_tiffProcessPath == m_nowpath)) {
+            //如果此图正在保存
+            m_thisImageIsSaving = true;
+            showImage(QImage());
+            return;
+        }
+        m_imageNeedUpdate = true;
+        creatImage(-1, true);
+    }
+}
+
+void Core::showImage(const QImage &img)
+{
+    //对于动图在静止无操作时，不多次进行触发
+    if (!img.isNull()) {
+        if (m_imageList != nullptr && (m_info.suffix().toLower() == "gif" || m_info.suffix().toLower() == "apng")) {
+            if (m_backImagePath == m_nowpath) {
+                if (operayteMode == OperayteMode::NormalMode || operayteMode == OperayteMode::NoOperate) {
+                    return;
+                }
+            }
+        }
+    }
+    if (!img.isNull()) {
+        m_backImagePath = m_nowpath;
+    }
+    m_origCutImage = img;
+    //m_origMattingImage = pix.toImage();
+
+    ImageAndInfo package;
+    package.proportion = m_proportion;
+    package.origProportion = m_origProportion;
+    package.info = m_info;
+    package.image = img;
+    package.realFormat = m_nowRealFormat;
+    m_paperFormat = m_nowRealFormat;
+    package.openSuccess = m_openSuccess;
+    if (!m_openSuccess) {
+        package.imageSize = "-";
+        package.colorSpace = "-";
+    } else {
+        package.imageSize = m_imageSize;
+        package.colorSpace = m_colorSpace;
+    }
+    if (m_imageList != nullptr) {
+        package.movieImage = true;
+    } else {
+        package.movieImage = false;
+    }
+    package.originImage = m_nowPixmap;
+    package.displaySizeOfPicture = m_tmpSize;
+    package.imageShowWay = m_imageShowWay;
+    if (displayMode == DisplayMode::OCRMode) {
+        m_imageNeedUpdate = false;
+    }
+    package.imageNeedUpdate = m_imageNeedUpdate;
+
+    if (m_info.suffix().toLower() == "tiff" || m_info.suffix().toLower() == "tif") {
+        if (m_imageList != nullptr && m_imageList->length() > 1) {
+            package.imageList = m_tiffImageList;
+        }
+    }
+    QVariant var;
+    var.setValue<ImageAndInfo>(package);
+    Q_EMIT openFinish(var);
+}
+
+void Core::creatImage(const int &proportion, bool defaultOpen)
+{
+    if (m_nowPixmap.isNull()) {
+        return;
+    }
+    QImage tempPix = m_nowPixmap;
+    if (m_imageList != nullptr && (m_paperFormat == "tiff" || m_paperFormat == "tif")) {
+        if (m_tiffImageList.length() > 0) {
+            tempPix = m_tiffImageList.at(m_tiffPage - 1);
+        }
+    }
+    double defaultProportion = 100 * (double)m_size.width() / tempPix.width();
+    if (tempPix.height() * defaultProportion / 100 > m_size.height()) {
+        defaultProportion = 100 * (double)m_size.height() / tempPix.height();
+    }
+    defaultProportion = std::floor(defaultProportion * 100) / 100.0;
+
+    if (defaultOpen == false) {
+        m_isClickBtnChangeImageSize = true;
+        operateImage(proportion, defaultProportion);
+    } else {
+        m_isClickBtnChangeImageSize = false;
+        defaultImage(proportion, defaultProportion);
+    }
+}
+//默认打开，旋转等，不进行放缩操作的方式查看图片
+void Core::defaultImage(int proportion, double defaultProportion)
+{
+    //自适应窗口大小显示
+    if (proportion <= 0) {
+        if (defaultProportion >= 100) {
+            m_proportion = 100;
+        } else {
+            m_proportion = defaultProportion;
+        }
+        m_lastTimeProportion = defaultProportion;
+        m_tmpSize = m_nowPixmap.size() * m_proportion / 100;
+        showImageOrMovie();
+        return;
+    }
+}
+//对图片尺寸进行了操作的方式查看图片
+void Core::operateImage(int proportion, double defaultProportion)
+{
+    m_lastTimeProportion = m_proportion;
+    //计算缩放比
+    if (proportion <= 0) {
+        if (defaultProportion > 1000) {
+            m_proportion = 1000;
+        } else {
+            m_proportion = defaultProportion;
+        }
+    } else {
+        m_proportion = proportion;
+    }
+    //计算缩放后尺寸
+    m_tmpSize = m_nowPixmap.size() * m_proportion / 100;
+    //极小的图缩放后尺寸低于1的不处理
+    if (judgeSizeIsZero(m_tmpSize)) {
+        return;
+    }
+    showImageOrMovie();
+}
+
+void Core::showImageOrMovie()
+{
+    if (m_tiffImageList.length() > 0) {
+        m_tiffImageList.clear();
+    }
+    if(m_isclose){
+        return;
+    }
+    QFileInfo fileInfo(m_nowpath);
+    //动画类格式循环播放
+    if (m_imageList != nullptr) {
+        if (fileInfo.suffix().toLower() != "tiff" && fileInfo.suffix().toLower() != "tif") {
+            if (m_imageList->length() > 1) {
+                playMovie(); //立即播放第一帧
+//                m_playMovieTimer->start(m_fps);
+                return;
+            }
+        } else {
+            if (m_imageList->length() > 1) {
+                for (int i = 0; i < m_imageList->length(); i++) {
+                    QImage image = m_imageList->at(i);
+                    m_tiffImageList.append(image);
+                }
+            }
+        }
+    }
+    if (m_bigImageCache.find(m_nowpath) != m_bigImageCache.end() && !Variable::g_isShowOrigImage) {
+        m_origProportion = m_proportion;
+        QImage img = m_bigImageCache.value(m_nowpath);
+        double defaultProportion = 100 * (double)m_size.width() / img.width();
+        if (img.height() * defaultProportion / 100 > m_size.height()) {
+            defaultProportion = 100 * (double)m_size.height() / img.height();
+        }
+        defaultProportion = std::floor(defaultProportion * 100) / 100.0;
+        if (defaultProportion >= 100) {
+            m_proportion = 100;
+        } else {
+            m_proportion = defaultProportion;
+        }
+        showImage(img);
+    } else {
+        showImage(m_nowPixmap);
+    }
+}
+
+void Core::playMovie()
+{
+    if (m_imageListIndex >= m_imageList->length()) {
+        m_imageListIndex = 0;
+    }
+
+    QImage image = m_imageList->at(m_imageListIndex);
+    m_imageListIndex++;
+
+    if(image.size().width() != m_tmpSize.width() ||
+       image.size().height() != m_tmpSize.height()  ){
+        image = image.scaled(m_tmpSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+
+    showImage(image);
+}
+
+void Core::tiffOperate()
+{
+    m_processed = false;
+    m_tiffHasOperatedFinish = false;
+    MultiTiffOperate *thread = new MultiTiffOperate(m_nowpath, m_tiffProcess);
+    connect(thread, &MultiTiffOperate::finished, thread, &MultiTiffOperate::deleteLater);
+    connect(thread, &MultiTiffOperate::tiffOPerateFinish, this, &Core::tiffOperateFinish);
+    thread->start();
+}
+
+void Core::qmlTiffImagePage(int pageNum)
+{
+    m_tiffPage = pageNum;
+}
+
+void Core::saveMovieFinish(const QString &path)
+{
+    //如果收到关闭信号，保存完再退出
+    if (m_shouldClose) {
+        //双层判断，避免多次确认状态，提升效率
+        if (File::allSaveFinish()) {
+            progremExit();
+        }
+        return;
+    }
+
+    //如果当前播放的不是这张图
+    if (m_nowpath != path) {
+        return;
+    }
+    m_thisImageIsSaving = false;
+    openImage(path);
+}
+
+void Core::tiffOperateFinish(const QString &path)
+{
+    //如果收到关闭信号，保存完再退出
+    if (m_shouldClose) {
+        progremExit();
+        return;
+    }
+    m_tiffProcess.clear();
+    m_thisImageIsSaving = false;
+    m_tiffHasOperatedFinish = true;
+    //如果当前播放的不是这张图
+    if (m_nowpath != path) {
+        return;
+    }
+    openImage(path);
+}
+//处理上一次图片没处理完，进行下一次操作的时候，更新对齐动图每一帧的操作状态
+void Core::processNewLoadImage()
+{
+    // m_willProcess为空，说明上一次处理完毕，不需要进行对齐更新
+    if (m_willProcess.isEmpty()) {
+        return;
+    }
+    //从未处理处开始进行对齐，m_willProcessNum为上一次处理到第几帧
+    for (int i = m_willProcessNum; i < m_imageList->length(); i++) {
+        //遍历队列，对剩下帧进行同样的操作，保持所有帧一致
+        for (Processing::FlipWay &tmpWay : m_willProcess) {
+            QImage image = Processing::processingImage(Processing::flip, m_imageList->at(i), QVariant(tmpWay));
+            m_imageList->replace(i, image);
+        }
+    }
+}
+
+void Core::flipImage(const Processing::FlipWay &way)
+{
+    //如果此图正在保存
+    if (m_thisImageIsSaving) {
+        return;
+    }
+    m_rotateRecord.append(way);
+    m_processed = true;
+
+    processNewLoadImage();
+
+    //如果是动图，则批量处理
+    if (m_playMovieTimer->isActive()) {
+        for (int i = 0; i < m_imageList->length(); i++) {
+            QImage image = Processing::processingImage(Processing::flip, m_imageList->at(i), QVariant(way));
+            m_imageList->replace(i, image);
+        }
+        //判断此次操作是否未加载完全，如是，记录此时的加载帧数和操作方式
+        if (m_maxFrame > m_imageList->length()) {
+            m_willProcessNum = m_imageList->length();
+            m_willProcess.append(way);
+        } else {
+            m_willProcess.clear();
+        }
+        m_imageNeedUpdate = false;
+        m_nowPixmap = m_imageList->first();
+        creatImage(-1, true);
+        return;
+    }
+    QImage image;
+    if (m_imageList != nullptr && (m_paperFormat == "tiff" || m_paperFormat == "tif")) {
+        m_tiffProcess.append(way);
+        m_tiffProcessPath = m_nowpath;
+        for (int i = 0; i < m_imageList->length(); i++) {
+            QImage tempmat = Processing::processingImage(Processing::flip, m_imageList->at(i), QVariant(way));
+            m_imageList->replace(i, tempmat);
+        }
+        for (int j = 0; j < m_imageList->length(); j++) {
+            QImage tempmat1 = m_imageList->at(j);
+            m_tiffImageList.replace(j, tempmat1);
+        }
+        image = m_imageList->at(m_tiffPage - 1);
+    } else {
+        image = Processing::processingImage(Processing::flip, m_nowImage, QVariant(way));
+    }
+    if (image.isNull()) {
+        return;
+    }
+    m_imageNeedUpdate = true;
+    image = changeMat(image);
+    m_nowPixmap = image;
+    creatImage(-1, true);
+}
+
+void Core::deleteImage()
+{
+    //如果此图正在保存
+    if (m_thisImageIsSaving) {
+        return;
+    }
+
+    m_processed = false; //重置是否操作过的状态,都已经删除了，就没必要存了
+
+    if (!m_isCanDel) {
+        return;
+    }
+    QFileInfo fileInfo(m_nowpath);
+    if (fileInfo.suffix().toLower() == m_nowRealFormat || m_loadedImage.contains(m_nowpath)) {
+        m_needDel = true;
+    } else {
+        m_needDel = false;
+    }
+    qDebug() << "deleteImage:" << m_needDel;
+    //切换到下一张
+    changeImage(NEXT_IMAGE);
+
+    setHighLight(m_nowpath);
+
+    //删除后队列中无图片，返回状态
+    if (m_albumModel->rowCount() == 1) {
+        showImage(QImage()); //发送状态
+        return;
+    }
+}
+
+void Core::setAsBackground()
+{
+    //设置为背景图
+    if (QGSettings::isSchemaInstalled(SET_BACKGROUND_PICTURE_GSETTINGS_PATH)) {
+        QGSettings *background = new QGSettings(SET_BACKGROUND_PICTURE_GSETTINGS_PATH);
+        QStringList keyList = background->keys();
+        if (keyList.contains(SET_BACKGROUND_PICTURE_GSETTINGS_NAME)) {
+            QString nowPath = background->get(SET_BACKGROUND_PICTURE_GSETTINGS_NAME).toString();
+            if (nowPath == m_nowpath) {
+                background->set(SET_BACKGROUND_PICTURE_GSETTINGS_NAME, QString(""));
+            }
+            background->set(SET_BACKGROUND_PICTURE_GSETTINGS_NAME, m_nowpath);
+        }
+        background->deleteLater();
+    }
+}
+#ifndef UNUI
+void Core::openInfile()
+{
+    QDBusInterface interface("org.freedesktop.FileManager1", "/org/freedesktop/FileManager1",
+                             "org.freedesktop.FileManager1", QDBusConnection::sessionBus());
+    QStringList items;
+    items.push_back(m_nowpath);
+    QString startUpId = "";
+    interface.call("ShowItems", items, startUpId);
+}
+#endif
+void Core::changeOpenIcon(QString theme)
+{
+    Variable::g_themeStyle = theme;
+
+    //将第一张图设置为打开按钮
+    if (m_item0 == nullptr) {
+        m_item0 = new MyStandardItem;
+        m_item0->setDragEnabled(false);
+        m_item0->setSizeHint(Variable::ALBUM_IMAGE_SIZE);
+        m_item0->setToolTip(tr("Add"));
+        m_albumModel->insertRow(0, m_item0); //插入model
+    }
+    if ("ukui-dark" == theme || "ukui-black" == theme) {
+        if (m_item0 != nullptr) {
+            m_item0->setIcon(m_item0Black); //用来保存地址路径
+            m_openImage = QPixmap(":/res/res/damaged_imgB.png");
+        }
+    } else {
+        if (m_item0 != nullptr) {
+            m_item0->setIcon(m_item0White); //用来保存地址路径
+            m_openImage = QPixmap(":/res/res/damaged_img.png");
+        }
+    }
+    if (!m_openSuccess) {
+        showImage(m_openImage.toImage());
+    }
+    for (int i = 0; i < m_albumModel->rowCount(); i++) {
+        MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        if (item == nullptr) {
+            continue;
+        }
+        if (Variable::g_damagedImage.contains(item->getPath())) {
+            item->setIcon(m_openImage);
+        }
+    }
+}
+
+void Core::close()
+{
+    //如果已经触发过关闭事件不响应
+    if (m_shouldClose) {
+        return;
+    }
+
+    //关闭缩略图相关加载
+    m_isclose = true;
+    KylinImageCodec::exitApp();
+    Variable::g_exitApp.store(true);
+
+    if(m_findImageThread && m_findImageThread->isRunning()){
+        m_findImageThread->quit();
+        m_findImageThread->wait();
+
+    }
+    while (!m_albumThumbnailLists.isEmpty()) {
+        QCoreApplication::processEvents();
+        QThread::msleep(10);
+    }
+
+    //如果正在裁剪,且还未保存--暂时逻辑，标题栏已隐藏，暂时不用处理
+    //    if (m_isCutting && m_isCutSaved) {
+    //        Q_EMIT isCutNotSave();
+    //    }
+    //如果没有操作且有正在保存的动图直接退出
+    if (!m_processed) {
+        if (!File::allSaveFinish()) {
+            if (m_playMovieTimer->isActive()) {
+                m_playMovieTimer->stop();
+            }
+
+            m_shouldClose = true;
+            showImage(QImage());
+            return;
+        }
+        progremExit();
+        return;
+    }
+    if (m_tiffProcess.length() > 0) {
+        this->tiffOperate();
+        m_shouldClose = true;
+        showImage(QImage());
+        return;
+    }
+    //如果不是作为外部API调用则默认覆盖保存
+    if (!m_isApi) {
+        m_apiReplaceFile = true;
+    }
+    m_isclose = true;
+    //如果正在播放动图，则停止
+    if (m_playMovieTimer->isActive()) {
+        m_playMovieTimer->stop();
+        showImage(QImage());
+        //判断没有加载完全部时，进行阻塞
+        while (m_maxFrame > m_imageList->length()) {
+            QThread::usleep(10);
+        }
+        processNewLoadImage();
+        //保存动图
+        File::saveImage(m_imageList, m_fps, m_nowpath, m_nowRealFormat, m_apiReplaceFile);
+        m_shouldClose = true;
+    } else {
+        //保存图片
+        File::saveImage(m_nowImage, m_nowpath, m_nowRealFormat, m_apiReplaceFile);
+        QString suffix = QFileInfo(m_nowpath).suffix().toLower();
+        if (suffix == "apng" || suffix == "png" || suffix == "gif") {
+            if (m_imageList != nullptr) {
+                if (m_imageList->length() > 1) {
+                    m_shouldClose = true;
+                    return;
+                }
+            }
+            //解决git静态图无法保存的问题，已测试，界面可正常关掉，png和apng可正常保存
+            if (suffix == "gif") {
+                m_shouldClose = true;
+                return;
+            }
+        }
+        progremExit();
+    }
+}
+
+QStandardItemModel *Core::getAlbumModel()
+{
+    return m_albumModel;
+}
+
+void Core::changeImage(const int &type)
+{
+    //    operayteMode = OperayteMode::ChangeImage;
+    //如果错误不处理
+    if (type == ERROR_IMAGE) {
+        Q_EMIT updateSideNum(m_albumModel->rowCount());
+        return;
+    }
+
+    //如果图片队列小于1，不处理。小于2时，相册文件清空时，会一直显示当前图片
+    if (m_albumModel->rowCount() < 2) {
+        m_backpath = m_nowpath;
+        return;
+    }
+    if (m_isclose == true) {
+        return;
+    }
+
+    // 防止频繁切换图片导致资源耗尽
+    if (coreOperateTooOften()) {
+        qWarning() << "[Core::changeImage] 操作过于频繁，忽略本次切换请求";
+        return;
+    }
+
+    needSave();
+
+    if (type == NEXT_IMAGE) {
+        QString key = nextImagePath(m_nowpath);
+        changeImageType(key);
+
+        if(m_needDel) {
+            //从队列中去除
+            deleteAlbumItem(m_backpath);
+            //更新相册列表
+            Q_EMIT updateSideNum(m_albumModel->rowCount());
+            //清空相册直接返回
+            if (m_albumModel->rowCount() < 2) {
+                Variable::g_clearImage = true;
+                m_backpath = m_nowpath;
+                m_needDel = false;
+                return;
+            }
+            m_needDel = false;
+        }
+
+        openImage(m_nowpath);
+        setHighLight(m_nowpath);
+        loadOnChange(m_nowpath);
+        return;
+    }
+    if (type == BACK_IMAGE) {
+        QString key = backImagePath(m_nowpath);
+        changeImageType(key);
+        openImage(m_nowpath);
+        setHighLight(m_nowpath);
+        loadOnChange(m_nowpath);
+        return;
+    }
+
+    //点击相册切换图片
+    MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(type));
+    changeImageType(item->getPath());
+    openImage(m_nowpath);
+    setHighLight(m_nowpath);
+    reloadImage(m_albumModel->indexFromItem(item));
+}
+#ifndef UNUI
+void Core::changeImageFromClick(QModelIndex modelIndex)
+{
+    MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->itemFromIndex(modelIndex));
+    if (item == nullptr) {
+        changeImage(modelIndex.row());
+        KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_CLICK);
+        kdk_dia_upload_default(node, (char *)"ChangeImage", (char *)"core");
+        kdk_dia_data_free(node);
+        return;
+    }
+//    if (item->getPath() == m_nowpath) {
+//        return;
+//    }
+    //判断是按钮点击，则打开图片
+    if (modelIndex.row() == 0) {
+        Q_EMIT openFromAlbum();
+        return;
+    }
+    KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_CLICK);
+    kdk_dia_upload_default(node, (char *)"ChangeImage", (char *)"core");
+    kdk_dia_data_free(node);
+    m_tiffPage = 1;
+    changeImage(modelIndex.row());
+    //    openImage(item->getPath());
+}
+#endif
+void Core::changeWidgetSize(const QSize &size)
+{
+    m_size = size;
+    creatImage(-1, true);
+}
+
+void Core::getDefaultProportion(const QSize &size)
+{
+    m_size = size;
+    if (m_nowPixmap.isNull()) {
+        return;
+    }
+    QImage tempPix = m_nowPixmap;
+    if (m_imageList != nullptr && (m_paperFormat == "tiff" || m_paperFormat == "tif")) {
+        if (m_tiffImageList.length() > 0) {
+            tempPix = m_tiffImageList.at(m_tiffPage - 1);
+        }
+    }
+    double defaultProportion = 100 * (double)m_size.width() / tempPix.width();
+    if (tempPix.height() * defaultProportion / 100 > m_size.height()) {
+        defaultProportion = 100 * (double)m_size.height() / tempPix.height();
+    }
+    defaultProportion = std::floor(defaultProportion * 100) / 100.0;
+
+    if (defaultProportion >= 100) {
+        m_proportion = 100;
+    } else {
+        m_proportion = defaultProportion;
+    }
+    Q_EMIT updateDefaultProportion(m_proportion);
+
+    //尺寸改变更新大图片的缩略图
+    //开线程执行，避免拖动改变窗口尺寸时出现卡顿
+    QThread* thread = new QThread();
+    QObject* worker = new QObject();
+    worker->moveToThread(thread);
+    connect(thread, &QThread::started, worker, [this, worker,thread]() {
+        for (auto it = m_bigImageCache.begin(); it != m_bigImageCache.end(); ++it) {
+            QPair<ImageAndFileinfo, QImage> imagePix = m_loadedImageCache.value(it.key());
+            QPixmap pix = QPixmap::fromImage(imagePix.second);
+            it.value() = Processing::resizePix(pix, m_size).toImage();
+        }
+        thread->quit();
+    });
+    connect(thread, &QThread::finished, worker, &QObject::deleteLater);
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+}
+
+void Core::changeImageShowSize(ImageShowStatus::ChangeShowSizeType type, QPoint focus)
+{
+    //如果此图正在保存
+    if (m_thisImageIsSaving) {
+        return;
+    }
+    m_imageNeedUpdate = false;
+    int resizeKey;
+    resizeKey = Variable::RESIZE_KEY;
+    int tmpProportion = 0;
+    switch (type) {
+
+    ///----------------------------放大图片----------------------------
+    case ImageShowStatus::BIG:
+        if (m_proportion == Variable::RESIZE_KEY_MAX) { //等于临界值
+            return;
+        }
+        if (m_proportion + resizeKey > Variable::RESIZE_KEY_MAX) { //将要超出临界值
+            tmpProportion = Variable::RESIZE_KEY_MAX;
+            creatImage(tmpProportion, false);
+            return;
+        }
+        if (int(m_proportion) % resizeKey != 0) { //不能整除
+            tmpProportion = (m_proportion / resizeKey + 1) * resizeKey;
+            creatImage(tmpProportion, false);
+            return;
+        }
+        tmpProportion = m_proportion + resizeKey;
+        creatImage(tmpProportion, false);
+        return;
+
+        ///----------------------------缩小图片----------------------------
+    case ImageShowStatus::SMALL:
+        if (m_proportion == Variable::RESIZE_KEY_MIN) { //等于临界值
+            return;
+        }
+        if (m_proportion - resizeKey < Variable::RESIZE_KEY_MIN) { //将要超出临界值
+            tmpProportion = Variable::RESIZE_KEY_MIN;
+            creatImage(tmpProportion, false);
+            return;
+        }
+        if (int(m_proportion) % resizeKey != 0) { //不能整除
+            tmpProportion = (m_proportion / resizeKey) * resizeKey;
+            creatImage(tmpProportion, false);
+            return;
+        }
+        tmpProportion = m_proportion - resizeKey;
+        creatImage(tmpProportion, false);
+        return;
+
+        ///----------------------------查看原图----------------------------
+    case ImageShowStatus::ORIGIN:
+        creatImage(100, false);
+        return;
+
+        ///----------------------------查看自适应图----------------------------
+    case ImageShowStatus::AUTO:
+        creatImage(-1, false);
+        return;
+
+    default:
+        break;
+    }
+}
+
+void Core::changeImageType(QString path)
+{
+    m_imageListIndex = 0;
+    if (path == "") { //回滚
+        deleteAlbumItem(m_nowpath);
+        if (m_albumModel->rowCount() == 1) {
+            m_backpath = m_nowpath;
+            m_nowpath = "";
+            return;
+        }
+        m_nowpath = m_backpath;
+        return;
+    }
+    m_backpath = m_nowpath;
+    m_nowpath = path;
+}
+
+QImage Core::changeMat(QImage image)
+{
+    m_backImage = m_nowImage;
+    m_nowImage = image;
+    m_imageSize = QString::number(m_nowPixmap.width()) + "x" + QString::number(m_nowPixmap.height());
+
+    switch (m_nowImage.format()) {
+
+        case QImage::Format_ARGB32:
+            m_colorSpace = "RGBA";
+            break;
+        case QImage::Format_RGB32:      // 注意：Qt的RGB32实际是ARGB
+        case QImage::Format_RGB888:     // 真正的RGB
+            m_colorSpace = "RGB";
+            break;
+        case QImage::Format_Grayscale8: // 灰度
+            m_colorSpace = "GRAY";
+            break;
+    }
+
+    // gif走的是apng流程，所以这里要单独判断
+    if (QFileInfo(m_nowpath).suffix().toLower() == "gif") {
+        m_colorSpace = "RGB";
+    }
+    return m_nowImage;
+}
+
+void Core::deleteAlbumItem(const QString &path)
+{
+    if (path == "") {
+        return;
+    }
+    if (m_loadedImage.contains(path)) {
+        m_loadedImage.removeAt(m_loadedImage.indexOf(path));
+    }
+    if (m_allImageList.contains(path)) {
+        m_allImageList.removeAt(m_allImageList.indexOf(path));
+    }
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        if (item->getPath() == path) {
+            if (m_nowpath == "" && m_backpath == "") {
+                m_backpath = dynamic_cast<MyStandardItem *>(m_albumModel->item(i - 1))->getPath();
+            }
+            m_albumModel->removeRow(i);
+            return;
+        }
+    }
+}
+#ifndef UNUI
+Enums::ChamgeImageType Core::nextOrBack(const QString &oldPath, const QString &newPath)
+{
+
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        if (item->getPath() == oldPath) {
+            return NEXT_IMAGE;
+        }
+        if (item->getPath() == newPath) {
+            return BACK_IMAGE;
+        }
+    }
+    return ERROR_IMAGE;
+}
+#endif
+Enums::RenameState Core::successOrFail(const QString &oldPath, const QString &newPath)
+{
+    QFile file(oldPath);
+    bool ok = file.rename(oldPath, newPath);
+    //改名
+    if (ok) {
+        QFileInfo fileToCore(newPath);
+        QString fileNewName = fileToCore.absoluteFilePath();
+        //更新相册，m_nowpath，m_info信息为重命名后的图片
+        m_nowpath = fileNewName;
+        m_info = fileToCore;
+        for (int i = 1; i < m_albumModel->rowCount(); i++) {
+            MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+            if (item->getPath() == oldPath) {
+                item->setPath(fileNewName);
+            }
+        }
+        return SUCCESS;
+    } else {
+        if (!file.exists()) {
+            return NOT_EXITS;
+        }
+        if (QFile::exists(newPath)) {
+            return SAME_NAME;
+        }
+        return UNKNOWN_ERROR;
+    }
+}
+
+QString Core::nextImagePath(const QString &oldPath)
+{
+    //相册中没有文件时，不进行处理
+    if (m_albumModel->rowCount() < 2) {
+        return "";
+    }
+
+    MyStandardItem *item = nullptr;
+    //最后一张切下一张时，回到队列开头
+    item = dynamic_cast<MyStandardItem *>(m_albumModel->item(m_albumModel->rowCount() - 1));
+    if (item->getPath() == oldPath) {
+        item = dynamic_cast<MyStandardItem *>(m_albumModel->item(1));
+        return item->getPath();
+    }
+
+    bool tmp = false;
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        if (tmp) {
+            return item->getPath();
+        }
+        if (item->getPath() == oldPath) {
+            tmp = true;
+        }
+    }
+    return "";
+}
+
+QString Core::backImagePath(const QString &oldPath)
+{
+    //相册中没有文件时，不进行处理
+    if (m_albumModel->rowCount() < 2) {
+        return "";
+    }
+
+    MyStandardItem *item = nullptr;
+    //第一张切上一张时，回到队列结尾
+    item = dynamic_cast<MyStandardItem *>(m_albumModel->item(1));
+    if (item->getPath() == oldPath) {
+        item = dynamic_cast<MyStandardItem *>(m_albumModel->item(m_albumModel->rowCount() - 1));
+        return item->getPath();
+    }
+
+    QString tmp = "";
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        QString tmp2 = item->getPath();
+        if (tmp2 == oldPath) {
+            return tmp;
+        }
+        tmp = tmp2;
+    }
+    return "";
+}
+
+void Core::progremExit()
+{
+    Q_EMIT coreProgremExit();
+
+    // 埋点
+    kdk_dia_upload_program_exit();
+}
+
+void Core::albumLoadFinish(QVariant var1, QVariant var2, QVariant var3)
+{
+    ImageAndInfo package = var1.value<ImageAndInfo>();
+    QString fileName = package.info.absoluteFilePath();
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        if (item->getPath() == fileName) {
+            if (package.image.isNull()) {
+                m_albumModel->removeRow(i);
+                return;
+            }
+            // 预览加载缩略图
+            m_albumModel->item(i)->setIcon(QPixmap::fromImage(package.image));
+            // 缓存图片
+            if (m_loadedImageCache.find(fileName) != m_loadedImageCache.end()) {
+                m_loadedImageCache.remove(fileName);
+                m_bigImageCache.remove(fileName);
+                m_cacheAccessOrder.removeAll(fileName);
+            }
+
+            QPair<ImageAndFileinfo, QImage> imagePix = var2.value<QPair<ImageAndFileinfo, QImage>>();
+            m_loadedImageCache.insert(fileName, imagePix);
+            // 更新LRU顺序
+            m_cacheAccessOrder.removeAll(fileName);
+            m_cacheAccessOrder.append(fileName);
+            // 管理缓存大小
+            manageCacheSize();
+
+            ImageAndInfo bigImage = var3.value<ImageAndInfo>();
+            if (!bigImage.image.isNull() && m_bigImageCache.find(fileName) == m_bigImageCache.end()) {
+                m_bigImageCache.insert(fileName, bigImage.image);
+            }
+        }
+    }
+}
+
+//重命名
+void Core::toCoreChangeName(QString oldName, QString newName)
+{
+    //存原图后缀
+    QFileInfo file(oldName);
+    QString oldSuffix = file.suffix();
+    if ("" != file.suffix()) {
+        oldSuffix = "." + oldSuffix;
+    }
+    //形成完整路径
+    QString path = file.absolutePath();
+    QString newPath = path + "/" + newName;
+    newPath = newPath + oldSuffix;
+    //判断是否重命名成功，并返回重命名结果
+    RenameState type = successOrFail(oldName, newPath);
+    //重命名返回结果---给前端发信号改名或错误提示
+    if (type == SUCCESS) { //重命名成功
+        QFileInfo fileToCore(newPath);
+        Q_EMIT renameResult(0, fileToCore);
+    } else if (type == NOT_EXITS) { //文件不存在
+        Q_EMIT renameResult(-1, file);
+    } else if (type == SAME_NAME) { //文件同名
+        Q_EMIT renameResult(-2, file);
+    } else if (type == NO_PEIMISSION) { //没有权限----暂时算为其他未知错误中，待以后解决
+        Q_EMIT renameResult(-3, file);
+    } else { //其他未知错误
+        Q_EMIT renameResult(-4, file);
+    }
+}
+
+void Core::toPrintImage(QPrinter *printer)
+{
+#ifndef UNUI
+    if (m_paperFormat != "tiff" && m_paperFormat != "tif") {
+        //图片使用原图进行打印
+        QImage img = m_nowPixmap;
+        QPainter painter(printer);
+        QRect rect = painter.viewport();
+        QSize size = img.size();
+        size.scale(rect.size(), Qt::KeepAspectRatio);
+        painter.setViewport(rect.x(), rect.y(), size.width(), size.height());
+        painter.setWindow(img.rect());
+        painter.drawImage(0, 0, img);
+    } else {
+        // 把image读出来，放到imagelist里面
+        ImageAndFileinfo maf = File::loadImage(m_nowpath);
+        QList<QImage> imagelist;
+        if (maf.imageList == nullptr) {
+            imagelist.append(maf.image);
+        } else {
+            for (int i = 0; i < maf.imageList->size(); i++) {
+                imagelist.append(maf.imageList->at(i));
+            }
+        }
+
+        // 设置开始结束页码
+        int fromPage;
+        int toPage;
+        switch (printer->printRange()) {
+        case QPrinter::PageRange:
+            fromPage = std::max(printer->fromPage() - 1, 0);
+            toPage = std::min(printer->toPage() - 1, imagelist.size() - 1);
+            break;
+        default:
+            fromPage = 0;
+            toPage = imagelist.size() - 1;
+            break;
+        }
+
+        // 把页面画到painter里面
+        int cnt = 0;
+        QPainter painter(printer);
+        QRect rect = painter.viewport();
+        for (int i = fromPage; i <= toPage; i++) {
+            QImage image = imagelist.at(i);
+            if (cnt != 0) {
+                printer->newPage();
+            }
+            QPixmap pix = Processing::converFormat(image);
+            QImage img = pix.toImage();
+            QSize size = img.size();
+            size.scale(rect.size(), Qt::KeepAspectRatio);
+            painter.setViewport(rect.x(), rect.y(), size.width(), size.height());
+            painter.setWindow(img.rect());
+            painter.drawImage(0, 0, img);
+            cnt++;
+        }
+    }
+#endif
+}
+//打开失败，判断是否为拖拽打开失败--是的话，不进行切换
+bool Core::openFail(QString fullPath)
+{
+#ifndef UNUI
+    //注--此函数只有在打开失败的时候才进来，不影响正常的图片
+    QStringList m_pathList;
+    //遍历整个相册
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        m_pathList.append(item->getPath());
+    }
+    //如果不包含当前路径，则说明是外部拖入
+    if (!m_pathList.contains(fullPath)) {
+        return true;
+    } else {
+        return false;
+    }
+#endif
+}
+#ifndef UNUI
+//裁剪，处理显示的图片
+void Core::cutImage()
+{
+    m_isCutting = true;
+    QImage image = Processing::pictureCutDeepen(m_origCutImage, m_origCutImage.size());
+    showImage(image);
+}
+#endif
+//裁剪-显示区域-全图裁剪
+void Core::cutFullViableImage()
+{
+    m_cutBeforeStartPosition = QPoint(0, 0);
+    cutRegion(QPoint(m_origCutImage.width(), m_origCutImage.height()));
+    realsePos(QPoint(0, 0));
+}
+
+void Core::startMark()
+{
+    m_markTool.setPixmap(QPixmap::fromImage(m_origPix));
+}
+
+void Core::markImage(QVariant var)
+{
+    MarkPainterSet markImage = var.value<MarkPainterSet>();
+    if (7 == markImage.type) {
+        auto *mob = new Mark::MarkOperatioBlur(markImage.painterColor, markImage.rectInfo, 1, markImage.thickness);
+        m_markTool.setMarkOperatio(mob);
+    } else if (6 == markImage.type) {
+        auto *mot = new Mark::MarkOperatioText(
+            markImage.painterColor, markImage.m_textSet.textContent, markImage.recordStartPos,
+            markImage.m_textSet.fontSize, 1, markImage.m_textSet.fontType, markImage.m_textSet.isBold,
+            markImage.m_textSet.isItalics, markImage.m_textSet.isUnderLine, markImage.m_textSet.isDeleteLine);
+        m_markTool.setMarkOperatio(mot);
+    } else if (5 == markImage.type) {
+        auto *mom = new Mark::MarkOperatioMarker(markImage.painterColor, markImage.recordStartPos,
+                                                 markImage.recordEndPos, 1, markImage.thickness, markImage.opactity);
+        m_markTool.setMarkOperatio(mom);
+    } else if (4 == markImage.type) {
+        auto *mop = new Mark::MarkOperatioPencil(markImage.painterColor, markImage.vp, 1, markImage.thickness);
+        m_markTool.setMarkOperatio(mop);
+    } else if (3 == markImage.type) {
+        auto *moa =
+            new Mark::MarkOperatioArrow(markImage.painterColor, markImage.recordStartPos, markImage.recordEndPos, 1,
+                                        markImage.thickness, markImage.arrowStartPos, markImage.arrowEndPos);
+        m_markTool.setMarkOperatio(moa);
+    } else if (2 == markImage.type) {
+        auto *mol = new Mark::MarkOperatioLine(markImage.painterColor, markImage.recordStartPos, markImage.recordEndPos,
+                                               1, markImage.thickness);
+        m_markTool.setMarkOperatio(mol);
+    } else if (1 == markImage.type) {
+        auto *moc = new Mark::MarkOperatioCircle(markImage.painterColor, markImage.circleLeftX, markImage.circleLeftY,
+                                                 markImage.paintWidth, markImage.paintHeight, 1, markImage.thickness);
+        m_markTool.setMarkOperatio(moc);
+    } else if (0 == markImage.type) {
+        auto *mor = new Mark::MarkOperatioRectangle(markImage.painterColor, markImage.rectInfo, 1, markImage.thickness);
+        m_markTool.setMarkOperatio(mor);
+    }
+}
+
+void Core::markUndo()
+{
+    m_markTool.undo();
+}
+
+void Core::markSave(QString savePath)
+{
+    m_markTool.save(savePath, false);
+}
+
+void Core::markClear()
+{
+    m_markTool.clear();
+}
+
+//裁剪区域
+void Core::cutRegion(const QPoint &point)
+{
+    //起始点变化
+    if (m_cutBeforeStartPosition != m_cutStartPostionSave && m_cutStartPostionSave.x() != -1
+        && m_cutStartPostionSave.y() != -1) {
+        //多个起点
+        return;
+    }
+    //判断是否是边界
+    QPoint changePoint = boundingSet(point, m_origCutImageBefore.width(), m_origCutImageBefore.height());
+    if (m_backPointRelease.x() != -1 && m_backPointRelease.y() != -1) {
+
+        m_backPointRelease =
+            boundingSet(m_backPointRelease, m_origCutImageBefore.width(), m_origCutImageBefore.height());
+    }
+    //判断只是点击一下，不进行绘制
+    if (changePoint == m_cutBeforeStartPosition) {
+        return;
+    }
+    //高亮区域
+    m_cuthightlightSize =
+        QSize(abs(point.x() - m_cutBeforeStartPosition.x()), abs(point.y() - m_cutBeforeStartPosition.y()));
+    //处理待显示的图片
+    QImage image = Processing::pictureCutImageDeepen(m_origCutImage, m_cuthightlightSize, m_cutBeforeStartPosition,
+                                                     m_origCutImageBefore, m_cuthightlightSizeBefore, changePoint);
+    //保存上一个区域
+    m_cuthightlightSizeBefore = m_cuthightlightSize;
+    //保存上一个起始点
+    m_cutStartPostionSave = m_cutBeforeStartPosition;
+    m_isReleasePaint = false; //非释放鼠标的时候要重置
+    m_isCutSaved = true;      //开始裁剪当并未保存
+    //重置上一个点
+    m_backPointRelease.setX(-1);
+    m_backPointRelease.setY(-1);
+    showImage(image);
+    //将当前画完框的图像存起来
+    m_cutReleaseImage = image;
+}
+//记录起始点
+void Core::startChange(const QPoint &point)
+{
+    m_cutBeforeStartPosition = point;
+}
+//释放鼠标
+void Core::realsePos(const QPoint &point)
+{
+    //判断裁剪框已经画好了，就不需要再次重绘
+    if (m_hasCutBox) {
+        return;
+    }
+    m_isReleasePaint = false; //释放鼠标的时候要重置
+    //重置上一个点
+    m_backPointRelease.setX(-1);
+    m_backPointRelease.setY(-1);
+    QImage image = Processing::pictureRelease(m_cutReleaseImage, m_origCutImageBefore);
+    showImage(image);
+    m_startP = Processing::releaseStart();
+    m_endP = Processing::releaseEnd();
+    Q_EMIT releaseRegion(m_startP, m_endP);
+}
+
+void Core::releaseCutChange(int type, const QPoint &point)
+{
+    //鼠标没有释放，状态不能改变，保证鼠标一直是当前这个状态
+    if (m_isReleasePaint) {
+        type = m_backType;
+        //给前端发信号，设置鼠标状态
+        Q_EMIT returnMouseType(type);
+    }
+    //边界判断
+    QPoint changPoint = boundingSet(point, m_origCutImageBefore.width(), m_origCutImageBefore.height());
+
+    if (m_backPointRelease.x() != -1 && m_backPointRelease.y() != -1) {
+
+        m_backPointRelease =
+            boundingSet(m_backPointRelease, m_origCutImageBefore.width(), m_origCutImageBefore.height());
+    }
+    QImage image = Processing::pictureCutChange(type, m_backType, m_cutReleaseImage, m_startP, m_endP, changPoint,
+                                                m_backPointRelease, m_origCutImageBefore);
+    m_isReleasePaint = true;
+    showImage(image);
+    m_cutReleaseImage = image;
+    m_backType = type;
+    m_backPointRelease = point;
+}
+
+void Core::exitCut()
+{
+    showImage(m_origCutImageBefore);
+    m_origCutImage = m_origCutImageBefore;
+    //状态重置
+    cutFinishReset();
+}
+//裁剪后保存
+void Core::needSaveCutImage(int proportion)
+{
+    QPointF startPosition =
+        QPointF(static_cast<double>(m_startP.x()) / (static_cast<double>(proportion) * Variable::PERCENTAGE),
+                static_cast<double>(m_startP.y()) / (Variable::PERCENTAGE * static_cast<double>(proportion)));
+    QPointF endPosition =
+        QPointF(static_cast<double>(m_endP.x()) / (static_cast<double>(proportion) * Variable::PERCENTAGE),
+                static_cast<double>(m_endP.y()) / (static_cast<double>(proportion) * Variable::PERCENTAGE));
+
+    int imageWidth = endPosition.x() - startPosition.x();
+    int imageHeight = endPosition.y() - startPosition.y();
+    // 确定最终裁剪区域
+    CutRegion cutRegion = cutRegionSelection(startPosition, QSize(imageWidth, imageHeight), m_nowPixmap);
+    if (m_nowRealFormat == "jp2" || m_nowRealFormat == "j2k") {
+        if (cutRegion.width < 36 || cutRegion.height < 36) {
+            Q_EMIT saveCutImageFaild(m_nowRealFormat);
+            return;
+        }
+    }
+
+    QImage tempImage = m_cutImage.copy(
+        cutRegion.startPostion.x(),
+        cutRegion.startPostion.y(),
+        cutRegion.width,
+        cutRegion.height
+    );
+
+    Q_EMIT cutSaveFinish();
+    //状态重置
+    cutFinishReset();
+    if (File::saveImage(tempImage, m_nowpath, m_nowRealFormat, false)) {
+        openSaveImage();
+    } else {
+    }
+}
+
+#ifdef USE_ONNXRUNTIME
+void Core::saveCutImage(int proportion, const QPoint &startP, const QPoint &endP)
+{
+    m_isSaveCutImage = true;
+    QPointF startPosition =
+        QPointF(static_cast<double>(startP.x()) / (static_cast<double>(proportion) * Variable::PERCENTAGE),
+                static_cast<double>(startP.y()) / (static_cast<double>(proportion) * Variable::PERCENTAGE));
+    QPointF endPosition =
+        QPointF(static_cast<double>(endP.x()) / (static_cast<double>(proportion) * Variable::PERCENTAGE),
+                static_cast<double>(endP.y()) / (static_cast<double>(proportion) * Variable::PERCENTAGE));
+
+    int imageWidth = endPosition.x() - startPosition.x();
+    int imageHeight = endPosition.y() - startPosition.y();
+    // 确定最终裁剪区域
+    CutRegion cutRegion = calcCutRegionSelection(startPosition, QSize(imageWidth, imageHeight),m_replaceImage);
+    m_mattingCutImage = m_replaceImage.copy(
+                cutRegion.startPostion.x(),
+                cutRegion.startPostion.y(),
+                cutRegion.width,
+                cutRegion.height
+                );
+    if (proportion > 100) {
+        m_mattingCutImage = m_mattingCutImage.scaled(QSize(endP.x()-startP.x(), endP.y()-startP.y()),
+                                                     Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    }
+    m_replaceImage = m_mattingCutImage;
+    finishMatting(m_mattingCutImage);
+}
+#endif
+//确定最终的裁剪区域，返回起始点和裁剪宽度信息
+CutRegion Core::cutRegionSelection(QPointF startPos, QSize cutSize, QImage nowImage)
+{
+    CutRegion cutRegion;
+    //确定起始点是否已经是图片内最大的点或超过最大的点，起始点不能是边界
+    if (startPos.x() >= nowImage.width()) {
+        //防止越界
+        startPos.setX(nowImage.width() - 1);
+    }
+    if (startPos.y() >= nowImage.height()) {
+        //防止越界
+        startPos.setY(nowImage.height() - 1);
+    }
+    //判断当前裁剪区域是否超过图片区域
+    if (startPos.x() + cutSize.width() > m_nowPixmap.width()) {
+        cutSize.setWidth(m_nowPixmap.width() - startPos.x());
+    }
+    if (startPos.y() + cutSize.height() > m_nowPixmap.height()) {
+        cutSize.setHeight(m_nowPixmap.height() - startPos.y());
+    }
+    //裁剪区域的宽度和高度不能小于等于0
+    if (cutSize.width() <= 0) {
+        cutSize.setWidth(CutMinValue::minValue);
+    }
+    if (cutSize.height() <= 0) {
+        cutSize.setHeight(CutMinValue::minValue);
+    }
+    //存到结构体
+    cutRegion.startPostion = startPos;
+    cutRegion.width = cutSize.width();
+    cutRegion.height = cutSize.height();
+    return cutRegion;
+}
+
+CutRegion Core::calcCutRegionSelection(QPointF startPos, QSize cutSize, QImage nowImage)
+{
+#ifndef UNUI
+    CutRegion cutRegion;
+    //确定起始点是否已经是图片内最大的点或超过最大的点，起始点不能是边界
+    if (startPos.x() >= nowImage.width()) {
+        //防止越界
+        startPos.setX(nowImage.width() - 1);
+    }
+    if (startPos.y() >= nowImage.height()) {
+        //防止越界
+        startPos.setY(nowImage.height() - 1);
+    }
+    //判断当前裁剪区域是否超过图片区域
+    if (startPos.x() + cutSize.width() > nowImage.width()) {
+        cutSize.setWidth(nowImage.width() - startPos.x());
+    }
+    if (startPos.y() + cutSize.height() > nowImage.height()) {
+        cutSize.setHeight(nowImage.height() - startPos.y());
+    }
+    //裁剪区域的宽度和高度不能小于等于0
+    if (cutSize.width() <= 0) {
+        cutSize.setWidth(CutMinValue::minValue);
+    }
+    if (cutSize.height() <= 0) {
+        cutSize.setHeight(CutMinValue::minValue);
+    }
+    //存到结构体
+    cutRegion.startPostion = startPos;
+    cutRegion.width = cutSize.width();
+    cutRegion.height = cutSize.height();
+    return cutRegion;
+#endif
+}
+
+//另存为
+void Core::needSaveAsImage(QString path)
+{
+    QFileInfo file(path);
+//    if (Variable::g_needSaveas && file.suffix().toLower() == "jpeg" || file.suffix().toLower() == "jpg"
+//        || file.suffix().toLower() == "jpe") {
+//        File::changeSaveSign(Variable::g_needSaveas);
+//    }
+    Variable::g_needSaveas = false;
+    if (File::saveImage(m_nowImage, QString(path), file.suffix().toLower())) {
+        openSaveImage();
+    } else {
+        //另存为失败
+        qDebug() << "另存为失败";
+        Q_EMIT saveAsFaild(true);
+    }
+}
+
+//处理边界问题
+QPoint Core::boundingSet(QPoint point, int xMax, int yMax)
+{
+    if (point.x() > xMax) {
+        point.setX(xMax);
+    }
+    if (point.y() > yMax) {
+        point.setY(yMax);
+    }
+    if (point.x() < 0) {
+        point.setX(0);
+    }
+    if (point.y() < 0) {
+        point.setY(0);
+    }
+    return point;
+}
+
+void Core::cutFinishReset()
+{
+    //状态重置
+    m_isCutting = false;
+    m_isCutSaved = false;
+    m_isReleasePaint = false;
+    m_hasCutBox = false;
+    m_backPointRelease = QPoint(-1, -1);
+    m_cutStartPostionSave = QPoint(-1, -1);  //保存前一个裁剪的起始点
+    m_cuthightlightSizeBefore = QSize(0, 0); //高亮区域大小-上一次的
+    m_cutspaceWidth = 0;                     //导航栏窗口与缩略图左边缘距离
+    m_cutspaceHeight = 0;                    //导航栏窗口与缩略图上边缘距离
+    m_imageNeedUpdate = false;
+}
+
+void Core::openSaveImage()
+{
+    //裁剪和另存为之后打开保存的图片
+    QString savePath = File::savePath();
+    QFileInfo file(savePath);
+    if (file.exists()) {
+        findAllImageFromDir(savePath);
+    }
+}
+//切换图片时加载-拿QModelIndex
+void Core::loadOnChange(QString path)
+{
+    if(m_isclose){
+        return;
+    }
+    for (int i = 1; i < m_albumModel->rowCount(); i++) {
+        MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+        if (item->getPath() == path) {
+            reloadImage(m_albumModel->indexFromItem(item));
+        }
+    }
+}
+
+bool Core::judgeSizeIsZero(QSize size)
+{
+    if (size.width() * size.height() == 0) {
+        return true;
+    }
+    return false;
+}
+
+
+bool Core::apiFunction()
+{
+    if (!m_isApi) {
+        return false;
+    }
+    QString fullPath = m_apiCmd[1];
+    openImage(fullPath);
+    //翻转
+    if (m_apiCmd[0] == "-flip") {
+        QString cmd = m_apiCmd[2];
+        for (QChar &ch : cmd) {
+            if (ch == 'h') {
+                flipImage(Processing::FlipWay::horizontal);
+            } else if (ch == 'v') {
+                flipImage(Processing::FlipWay::vertical);
+            } else if (ch == 'c') {
+                flipImage(Processing::FlipWay::clockwise);
+            }
+        }
+        close();
+    }
+    return true;
+}
+//判断是不是一个文件夹路径
+bool Core::isSamePath(QString path)
+{
+    QString pathDir = QFileInfo(path).absolutePath(); //文件夹
+    QStringList pathlist;
+    //此处不能-1，会造成只有两张图片时，无法寻找第一张图片的路径，重复加载此路径下的图片
+    int num = m_albumModel->rowCount();
+    if (num > 0) {
+        for (int i = 0; i < num; i++) {
+            MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+            QFileInfo info(item->getPath());
+            pathlist.append(info.absolutePath());
+        }
+        if (pathlist.contains(pathDir)) {
+            return true;
+        } else {
+            return false;
+        }
+    } else {
+        return false;
+    }
+}
+//判断统一文件夹下有不同图片时，需要在相册显示
+QStringList Core::diffPath(QStringList image)
+{
+    QStringList pathList;   //存相册的图片路径
+    QStringList diffImages; //存不同图片
+    int num = m_albumModel->rowCount();
+    if (num > 0) {
+        for (int i = 0; i < num; i++) {
+            MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->item(i));
+            QFileInfo info(item->getPath());
+            if (info.exists()) {
+                pathList.append(item->getPath());
+            }
+        }
+    } else {
+        return diffImages;
+    }
+    //遍历image列表
+    for (int j = 0; j < image.length(); j++) {
+        //判断，相册文件列表中无此时文件路径，存入diffImages中
+        if (!pathList.contains(image.at(j))) {
+            diffImages.append(image.at(j));
+        }
+    }
+    return diffImages;
+}
+
+void Core::needSave()
+{
+    //解决侧栏切换和点击按钮打开图片时，上一张操作过的图片无法保存的问题
+    m_thisImageIsSaving = false;
+    //如果正在播放动图，则停止
+    if (m_playMovieTimer->isActive()) {
+        m_playMovieTimer->stop();
+        //保存动图
+        if (m_processed) {
+            //判断没有加载完全部时，进行阻塞
+            while (m_maxFrame > m_imageList->length()) {
+                QThread::usleep(10);
+            }
+            processNewLoadImage();
+            File::saveImage(m_imageList, m_fps, m_nowpath, m_nowRealFormat);
+        }
+    } else {
+
+        //保存图片
+        if (m_processed) {
+            QString suffix = QFileInfo(m_nowpath).suffix().toLower();
+            if (m_imageList == nullptr) {
+                File::saveImage(m_nowImage, m_nowpath, m_nowRealFormat);
+            } else {
+                if (m_tiffProcess.length() > 0) {
+                    this->tiffOperate();
+                }
+            }
+            //            File::saveImage(m_nowImage, m_nowpath);
+        }
+    }
+    m_tiffProcess.clear();
+    m_processed = false; //重置是否操作过的状态
+}
+
+void Core::findAllImageFromDir(QString fullPath)
+{
+    int flag = apiFunction();
+    if (flag) {
+        return;
+    }
+    QFileInfo info(fullPath);
+    QString filepath = info.absoluteFilePath(); //转成绝对路径
+    Variable::g_clearImage = false;
+    openImage(filepath);
+
+    Variable::g_sidebarState = false;
+    m_findImageThread = new FindImageFromDir(filepath);
+    connect(m_findImageThread, &FindImageFromDir::findFinish, this, &Core::findImageFromDirFinish);
+    connect(m_findImageThread, &FindImageFromDir::finished, m_findImageThread, &FindImageFromDir::deleteLater);
+    m_findImageThread->start();
+}
+void Core::findImageFromDirFinish(QStringList list, QString path)
+{
+    QStringList images = list;
+    //判断是同一文件夹下的图片，过滤掉相同的图片，加载文件夹下其他图片
+    if (isSamePath(path)) {
+        images = diffPath(images);
+    }
+    //先把完整路径存起来，方便对比
+    for (int i = 0; i < images.length(); i++) {
+        m_allImageList.insert(i, images.at(i));
+    }
+    if (!m_allImageList.contains(path)) {
+        m_allImageList.insert(0, path);
+        images.insert(0, path);
+    }
+    creatModule(images);
+    Q_EMIT updateSideNum(m_albumModel->rowCount());
+    setHighLight(path); //设置相册选中
+    Variable::g_sidebarState = true;
+    loadOnChange(path);
+}
+//创建相册model
+void Core::creatModule(QStringList list)
+{
+    //将所有图片存入队列
+    int i = 1;
+    for (QString &filePath : list) {
+        //构造item
+        MyStandardItem *item = new MyStandardItem;
+        item->setDragEnabled(false);
+        item->setSizeHint(Variable::ALBUM_IMAGE_SIZE);
+        item->setIcon(QIcon::fromTheme("kylin-photo-viewer"));//改为系统默认主题图标
+
+        item->setPath(filePath);       //用来保存地址路径
+        m_albumModel->insertRow(i, item); //插入model
+        i++;
+    }
+}
+//加载相册缩略图
+void Core::loadAlbum(QStringList list, int start, int end)
+{
+    if(m_isclose){
+        return;
+    }
+
+    // 检查内存并动态调整阈值
+    checkAndAdjustForLowMemory();
+
+    // 限制并发线程数量（使用动态阈值）
+    int currentThreads = m_albumThumbnailLists.size();
+    int maxNewThreads = m_currentMaxAlbumThreads - currentThreads;
+    if (maxNewThreads <= 0) {
+        qWarning() << "[Core::loadAlbum] 线程数已达上限(" << m_currentMaxAlbumThreads << "), 跳过本次加载";
+        return;
+    }
+
+    int loadCount = 0;
+    for (unsigned int i = start; i <= end && loadCount < maxNewThreads; i++) {
+        QString tmpFullPath = list.at(i - 1);
+        if (m_loadedImage.contains(tmpFullPath)) {
+            continue;
+        }
+        //存完整路径
+        QFileInfo file(tmpFullPath);
+        //判断有没有被外部删除
+        if (file.exists()) {
+            if (!m_loadedImage.contains(tmpFullPath)) {
+                m_loadedImage.append(tmpFullPath);
+            }
+            QString nowRealFormat = File::realFormat(tmpFullPath);
+            AlbumThumbnail *thread = new AlbumThumbnail(tmpFullPath, nowRealFormat);
+            m_albumThumbnailLists.push_back(thread);
+            connect(thread, &AlbumThumbnail::finished, thread, &AlbumThumbnail::deleteLater);
+            connect(thread, &AlbumThumbnail::albumFinish, this, &Core::albumLoadFinish);
+            connect(thread, &AlbumThumbnail::finished, this, [this, thread](){
+               auto it = std::find(m_albumThumbnailLists.begin(), m_albumThumbnailLists.end(), thread);
+               if(it != m_albumThumbnailLists.end()){
+                   m_albumThumbnailLists.erase(it);
+               }
+            });
+            thread->start();
+            loadCount++;
+        } else {
+            //触发删除-外部删除文件的情况，加载的时候需要删掉对应的item
+            //            deleteAlbumItem(tmpFullPath);
+        }
+    }
+
+    if (loadCount > 0) {
+        qDebug() << "[Core::loadAlbum] 启动了" << loadCount << "个加载线程, 当前总线程数:" << m_albumThumbnailLists.size();
+    }
+}
+
+//再加载图片
+void Core::reloadImage(QModelIndex modelIndex)
+{
+    MyStandardItem *item = dynamic_cast<MyStandardItem *>(m_albumModel->itemFromIndex(modelIndex));
+    if (item == nullptr) {
+        return;
+    }
+
+    int startItem = item->row() - Variable::LOADIMAGE_NUM / 2 - 1;
+    int endItem = item->row() + Variable::LOADIMAGE_NUM / 2 + 4;
+    if (startItem <= 0) {
+        startItem = 1;
+    }
+    if (endItem > m_allImageList.length()) {
+        endItem = m_allImageList.length();
+    }
+    loadAlbum(m_allImageList, startItem, endItem);
+}
+
+void Core::qmlCutImageDisplay(QPointF startPos, QSizeF displaySize, double imageScale)
+{
+    m_isCutting = true;
+    //边界修正
+    startPos = qmlBoundaryPos(startPos, m_nowPixmap.width(), m_nowPixmap.height());
+    displaySize = qmlBoundarySize(startPos, displaySize);
+    //裁剪图片
+    QRect cropRect(startPos.x(), startPos.y(), displaySize.width(), displaySize.height());
+    m_cutImage = m_nowImage.copy(cropRect);
+
+    //缩放到显示的大小
+    QPixmap pixmap = Processing::converFormat(m_cutImage);
+    QSizeF tmp(pixmap.size());
+    tmp.setWidth(tmp.width() * imageScale);
+    tmp.setHeight(tmp.height() * imageScale);
+    pixmap = pixmap.scaled(tmp.toSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+
+    //给图片添加蒙层
+    QImage image = Processing::pictureCutDeepen(pixmap.toImage(), pixmap.size());
+    //显示图片
+    showImage(image);
+    m_origCutImageBefore = pixmap.toImage();
+}
+#ifdef USE_ONNXRUNTIME
+void Core::matToSamples()
+{
+
+    if (m_isSaveCutImage) {
+        m_origImage = m_mattingCutImage;
+    } else {
+        m_origImage = m_nowImage;
+    }
+
+    if (m_origImage.isNull()) {
+        qDebug()<<"输入图片为空";
+        return;
+    }
+
+    int inputWidth = 512;
+    int inputHeight = 512;
+    const std::vector<float> mean = {0.5, 0.5, 0.5};
+    const std::vector<float> std = {0.5, 0.5, 0.5};
+    QImage resizedImage = m_origImage.scaled(inputWidth, inputHeight, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+    std::vector<float> inputTensorData(inputWidth * inputHeight * 3);
+
+    for (int y = 0; y < inputHeight; ++y) {
+        for (int x = 0; x < inputWidth; ++x) {
+            // 获取 RGB 值
+            QColor color = resizedImage.pixelColor(x, y);
+            float r = color.redF();   // 0.0 ~ 1.0
+            float g = color.greenF(); // 0.0 ~ 1.0
+            float b = color.blueF();  // 0.0 ~ 1.0
+
+            // 数据归一化和标准化
+            inputTensorData[y * inputWidth + x + 0 * inputHeight * inputWidth] = (r - mean[0]) / std[0]; // R
+            inputTensorData[y * inputWidth + x + 1 * inputHeight * inputWidth] = (g - mean[1]) / std[1]; // G
+            inputTensorData[y * inputWidth + x + 2 * inputHeight * inputWidth] = (b - mean[2]) / std[2]; // B
+        }
+    }
+
+    // 创建ORT环境
+    Ort::Env env(ORT_LOGGING_LEVEL_WARNING, "Test");
+    // 创建会话选项
+    Ort::SessionOptions sessionOptions;
+    // 加载模型
+    const char* model_path = "/usr/share/kylin-photo-viewer/model/kylin_photo_viewer_matting_model.onnx";
+    Ort::Session session(env, model_path, sessionOptions);
+    // 准备输入数据
+    Ort::MemoryInfo memory_info = Ort::MemoryInfo::CreateCpu(OrtAllocatorType::OrtArenaAllocator, OrtMemType::OrtMemTypeDefault);
+    std::vector<int64_t> input_shape = {1, 3, inputHeight, inputWidth};
+    Ort::Value input_tensor = Ort::Value::CreateTensor<float>(memory_info, inputTensorData.data(), inputTensorData.size(), input_shape.data(), 4);
+
+    const char* inputNames[] = {"input"};
+    const char* outputNames[] = {"output"};
+    std::vector<float> outputData(1 * 1 * inputHeight * inputWidth);
+    std::vector<int64_t> outputShape = {1, 1, inputHeight, inputWidth};
+
+    Ort::Value outputTensor = Ort::Value::CreateTensor<float>(
+        memory_info, outputData.data(), outputData.size(), outputShape.data(), outputShape.size());
+
+    session.Run(Ort::RunOptions{nullptr}, inputNames, &input_tensor, 1, outputNames, &outputTensor, 1);
+
+    QImage matteImage(inputWidth, inputHeight, QImage::Format_Grayscale8);
+
+    for (int y = 0; y < inputHeight; ++y) {
+        for (int x = 0; x < inputWidth; ++x) {
+            float value = outputData[y * inputWidth + x];
+            int pixelValue = static_cast<int>(value * 255); // 转换为 [0, 255]
+            matteImage.setPixel(x, y, qRgb(pixelValue, pixelValue, pixelValue));
+        }
+    }
+    m_transparentImage = matteImage.scaled(m_origImage.width(), m_origImage.height(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+}
+
+void Core::picMatting(QImage pic)
+{
+    if (m_isSaveCutImage) {
+        matToSamples();
+        m_isSaveCutImage = false;
+    }
+    QImage bgImage = pic.copy();
+    if (bgImage.isNull()) {
+        return;
+    }
+#ifndef UNUI
+    bgImage = bgImage.scaled(m_origImage.width(), m_origImage.height(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+#endif
+    QImage resultImage(m_origImage.size(), QImage::Format_ARGB32);
+    for (int y = 0; y < m_origImage.height(); ++y) {
+        for (int x = 0; x < m_origImage.width(); ++x) {
+            uchar matteValue = qGray(m_transparentImage.pixel(x, y));
+            if (matteValue >= 200) { // 前景区域（保留原图像素）
+                QRgb origPixel = m_origImage.pixel(x, y);
+                uchar r = qRed(origPixel);
+                uchar g = qGreen(origPixel);
+                uchar b = qBlue(origPixel);
+                resultImage.setPixel(x, y, qRgba(r, g, b, 255));
+            } else { // 背景区域（替换为指定颜色）
+                QRgb bgPixel = bgImage.pixel(x, y);
+                uchar r = qRed(bgPixel);
+                uchar g = qGreen(bgPixel);
+                uchar b = qBlue(bgPixel);
+                uchar a = qAlpha(bgPixel);
+                resultImage.setPixel(x, y, qRgba(r, g, b, a));
+            }
+        }
+    }
+    m_replaceImage = resultImage;
+    finishMatting(resultImage);
+}
+
+void Core::replaceBackground(uint b, uint g, uint r, uint a, bool isFirstEnter)
+{
+    if (isFirstEnter || m_isSaveCutImage) {
+        matToSamples();
+        m_isSaveCutImage = false;
+    }
+
+    QImage resultImage(m_origImage.size(), QImage::Format_ARGB32);
+    for (int y = 0; y < m_origImage.height(); ++y) {
+        for (int x = 0; x < m_origImage.width(); ++x) {
+            uchar matteValue = qGray(m_transparentImage.pixel(x, y));
+            if (matteValue >= 200) { // 前景区域（保留原图像素）
+                QRgb origPixel = m_origImage.pixel(x, y);
+                uchar r = qRed(origPixel);
+                uchar g = qGreen(origPixel);
+                uchar b = qBlue(origPixel);
+                resultImage.setPixel(x, y, qRgba(r, g, b, 255));
+            } else { // 背景区域（替换为指定颜色）
+                resultImage.setPixel(x, y, qRgba(r, g, b, a));
+            }
+        }
+    }
+    m_replaceImage = resultImage;
+    finishMatting(resultImage);
+}
+
+void Core::finishMatting(QImage image)
+{
+    Q_EMIT returnReplaceAndOrigImage(image, m_nowImage);
+}
+
+void Core::needSaveReplaceImage(QString path)
+{
+    QFileInfo file(path);
+    if (File::saveImage(m_replaceImage, QString(path), file.suffix().toLower())) {
+        openSaveImage();
+    }
+}
+
+void Core::mattingFlip(const Processing::FlipWay &way)
+{
+    if (m_isSaveCutImage) {
+        m_mattingCutImage = Processing::processingImage(Processing::flip, m_mattingCutImage, QVariant(way));
+        if (!m_mattingCutImage.isNull()) {
+            return;
+        }
+    } else {
+        m_origMattingImage = Processing::processingImage(Processing::flip, m_origMattingImage, QVariant(way));
+        if (!m_origMattingImage.isNull()) {
+            return;
+        }
+        m_transparentImage = Processing::processingImage(Processing::flip, m_transparentImage, QVariant(way));
+        if (!m_transparentImage.isNull()) {
+            return;
+        }
+    }
+
+    QImage img = Processing::processingImage(Processing::flip, m_replaceImage, QVariant(way));
+    if (!img.isNull()) {
+        return;
+    }
+
+    m_replaceImage = img;
+    Q_EMIT returnFlipAndOrigImage(img, m_origMattingImage);
+}
+#endif
+
+#ifdef SUPPORTSCANNER
+void Core::scanImage()
+{
+    Mat opMat;
+    //灰度
+    Mat grayMat = opMat.clone();
+    if(opMat.channels() != 1){
+        cvtColor(opMat, grayMat, COLOR_BGR2GRAY);
+    }
+    // 双边滤波只支持8位无符号整型（CV_8U）和32位浮点型（CV_32F）的图像格式
+    if (grayMat.type() != CV_8U || grayMat.type() != CV_32F) {
+        grayMat.convertTo(grayMat, CV_8U);
+    }
+    //双边滤波-降噪
+    Mat filtMat;
+    bilateralFilter(grayMat, filtMat, 10, 10, 10); //src和dst需不同
+    //黑白二值图像
+    Mat binaryMat;
+    double maxValue = 255;
+    cv::adaptiveThreshold(filtMat, binaryMat, maxValue,
+                          cv::ADAPTIVE_THRESH_GAUSSIAN_C, //自动阈值计算
+                          cv::THRESH_BINARY,
+                          25,  // blockSize 必须是奇数
+                          9);  // -C 用于微调阈值
+
+    QImage scanImage;
+    Q_EMIT returnScanAndOrigImage(scanImage, m_origScanImage);
+}
+
+void Core::needSaveScanImage(QString savePath)
+{
+    QFileInfo file(savePath);
+    QImage saveImage;
+    if(m_isWatermark){
+        saveImage = m_watermarkImage;
+    }else{
+        saveImage = m_scanImage;
+    }
+    bool result = File::saveImage(saveImage, savePath, file.suffix());
+    Q_EMIT returnScannerSaveResult(result);
+    if (result) {
+        openSaveImage();
+    }
+}
+
+void Core::printScanImage(QPrinter *printer)
+{
+    QImage printImage;
+    if(m_isWatermark){
+        printImage = Processing::converFormat(m_watermarkImage).toImage();
+    }else{
+        printImage = Processing::converFormat(m_scanImage).toImage();
+    }
+    QPainter painter(printer);
+    QRect rect = painter.viewport();
+    QSize size = printImage.size();
+    size.scale(rect.size(), Qt::KeepAspectRatio);
+    painter.setViewport(rect.x(), rect.y(), size.width(), size.height());
+    painter.setWindow(printImage.rect());
+    painter.drawImage(0, 0, printImage);
+    painter.end();
+}
+
+void Core::scannerSavePDF(QPrinter *printer)
+{
+    QImage printImage;
+    if(m_isWatermark){
+        printImage = Processing::converFormat(m_watermarkImage).toImage();
+    }else{
+        printImage = Processing::converFormat(m_scanImage).toImage();
+    }
+
+    QPainter painter(printer);
+    QSizeF pageSize = printer->pageRect().size();   //打印机页面的尺寸
+    QSizeF imageSize = printImage.size();           //原图的尺寸
+    imageSize.scale(pageSize, Qt::KeepAspectRatio); //缩放
+    QPointF startPoint((pageSize.width() - imageSize.width()) / 2.0, (pageSize.height() - imageSize.height()) / 2.0); //居中
+    //绘制图像
+    painter.drawImage(QRectF(startPoint, imageSize), printImage);
+    painter.end();
+
+    bool result;
+    if (printer->printerState() == QPrinter::Error) {
+        result = false;
+    } else {
+        result = true;
+    }
+    Q_EMIT returnScannerSaveResult(result);
+}
+
+void Core::scannerAddWatermark(bool isWatermark, QString vmContent)
+{
+    m_isWatermark = isWatermark;
+    if(m_isWatermark){
+        //准备绘制水印的图片、文本和设置
+        QPixmap pix = Processing::converFormat(m_scanImage);
+        QFont font("Noto Sans CJK SC",15);
+        QColor textColor(128, 128, 128, 51); //半透明水印文字
+        //计算绘制文本字符串的宽和高
+        QFontMetricsF fontMetrics(font);
+        qreal font_w = fontMetrics.width(vmContent);
+        qreal font_h = fontMetrics.height();
+        //旋转角度
+        qreal ang = 30.0;
+        double rad = ang * M_PI / 180;
+
+        //开始绘图
+        QPainter painter(&pix);
+        painter.setFont(font);
+        painter.setPen(textColor);
+        painter.translate(pix.width() / 2, pix.height() / 2);  //平移原点
+        painter.rotate(ang);
+        int project_Y = abs(pix.width() * sin(rad)) + abs(pix.height() * cos(rad));//原图像Y坐标在新坐标系Y轴上的投影长度
+        int project_X = abs(pix.height() * sin(rad)) + abs(pix.width() * cos(rad));//原图像x坐标在新坐标系x轴上的投影长度
+        //水印间的距离
+        int x_step = 2 * font_w;
+        int y_step = 3 * font_h ;
+        //水印的行数与列数
+        int rowCount = project_Y / y_step + 1;
+        int colCount = project_X / x_step + 2;//水印的行数  因为旋转了，如果不加2会导致水印缺少一块
+        for (int r = 0; r < rowCount; r++){
+            for (int c = 0; c < colCount; c++){
+                painter.drawText(-project_X / 2 + x_step * c, -project_Y / 2 + y_step * r,vmContent);//写水印
+            }
+        }
+        m_watermarkImage = pix.toImage();
+        //返回水印
+        Q_EMIT returnScanAndOrigImage(m_watermarkImage, m_origScanImage);
+
+    }else{
+        Q_EMIT returnScanAndOrigImage(m_scanImage, m_origScanImage);
+    }
+}
+
+void Core::scannerFlip(const ProcessingBase::FlipWay &way)
+{
+    //若添加水印后，扫描与水印状态同步
+    QImage flipImage;
+    flipImage = m_scanImage.copy();
+    flipImage = Processing::processingImage(Processing::flip, flipImage, QVariant(way));
+    if (!flipImage.isNull()) {
+        return;
+    }
+    m_scanImage = flipImage.copy();
+
+    if(m_isWatermark){
+        flipImage = m_watermarkImage.copy();
+        flipImage = Processing::processingImage(Processing::flip, flipImage, QVariant(way));
+        if (!flipImage.isNull()) {
+            return;
+        }
+        m_watermarkImage = flipImage.copy();
+    }
+
+    if(m_isWatermark){
+        Q_EMIT returnScannerFlipAndOrigImage(m_watermarkImage, m_origScanImage);
+    }else{
+        Q_EMIT returnScannerFlipAndOrigImage(m_scanImage, m_origScanImage);
+    }
+}
+
+void Core::scannerSaveCutImage(int proportion, const QPoint &startP, const QPoint &endP)
+{
+    QPointF startPosition =
+            QPointF(static_cast<double>(startP.x()) / (static_cast<double>(proportion) * Variable::PERCENTAGE),
+                    static_cast<double>(startP.y()) / (static_cast<double>(proportion) * Variable::PERCENTAGE));
+    QPointF endPosition =
+            QPointF(static_cast<double>(endP.x()) / (static_cast<double>(proportion) * Variable::PERCENTAGE),
+                    static_cast<double>(endP.y()) / (static_cast<double>(proportion) * Variable::PERCENTAGE));
+
+    int imageWidth = endPosition.x() - startPosition.x();
+    int imageHeight = endPosition.y() - startPosition.y();
+
+    //水印与扫描图片同步
+    if(m_isWatermark){
+        CutRegion cutRegion = calcCutRegionSelection(startPosition, QSize(imageWidth, imageHeight),m_watermarkImage);
+        m_watermarkImage = m_watermarkImage.copy(
+                    cutRegion.startPostion.x(),
+                    cutRegion.startPostion.y(),
+                    cutRegion.width,
+                    cutRegion.height
+                    );
+        Q_EMIT returnScanAndOrigImage(m_watermarkImage, m_nowImage);
+    }
+    else
+    {
+        //确定最终裁剪区域
+        CutRegion cutRegion = calcCutRegionSelection(startPosition, QSize(imageWidth, imageHeight),m_scanImage);
+        //裁剪图片
+        m_scanImage = m_scanImage.copy(
+                    cutRegion.startPostion.x(),
+                    cutRegion.startPostion.y(),
+                    cutRegion.width,
+                    cutRegion.height
+                    );
+        Q_EMIT returnScanAndOrigImage(m_scanImage, m_nowImage);
+    }
+}
+#endif
+
+void Core::resizeImage(int w, int h)
+{
+    if (m_nowImage.isNull()) {
+        return;
+    }
+    if (w <= 0 || h <= 0) {
+        return;
+    }
+    QSize newSize(w, h);
+    QImage resizedImage = m_nowImage.scaled(newSize, Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+
+    QFileInfo fileInfo(m_nowpath);
+    QString baseName = fileInfo.baseName(); // 获取文件名（不含扩展名）
+    QString suffix = fileInfo.suffix(); // 获取文件扩展名
+    QString dir = fileInfo.absolutePath(); // 获取文件所在目录
+    QString newFileName = QString("%1/%2.%3").arg(dir, baseName, suffix);
+    QString finalFileName = newFileName;
+    int num = 1;
+    while (QFile::exists(finalFileName) && num < INT_MAX) {
+        finalFileName = finalFileName.mid(0, finalFileName.lastIndexOf(".")) + "(" + QString::number(num) + ")"
+                       + finalFileName.mid(finalFileName.lastIndexOf("."), -1);
+        num++;
+    }
+
+    // 保存调整后的图片
+    bool saveSuccess = resizedImage.save(finalFileName, suffix.toUpper().toLocal8Bit().data());
+    if (saveSuccess) {
+        findAllImageFromDir(finalFileName);
+    }
+}
+
+void Core::processLog()
+{
+    QString error = QString::fromLocal8Bit(m_process->readAllStandardError());
+    if (error == "") {
+        return;
+    }
+}
+
+void Core::fileChangedNeedUpdated()
+{
+#ifndef UNUI
+    QFile file(m_monitoredFiles);
+    if (file.exists()) {
+        openImage(m_monitoredFiles);
+    }
+#endif
+}
+
+// 获取图片中文字
+void Core::getTextFromImage()
+{
+    QThread *m_ocrThread = new QThread(this);
+    OcrWorker *m_ocrWorker = new OcrWorker();
+    m_ocrWorker->moveToThread(m_ocrThread);
+
+    // 连接信号槽
+    connect(m_ocrWorker, &OcrWorker::ocrFinished, this, &Core::sendOcrResult);
+    connect(m_ocrWorker, &OcrWorker::ocrFinished, m_ocrThread, &QThread::quit);
+    connect(m_ocrThread, &QThread::finished, m_ocrWorker, &QObject::deleteLater);
+    connect(m_ocrThread, &QThread::finished, m_ocrThread, &QObject::deleteLater);
+
+    m_ocrThread->start();
+
+    // 通过信号触发OCR工作
+    QMetaObject::invokeMethod(m_ocrWorker, "doOcr", Qt::QueuedConnection, Q_ARG(QString, m_nowpath));
+}
+
+void Core::sendOcrResult(QString path, QVector<QString> result)
+{
+    if (path == m_nowpath) {
+        Q_EMIT getTextResult(result);
+    } else {
+        qWarning() << "Image paths do not match,get recognition result failed!";
+    }
+}
+
+QPointF Core::qmlBoundaryPos(QPointF pointf, int xMax, int yMax)
+{
+    if (pointf.x() > xMax) {
+        pointf.setX(xMax);
+    }
+    if (pointf.y() > yMax) {
+        pointf.setY(yMax);
+    }
+    if (pointf.x() < 0) {
+        pointf.setX(0);
+    }
+    if (pointf.y() < 0) {
+        pointf.setY(0);
+    }
+    return pointf;
+}
+
+QSizeF Core::qmlBoundarySize(QPointF pointf, QSizeF displaySize)
+{
+    QSizeF tmpSize = displaySize;
+    if (m_nowPixmap.width() - pointf.x() - tmpSize.width() < 0) {
+        tmpSize.setWidth(m_nowPixmap.width() - pointf.x());
+    }
+    if (m_nowPixmap.height() - pointf.y() - tmpSize.height() < 0) {
+        tmpSize.setHeight(m_nowPixmap.height() - pointf.y());
+    }
+    return tmpSize;
+}
+
+bool Core::coreOperateTooOften()
+{
+#ifndef UNUI
+    if (m_canProcess->isActive()) {
+        return true;
+    }
+    m_canProcess->start(Variable::REFRESH_RATE); //刷新间隔
+    return false;
+#endif
+}
+
+void MyStandardItem::setPath(const QString &path)
+{
+    m_path = path;
+}
+
+QString MyStandardItem::getPath()
+{
+    return m_path;
+}
+
+// 获取系统可用内存（MB）
+qint64 Core::getAvailableMemoryMB()
+{
+    QFile file("/proc/meminfo");
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return -1;
+    }
+
+    QString content = file.readAll();
+    file.close();
+
+    // 提取 Available 行（单位 kB）
+    QRegularExpression rx("Available:\\s+(\\d+)");
+    QRegularExpressionMatch match = rx.match(content);
+    if (match.hasMatch()) {
+        return match.captured(1).toLongLong() / 1024; // 转为 MB
+    }
+    return -1;
+}
+// 检查内存并动态调整线程和缓存阈值
+bool Core::checkAndAdjustForLowMemory()
+{
+    qint64 availMB = getAvailableMemoryMB();
+    if (availMB < 0) {
+        return false; // 获取失败，不调整
+    }
+
+    bool adjusted = false;
+
+    if (availMB < 128) {
+        // 极低内存：激进降级
+        m_currentMaxAlbumThreads = 2;
+        m_currentMaxCacheSize = 10;
+        adjusted = true;
+    }
+    else if (availMB < 256) {
+        // 低内存：适度降级
+        m_currentMaxAlbumThreads = 4;
+        m_currentMaxCacheSize = 20;
+        adjusted = true;
+    }
+    else if (availMB < 512) {
+        // 偏低内存：轻度降级
+        m_currentMaxAlbumThreads = 6;
+        m_currentMaxCacheSize = 30;
+        adjusted = true;
+    }
+    else {
+        // 内存充足：恢复默认
+        m_currentMaxAlbumThreads = MAX_ALBUM_THREADS;
+        m_currentMaxCacheSize = MAX_CACHE_SIZE;
+    }
+
+    if (adjusted)
+    {
+        qWarning() << "[Core::checkAndAdjustForLowMemory] 可用内存:" << availMB << "MB,"
+                   << "降级 -> 线程:" << m_currentMaxAlbumThreads
+                   << ", 缓存:" << m_currentMaxCacheSize;
+    }
+
+    return adjusted;
+}
+
+// 管理缓存大小，实现LRU淘汰策略
+void Core::manageCacheSize()
+{
+    // 管理 m_loadedImageCache
+    while (m_loadedImageCache.size() > m_currentMaxCacheSize && !m_cacheAccessOrder.isEmpty()) {
+        QString oldestKey = m_cacheAccessOrder.takeFirst();
+        if (m_loadedImageCache.contains(oldestKey)) {
+            m_loadedImageCache.remove(oldestKey);
+            m_bigImageCache.remove(oldestKey);
+        }
+    }
+
+    // 额外保护：如果缓存仍然过大，直接清空一半
+    if (m_loadedImageCache.size() > m_currentMaxCacheSize * 2) {
+        int removeCount = m_loadedImageCache.size() / 2;
+        QList<QString> keys = m_loadedImageCache.keys();
+        for (int i = 0; i < removeCount && i < keys.size(); i++) {
+            m_loadedImageCache.remove(keys[i]);
+            m_bigImageCache.remove(keys[i]);
+        }
+        m_cacheAccessOrder.clear();
+    }
+}

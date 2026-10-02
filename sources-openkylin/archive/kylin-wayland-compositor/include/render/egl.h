@@ -1,0 +1,89 @@
+// SPDX-FileCopyrightText: 2023 The wlroots contributors
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _RENDER_EGL_H_
+#define _RENDER_EGL_H_
+
+#include <epoxy/egl.h>
+
+#include <wlr/render/dmabuf.h>
+#include <wlr/render/drm_format_set.h>
+
+struct egl {
+    EGLDisplay display;
+    EGLContext context;
+    EGLDeviceEXT device; // may be EGL_NO_DEVICE_EXT
+    struct gbm_device *gbm_device;
+
+    // opengl or opengles
+    bool is_gles;
+    // software rendering, like llvmpipe
+    bool is_software;
+    // whether wait/signal timelines are supported.
+    bool support_timeline;
+
+    // https://registry.khronos.org/EGL/extensions/
+    struct {
+        // Display extensions
+        bool KHR_image_base;
+        bool EXT_image_dma_buf_import;
+        bool EXT_image_dma_buf_import_modifiers;
+        bool IMG_context_priority;
+        bool EXT_create_context_robustness;
+        bool WL_bind_wayland_display;
+
+        // Device extensions
+        bool EXT_device_drm;
+        bool EXT_device_drm_render_node;
+
+        // Client extensions
+        bool KHR_platform_gbm;
+        bool EXT_platform_device;
+        bool KHR_display_reference;
+        bool EXT_device_enumeration;
+        bool EXT_device_query;
+    } exts;
+
+    bool has_modifiers;
+    struct wlr_drm_format_set dmabuf_texture_formats;
+    struct wlr_drm_format_set dmabuf_render_formats;
+
+    /* renderer quirks */
+    uint32_t quirks;
+};
+
+struct egl_context {
+    EGLDisplay display;
+    EGLContext context;
+    EGLSurface draw_surface;
+    EGLSurface read_surface;
+};
+
+struct egl *egl_create_with_drm_fd(int drm_fd);
+
+void egl_destroy(struct egl *egl);
+
+bool egl_make_current(struct egl *egl, struct egl_context *save_context);
+
+bool egl_unset_current(struct egl *egl);
+
+bool egl_restore_context(struct egl_context *context);
+
+bool egl_destroy_image(struct egl *egl, EGLImageKHR image);
+
+EGLImageKHR egl_create_image_from_dmabuf(struct egl *egl, struct wlr_dmabuf_attributes *attributes,
+                                         bool *external_only);
+
+int egl_dup_drm_fd(struct egl *egl);
+
+EGLSyncKHR egl_create_sync(struct egl *egl, int fence_fd);
+
+void egl_destroy_sync(struct egl *egl, EGLSyncKHR sync);
+
+int egl_dup_fence_fd(struct egl *egl, EGLSyncKHR sync);
+
+bool egl_wait_sync(struct egl *egl, EGLSyncKHR sync);
+
+#endif /* _RENDER_EGL_H_ */

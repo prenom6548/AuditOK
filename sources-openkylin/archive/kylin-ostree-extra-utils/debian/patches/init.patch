@@ -1,0 +1,177 @@
+From: zhangtingting <zhangtingting@kylinos.cn>
+Date: Tue, 23 Apr 2024 15:17:38 +0800
+Subject: <short summary of the patch>
+
+TODO: Put a short summary on the line above and replace this paragraph
+with a longer explanation of this change. Complete the meta-information
+with other relevant fields (see below for details). To make it easier, the
+information below has been extracted from the changelog. Adjust it or drop
+it.
+
+kylin-ostree-extra-utils (1.0.0-ok1) nile; urgency=medium
+
+  * init
+---
+ factory-restore/kylin-ostree-restore-plymouth.sh | 38 ++++++++++++++
+ factory-restore/kylin-ostree-restore.py          | 66 ++++++++++++++++++++++++
+ update-initramfs/ostree-update-initramfs.sh      | 33 ++++++++++++
+ 3 files changed, 137 insertions(+)
+ create mode 100644 factory-restore/kylin-ostree-restore-plymouth.sh
+ create mode 100644 factory-restore/kylin-ostree-restore.py
+ create mode 100644 update-initramfs/ostree-update-initramfs.sh
+
+diff --git a/factory-restore/kylin-ostree-restore-plymouth.sh b/factory-restore/kylin-ostree-restore-plymouth.sh
+new file mode 100644
+index 0000000..1b68be4
+--- /dev/null
++++ b/factory-restore/kylin-ostree-restore-plymouth.sh
+@@ -0,0 +1,38 @@
++#!/bin/bash 
++#!/bin/sh
++set -e 
++
++unset DISPLAY
++
++NEED_FACTORY_RESTORE=
++for x in $(cat /proc/cmdline); do
++    case $x in
++        ostree-factory-restore)
++            NEED_FACTORY_RESTORE=y
++            ;;
++        *)
++            ;;
++    esac
++done
++
++if [ x"$NEED_FACTORY_RESTORE" = "xy" ]; then
++    /sbin/plymouthd --mode=shutdown --pid-file=/run/plymouth/pid --attach-to-session --kernel-command-line="quiet splash plymouth.debug"
++    /bin/plymouth show-splash
++    /bin/plymouth display-message --text="请再一次确认是否进行系统出厂还原，是否继续？[y/n]"
++    is_sure=$(/bin/plymouth watch-keystroke)
++    echo is_sure=$is_sure
++    case $is_sure in
++            y|Y)
++                /bin/plymouth display-message --text="正在还原系统....."
++                python3 /usr/sbin/kylin-ostree-restore.py
++                sleep 3
++                /bin/plymouth quit;;
++            n|N)
++                /bin/plymouth display-message --text="不恢复！....."
++                sleep 10
++                /bin/plymouth quit
++                # # 注意，reboot重启不了，可用reboot -f
++                reboot -f;;
++            *) ;;
++            esac
++fi
+diff --git a/factory-restore/kylin-ostree-restore.py b/factory-restore/kylin-ostree-restore.py
+new file mode 100644
+index 0000000..c111e30
+--- /dev/null
++++ b/factory-restore/kylin-ostree-restore.py
+@@ -0,0 +1,66 @@
++import gi
++import traceback
++import os,subprocess
++gi.require_version('OSTree', '1.0')
++from gi.repository import GLib, Gio, OSTree,GObject
++
++
++def is_restore():
++    with open('/proc/cmdline') as f:
++        content = f.read()
++        if "ostree-factory-restore" in content:
++            print("restore")
++            return True
++    print("no restore")
++    return False
++
++def main():
++    # 在这里编写主进程的代码
++    print("这是主进程")
++    ##先判断是不是恢复出厂模式
++    if is_restore() == True:  ##是恢复出厂设置
++        
++        sysroot = OSTree.Sysroot.new(None)
++        sysroot.set_mount_namespace_in_use()
++        sysroot.initialize()
++        sysroot.load()
++        old_deployments = sysroot.get_deployments()
++        # 部署的列表
++        for i in range(len(old_deployments)-1,-1,-1):
++            deployment = old_deployments[i]
++            index = deployment.get_index()
++            # 判断当前部署不是pin，则删除该部署
++            if deployment.is_pinned() != True:
++                
++                print(f"NO-PIN-index=",index) 
++                args = ["ostree", "admin", "undeploy",str(index)]
++                subprocess.run(args, stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True) ##删除非pin、非hotfix部署
++                print(f"Successfully undeployed")  
++            ##删除分支后实际列表已变，但old_deployments未变，所以取消pin、创建新的pin需要重新reload
++
++        ##重新load一次
++        sysroot = OSTree.Sysroot.new(None)
++        sysroot.set_mount_namespace_in_use()
++        sysroot.initialize()
++        sysroot.load()
++        deployment_list = sysroot.get_deployments()
++        for deployment in deployment_list:
++            # 判断当前部署是pin，则取消该部署pin并重新部署该分支
++            if deployment.is_pinned() == True:
++                sysroot.deployment_set_pinned(deployment,False)
++                osname = deployment.get_osname()
++                bootcsum = deployment.get_csum()
++                origin = deployment.get_origin()
++                ret,my_deployment = sysroot.deploy_tree(osname,bootcsum,origin,deployment,None,None)
++                #print(f"Successfully tree")
++                sysroot.simple_write_deployment(osname,my_deployment,None,OSTree.SysrootSimpleWriteDeploymentFlags.RETAIN,None)
++                # print(f"Successfully write")
++                sysroot.deployment_set_pinned(my_deployment,True)
++                subprocess.run(["/bin/plymouth display-message","--text='系统还原完成.....'"], stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
++                print(f"Successfully pin")
++                break
++        ###更新grub
++        subprocess.run(["update-grub"], stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
++
++if __name__ == "__main__":
++    main()
+diff --git a/update-initramfs/ostree-update-initramfs.sh b/update-initramfs/ostree-update-initramfs.sh
+new file mode 100644
+index 0000000..37c6480
+--- /dev/null
++++ b/update-initramfs/ostree-update-initramfs.sh
+@@ -0,0 +1,33 @@
++#!/bin/bash 
++osname=$1
++csum=$2
++deployserial=$3
++bootcsum=$4
++deploy_path=/ostree/deploy/${osname}/deploy/${csum}.${deployserial}
++ 
++# 定义目标目录  
++TARGET_DIR="${deploy_path}/usr/lib/modules"  
++#TARGET_DIR="/usr/lib/modules"  ##在chroot环境内，环境外路径为：/ostree/deploy/openkylin/deploy/${commit_id}.0/usr/lib/modules
++
++# 遍历目录下的所有子目录  
++for ker_version in "$TARGET_DIR"/*; do  
++	echo $ker_version
++    if [[ -d "$ker_version" ]]; then  
++        # 进入子目录  
++        cd "$ker_version" || continue  
++  		echo "dir="$ker_version
++        # 获取子目录名称  
++        subdir_name=$(basename "$ker_version")  
++		echo "sub="${subdir_name}
++
++        ## 进入deploy的环境并创建img文件
++        chroot $deploy_path mkinitramfs -o /etc/initramfs-${subdir_name}.img ${subdir_name} -v
++        initramfs_file=${deploy_path}/etc/initramfs-${subdir_name}.img
++        if [ -s $initramfs_file ] && [ -e $initramfs_file ]
++        then 
++            cp ${deploy_path}/etc/initramfs-${subdir_name}.img  /boot/ostree/${osname}-${bootcsum}/
++        fi
++        echo "------------------------------"  
++          
++    fi  
++done

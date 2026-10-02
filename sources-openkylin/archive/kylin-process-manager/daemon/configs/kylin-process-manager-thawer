@@ -1,0 +1,48 @@
+#!/bin/bash
+
+thaw_v1_freezer() {
+    local freezer_mounts
+    freezer_mounts=$(grep -E '^cgroup[[:space:]]+[^[:space:]]+[[:space:]]+cgroup[[:space:]]+[^[:space:]]*freezer' /proc/mounts | awk '{print $2}')
+    
+    if [[ -z "$freezer_mounts" ]]; then
+        return
+    fi
+
+    for mount_point in $freezer_mounts; do
+        find "$mount_point" -type f -name 'freezer.state' 2>/dev/null | while read -r state_file; do
+            local cgroup_dir
+            cgroup_dir=$(dirname "$state_file")
+            local current_state
+            current_state=$(cat "$state_file" 2>/dev/null | tr -d '[:space:]')
+            
+            if [[ "$current_state" == "FROZEN" || "$current_state" == "FREEZING" ]]; then
+                echo "THAWED" > "$state_file" 2>/dev/null
+            fi
+        done
+    done
+}
+
+thaw_v2_freeze() {
+    local v2_mounts
+    v2_mounts=$(grep '^cgroup2[[:space:]]' /proc/mounts | awk '{print $2}')
+    
+    if [[ -z "$v2_mounts" ]]; then
+        return
+    fi
+
+    for mount_point in $v2_mounts; do
+        find "$mount_point" -type f -name 'cgroup.freeze' 2>/dev/null | while read -r freeze_file; do
+            local cgroup_dir
+            cgroup_dir=$(dirname "$freeze_file")
+            local frozen
+            frozen=$(cat "$freeze_file" 2>/dev/null | tr -d '[:space:]')
+            
+            if [[ "$frozen" == "1" ]]; then
+                echo "0" > "$freeze_file" 2>/dev/null
+            fi
+        done
+    done
+}
+
+thaw_v1_freezer
+thaw_v2_freeze

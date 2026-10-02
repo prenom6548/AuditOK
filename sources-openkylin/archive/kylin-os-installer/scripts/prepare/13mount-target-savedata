@@ -1,0 +1,388 @@
+#!/bin/bash
+
+set -e
+
+data_unformat=$(get_value data-unformat)
+if [[ "${data_unformat}" == "true" ]]; then
+  echo "save data installer"
+else
+  return 0
+fi
+
+automatic=$(get_value automatic-installation)
+if [[ "$automatic" == "0" ]]; then
+  return 0
+fi
+
+disk_custom=$(get_value disk-custom)
+#兼容老版本配置文件
+root_size=$(get_value disk-root)
+if [[ "${disk_custom}" == "true" ]] && [[ -z "${root_size}" ]]; then
+  return 0
+fi
+
+
+disk=$(get_value devpath)
+data_device=$(get_value data-device)
+
+
+
+partprobe "${disk}" && sync
+
+sleep 1
+
+has_backup=0
+
+do_mkfs_efi(){
+  #if egrep -qi 'kirin.?990' /proc/cpuinfo; then
+  part_efi=$1
+  if [[ "${is_990_9a0}" == "true" ]]; then
+    sudo mkfs.vfat -s1 -n ESP "${part_efi}"
+  else
+    sudo mkfs.vfat -n ESP "${part_efi}" || sudo mkfs.vfat -F16 -n ESP "${part_efi}"
+  fi
+}
+
+do_prepare_sw() {
+  umount -l /media/*/* || true
+  dmsetup remove_all -f
+  #gsettings set org.ukui.flash-disk.autoload ifautoload false
+}
+
+do_mkfs_boot() {
+  boot_part=$1
+  if [[ "$(archdetect)" == "sw64/generic" ]]; then
+  #  do_prepare_sw
+    mkfs.ext3 -Fq -L SYSBOOT "${boot_part}"
+  else
+    mkfs.ext4 -Fq -L SYSBOOT "${boot_part}"
+  fi
+}
+
+
+
+# 保留data
+save_history_data() {
+	mount "$1" /mnt 
+	mnt_dir=/mnt
+        if grep -q "/var/mnt" /proc/mounts; then
+		mnt_dir=/var/mnt
+	fi
+
+	mkdir -p /tmp/etc
+	save_deploy_hashvalue=`cat "${mnt_dir}/ostree/pkgs/ostree-version.info" | awk -F " " '{print $2}'`
+	ostree_mode=normal
+        if [ -f "${mnt_dir}/ostree/pkgs/conf/install-default/system-ovl.conf" ]; then
+                if grep -qi "Mode=maintain" "${mnt_dir}/ostree/pkgs/conf/install-default/system-ovl.conf"; then
+                        ostree_mode=maintain
+                fi
+        else
+                if [ -f "${mnt_dir}/ostree/pkgs/system-ovl.conf" ]; then
+                        if grep -qi "Mode=maintain" "${mnt_dir}/ostree/pkgs/system-ovl.conf"; then
+                                ostree_mode=maintain
+                        fi
+                fi
+        fi
+
+        if [[ $ostree_mode == "maintain" ]]; then
+                mount -t overlay overlay -o lowerdir=${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-upper:${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-lower:${mnt_dir}/etc,upperdir=${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-tmpupper,workdir=${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-work ${mnt_dir}/etc
+        else
+                if [[ $ostree_mode == "normal" ]]; then
+                        mount -t overlay overlay -o lowerdir=${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-lower:${mnt_dir}/etc,upperdir=${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-upper,workdir=${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-work ${mnt_dir}/etc
+                fi
+        fi
+
+        tmp_path="${mnt_dir}/etc/"
+        tmp_lower_path="${mnt_dir}/ostree/pkgs/ovl-${save_deploy_hashvalue}/etc-ovl/etc-lower/"
+
+	if [ -f ${tmp_path}shadow ]; then
+     		cp -a ${tmp_path}shadow* /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}shadow ]; then
+     			cp -a ${tmp_lower_path}shadow* /tmp/etc
+		else
+			echo "shadow does not exist"
+		fi
+	fi
+	if [ -f ${tmp_path}passwd ]; then
+     		cp -a ${tmp_path}passwd* /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}passwd ]; then
+     			cp -a ${tmp_lower_path}passwd* /tmp/etc
+		else
+			echo "passwd  does not exist"
+		fi
+	fi
+	if [ -f ${tmp_path}gshadow ]; then
+     		cp -a ${tmp_path}gshadow* /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}gshadow ]; then
+     			cp -a ${tmp_lower_path}gshadow* /tmp/etc
+		else
+			echo "gshadow  does not exist"
+		fi
+	fi
+	if [ -f ${tmp_path}group ]; then
+     		cp -a ${tmp_path}group* /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}group ]; then
+     			cp -a ${tmp_lower_path}group* /tmp/etc
+		else
+			echo "group  does not exist"
+		fi
+	fi
+	if [ -f ${tmp_path}hostname ]; then
+     		cp -a ${tmp_path}hostname /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}hostname ]; then
+     			cp -a ${tmp_lower_path}hostname /tmp/etc
+		else
+			echo "hostname  does not exist"
+		fi
+	fi
+	if [ -f ${tmp_path}hosts ]; then
+     		cp -a ${tmp_path}hosts /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}hosts ]; then
+     			cp -a ${tmp_lower_path}hosts /tmp/etc
+		else
+			echo "hosts  does not exist"
+		fi
+	fi
+	
+	if [ -f ${tmp_path}uid_list ]; then
+                cp -a ${tmp_path}uid_list /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}uid_list ]; then
+                	cp -a ${tmp_lower_path}uid_list /tmp/etc
+		else
+			echo "uid_list  does not exist"
+		fi
+        fi
+
+	if [ -f ${tmp_path}subgid ]; then
+                cp -a ${tmp_path}subgid* /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}subgid ]; then
+                	cp -a ${tmp_lower_path}subgid* /tmp/etc
+		else
+			echo "subgid  does not exist"
+		fi
+        fi
+	if [ -f ${tmp_path}subuid ]; then
+                cp -a ${tmp_path}subuid* /tmp/etc
+	else
+		if [ -f ${tmp_lower_path}subuid ]; then
+                	cp -a ${tmp_lower_path}subuid* /tmp/etc
+		else
+			echo "subuid  does not exist"
+		fi
+        fi 
+
+	if [ -f ${tmp_path}lightdm/lightdm.conf ]; then
+		mkdir -p /tmp/etc/lightdm
+		cp -a ${tmp_path}lightdm/lightdm.conf /tmp/etc/lightdm
+	else
+		if [ -f ${tmp_lower_path}lightdm/lightdm.conf ]; then
+			mkdir -p /tmp/etc/lightdm
+			cp -a ${tmp_lower_path}lightdm/lightdm.conf /tmp/etc/lightdm
+		else
+			echo "lightdm.conf  does not exist"
+		fi
+	fi
+
+	# 保留激活文件
+	if [ -f ${tmp_path}.kyinfo ]; then
+                cp -a ${tmp_path}.kyinfo /tmp/etc/
+	else
+		if [ -f ${tmp_lower_path}.kyinfo ]; then
+                	cp -a ${tmp_lower_path}.kyinfo /tmp/etc/
+		else
+			echo "kyinfo  does not exist"
+		fi
+        fi
+	if [ -f ${tmp_path}LICENSE ]; then
+                cp -a ${tmp_path}LICENSE /tmp/etc/
+	else
+		if [ -f ${tmp_lower_path}LICENSE ]; then
+                	cp -a ${tmp_lower_path}LICENSE /tmp/etc/
+		else
+			echo "LICENSE  does not exist"
+		fi
+        fi
+	if [ -f ${tmp_path}.kyhwid ]; then
+                cp -a ${tmp_path}.kyhwid /tmp/etc/
+	else
+		if [ -f ${tmp_lower_path}.kyhwid ]; then
+                	cp -a ${tmp_lower_path}.kyhwid /tmp/etc/
+		else
+			echo "kyhwid  does not exist"
+		fi
+        fi
+        if [ -f ${tmp_path}.kyactivation ]; then
+                cp -a ${tmp_path}.kyactivation /tmp/etc/
+	else
+        	if [ -f ${tmp_lower_path}.kyactivation ]; then
+                	cp -a ${tmp_lower_path}.kyactivation /tmp/etc/
+		else
+			echo "kyactivation  does not exist"
+		fi
+        fi
+	if [ -f ${tmp_path}.product ]; then
+                cp -a ${tmp_path}.product /tmp/etc/
+	else
+		if [ -f ${tmp_lower_path}.product ]; then
+                	cp -a ${tmp_lower_path}.product /tmp/etc/
+		else
+			echo "product  does not exist"
+		fi
+        fi
+
+
+
+	if [ -f /tmp/etc/passwd ]; then
+
+		if [[ -f /usr/share/kylin-os-installer/user-groups.txt ]]; then
+			rm -rf /usr/share/kylin-os-installer/user-groups.txt
+		fi
+               
+		user_name=
+                user_names=
+                user_names=`cat "/tmp/etc/passwd" | grep home | grep "/bin/bash"`
+                for i in ${user_names}; do
+                        user_name=${i%%:*}
+                        echo "${user_name}"
+                        user_groups="adm cdrom sudo dip plugdev users lpadmin sambashare"
+                        echo "${user_name}=${user_groups}" >> /usr/share/kylin-os-installer/user-groups.txt
+                done
+
+        fi
+	if [ -f ${tmp_path}fstab ]; then
+		cp -a ${tmp_path}fstab /tmp
+	else
+		if [ -f ${tmp_lower_path}fstab ]; then
+			cp -a ${tmp_lower_path}fstab /tmp
+		else
+			echo "fstab  does not exist"
+		fi
+	fi
+	
+	umount ${mnt_dir}/etc/ 
+	umount "$1"
+}
+
+save_part=${disk##*/}
+save_part_list=$(cat "/var/log/installer/os-prober.log" |grep "/dev/" |grep ^${save_part})
+echo "${save_part_list}"
+save_part_label_list=$(echo "${save_part_list}"| awk '{print $2}')
+echo "${save_part_label_list}"
+
+for i in ${save_part_label_list}
+  do
+      save_part_dev=$(echo "${save_part_list}" | grep $i | awk '{print $3}')
+      case "${i}" in
+      root)
+              part_root="${save_part_dev}"
+              echo "root=${part_root}"
+              save_history_data ${part_root}
+              fs=$(lsblk -o KNAME,FSTYPE ${part_root} | grep ${part_root##*/} | awk '{print $2}')
+              case "$fs" in
+                      fat32|fat16)
+                      mkfs.vfat -n "$i" "${part_root}";;
+                      ext4)
+                      mkfs.ext4 -Fq -L SYSROOT "${part_root}";;
+                      xfs)
+                      mkfs.xfs -fq -L SYSROOT "${part_root}";;
+                      btrfs)
+                      mkfs.btrfs -fq -L SYSROOT "${part_root}";;
+                      ntfs)
+                      mkfs.ntfs -fq -L "$i" "${part_root}";;
+                      *)
+                      mkfs.${fs} -Fq -L SYSROOT "${part_root}" ||  mkfs.${fs} -fq -L SYSROOT "${part_root}";;
+              esac
+              mkdir -p /target
+              mount "${part_root}" /target
+	      echo "part-root=${part_root}" >>/tmp/ky-installer.cfg
+              ;;
+        *)
+              continue
+              ;;
+        esac
+ done
+
+for i in ${save_part_label_list}
+    do
+        save_part_dev=$(echo "${save_part_list}" | grep $i | awk '{print $3}')
+        case "${i}" in
+        efi)
+                part_efi="${save_part_dev}"
+                echo "efi=${part_efi}"
+                do_mkfs_efi ${part_efi}
+		echo "part-efi=${part_efi}" >>/tmp/ky-installer.cfg
+                ;;
+        boot)
+                part_boot="${save_part_dev}"
+                echo "boot=${part_boot}"
+                do_mkfs_boot "${part_boot}"
+                #mkdir -p /target/boot
+                #mount "${part_boot}" /target/boot
+		echo "part-boot=${part_boot}" >>/tmp/ky-installer.cfg
+                ;;
+        root)
+                continue
+                ;;
+        backup)
+                part_backup="${save_part_dev}"
+                echo "backup=${part_backup}"
+                mkfs.ext4 -Fq -L KYLIN-BACKUP "${part_backup}"
+                #mkdir -p /target/backup
+                #mount "${part_backup}" /target/backup
+		echo "part-backup=${part_backup}" >>/tmp/ky-installer.cfg
+                #set_backup "${part_backup}"
+                ;;
+        data)
+                part_data="${save_part_dev}"
+                echo "data=${part_data}"
+                mkdir -p /target/data
+               # mount "${part_data}" /target/data
+               # chmod 1777 /target/data
+               # do_bind_data
+		echo "part-data=${part_data}" >>/tmp/ky-installer.cfg
+                ;;
+        swap)
+                part_swap="${save_part_dev}"
+                echo "swap=${part_swap}"
+                mkswap -L SWAP "${part_swap}"
+                swapon "${part_swap}"
+                ;;
+	*)
+                part_other="${save_part_dev}"
+                echo "other=${part_other}"
+                uuid=$(lsblk -o KNAME,UUID ${part_other} | grep ${part_other##*/} | awk '{print $2}')
+                mount=
+                test_mount=
+                test_mount=$(cat "/tmp/fstab"  | grep ${uuid} | awk '{print $5}') || true
+                if [[ -n ${test_mount} ]]; then
+                        mount=$(cat "/tmp/fstab"  | grep ${uuid} | awk '{print $2}'| grep "/" ) || true
+                else
+                        test_mount=$(cat "/tmp/fstab"  | grep ${part_other} | awk '{print $5}') || true
+                        if [[ -n ${test_mount} ]]; then
+                                mount=$(cat "/tmp/fstab"  | grep ${part_other} | awk '{print $2}'| grep "/" ) || true
+                        fi
+                fi
+                if [[ -n ${mount} ]]; then
+                        mkdir -p /target${mount}
+                        mount "${part_other}" /target${mount}
+                fi
+                ;;
+        esac
+   done
+
+
+
+#if [[ "${is_efi}" == "true" ]]; then
+#  mkdir -p /target/boot/efi
+#  mount "${part_efi}" /target/boot/efi
+#fi
+
+

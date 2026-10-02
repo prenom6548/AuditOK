@@ -1,0 +1,123 @@
+From: snowsi <348240162@qq.com>
+Date: Thu, 7 Mar 2024 07:46:55 +0000
+Subject: =?utf-8?b?ITY0IOS/ruWkjeWPjeWkjeWkmuasoeWPlua2iOaPkOS6pOaTjeS9nA==?=
+ =?utf-8?b?5ZCO77yM56Gs55uY6KKr5Y6L57yp5paH5Lu25YaZ5ruh5LqGIE1lcmdlIHB1bGwg?=
+ =?utf-8?b?cmVxdWVzdCAhNjQgZnJvbSBzbm93c2kvb3Blbmt5bGluL25pbGU=?=
+
+---
+ .../src/feedbackmanagerlogic.cpp                   | 39 ++++++++++++++++++----
+ .../src/feedbackmanagerlogic.h                     |  5 +++
+ 2 files changed, 38 insertions(+), 6 deletions(-)
+
+diff --git a/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp b/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp
+index 3916108..6057df1 100644
+--- a/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp
++++ b/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp
+@@ -54,8 +54,8 @@ void FeedbackManagerLogic::startCollect()
+     //创建临时目录
+     m_timeStr = QString::number(QDateTime::currentDateTime().toSecsSinceEpoch());
+     QString hostName = qgetenv("USER");
+-    QString tmpPath = "/tmp/kom-pfb." + hostName + "_" + m_timeStr + "/";
+-    m_tmpPath = tmpPath + "kylin-os-manager";
++    m_cacheDir = "/tmp/kom-pfb." + hostName + "_" + m_timeStr + "/";
++    m_tmpPath = m_cacheDir + "kylin-os-manager";
+     if (!QDir().mkpath(m_tmpPath)) {
+         qDebug() << "creat tmp path error";
+         emit errorMessage(tr("Failed to create temporary directory!"));
+@@ -69,6 +69,7 @@ void FeedbackManagerLogic::startCollect()
+     collecting();
+     qDebug() << "采集系统信息完成：" << m_time->elapsed();
+     if (*m_cancel) {
++        Clear();
+         finish(Cancel);
+         return;
+     }
+@@ -227,6 +228,8 @@ void FeedbackManagerLogic::uploadProgress(qint64 bytesSent, qint64 bytesTotal)
+ 
+ void FeedbackManagerLogic::uploadFinish()
+ {
++    // FIXME: 在取消流程中，因为是否取消依赖于 m_cache 变量的值，而 m_cache 在多线程中被修改，如果提交流程跑到此处，则意味着提交完成，
++    //  不应该再被取消，如果此时另外一个线程发出取消信号，则会等到该函数执行完毕后才会处理取消信号。等于提交显示提交成功后又接着显示了取消成功。
+     QByteArray creatByt = m_networkReply->readAll();
+     m_networkReply->deleteLater();
+     qDebug() << "uploadFinish :" << creatByt;
+@@ -249,6 +252,11 @@ void FeedbackManagerLogic::cancel()
+         m_networkReply->abort();
+         m_networkReply->deleteLater();
+     }
++    if (m_proc && m_proc->state() != QProcess::NotRunning) {
++        m_proc->kill();
++    }
++
++    Clear();
+     finish(Cancel);
+ }
+ 
+@@ -438,6 +446,13 @@ QString FeedbackManagerLogic::getPathFromJson(QString fn, QString k1, QString v1
+ 
+ void FeedbackManagerLogic::onProcFinish(int code)
+ {
++    if (*m_cancel) {
++        Clear();
++        finish(Cancel);
++        return;
++    }
++    ClearCache();
++
+     if (code) {
+         qDebug() << "onProcFinish code :" << code;
+     }
+@@ -447,10 +462,7 @@ void FeedbackManagerLogic::onProcFinish(int code)
+         finish(Success);
+         return;
+     }
+-    if (*m_cancel) {
+-        finish(Cancel);
+-        return;
+-    }
++
+     QFileInfo info;
+     info.setFile(m_savePath);
+     qint64 fileSize = info.size();
+@@ -474,3 +486,18 @@ QStringList FeedbackManagerLogic::getFileNameFromDir(const QString &arg) const {
+     }
+     return tmp;
+ }
++
++void FeedbackManagerLogic::Clear() {
++    if (QFile::exists(m_savePath))
++        QFile::remove(m_savePath);
++    ClearCache();
++}
++
++void FeedbackManagerLogic::ClearCache() {
++    if (QFile::exists(m_cacheDir)) {
++        QDir dir(m_cacheDir);
++        if (!dir.removeRecursively()) {
++            qCritical() << "Service support delete cache dir fail.";
++        }
++    }
++}
+diff --git a/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.h b/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.h
+index 60e4bde..9b68f6f 100644
+--- a/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.h
++++ b/plugins/service-support/service-support-backend/src/feedbackmanagerlogic.h
+@@ -41,6 +41,9 @@ private:
+     void appendHttpPart(QHttpMultiPart *multiPart, const QString &name, const QString &value);
+     QString getPathFromJson(QString fn, QString k1, QString v1, QString keyRes, QString k2 = "", QString v2 = "");
+     QStringList getFileNameFromDir(const QString &arg) const;
++    void Clear();
++    void ClearCache();
++
+     QProcess *m_proc = nullptr;
+     QDBusInterface *m_dbus = nullptr;
+     QNetworkAccessManager *m_networkManager = nullptr;
+@@ -58,6 +61,8 @@ private:
+     QByteArray m_posData;
+     QString m_beFromKey;
+ 
++    QString m_cacheDir;
++
+ signals:
+     void creatFinish(FeedBackFinishType, QString);
+     void creatProgress(int);

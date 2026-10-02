@@ -1,0 +1,326 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _VIEW_H_
+#define _VIEW_H_
+
+#include <kywc/view.h>
+
+#include "input/event.h"
+#include "scene/scene.h"
+
+struct server;
+struct workspace;
+
+/* taken from kwin layer */
+enum layer {
+    LAYER_UNKNOWN = -1,
+    LAYER_FIRST = 0,
+    /* layer-shell background */
+    LAYER_DESKTOP = LAYER_FIRST,
+    /* layer for a watermark window */
+    LAYER_WATERMARK,
+    /* layer-shell bottom */
+    LAYER_BELOW,
+    LAYER_NORMAL,
+    /* dock, panel */
+    LAYER_DOCK,
+    /* layer-shell top */
+    LAYER_ABOVE,
+    /* layer for windows of type notification */
+    LAYER_NOTIFICATION,
+    /* active fullscreen, or active dialog */
+    LAYER_ACTIVE,
+    /* layer for system window, ukui-sidebar, ukui-menu */
+    LAYER_SYSTEM_WINDOW,
+    /* layer for window switcher, panel window preview */
+    LAYER_SWITCHER,
+    /* tooltips, sub- and context menus, popups */
+    LAYER_POPUP,
+    /* layer for input method */
+    LAYER_INPUT_PANEL,
+    /* layer for notifications that should be shown even on top of fullscreen */
+    LAYER_CRITICAL_NOTIFICATION,
+    /* layer for logout window */
+    LAYER_LOGOUT,
+    /* layer for override redirect windows, layer-shell overlay */
+    LAYER_UNMANAGED,
+    /* layer for lockscreen window */
+    LAYER_SCREEN_LOCK,
+    /* layer for notification windows on top of lockscreen */
+    LAYER_SCREEN_LOCK_NOTIFICATION,
+    /* layer for On Screen Display windows such as volume feedback, maybe dragicon */
+    LAYER_ON_SCREEN_DISPLAY,
+    LAYER_NUMBER,
+};
+
+struct view_layer {
+    enum layer layer;
+    struct ky_scene_tree *tree;
+};
+
+enum view_action {
+    VIEW_ACTION_NOP = 0,
+    VIEW_ACTION_ACTIVATE = 1 << 0,
+    VIEW_ACTION_FULLSCREEN = 1 << 1,
+    VIEW_ACTION_MAXIMIZE = 1 << 2,
+    VIEW_ACTION_RESIZE = 1 << 3,
+    VIEW_ACTION_TILE = 1 << 4,
+    VIEW_ACTION_MINIMIZE = 1 << 5,
+    VIEW_ACTION_MOVE = 1 << 6,
+};
+
+enum view_adsorption {
+    VIEW_ADSORPTION_NONE = 0,
+    VIEW_ADSORPTION_WINDOW_EDGES = 1 << 0,
+    VIEW_ADSORPTION_SCREEN_EDGES = 1 << 1,
+    VIEW_ADSORPTION_ALL = (1 << 2) - 1,
+};
+
+#define view_action_change_size(action)                                                            \
+    (action & ~(VIEW_ACTION_ACTIVATE | VIEW_ACTION_MINIMIZE | VIEW_ACTION_MOVE))
+
+struct view_configure_state {
+    enum view_action action;
+    struct kywc_box geometry;
+
+    /* check serial to ensure configure is finished (0) */
+    uint32_t configure_serial;
+    enum view_action configure_action;
+    struct kywc_box configure_geometry;
+    struct wl_event_source *configure_timeout;
+};
+
+struct view {
+    struct kywc_view base;
+    struct wlr_surface *surface;
+    struct wl_list link;
+
+    /* parent and children */
+    struct view *parent;
+    struct wl_list parent_link;
+    struct wl_list children;
+    struct modal *modal;
+
+    /* view in workspace */
+    struct view_proxy *current_proxy;
+    struct wl_list view_proxies;
+
+    struct ky_scene_tree *tree;
+    struct ky_scene_tree *surface_tree;
+
+    // TODO: we may need update output when current output geometry/off/destroy changed
+    // but something is done by positioner
+    struct kywc_output *output;
+    struct wl_listener output_destroy;
+
+    struct {
+        struct wl_signal output;
+        /* emit if view's parent changed */
+        struct wl_signal parent;
+        /* emit if view's workspace changed */
+        struct wl_signal workspace;
+        /* emit if view enter a workspace */
+        struct wl_signal workspace_enter;
+        /* emit if view leave a workspace */
+        struct wl_signal workspace_leave;
+        /* emit if view change icon name */
+        struct wl_signal icon_update;
+        /* emit if view valid position is update */
+        struct wl_signal position;
+    } events;
+
+    struct {
+        /* geometry saved for tile, maximize and fullscreen */
+        struct kywc_box geometry;
+        /* records the current output and status when it is send to output */
+        struct kywc_output *output;
+        enum kywc_tile tiled;
+    } saved;
+
+    /* minimized geometry */
+    struct {
+        struct wlr_surface *panel_surface;
+        struct kywc_box geometry;
+    } minimized_geometry;
+
+    struct {
+        uint32_t location;
+        int offset;
+    } slide;
+
+    struct kywc_box tile_start_geometry;
+
+    /* startup_geometry */
+    struct {
+        bool use_startup_geometry;
+        struct kywc_box geometry;
+    } startup_geometry;
+
+    struct view_configure_state pending;
+
+    const struct view_impl *impl;
+    void *data;
+
+    pid_t pid;
+    char *icon_name;   // from application set
+    struct icon *icon; // find in icon folder
+
+    uint32_t current_resize_edges;
+    bool interactive_moving;
+    bool minimized_when_show_desktop;
+    bool minimized_when_show_active_only;
+    bool use_slide;
+
+    void *mode_view;
+};
+
+struct view_impl {
+    void (*configure)(struct view *view);
+    void (*close_popups)(struct view *view);
+    void (*close)(struct view *view);
+    void (*destroy)(struct view *view);
+
+    struct wlr_buffer *(*get_icon_buffer)(struct view *view, int size, float scale);
+};
+
+void view_click(struct seat *seat, struct view *view, uint32_t button, bool pressed,
+                enum click_state state);
+
+void view_hover(struct seat *seat, struct view *view);
+
+void view_do_move(struct view *view, int x, int y);
+
+void view_do_resize(struct view *view, struct kywc_box *geometry);
+
+void view_do_minimized(struct view *view, bool minimized);
+
+void view_do_maximized(struct view *view, bool maximized, struct kywc_output *kywc_output);
+
+void view_do_fullscreen(struct view *view, bool fullscreen, struct kywc_output *kywc_output);
+
+void view_do_tiled(struct view *view, enum kywc_tile tile, struct kywc_output *kywc_output);
+
+void view_do_activate(struct view *view);
+
+typedef bool (*view_iterator_func_t)(struct kywc_view *view, void *data);
+
+void view_manager_for_each_view(view_iterator_func_t iterator, bool mapped, void *data);
+
+struct view_manager *view_manager_create(struct server *server);
+
+struct view_layer *view_manager_get_layer(enum layer layer, bool in_workspace);
+
+struct view_layer *view_manager_get_layer_by_node(struct ky_scene_node *node, bool in_workspace);
+
+struct view_layer *view_manager_get_layer_by_role(enum kywc_view_role role);
+
+struct view *view_manager_get_activated(void);
+
+void view_manager_add_activate_view_listener(struct wl_listener *listener);
+
+void view_manager_show_desktop(bool enabled, bool apply);
+
+bool view_manager_get_show_desktop(void);
+
+bool view_manager_get_show_switcher(void);
+
+void view_manager_add_show_desktop_listener(struct wl_listener *listener);
+
+void view_manager_show_active_only(bool enabled, bool apply);
+
+bool view_manager_get_show_activte_only(void);
+
+uint32_t view_manager_get_adsorption(void);
+
+bool view_manager_set_view_mode(const char *name);
+
+struct view *view_from_kywc_view(struct kywc_view *kywc_view);
+
+struct view *view_try_from_wlr_surface(struct wlr_surface *wlr_surface);
+
+void view_init(struct view *view, const struct view_impl *impl, void *data);
+
+void view_map(struct view *view);
+
+void view_unmap(struct view *view);
+
+void view_destroy(struct view *view);
+
+void view_set_title(struct view *view, const char *title);
+
+void view_set_app_id(struct view *view, const char *app_id);
+
+void view_set_decoration(struct view *view, enum kywc_ssd ssd);
+
+void view_move_to_output(struct view *view, struct kywc_box *src_box,
+                         struct kywc_output *kywc_output);
+
+void view_set_workspace(struct view *view, struct workspace *workspace);
+
+void view_unset_workspace(struct view *view, struct view_layer *layer);
+
+void view_add_all_workspace(struct view *view);
+
+struct view_proxy *view_add_workspace(struct view *view, struct workspace *workspace);
+
+void view_remove_workspace(struct view *view, struct workspace *workspace);
+
+void view_set_parent(struct view *view, struct view *parent);
+
+void view_configure(struct view *view, uint32_t serial);
+
+void view_configured(struct view *view);
+
+void view_helper_move(struct view *view, int x, int y);
+
+void view_update_size(struct view *view, int width, int height, int min_width, int min_height,
+                      int max_width, int max_height);
+
+bool view_has_modal_property(struct view *view);
+
+struct view *view_find_descendant_modal(struct view *view);
+
+bool view_is_minimizable(struct view *view);
+
+bool view_is_maximizable(struct view *view);
+
+bool view_is_fullscreenable(struct view *view);
+
+bool view_is_closeable(struct view *view);
+
+bool view_is_movable(struct view *view);
+
+bool view_is_resizable(struct view *view);
+
+bool view_is_activatable(struct view *view);
+
+bool view_is_focusable(struct view *view);
+
+void view_get_tiled_geometry(struct view *view, struct kywc_box *geometry,
+                             struct kywc_output *kywc_output, enum kywc_tile tile);
+
+void view_apply_role(struct view *view);
+
+struct wlr_buffer *view_get_icon_buffer(struct view *view, float scale);
+
+void view_set_icon_name(struct view *view, const char *icon_name);
+
+void view_move_to_center(struct view *view);
+
+bool view_has_descendant(struct view *view, struct view *descendant);
+
+bool view_has_ancestor(struct view *view, struct view *ancestor);
+
+void view_raise_to_top(struct view *view, bool find_parent);
+
+void view_set_focus(struct view *view, struct seat *seat);
+
+void view_activate_topmost(void);
+
+void view_show_window_menu(struct view *view, struct seat *seat, int x, int y);
+
+bool view_show_tile_flyout(struct view *view, struct seat *seat, struct kywc_box *box);
+
+#endif /* _VIEW_H_ */

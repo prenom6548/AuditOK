@@ -1,0 +1,253 @@
+From: =?utf-8?b?6IyD5pix6L6w?= <fanyuchen@kylinos.cn>
+Date: Mon, 1 Jul 2024 09:48:15 +0000
+Subject: =?utf-8?b?ITc3IOS/ruWkjeiuvuWkh+euoeeQhuebuOWFs2J1ZyBNZXJnZSBwdWxs?=
+ =?utf-8?b?IHJlcXVlc3QgITc3IGZyb20g6IyD5pix6L6wL29wZW5reWxpbi9uaWxl?=
+
+---
+ .../device-controller/src/driverinstallwidget.cpp  | 72 +++++++++++++---------
+ .../src/hotplug/devicemonitorthread.cpp            | 18 ++----
+ .../src/hotplug/devicemonitorthread.h              |  1 +
+ 3 files changed, 48 insertions(+), 43 deletions(-)
+
+diff --git a/plugins/device-controller/src/driverinstallwidget.cpp b/plugins/device-controller/src/driverinstallwidget.cpp
+index 4084f6a..6e8915d 100644
+--- a/plugins/device-controller/src/driverinstallwidget.cpp
++++ b/plugins/device-controller/src/driverinstallwidget.cpp
+@@ -523,7 +523,10 @@ void DriverInstallWidget::addScannerContent() {
+             }
+         } else {
+             if (g_infogetter->m_scannerHardwares.at(i).driverNameList.length() == 0 &&
+-                g_infogetter->m_scannerHardwares.at(i).driver_now == "") {
++                g_infogetter->m_scannerHardwares.at(i).driver_now == "" ||
++                (g_infogetter->m_scannerHardwares.at(i).upgradeable ==
++                 false && g_infogetter->m_scannerHardwares.at(i).driverNameList.length() != 0 &&
++                 g_infogetter->m_scannerHardwares.at(i).driver_now == "")) {
+                 if (!m_devList.contains(g_infogetter->m_scannerHardwares.at(i).model)) {
+                     m_devList.append(g_infogetter->m_scannerHardwares.at(i).model);
+                     m_item = new DeviceItem(g_infogetter->m_scannerHardwares[i]);
+@@ -580,8 +583,11 @@ void DriverInstallWidget::addPrinterContent() {
+                 m_updateabelNum--;
+             }
+         } else {
+-            if (g_infogetter->m_printerHardwares.at(i).driverNameList.length() == 0 &&
+-                g_infogetter->m_printerHardwares.at(i).driver_now == "") {
++            if ((g_infogetter->m_printerHardwares.at(i).driverNameList.length() == 0 &&
++                 g_infogetter->m_printerHardwares.at(i).driver_now == "") ||
++                (g_infogetter->m_printerHardwares.at(i).upgradeable ==
++                 false && g_infogetter->m_printerHardwares.at(i).driverNameList.length() != 0 &&
++                          g_infogetter->m_printerHardwares.at(i).driver_now == "")) {
+                 if (!m_devList.contains(g_infogetter->m_printerHardwares.at(i).model)) {
+                     m_devList.append(g_infogetter->m_printerHardwares.at(i).model);
+                     m_item = new DeviceItem(g_infogetter->m_printerHardwares[i]);
+@@ -916,7 +922,7 @@ void DriverInstallWidget::addDeleteItem(QList<HardWareInfo> hwList) {
+         if (getDriverVersion(driver).trimmed() != driverVersion) {
+             return;
+         }
+-        if (getPackageVersion(driver) == ""){  // 该驱动在本机已经不存在
++        if (getPackageVersion(driver) == "") {  // 该驱动在本机已经不存在
+             g_signal->deleteDataFromDriverSignal(driver);   // 删除数据库中的条目
+             return;
+         }
+@@ -1024,14 +1030,14 @@ void DriverInstallWidget::installFailSlot(QString result) {
+ }
+ 
+ void DriverInstallWidget::moveToInstalledSlot(DeviceItem *item, HardWareInfo hardWareInfo) {
+-    if(item->getBtnText() == tr("Update")){
++    if (item->getBtnText() == tr("Update")) {
+         m_updateabelNum--;
+         m_notUpdatedNum++;
+         // 从可升级列表中移除
+         caculateAndSetPageSize();
+         int x = item->parent()->findChildren<DeviceItem *>().indexOf(item);
+         m_upgradableListWidget->takeItem(m_upgradableListWidget->count() - 1 - x);
+-    }else if(item->getBtnText() == tr("Install")){
++    } else if (item->getBtnText() == tr("Install")) {
+         m_installabelNum--;
+         m_notUpdatedNum++;
+         // 从可安装列表中移除
+@@ -1140,11 +1146,12 @@ void DriverInstallWidget::addNewInstallabelItemSlot(HardWareInfo hardWareInfo) {
+ }
+ 
+ void DriverInstallWidget::installMultiDriverSlot() {
+-    if(g_signal->onUninstalling == true){
+-        QString result = tr("Uninstalling drivers. Please wait for the uninstallation to complete before clicking again.");
++    if (g_signal->onUninstalling == true) {
++        QString result = tr(
++                "Uninstalling drivers. Please wait for the uninstallation to complete before clicking again.");
+         QMessageBox::information(this, tr("Uninstall Failed"), result);
+         return;
+-    }else if(g_signal->onInstalling == true){
++    } else if (g_signal->onInstalling == true) {
+         QString result = tr("Installing drivers. Please wait for the installation to complete before clicking again.");
+         QMessageBox::information(this, tr("Install Failed"), result);
+         return;
+@@ -1165,8 +1172,10 @@ void DriverInstallWidget::installMultiDriverSlot() {
+     // 将所有的要安装的驱动设置为待安装状态
+     for (int i = 0; i < m_installableListWidget->count(); ++i) {
+         for (int j = 0; j < checkedItem.length(); ++j) {
+-            if (static_cast<DeviceItem *>(m_installableListWidget->itemWidget(m_installableListWidget->item(i)))->getDevName() == checkedItem[j]) {
+-                static_cast<DeviceItem *>(m_installableListWidget->itemWidget(m_installableListWidget->item(i)))->toLoadingPage();
++            if (static_cast<DeviceItem *>(m_installableListWidget->itemWidget(
++                    m_installableListWidget->item(i)))->getDevName() == checkedItem[j]) {
++                static_cast<DeviceItem *>(m_installableListWidget->itemWidget(
++                        m_installableListWidget->item(i)))->toLoadingPage();
+             }
+         }
+     }
+@@ -1174,8 +1183,10 @@ void DriverInstallWidget::installMultiDriverSlot() {
+     connect(g_signal, &GlobalSignal::quitEventLoop, [=]() { eventLoop.quit(); });
+     for (int i = 0; i < m_installableListWidget->count(); ++i) {
+         for (int j = 0; j < checkedItem.length(); ++j) {
+-            if (static_cast<DeviceItem *>(m_installableListWidget->itemWidget(m_installableListWidget->item(i)))->getDevName() == checkedItem[j]) {
+-                static_cast<DeviceItem *>(m_installableListWidget->itemWidget(m_installableListWidget->item(i)))->clickInstall();
++            if (static_cast<DeviceItem *>(m_installableListWidget->itemWidget(
++                    m_installableListWidget->item(i)))->getDevName() == checkedItem[j]) {
++                static_cast<DeviceItem *>(m_installableListWidget->itemWidget(
++                        m_installableListWidget->item(i)))->clickInstall();
+                 eventLoop.exec();
+             }
+         }
+@@ -1183,11 +1194,12 @@ void DriverInstallWidget::installMultiDriverSlot() {
+ }
+ 
+ void DriverInstallWidget::updateMultiDriverSlot() {
+-    if(g_signal->onUninstalling == true){
+-        QString result = tr("Uninstalling drivers. Please wait for the uninstallation to complete before clicking again.");
++    if (g_signal->onUninstalling == true) {
++        QString result = tr(
++                "Uninstalling drivers. Please wait for the uninstallation to complete before clicking again.");
+         QMessageBox::information(this, tr("Uninstall Failed"), result);
+         return;
+-    }else if(g_signal->onInstalling == true){
++    } else if (g_signal->onInstalling == true) {
+         QString result = tr("Installing drivers. Please wait for the installation to complete before clicking again.");
+         QMessageBox::information(this, tr("Install Failed"), result);
+         return;
+@@ -1207,8 +1219,10 @@ void DriverInstallWidget::updateMultiDriverSlot() {
+ 
+     for (int i = 0; i < m_upgradableListWidget->count(); ++i) {
+         for (int j = 0; j < checkedItem.length(); ++j) {
+-            if (static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(m_upgradableListWidget->item(i)))->getDevName() == checkedItem[j]) {
+-                static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(m_upgradableListWidget->item(i)))->toLoadingPage();
++            if (static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(
++                    m_upgradableListWidget->item(i)))->getDevName() == checkedItem[j]) {
++                static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(
++                        m_upgradableListWidget->item(i)))->toLoadingPage();
+             }
+         }
+     }
+@@ -1216,8 +1230,10 @@ void DriverInstallWidget::updateMultiDriverSlot() {
+     connect(g_signal, &GlobalSignal::quitEventLoop, [=]() { eventLoop.quit(); });
+     for (int i = 0; i < m_upgradableListWidget->count(); ++i) {
+         for (int j = 0; j < checkedItem.length(); ++j) {
+-            if (static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(m_upgradableListWidget->item(i)))->getDevName() == checkedItem[j]) {
+-                static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(m_upgradableListWidget->item(i)))->clickInstall();
++            if (static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(
++                    m_upgradableListWidget->item(i)))->getDevName() == checkedItem[j]) {
++                static_cast<DeviceItem *>(m_upgradableListWidget->itemWidget(
++                        m_upgradableListWidget->item(i)))->clickInstall();
+                 eventLoop.exec();
+             }
+         }
+@@ -1577,7 +1593,7 @@ void DriverInstallWidget::uninstallUpdateDriverSlot(DeviceItem *item, QString dr
+     m_tempupdateitem = item;
+     m_tempDriverName = driverName;
+     connect(m_uninstaller, &Uninstaller::succeed, this, &DriverInstallWidget::uninstallUpdateSuccessSlot);
+-    connect(m_uninstaller, &Uninstaller::failed, [=]() {g_signal->onUninstalling = false;});
++    connect(m_uninstaller, &Uninstaller::failed, [=]() { g_signal->onUninstalling = false; });
+     connect(m_uninstaller, &Uninstaller::progressChanged, item, &DeviceItem::changeProgress);
+ 
+     m_uninstaller->startWorker();
+@@ -1601,7 +1617,7 @@ void DriverInstallWidget::uninstallDriverSlot(UninstallItem *item, QString drive
+     m_tempitem = item;
+     m_tempDriverName = driverName;
+     connect(m_uninstaller, &Uninstaller::succeed, this, &DriverInstallWidget::uninstallSuccessSlot);
+-    connect(m_uninstaller, &Uninstaller::failed, [=]() {g_signal->onUninstalling = false;});
++    connect(m_uninstaller, &Uninstaller::failed, [=]() { g_signal->onUninstalling = false; });
+     connect(m_uninstaller, &Uninstaller::progressChanged, item, &UninstallItem::changeProgress);
+ 
+     m_uninstaller->startWorker();
+@@ -1645,29 +1661,27 @@ static QString getDriverVersion(QString driverName) {
+     }
+ }
+ 
+-static QString getPackageVersion(const QString &packageName)
+-{
++static QString getPackageVersion(const QString &packageName) {
+     QString res{QString()};
+     if (packageName.isEmpty()) {
+         return res;
+     }
+     QString cmd = QString("/usr/bin/dpkg-query -W -f='${Version}\\n' %1").arg(packageName);
+     res = getRetFromCommand(cmd.split(" "));
+-    return  res;
++    return res;
+ }
+ 
+-static QString getRetFromCommand(const QStringList &command)
+-{
++static QString getRetFromCommand(const QStringList &command) {
+     QProcess proc;
+     QStringList options;
+-    options << "-c"<< command.join(" ");
++    options << "-c" << command.join(" ");
+     proc.closeWriteChannel();
+     proc.start("bash", options);
+     if (!proc.waitForFinished())
+         return "";
+     QString res = QString(proc.readAll());
+     proc.close();
+-    if(res.right(1) == "\n")
++    if (res.right(1) == "\n")
+         res.chop(1);
+     return res;
+ }
+\ No newline at end of file
+diff --git a/plugins/device-controller/src/hotplug/devicemonitorthread.cpp b/plugins/device-controller/src/hotplug/devicemonitorthread.cpp
+index 031a110..6bae6ca 100644
+--- a/plugins/device-controller/src/hotplug/devicemonitorthread.cpp
++++ b/plugins/device-controller/src/hotplug/devicemonitorthread.cpp
+@@ -125,6 +125,7 @@ void DeviceMonitorThread::initDevPaths() {
+     udev_enumerate_add_match_subsystem(enumerate, "bluetooth");
+     udev_enumerate_add_match_subsystem(enumerate, "net");
+     udev_enumerate_add_match_subsystem(enumerate, "scsi");
++    udev_enumerate_add_match_subsystem(enumerate, "usb");
+     udev_enumerate_scan_devices(enumerate);
+ 
+     struct udev_list_entry *devices = udev_enumerate_get_list_entry(enumerate);
+@@ -144,20 +145,9 @@ void DeviceMonitorThread::initDevPaths() {
+ }
+ 
+ QString DeviceMonitorThread::getDeviceID(struct udev_device *dev) {
+-    const char *serial = udev_device_get_property_value(dev, "ID_SERIAL");
+-    if (serial) {
+-        return QString(serial);
++    const char *token = udev_device_get_property_value(dev, "USEC_INITIALIZED");
++    if (token) {
++        return QString(token);
+     }
+-
+-    const char *path = udev_device_get_property_value(dev, "ID_PATH");
+-    if (path) {
+-        return QString(path);
+-    }
+-
+-    const char *path_tag = udev_device_get_property_value(dev, "ID_PATH_TAG");
+-    if (path_tag) {
+-        return QString(path_tag);
+-    }
+-
+     return QString("unknown");
+ }
+diff --git a/plugins/device-controller/src/hotplug/devicemonitorthread.h b/plugins/device-controller/src/hotplug/devicemonitorthread.h
+index 898b950..a5decf8 100644
+--- a/plugins/device-controller/src/hotplug/devicemonitorthread.h
++++ b/plugins/device-controller/src/hotplug/devicemonitorthread.h
+@@ -24,6 +24,7 @@ private:
+     QStringList devInfos;
+ 
+     void initDevPaths();
++
+     QString getDeviceID(struct udev_device *dev);
+ };
+ 

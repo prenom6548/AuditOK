@@ -1,0 +1,1459 @@
+From: cckylin-cibot <cckylin-cibot@kylinos.cn>
+Date: Thu, 7 Jul 2022 08:42:46 +0000
+Subject: =?utf-8?b?ITEgY2xvc2UtY2QgIzEyNzA4NywgIzEyNjU4NSAjMTI3MDg3LCDop6M=?=
+ =?utf-8?b?5Yazd2F5bGFuZOeOr+Wig+S4i++8jOaQnOe0ouahhui+k+WFpeatjOabsuWQjQ==?=
+ =?utf-8?b?56ew77yM6Z+z5LmQ5bqU55So6Zeq6YCA6Zeu6aKYICMxMjY1ODXvvIzop6PlhrN3?=
+ =?utf-8?b?YXlsYW5k546v5aKD5LiL77yM6Z+z5LmQ5omT5byA5pi+56S65L2N572u5LiN5Zu6?=
+ =?utf-8?b?5a6a6Zeu6aKY?=
+
+---
+ UI/mainwidget.cpp                           |  60 ++++++----
+ UI/mainwidget.h                             |   6 +
+ UI/player/miniwidget.cpp                    |   6 +
+ UI/player/searchedit.cpp                    |  61 +++++++----
+ UI/player/searchresult.cpp                  |  81 ++++++++++++--
+ UI/ukui-wayland/plasma-shell-manager.cpp    | 145 ++++++++++++++++++++++++
+ UI/ukui-wayland/plasma-shell-manager.h      |  36 ++++++
+ UI/ukui-wayland/ukui-decoration-client.h    | 164 ++++++++++++++++++++++++++++
+ UI/ukui-wayland/ukui-decoration-core.c      |  79 ++++++++++++++
+ UI/ukui-wayland/ukui-decoration-manager.cpp | 101 +++++++++++++++++
+ UI/ukui-wayland/ukui-decoration-manager.h   |  20 ++++
+ UI/ukui-wayland/ukui-raise.c                |  30 +++++
+ UI/ukui-wayland/waylanddialog.cpp           |  20 ++++
+ UI/ukui-wayland/waylanddialog.h             |  26 +++++
+ UI/ukui-wayland/waylanddialog.ui            |  83 ++++++++++++++
+ UIControl/global/global.cpp                 |  27 +++++
+ UIControl/global/global.h                   |  48 ++++++++
+ kylin-music.pro                             |  18 ++-
+ main.cpp                                    |  46 ++++++--
+ translations/kylin-music_bo_CN.qm           | Bin 10229 -> 10239 bytes
+ translations/kylin-music_zh_CN.qm           | Bin 7913 -> 7923 bytes
+ 21 files changed, 997 insertions(+), 60 deletions(-)
+ create mode 100644 UI/ukui-wayland/plasma-shell-manager.cpp
+ create mode 100644 UI/ukui-wayland/plasma-shell-manager.h
+ create mode 100644 UI/ukui-wayland/ukui-decoration-client.h
+ create mode 100644 UI/ukui-wayland/ukui-decoration-core.c
+ create mode 100644 UI/ukui-wayland/ukui-decoration-manager.cpp
+ create mode 100644 UI/ukui-wayland/ukui-decoration-manager.h
+ create mode 100644 UI/ukui-wayland/ukui-raise.c
+ create mode 100644 UI/ukui-wayland/waylanddialog.cpp
+ create mode 100644 UI/ukui-wayland/waylanddialog.h
+ create mode 100644 UI/ukui-wayland/waylanddialog.ui
+ create mode 100644 UIControl/global/global.cpp
+ create mode 100644 UIControl/global/global.h
+
+diff --git a/UI/mainwidget.cpp b/UI/mainwidget.cpp
+index 57009bc..207bac1 100644
+--- a/UI/mainwidget.cpp
++++ b/UI/mainwidget.cpp
+@@ -2,6 +2,11 @@
+ #include <QDBusMessage>
+ #include "mainwidget.h"
+ #include "UI/base/xatom-helper.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
++#include "UIControl/global/global.h"
++
++
+ #include <ukui-log4qt.h>
+ 
+ #define UKUI_FONT_SIZE "systemFontSize"
+@@ -617,24 +622,26 @@ void Widget::initAllComponent()
+     musicListTable = new TableOne(playlistName,this);
+     playSongArea = new PlaySongArea(this);
+     m_titleBar = new TitleBar(this);
++    m_miniWidget = new miniWidget();
+ 
+-//    musicListTable->hide();
+-//    playSongArea->hide();
+ 
++    if (Global::isWayland) {
++        kdk::UkuiStyleHelper::self()->removeHeader(this);
+ 
+-    // ÂéªÊéâÊ†áÈ¢òÊ†è
+-    MotifWmHints hintt;
+-    hintt.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+-    hintt.functions = MWM_FUNC_ALL;
+-    hintt.decorations = MWM_DECOR_BORDER;
+-    XAtomHelper::getInstance()->setWindowMotifHint(this->winId(), hintt);
++    } else {
++        // ÂéªÊéâÊ†áÈ¢òÊ†è
++        MotifWmHints hintt;
++        hintt.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
++        hintt.functions = MWM_FUNC_ALL;
++        hintt.decorations = MWM_DECOR_BORDER;
++        XAtomHelper::getInstance()->setWindowMotifHint(this->winId(), hintt);
+ 
+-    m_miniWidget = new miniWidget();
+-    MotifWmHints hints;
+-    hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+-    hints.functions = MWM_FUNC_ALL;
+-    hints.decorations = MWM_DECOR_BORDER;
+-    XAtomHelper::getInstance()->setWindowMotifHint(m_miniWidget->winId(), hints);
++        MotifWmHints hints;
++        hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
++        hints.functions = MWM_FUNC_ALL;
++        hints.decorations = MWM_DECOR_BORDER;
++        XAtomHelper::getInstance()->setWindowMotifHint(m_miniWidget->winId(), hints);
++    }
+ 
+ 
+     rightVWidget = new QWidget(this);
+@@ -656,11 +663,18 @@ void Widget::initAllComponent()
+     this->setLayout(mainHBoxLayout);
+ 
+     historyListTable = new TableHistory(this);
+-    MotifWmHints hint;
+-    hint.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+-    hint.functions = MWM_FUNC_ALL;
+-    hint.decorations = MWM_DECOR_BORDER;
+-    XAtomHelper::getInstance()->setWindowMotifHint(historyListTable->winId(), hint);
++
++    if (Global::isWayland) {
++        kdk::UkuiStyleHelper::self()->removeHeader(this);
++
++    } else {
++        MotifWmHints hint;
++        hint.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
++        hint.functions = MWM_FUNC_ALL;
++        hint.decorations = MWM_DECOR_BORDER;
++        XAtomHelper::getInstance()->setWindowMotifHint(historyListTable->winId(), hint);
++    }
++
+     historyListTable->hide();
+ 
+     this->setAutoFillBackground(true);
+@@ -850,6 +864,14 @@ void Widget::movePlayHistoryWid()
+     historyListTable->move(historyPos);
+ }
+ 
++void Widget::showMyWindow()
++{
++    kdk::UkuiStyleHelper::self()->removeHeader(this);
++    show();
++//    kdk::WindowManager::setGeometry(this->windowHandle(), QRect(0, 0, 960, 640));
++
++}
++
+ #if 0
+ void Widget::paintEvent(QPaintEvent *event)
+ {
+diff --git a/UI/mainwidget.h b/UI/mainwidget.h
+index 944120c..3079bd7 100644
+--- a/UI/mainwidget.h
++++ b/UI/mainwidget.h
+@@ -33,6 +33,10 @@
+ #include <QProcess>
+ 
+ #include "./dbusadapter.h"
++#include "ukui-wayland/ukui-decoration-client.h"
++#include "ukui-wayland/ukui-decoration-manager.h"
++#include "ukui-wayland/plasma-shell-manager.h"
++
+ #include "UIControl/base/musicDataBase.h"
+ #include "UI/tableview/tableone.h"
+ #include "UIControl/tableview/musiclistmodel.h"
+@@ -55,6 +59,8 @@ public:
+     //ËÆ°ÁÆóÊí≠ÊîæÂéÜÂè≤
+     void movePlayHistoryWid();
+ 
++    void showMyWindow();
++
+     // ÊØõÁéªÁíÉ
+ //    void paintEvent(QPaintEvent *event);
+     void transparencyChange();
+diff --git a/UI/player/miniwidget.cpp b/UI/player/miniwidget.cpp
+index 7eef092..00ce70f 100644
+--- a/UI/player/miniwidget.cpp
++++ b/UI/player/miniwidget.cpp
+@@ -18,6 +18,10 @@
+ #include "miniwidget.h"
+ #include "UI/base/widgetstyle.h"
+ #include "UI/mainwidget.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
++#include "UIControl/global/global.h"
++
+ #include <QDebug>
+ 
+ #define PT_9 9
+@@ -43,6 +47,8 @@ miniWidget::miniWidget(QWidget *parent) : QFrame(parent)
+     initAction();
+     initConnect();
+     initStyle();
++
++
+ }
+ 
+ void miniWidget::initAction()
+diff --git a/UI/player/searchedit.cpp b/UI/player/searchedit.cpp
+index 17b1d00..7e8cd08 100644
+--- a/UI/player/searchedit.cpp
++++ b/UI/player/searchedit.cpp
+@@ -1,5 +1,8 @@
+ #include "searchedit.h"
+ #include "UI/base/xatom-helper.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
++#include "UIControl/global/global.h"
+ 
+ SearchEdit::SearchEdit(QWidget *parent) : KSearchLineEdit(parent)
+ {
+@@ -12,29 +15,40 @@ SearchEdit::SearchEdit(QWidget *parent) : KSearchLineEdit(parent)
+ 
+     m_result = new SearchResult(m_mainWidget);
+     m_result->setSearchEdit(this);
+-    MotifWmHints hints;
+-    hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+-    hints.functions = MWM_FUNC_ALL;
+-    hints.decorations = MWM_DECOR_BORDER;
+-    XAtomHelper::getInstance()->setWindowMotifHint(m_result->winId(), hints);
+ 
+-    moveSearchResult();
++    if (Global::isWayland) {
++        kdk::UkuiStyleHelper::self()->removeHeader(this);
++
++    } else {
++        MotifWmHints hints;
++        hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
++        hints.functions = MWM_FUNC_ALL;
++        hints.decorations = MWM_DECOR_BORDER;
++        XAtomHelper::getInstance()->setWindowMotifHint(m_result->winId(), hints);
++    }
++
++//    moveSearchResult();
+ }
+ 
+ void SearchEdit::keyPressEvent(QKeyEvent *event)
+ {
+-    if(m_result == nullptr)
+-    {
++    if(m_result == nullptr) {
+         return;
+     }
+-    if(event->key() == Qt::Key_Up)
+-    {
++
++    switch (event->key()) {
++    case Qt::Key_Up:
+         m_result->selectUp();
+-    }
+-    if(event->key() == Qt::Key_Down)
+-    {
++        break;
++    case Qt::Key_Down:
+         m_result->selectDown();
++        break;
++    case Qt::Key_Escape:
++        m_result->hide();
++    default:
++        break;
+     }
++
+     QLineEdit::keyPressEvent(event);
+ }
+ 
+@@ -78,13 +92,10 @@ void SearchEdit::slotTextChanged()
+     if (text.length() >= 1) {
+         m_result->setListviewSearchString(text);
+ 
++        m_result->autoResize();
+         moveSearchResult();
+-        m_result->show();
+ //        m_result->activateWindow();
+-//        m_result->raise();
+-        m_result->autoResize();
+ //        m_result->setFocusPolicy(Qt::StrongFocus);
+-//        m_result->raise();
+     } else {
+         m_result->hide();
+     }
+@@ -117,14 +128,26 @@ void SearchEdit::setWidget(QWidget *mainWidget)
+ 
+ void SearchEdit::moveSearchResult()
+ {
++    m_result->show();
++    m_result->raise();
+     m_result->setFixedWidth(240);
++
+     QPoint resultPos = this->mapToGlobal(this->rect().bottomLeft());
+     resultPos.setX(resultPos.x());
+     resultPos.setY(resultPos.y() + 12);
+-    QSize editSize = this->size();
++
+     int newPosX = resultPos.x();
++    QSize editSize = this->size();
+     int newPosY = resultPos.y() - editSize.height() - 12;
++
+     m_result->changeSrearchResultPos(newPosX, newPosY, editSize.width(), editSize.height());
+-    m_result->move(resultPos);
++
++    if (Global::isWayland) {
++        kdk::WindowManager::setGeometry(m_result->windowHandle(), QRect(newPosX, newPosY + 12 + editSize.height() *2 , editSize.width(), editSize.height()));
++    } else {
++        m_result->move(resultPos);
++
++    }
++
+ }
+ 
+diff --git a/UI/player/searchresult.cpp b/UI/player/searchresult.cpp
+index 342018f..d5d7955 100644
+--- a/UI/player/searchresult.cpp
++++ b/UI/player/searchresult.cpp
+@@ -9,12 +9,20 @@
+ #include <X11/extensions/XTest.h>
+ 
+ #include "UI/base/xatom-helper.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
++#include "UIControl/global/global.h"
++
+ SearchResult::SearchResult(QWidget *parent) : QWidget(parent)
+ {
+     this->setAutoFillBackground(true);
+     this->setBackgroundRole(QPalette::Base);
+     this->setWindowFlag(Qt::Tool);
+ 
++    if (Global::isWayland) {
++        kdk::UkuiStyleHelper::self()->removeHeader(this);
++    }
++
+     //Á™ó‰ΩìÁ¶ÅÊ≠¢ÊãñÂä®
+     this->setProperty("useStyleWindowManager", false);
+     vlayout = new QVBoxLayout(this);
+@@ -94,7 +102,7 @@ SearchResult::SearchResult(QWidget *parent) : QWidget(parent)
+     sideLayout->setSpacing(0);
+     this->setLayout(sideLayout);
+ 
+-    autoResize();
++//    autoResize();
+ 
+     connect(m_MusicView,&MusicSearchListview::clicked,this,&SearchResult::slotMusicItemClicked);
+     connect(m_SingerView,&MusicSearchListview::clicked,this,&SearchResult::slotSingerItemClicked);
+@@ -109,15 +117,34 @@ SearchResult::~SearchResult()
+ void SearchResult::keyPressEvent(QKeyEvent *event)
+ {
+ //    m_searchEdit->raise();
+-    m_searchEdit->activateWindow();
++    if (Global::isWayland) {
++
++        kdk::UkuiStyleHelper::self()->removeHeader(this);
++//        kdk::WindowManager::activateWindow(m_searchEdit->winId());
++
++    } else {
++        m_searchEdit->activateWindow();
++    }
+ //    QApplication::sendEvent(m_searchEdit,event);
+-    setCursorWithXEvent();
++
++    if (Global::isWayland) {
++        QPoint point = m_searchEdit->mapToGlobal(QPoint(m_searchEdit->rect().topRight().x() - 10,m_searchEdit->rect().topRight().y() - 5));
++
++    } else {
++        setCursorWithXEvent();
++    }
++
+ 
+     if (event->key() == Qt::Key_Return) {
+         this->hide();
+         return;
+     }
+ 
++    if (event->key() == Qt::Key_Escape) {
++        this->hide();
++        return;
++    }
++
+     if (event->key() == Qt::Key_Backspace) {
+         QApplication::sendEvent(m_searchEdit,event);
+         Q_EMIT m_searchEdit->textChanged(m_searchEdit->text());
+@@ -127,14 +154,20 @@ void SearchResult::keyPressEvent(QKeyEvent *event)
+     m_key = event->nativeVirtualKey();
+     QTimer *timer = new QTimer;
+     timer->setSingleShot(true);
+-    connect(timer,&QTimer::timeout,this,[=]{
+-        Display  *display = XOpenDisplay(NULL);
+-        XTestFakeKeyEvent(display, XKeysymToKeycode(display,m_key), 1, 10);
+-        XFlush(display);
+-        XTestFakeKeyEvent(display, XKeysymToKeycode(display,m_key), 0, 10);
+-        XFlush(display);
+-        XCloseDisplay(display);
+-    });
++
++    if (Global::isWayland) {
++
++    } else {
++        connect(timer,&QTimer::timeout,this,[=]{
++            Display  *display = XOpenDisplay(NULL);
++            XTestFakeKeyEvent(display, XKeysymToKeycode(display,m_key), 1, 10);
++            XFlush(display);
++            XTestFakeKeyEvent(display, XKeysymToKeycode(display,m_key), 0, 10);
++            XFlush(display);
++            XCloseDisplay(display);
++        });
++
++    }
+     connect(timer,&QTimer::timeout,timer,&QTimer::deleteLater);
+     timer->start(200);
+ 
+@@ -182,7 +215,12 @@ void SearchResult::autoResize()
+         if (m_searchEdit->text() != "") {
+             this->show();
+             this->raise();
+-            this->activateWindow();
++
++            if (Global::isWayland) {
++//                kdk::WindowManager::activateWindow(kdk::WindowManager::currentActiveWindow());
++            } else {
++                this->activateWindow();
++            }
+         }
+     }
+ 
+@@ -356,7 +394,22 @@ void SearchResult::setSearchEdit(SearchEdit *edit)
+ 
+ bool SearchResult::nativeEvent(const QByteArray &eventType, void *message, long *result)
+ {
++
+     Q_UNUSED(result);
++
++    if (Global::isWayland) {
++        return 0;
++#if 0
++        QRect rect(m_resultPosX, m_resultPosY, m_resultPosWidth, m_resultPosHeight);
++        if(rect.contains(QCursor::pos(), false)) {
++            return 0;
++        } else {
++            this->hide();
++            return false;
++        }
++#endif
++    }
++
+     if(eventType != "xcb_generic_event_t")
+     {
+         return false;
+@@ -386,6 +439,10 @@ void SearchResult::changeSrearchResultPos(int posX, int posY, int width, int hei
+     m_resultPosY = posY;
+     m_resultPosWidth = width;
+     m_resultPosHeight = height;
++
++    qDebug() << "m_resultPos(x, y, width, height) = "
++             << m_resultPosX << m_resultPosY
++             << m_resultPosWidth << m_resultPosHeight;
+ }
+ 
+ void SearchResult::onReturnPressed()
+diff --git a/UI/ukui-wayland/plasma-shell-manager.cpp b/UI/ukui-wayland/plasma-shell-manager.cpp
+new file mode 100644
+index 0000000..64e6117
+--- /dev/null
++++ b/UI/ukui-wayland/plasma-shell-manager.cpp
+@@ -0,0 +1,145 @@
++#include "plasma-shell-manager.h"
++
++#include <QApplication>
++
++#include <KWayland/Client/connection_thread.h>
++#include <KWayland/Client/registry.h>
++
++#include <KWayland/Client/surface.h>
++
++static PlasmaShellManager* global_instance = nullptr;
++
++PlasmaShellManager *PlasmaShellManager::getInstance()
++{
++    if (!global_instance)
++        global_instance = new PlasmaShellManager;
++    return global_instance;
++}
++
++bool PlasmaShellManager::setAppWindowActive()
++{
++    if (!supportPlasmaWindowManagement())
++        return false;
++
++    m_appWindow->requestActivate();
++    return true;
++}
++
++bool PlasmaShellManager::setAppWindowKeepAbove(bool keep)
++{
++    if (!supportPlasmaWindowManagement())
++        return false;
++
++    if(keep != m_appWindow->isKeepAbove()) {
++        m_appWindow->requestToggleKeepAbove();
++    }
++    return true;
++}
++
++bool PlasmaShellManager::setMaximized(QWindow *window)
++{
++    if (!supportShell())
++        return false;
++
++    auto surface = KWayland::Client::Surface::fromWindow(window);
++    if (!surface)
++        return false;
++
++    auto shellSurface = m_shell->createSurface(surface, window);
++    if (!shellSurface)
++        return false;
++
++    shellSurface->setMaximized();
++    return true;
++}
++
++bool PlasmaShellManager::setRole(QWindow *window, KWayland::Client::PlasmaShellSurface::Role role)
++{
++    if (!supportPlasmaShell())
++        return false;
++
++    auto surface = KWayland::Client::Surface::fromWindow(window);
++    if (!surface)
++        return false;
++
++    auto plasmaShellSurface = m_plasmaShell->createSurface(surface, window);
++    if (!plasmaShellSurface)
++        return false;
++
++    plasmaShellSurface->setRole(role);
++    return true;
++}
++
++bool PlasmaShellManager::setPos(QWindow *window, const QPoint &pos)
++{
++    if (!supportPlasmaShell())
++        return false;
++
++    auto surface = KWayland::Client::Surface::fromWindow(window);
++    if (!surface)
++        return false;
++
++    auto plasmaShellSurface = m_plasmaShell->createSurface(surface, window);
++    if (!plasmaShellSurface)
++        return false;
++
++    plasmaShellSurface->setPosition(pos);
++    return true;
++}
++
++bool PlasmaShellManager::supportPlasmaShell()
++{
++    return m_plasmaShell;
++}
++
++bool PlasmaShellManager::supportShell()
++{
++    return m_shell;
++}
++
++bool PlasmaShellManager::supportPlasmaWindowManagement()
++{
++    return m_windowManager && m_appWindow;
++}
++
++PlasmaShellManager::PlasmaShellManager(QObject *parent) : QObject(parent)
++{
++    auto connection = KWayland::Client::ConnectionThread::fromApplication(qApp);
++    auto registry = new KWayland::Client::Registry(this);
++    registry->create(connection->display());
++
++    connect(registry, &KWayland::Client::Registry::plasmaShellAnnounced, this, [=](){
++        const auto interface = registry->interface(KWayland::Client::Registry::Interface::PlasmaShell);
++        if (interface.name != 0) {
++            m_plasmaShell = registry->createPlasmaShell(interface.name, interface.version, this);
++        }
++    });
++
++    connect(registry, &KWayland::Client::Registry::plasmaWindowManagementAnnounced, this, [=](){
++        const auto interface = registry->interface(KWayland::Client::Registry::Interface::PlasmaWindowManagement);
++        if (interface.name != 0) {
++            m_windowManager = registry->createPlasmaWindowManagement(interface.name, interface.version, this);
++        }
++        if(m_windowManager) {
++            connect(m_windowManager, &KWayland::Client::PlasmaWindowManagement::windowCreated,
++                [this](KWayland::Client::PlasmaWindow *window) {
++               if(window->appId() == QApplication::applicationName()){
++                   if(isFirstCreate) {
++                       isFirstCreate = false;
++                       m_appWindow = window;
++                   }
++               }
++            });
++        }
++    });
++
++    connect(registry, &KWayland::Client::Registry::shellAnnounced, this, [=](){
++        const auto interface = registry->interface(KWayland::Client::Registry::Interface::Shell);
++        if (interface.name != 0) {
++            m_shell = registry->createShell(interface.name, interface.version, this);
++        }
++    });
++
++    registry->setup();
++    connection->roundtrip();
++}
+diff --git a/UI/ukui-wayland/plasma-shell-manager.h b/UI/ukui-wayland/plasma-shell-manager.h
+new file mode 100644
+index 0000000..1edc439
+--- /dev/null
++++ b/UI/ukui-wayland/plasma-shell-manager.h
+@@ -0,0 +1,36 @@
++#ifndef PLASMASHELLMANAGER_H
++#define PLASMASHELLMANAGER_H
++
++#include <QObject>
++#include <QWindow>
++#include <KWayland/Client/plasmawindowmanagement.h>
++#include <KWayland/Client/plasmashell.h>
++#include <KWayland/Client/shell.h>
++
++class PlasmaShellManager : public QObject
++{
++    Q_OBJECT
++public:
++    static PlasmaShellManager *getInstance();
++
++    bool setAppWindowActive();
++    bool setAppWindowKeepAbove(bool keep);
++    bool setMaximized(QWindow *window);
++    bool setRole(QWindow *window, KWayland::Client::PlasmaShellSurface::Role role);
++    bool setPos(QWindow *window, const QPoint &pos);
++    bool supportPlasmaShell();
++    bool supportShell();
++    bool supportPlasmaWindowManagement();
++
++private:
++    explicit PlasmaShellManager(QObject *parent = nullptr);
++
++    KWayland::Client::PlasmaShell *m_plasmaShell = nullptr;
++    KWayland::Client::Shell *m_shell = nullptr;
++    KWayland::Client::PlasmaWindowManagement *m_windowManager = nullptr;
++    KWayland::Client::PlasmaWindow *m_appWindow = nullptr;
++
++    bool isFirstCreate = true;
++};
++
++#endif // PLASMASHELLMANAGER_H
+diff --git a/UI/ukui-wayland/ukui-decoration-client.h b/UI/ukui-wayland/ukui-decoration-client.h
+new file mode 100644
+index 0000000..12c131f
+--- /dev/null
++++ b/UI/ukui-wayland/ukui-decoration-client.h
+@@ -0,0 +1,164 @@
++/* Generated by wayland-scanner 1.18.0 */
++
++#ifndef CUSTOM_CLIENT_PROTOCOL_H
++#define CUSTOM_CLIENT_PROTOCOL_H
++
++#include <stdint.h>
++#include <stddef.h>
++#include "wayland-client.h"
++
++#ifdef  __cplusplus
++extern "C" {
++#endif
++
++/**
++ * @page page_custom The custom protocol
++ * @section page_ifaces_custom Interfaces
++ * - @subpage page_iface_ukui_decoration - UKUI Wayland extension
++ * @section page_copyright_custom Copyright
++ * <pre>
++ *
++ * Copyright (C) 2015 The Qt Company Ltd.
++ * Contact: http://www.qt.io/licensing/
++ *
++ * This file is part of the examples of the Qt Wayland module
++ *
++ * $QT_BEGIN_LICENSE:BSD$
++ * You may use this file under the terms of the BSD license as follows:
++ *
++ * "Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met:
++ * * Redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer.
++ * * Redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in
++ * the documentation and/or other materials provided with the
++ * distribution.
++ * * Neither the name of The Qt Company Ltd nor the names of its
++ * contributors may be used to endorse or promote products derived
++ * from this software without specific prior written permission.
++ *
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
++ *
++ * $QT_END_LICENSE$
++ * </pre>
++ */
++struct ukui_decoration;
++struct wl_surface;
++
++/**
++ * @page page_iface_ukui_decoration ukui_decoration
++ * @section page_iface_ukui_decoration_desc Description
++ *
++ * This example shows how to add extra functionality to Wayland
++ * through an extension. This is the global object of the extension.
++ * @section page_iface_ukui_decoration_api API
++ * See @ref iface_ukui_decoration.
++ */
++/**
++ * @defgroup iface_ukui_decoration The ukui_decoration interface
++ *
++ * This example shows how to add extra functionality to Wayland
++ * through an extension. This is the global object of the extension.
++ */
++extern const struct wl_interface ukui_decoration_interface;
++
++#define UKUI_DECORATION_MOVE_SURFACE 0
++#define UKUI_DECORATION_SET_UKUI_DECORATION_MODE 1
++#define UKUI_DECORATION_SET_UNITY_BORDER_RADIUS 2
++
++
++/**
++ * @ingroup iface_ukui_decoration
++ */
++#define UKUI_DECORATION_MOVE_SURFACE_SINCE_VERSION 1
++/**
++ * @ingroup iface_ukui_decoration
++ */
++#define UKUI_DECORATION_SET_UKUI_DECORATION_MODE_SINCE_VERSION 1
++/**
++ * @ingroup iface_ukui_decoration
++ */
++#define UKUI_DECORATION_SET_UNITY_BORDER_RADIUS_SINCE_VERSION 1
++
++/** @ingroup iface_ukui_decoration */
++static inline void
++ukui_decoration_set_user_data(struct ukui_decoration *ukui_decoration, void *user_data)
++{
++	wl_proxy_set_user_data((struct wl_proxy *) ukui_decoration, user_data);
++}
++
++/** @ingroup iface_ukui_decoration */
++static inline void *
++ukui_decoration_get_user_data(struct ukui_decoration *ukui_decoration)
++{
++	return wl_proxy_get_user_data((struct wl_proxy *) ukui_decoration);
++}
++
++static inline uint32_t
++ukui_decoration_get_version(struct ukui_decoration *ukui_decoration)
++{
++	return wl_proxy_get_version((struct wl_proxy *) ukui_decoration);
++}
++
++/** @ingroup iface_ukui_decoration */
++static inline void
++ukui_decoration_destroy(struct ukui_decoration *ukui_decoration)
++{
++	wl_proxy_destroy((struct wl_proxy *) ukui_decoration);
++}
++
++/**
++ * @ingroup iface_ukui_decoration
++ *
++ * Inform the compositor that the client has a new surface that is
++ * covered by the extension.
++ */
++static inline void
++ukui_decoration_move_surface(struct ukui_decoration *ukui_decoration, struct wl_surface *surface)
++{
++	wl_proxy_marshal((struct wl_proxy *) ukui_decoration,
++			 UKUI_DECORATION_MOVE_SURFACE, surface);
++}
++
++/**
++ * @ingroup iface_ukui_decoration
++ *
++ * The compositor should perform a move animation on the surface.
++ */
++static inline void
++ukui_decoration_set_ukui_decoration_mode(struct ukui_decoration *ukui_decoration, struct wl_surface *surface, uint32_t mode)
++{
++	wl_proxy_marshal((struct wl_proxy *) ukui_decoration,
++			 UKUI_DECORATION_SET_UKUI_DECORATION_MODE, surface, mode);
++}
++
++/**
++ * @ingroup iface_ukui_decoration
++ *
++ * The compositor should perform a move animation on the surface.
++ */
++static inline void
++ukui_decoration_set_unity_border_radius(struct ukui_decoration *ukui_decoration, struct wl_surface *surface, uint32_t topleft, uint32_t topright, uint32_t bottomleft, uint32_t bottomright)
++{
++	wl_proxy_marshal((struct wl_proxy *) ukui_decoration,
++			 UKUI_DECORATION_SET_UNITY_BORDER_RADIUS, surface, topleft, topright, bottomleft, bottomright);
++}
++
++#ifdef  __cplusplus
++}
++#endif
++
++#endif
+diff --git a/UI/ukui-wayland/ukui-decoration-core.c b/UI/ukui-wayland/ukui-decoration-core.c
+new file mode 100644
+index 0000000..f96bde4
+--- /dev/null
++++ b/UI/ukui-wayland/ukui-decoration-core.c
+@@ -0,0 +1,79 @@
++/* Generated by wayland-scanner 1.18.0 */
++
++/*
++ * Copyright (C) 2015 The Qt Company Ltd.
++ * Contact: http://www.qt.io/licensing/
++ *
++ * This file is part of the examples of the Qt Wayland module
++ *
++ * $QT_BEGIN_LICENSE:BSD$
++ * You may use this file under the terms of the BSD license as follows:
++ *
++ * "Redistribution and use in source and binary forms, with or without
++ * modification, are permitted provided that the following conditions are
++ * met:
++ * * Redistributions of source code must retain the above copyright
++ * notice, this list of conditions and the following disclaimer.
++ * * Redistributions in binary form must reproduce the above copyright
++ * notice, this list of conditions and the following disclaimer in
++ * the documentation and/or other materials provided with the
++ * distribution.
++ * * Neither the name of The Qt Company Ltd nor the names of its
++ * contributors may be used to endorse or promote products derived
++ * from this software without specific prior written permission.
++ *
++ *
++ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
++ * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
++ * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
++ * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
++ * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
++ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
++ * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++ * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
++ * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
++ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
++ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
++ *
++ * $QT_END_LICENSE$
++ */
++
++#include <stdlib.h>
++#include <stdint.h>
++#include "wayland-util.h"
++
++#ifndef __has_attribute
++# define __has_attribute(x) 0  /* Compatibility with non-clang compilers. */
++#endif
++
++#if (__has_attribute(visibility) || defined(__GNUC__) && __GNUC__ >= 4)
++#define WL_PRIVATE __attribute__ ((visibility("hidden")))
++#else
++#define WL_PRIVATE
++#endif
++
++extern const struct wl_interface wl_surface_interface;
++
++static const struct wl_interface *custom_types[] = {
++	&wl_surface_interface,
++	&wl_surface_interface,
++	NULL,
++	&wl_surface_interface,
++	NULL,
++	NULL,
++	NULL,
++	NULL,
++};
++
++static const struct wl_message ukui_decoration_requests[] = {
++	{ "move_surface", "o", custom_types + 0 },
++	{ "set_ukui_decoration_mode", "ou", custom_types + 1 },
++	{ "set_unity_border_radius", "ouuuu", custom_types + 3 },
++};
++
++WL_PRIVATE const struct wl_interface ukui_decoration_interface = {
++	"ukui_decoration", 1,
++	3, ukui_decoration_requests,
++	0, NULL,
++};
++
+diff --git a/UI/ukui-wayland/ukui-decoration-manager.cpp b/UI/ukui-wayland/ukui-decoration-manager.cpp
+new file mode 100644
+index 0000000..64aee9e
+--- /dev/null
++++ b/UI/ukui-wayland/ukui-decoration-manager.cpp
+@@ -0,0 +1,101 @@
++#include "ukui-decoration-manager.h"
++
++#include "ukui-decoration-client.h"
++
++#include <QApplication>
++#include <qpa/qplatformnativeinterface.h>
++#include <KWayland/Client/connection_thread.h>
++
++static UKUIDecorationManager *global_instance = nullptr;
++
++static wl_display *display = nullptr;
++static ukui_decoration *ukui_decoration_manager = nullptr;
++
++static void handle_global(void *data, struct wl_registry *registry,
++                          uint32_t name, const char *interface, uint32_t version) {
++    if (strcmp(interface, ukui_decoration_interface.name) == 0) {
++        ukui_decoration_manager = (ukui_decoration *) wl_registry_bind(registry, name, &ukui_decoration_interface, version);
++    }
++}
++
++static void handle_global_remove(void *data, struct wl_registry *registry,
++                                 uint32_t name) {
++    // Who cares
++}
++
++static const struct wl_registry_listener registry_listener = {
++    .global = handle_global,
++    .global_remove = handle_global_remove,
++};
++
++UKUIDecorationManager *UKUIDecorationManager::getInstance()
++{
++    if (!global_instance)
++        global_instance = new UKUIDecorationManager;
++    return global_instance;
++}
++
++bool UKUIDecorationManager::supportUKUIDecoration()
++{
++    return ukui_decoration_manager;
++}
++
++bool UKUIDecorationManager::moveWindow(QWindow *windowHandle)
++{
++    if (!supportUKUIDecoration())
++        return false;
++
++    auto nativeInterface = qApp->platformNativeInterface();
++    wl_surface *surface = reinterpret_cast<wl_surface *>(nativeInterface->nativeResourceForWindow(QByteArrayLiteral("surface"), windowHandle));
++    if (!surface)
++        return false;
++
++    ukui_decoration_move_surface(ukui_decoration_manager, surface);
++    wl_surface_commit(surface);
++    wl_display_roundtrip(display);
++    return true;
++}
++
++bool UKUIDecorationManager::removeHeaderBar(QWindow *windowHandle)
++{
++    if (!supportUKUIDecoration())
++        return false;
++
++    auto nativeInterface = qApp->platformNativeInterface();
++    wl_surface *surface = reinterpret_cast<wl_surface *>(nativeInterface->nativeResourceForWindow(QByteArrayLiteral("surface"), windowHandle));
++    if (!surface)
++        return false;
++
++    ukui_decoration_set_ukui_decoration_mode(ukui_decoration_manager, surface, 1);
++    wl_surface_commit(surface);
++    wl_display_roundtrip(display);
++    return true;
++}
++
++bool UKUIDecorationManager::setCornerRadius(QWindow *windowHandle, int topleft, int topright, int bottomleft, int bottomright)
++{
++    if (!supportUKUIDecoration())
++        return false;
++
++    auto nativeInterface = qApp->platformNativeInterface();
++    wl_surface *surface = reinterpret_cast<wl_surface *>(nativeInterface->nativeResourceForWindow(QByteArrayLiteral("surface"), windowHandle));
++    if (!surface)
++        return false;
++
++    ukui_decoration_set_unity_border_radius(ukui_decoration_manager, surface, topleft, topright, bottomleft, bottomright);
++    wl_surface_commit(surface);
++    wl_display_roundtrip(display);
++    return true;
++}
++
++UKUIDecorationManager::UKUIDecorationManager()
++{
++    auto connectionThread = KWayland::Client::ConnectionThread::fromApplication(qApp);
++    display = connectionThread->display();
++
++    struct wl_registry *registry = wl_display_get_registry(display);
++
++    // get ukui_decoration_manager
++    wl_registry_add_listener(registry, &registry_listener, nullptr);
++    wl_display_roundtrip(display);
++}
+diff --git a/UI/ukui-wayland/ukui-decoration-manager.h b/UI/ukui-wayland/ukui-decoration-manager.h
+new file mode 100644
+index 0000000..4c97d5b
+--- /dev/null
++++ b/UI/ukui-wayland/ukui-decoration-manager.h
+@@ -0,0 +1,20 @@
++#ifndef UKUIDECORATIONMANAGER_H
++#define UKUIDECORATIONMANAGER_H
++
++#include <QWindow>
++
++class UKUIDecorationManager
++{
++public:
++    static UKUIDecorationManager *getInstance();
++    bool supportUKUIDecoration();
++
++    bool moveWindow(QWindow *windowHandle);
++    bool removeHeaderBar(QWindow *windowHandle);
++    bool setCornerRadius(QWindow *windowHandle, int topleft, int topright, int bottomleft, int bottomright);
++
++private:
++    UKUIDecorationManager();
++};
++
++#endif // UKUIDECORATIONMANAGER_H
+diff --git a/UI/ukui-wayland/ukui-raise.c b/UI/ukui-wayland/ukui-raise.c
+new file mode 100644
+index 0000000..7ec34d3
+--- /dev/null
++++ b/UI/ukui-wayland/ukui-raise.c
+@@ -0,0 +1,30 @@
++#include <stdlib.h>
++#include <stdint.h>
++#include "wayland-util.h"
++
++#ifndef __has_attribute
++# define __has_attribute(x) 0  /* Compatibility with non-clang compilers. */
++#endif
++
++#if (__has_attribute(visibility) || defined(__GNUC__) && __GNUC__ >= 4)
++#define WL_PRIVATE __attribute__ ((visibility("hidden")))
++#else
++#define WL_PRIVATE
++#endif
++
++extern const struct wl_interface wl_surface_interface;
++static const struct wl_interface *custom_types[] = {
++	&wl_surface_interface,
++	NULL,
++};
++	static const struct wl_message ukui_raise_requests[] = {
++		{ "set_top", "o", custom_types + 0 }
++	};
++
++	WL_PRIVATE const struct wl_interface ukui_raise_interface = {
++		"ukui_raise", 1,
++		1, ukui_raise_requests,
++		0, NULL,
++	};
++
++
+diff --git a/UI/ukui-wayland/waylanddialog.cpp b/UI/ukui-wayland/waylanddialog.cpp
+new file mode 100644
+index 0000000..8155c2e
+--- /dev/null
++++ b/UI/ukui-wayland/waylanddialog.cpp
+@@ -0,0 +1,20 @@
++#include "waylanddialog.h"
++#include "ui_waylanddialog.h"
++
++WaylandDialog::WaylandDialog(QWidget *parent) :
++    QDialog(parent),
++    ui(new Ui::WaylandDialog)
++{
++    ui->setupUi(this);
++    setFixedSize(400, 170);
++}
++
++WaylandDialog::~WaylandDialog()
++{
++    delete ui;
++}
++
++void WaylandDialog::setText(QString text)
++{
++    ui->textBrowser->setText(text);
++}
+diff --git a/UI/ukui-wayland/waylanddialog.h b/UI/ukui-wayland/waylanddialog.h
+new file mode 100644
+index 0000000..5a2aa69
+--- /dev/null
++++ b/UI/ukui-wayland/waylanddialog.h
+@@ -0,0 +1,26 @@
++#ifndef WAYLANDDIALOG_H
++#define WAYLANDDIALOG_H
++
++#include <QDialog>
++#include "ukui-decoration-client.h"
++#include "ukui-decoration-manager.h"
++
++namespace Ui {
++class WaylandDialog;
++}
++
++class WaylandDialog : public QDialog
++{
++    Q_OBJECT
++
++public:
++    explicit WaylandDialog(QWidget *parent = nullptr);
++    ~WaylandDialog();
++
++    void setText(QString text);
++
++private:
++    Ui::WaylandDialog *ui;
++};
++
++#endif // WAYLANDDIALOG_H
+diff --git a/UI/ukui-wayland/waylanddialog.ui b/UI/ukui-wayland/waylanddialog.ui
+new file mode 100644
+index 0000000..bafe038
+--- /dev/null
++++ b/UI/ukui-wayland/waylanddialog.ui
+@@ -0,0 +1,83 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<ui version="4.0">
++ <class>WaylandDialog</class>
++ <widget class="QDialog" name="WaylandDialog">
++  <property name="geometry">
++   <rect>
++    <x>0</x>
++    <y>0</y>
++    <width>400</width>
++    <height>210</height>
++   </rect>
++  </property>
++  <property name="windowTitle">
++   <string>Dialog</string>
++  </property>
++  <layout class="QVBoxLayout" name="verticalLayout">
++   <property name="leftMargin">
++    <number>20</number>
++   </property>
++   <property name="topMargin">
++    <number>40</number>
++   </property>
++   <property name="rightMargin">
++    <number>20</number>
++   </property>
++   <property name="bottomMargin">
++    <number>20</number>
++   </property>
++   <item>
++    <widget class="QTextBrowser" name="textBrowser">
++     <property name="styleSheet">
++      <string notr="true">background-color: rgba(255, 255, 255, 0);</string>
++     </property>
++    </widget>
++   </item>
++   <item>
++    <widget class="QDialogButtonBox" name="buttonBox">
++     <property name="orientation">
++      <enum>Qt::Horizontal</enum>
++     </property>
++     <property name="standardButtons">
++      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
++     </property>
++    </widget>
++   </item>
++  </layout>
++ </widget>
++ <resources/>
++ <connections>
++  <connection>
++   <sender>buttonBox</sender>
++   <signal>accepted()</signal>
++   <receiver>WaylandDialog</receiver>
++   <slot>accept()</slot>
++   <hints>
++    <hint type="sourcelabel">
++     <x>248</x>
++     <y>254</y>
++    </hint>
++    <hint type="destinationlabel">
++     <x>157</x>
++     <y>274</y>
++    </hint>
++   </hints>
++  </connection>
++  <connection>
++   <sender>buttonBox</sender>
++   <signal>rejected()</signal>
++   <receiver>WaylandDialog</receiver>
++   <slot>reject()</slot>
++   <hints>
++    <hint type="sourcelabel">
++     <x>316</x>
++     <y>260</y>
++    </hint>
++    <hint type="destinationlabel">
++     <x>286</x>
++     <y>274</y>
++    </hint>
++   </hints>
++  </connection>
++ </connections>
++</ui>
+diff --git a/UIControl/global/global.cpp b/UIControl/global/global.cpp
+new file mode 100644
+index 0000000..b00f4cb
+--- /dev/null
++++ b/UIControl/global/global.cpp
+@@ -0,0 +1,27 @@
++#include "global.h"
++
++#include <QSettings>
++#include <QGSettings>
++#include <QApplication>
++#include <QFile>
++#include <QDebug>
++
++bool Global::isWayland = false;
++
++using namespace Global;
++
++void Global::global_init() {
++
++    // ËøêË°åÁéØÂ¢É
++    if(QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
++        qputenv("QT_QPA_PLATFORM", "wayland");
++        isWayland = true;
++    } else {
++        isWayland = false;
++    }
++
++}
++
++void Global::global_end() {
++
++}
+diff --git a/UIControl/global/global.h b/UIControl/global/global.h
+new file mode 100644
+index 0000000..6b1f356
+--- /dev/null
++++ b/UIControl/global/global.h
+@@ -0,0 +1,48 @@
++/*  smplayer, GUI front-end for mplayer.
++    Copyright (C) 2006-2015 Ricardo Villalba <rvm@users.sourceforge.net>
++
++    This program is free software; you can redistribute it and/or modify
++    it under the terms of the GNU General Public License as published by
++    the Free Software Foundation; either version 2 of the License, or
++    (at your option) any later version.
++
++    This program is distributed in the hope that it will be useful,
++    but WITHOUT ANY WARRANTY; without even the implied warranty of
++    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++    GNU General Public License for more details.
++
++    You should have received a copy of the GNU General Public License
++    along with this program; if not, write to the Free Software
++    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
++*/
++
++
++#ifndef _GLOBAL_H_
++#define _GLOBAL_H_
++
++#include <QString>
++#include <QSettings>
++
++#include <KF5/KWindowSystem/kwindoweffects.h>
++
++
++class QSettings;
++class QGSettings;
++
++namespace Global {
++
++// ÈîôËØØÁ±ªÂûã
++enum KERROR_TYPE{
++    NO_ERROR = 0
++};
++
++//! Read and store application settings
++extern bool isWayland;
++
++void global_init();
++void global_end();
++
++}
++
++#endif
++
+diff --git a/kylin-music.pro b/kylin-music.pro
+index 2024d16..8d8e16e 100644
+--- a/kylin-music.pro
++++ b/kylin-music.pro
+@@ -1,4 +1,4 @@
+-QT       += core gui sql widgets dbus x11extras KWindowSystem network svg
++QT       += core gui sql widgets dbus x11extras KWindowSystem network svg KWaylandClient gui-private
+ 
+ #greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
+ 
+@@ -57,7 +57,7 @@ INSTALLS += \
+ 
+ 
+ CONFIG += link_pkgconfig
+-PKGCONFIG += gsettings-qt taglib gio-unix-2.0 kysdk-qtwidgets
++PKGCONFIG += gsettings-qt taglib gio-unix-2.0 kysdk-qtwidgets wayland-client kysdk-waylandhelper
+ # You can also make your code fail to compile if it uses deprecated APIs.
+ # In order to do so, uncomment the following line.
+ # You can also select to disable deprecated APIs only up to a certain version of Qt.
+@@ -104,9 +104,15 @@ SOURCES += \
+     UI/tableview/tableviewdelegate.cpp \
+     UI/titlebar/menumodule.cpp \
+     UI/titlebar/titlebar.cpp \
++    UI/ukui-wayland/plasma-shell-manager.cpp \
++    UI/ukui-wayland/ukui-decoration-core.c \
++    UI/ukui-wayland/ukui-decoration-manager.cpp \
++    UI/ukui-wayland/ukui-raise.c \
++    UI/ukui-wayland/waylanddialog.cpp \
+     UIControl/base/daemonipcdbus.cpp \
+     UIControl/base/musicDataBase.cpp \
+     UIControl/base/musicfileinformation.cpp \
++    UIControl/global/global.cpp \
+     UIControl/player/coreplayer/mmediaplayer.cpp \
+     UIControl/player/coreplayer/mmediaplaylist.cpp \
+     UIControl/player/player.cpp \
+@@ -143,9 +149,14 @@ HEADERS += \
+     UI/tableview/tableviewdelegate.h \
+     UI/titlebar/menumodule.h \
+     UI/titlebar/titlebar.h \
++    UI/ukui-wayland/plasma-shell-manager.h \
++    UI/ukui-wayland/ukui-decoration-client.h \
++    UI/ukui-wayland/ukui-decoration-manager.h \
++    UI/ukui-wayland/waylanddialog.h \
+     UIControl/base/daemonipcdbus.h \
+     UIControl/base/musicDataBase.h \
+     UIControl/base/musicfileinformation.h \
++    UIControl/global/global.h \
+     UIControl/player/coreplayer/mmediaplayer.h \
+     UIControl/player/coreplayer/mmediaplaylist.h \
+     UIControl/player/player.h \
+@@ -167,3 +178,6 @@ DISTFILES += \
+     translations/generate_translations_pm.sh \
+     translations/kylin-music_bo_CN.ts \
+     translations/kylin-music_zh_CN.ts
++
++FORMS += \
++    UI/ukui-wayland/waylanddialog.ui
+diff --git a/main.cpp b/main.cpp
+index d95724e..0730ba6 100644
+--- a/main.cpp
++++ b/main.cpp
+@@ -1,6 +1,11 @@
+ #include "UI/mainwidget.h"
+ #include "UI/base/xatom-helper.h"
++#include "ukuistylehelper/ukuistylehelper.h"
++#include "windowmanager/windowmanager.h"
++#include "UIControl/global/global.h"
++
+ #include <QApplication>
++#include <QGuiApplication>
+ #include <QDebug>
+ #include <ukui-log4qt.h>
+ 
+@@ -77,11 +82,18 @@ int main(int argc, char *argv[])
+     }
+ 
+     initUkuiLog4qt("kylin-music");
++
++
+     qsrand(QTime(0,0,0).secsTo(QTime::currentTime()));
+-//    //È´òÊ∏ÖÂ±èÂπïËá™ÈÄÇÂ∫î
+-//    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+-//    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+-    // ÈÄÇÈÖç4KÂ±è
++
++    bool isWayland = false;
++
++
++    if(QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
++        qputenv("QT_QPA_PLATFORM", "wayland");
++        isWayland = true;
++    } else {
++    // ÈÄÇÈÖç4KÂ±è,È´òÊ∏ÖÂ±èÂπïËá™ÈÄÇÂ∫î
+     #if (QT_VERSION >= QT_VERSION_CHECK(5, 12, 0))
+         QApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+         QApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+@@ -90,13 +102,13 @@ int main(int argc, char *argv[])
+     #if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
+         QApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+     #endif
+-//    qsrand(QTime(0,0,0).secsTo(QTime::currentTime()));
+-//    //È´òÊ∏ÖÂ±èÂπïËá™ÈÄÇÂ∫î
+-//    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
+-//    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
++    }
++
+     QApplication a(argc, argv);
+     a.setWindowIcon(QIcon::fromTheme("kylin-music"));
+ 
++    Global::global_init();
++
+     QTranslator trankdk;
+     QString localeKdk = QLocale::system().name();
+     if(localeKdk == "zh_CN")
+@@ -198,8 +210,26 @@ int main(int argc, char *argv[])
+             }
+         }
+     }
++
+     Widget w(strList);
++
++    if(isWayland) {
++        // ÂéªÈô§Á™óÁÆ°Ê†áÈ¢òÊ†èÔºå‰º†ÂÖ•ÂèÇÊï∞‰∏∫QWidget *
++        kdk::UkuiStyleHelper::self()->removeHeader(&w);
++    }
++
+     w.show();
+     w.creartFinish();
++
++
++    if(isWayland) {
++//        UKUIDecorationManager::getInstance()->setCornerRadius(w.windowHandle(), 12, 12, 12, 12);
++
++        // set window position
++        int sw = QGuiApplication::primaryScreen()->availableGeometry().width();
++        int sh = QGuiApplication::primaryScreen()->availableGeometry().height();
++        kdk::WindowManager::setGeometry(w.windowHandle(), QRect((sw-w.width())/2, (sh-w.height())/2, w.width(), w.height()));
++    }
++
+     return a.exec();
+ }
+diff --git a/translations/kylin-music_bo_CN.qm b/translations/kylin-music_bo_CN.qm
+index 6b659bb..4f80061 100644
+--- a/translations/kylin-music_bo_CN.qm
++++ b/translations/kylin-music_bo_CN.qm
+@@ -1,4 +1,4 @@
+-<∏d ÔúïÕ!ø`°Ω›B  ¿ åØ   $ ®ã   Y Ï0   å 6`  œ 6`  
++<∏d ÔúïÕ!ø`°Ω›ß   bo_CNB  ¿ åØ   $ ®ã   Y Ï0   å 6`  œ 6`  
+ « 6`  #> LÙ  Y râ  ï râ   râ  ⁄ å  !@ ¶G  Q ¶G  ± ∞5  ä ∞5   áõ  ñ Eï  $ >í    >í   >í   >í  ô >í  Â >í   ˇ >í  #ã Gñƒ  Ù H)Ω  ‹ H)Ω  e H)Ω  Ï LGπ  ” R˝Ù   ¡ T…Û  ° Våï  G ZÏ5  !Â \t≥  ∆ j6ï  Õ ÷T†  ^Â:ê  Ç«B  ¶ZÑê  Xzd„  Ìzd„  yãC\  õ˜@  çª$  4⁄•‘  ›˘à…  R    	¨    "c]DL  °7Ä‰  ¢ïäƒ  ïäƒ  ûïäƒ  ‰òIº    òIº  ”¨,•  œ¨,•  ûµ6≈  µ6≈  
+ Ñµ6≈  µ6≈  õµ6≈  "˝‹¿  G#C$  ∂àK]  	$àK]  #àK]  #ÃåH5   åH5  ﬁ†M¬  †M¬  Ÿ†M¬  Ä∏àÉ  Ô÷<5  t∫q  µ√ò‘  Åƒ≈‘  "Z3  Z3  .Go’  RO˘o  µáÑ  ñΩ˛  Õ≥  ‚H5  MH5  u	VÒ  <	ó¿  !y	†   "+	».¥  
+ d–Õ   C
+diff --git a/translations/kylin-music_zh_CN.qm b/translations/kylin-music_zh_CN.qm
+index 3709f46..0cc4de7 100644
+--- a/translations/kylin-music_zh_CN.qm
++++ b/translations/kylin-music_zh_CN.qm
+@@ -1,4 +1,4 @@
+-<∏d ÔúïÕ!ø`°Ω›B  ¯ åØ  / ®ã  Z Ï0  Å 6`  > 6`  ∂ 6`  P LÙ  	 râ  v râ  ¿ râ  ! å  Ó ¶G  û ¶G  j ∞5  … ∞5  ä áõ  â Eï   >í   ‡ >í  ¶ >í  „ >í  > >í  V >í  – >í  { Gñƒ   H)Ω  E H)Ω  
++<∏d ÔúïÕ!ø`°Ω›ß   zh_CNB  ¯ åØ  / ®ã  Z Ï0  Å 6`  > 6`  ∂ 6`  P LÙ  	 râ  v râ  ¿ râ  ! å  Ó ¶G  û ¶G  j ∞5  … ∞5  ä áõ  â Eï   >í   ‡ >í  ¶ >í  „ >í  > >í  V >í  – >í  { Gñƒ   H)Ω  E H)Ω  
+ b H)Ω  Ì LGπ  f R˝Ù  ® T…Û  
+ å Våï  L ZÏ5  W \t≥  © j6ï  Æ ÷T†  /∑%Ñ  <Â:ê  «B  ŸZÑê  Åzd„   zd„  ÆãC\  Fõ˜@  Úª$  ≥⁄•‘  p˘à…      ﬂ    ≠]DL  ™7Ä‰  ïäƒ  Ãïäƒ  óïäƒ  èòIº    òIº  $¨,•  Ù¨,•  ;µ6≈  µ6≈  âµ6≈  
+ ·µ6≈  ¯µ6≈  %‹¿  ⁄‡ƒ  ò#C$  ÌàK]  qàK]  	†àK]  ™åH5  üåH5  †M¬  q†M¬  

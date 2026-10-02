@@ -1,0 +1,16 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _SCENE_XDG_SHELL_H_
+#define _SCENE_XDG_SHELL_H_
+
+#include "scene.h"
+#include "surface.h"
+
+struct wlr_xdg_surface;
+
+struct scene_tree *scene_xdg_surface_create(struct scene_tree *parent,
+                                            struct wlr_xdg_surface *xdg_surface);
+
+#endif /* _SCENE_XDG_SHELL_H_ */

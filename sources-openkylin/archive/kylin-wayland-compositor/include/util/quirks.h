@@ -1,0 +1,28 @@
+// SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _UTIL_QUIRKS_H_
+#define _UTIL_QUIRKS_H_
+
+#include <stdint.h>
+
+enum quirks_mask {
+    QUIRKS_MASK_MASTER_FD = 1 << 0,
+    QUIRKS_MASK_SOFTWARE_CURSOR = 1 << 1,
+    QUIRKS_MASK_EXPLICIT_SYNC = 1 << 2,
+    QUIRKS_MASK_NO_MODIFIERS = 1 << 3,
+    QUIRKS_MASK_EGL_WAYLAND = 1 << 4,
+    QUIRKS_MASK_PREFER_OPENGL = 1 << 5,
+    QUIRKS_MASK_DISABLE_DIRECT_SCANOUT = 1 << 6,
+    QUIRKS_MASK_DISABLE_GAMMA = 1 << 7,
+    QUIRKS_MASK_DISABLE_CTM = 1 << 8,
+    QUIRKS_MASK_YUYV_MODE = 1 << 9,
+    QUIRKS_MASK_PREFER_DRM_DUMB = 1 << 10,
+};
+
+uint32_t quirks_by_backend(int drm_fd);
+
+uint32_t quirks_by_renderer(int drm_fd, const char *vendor_name);
+
+#endif /* _UTIL_QUIRKS_H */

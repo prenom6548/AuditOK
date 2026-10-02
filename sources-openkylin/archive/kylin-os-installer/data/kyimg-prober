@@ -1,0 +1,97 @@
+#!/bin/bash
+
+set -x
+
+m_arch=$(uname -m)
+
+dev_name=
+do_other_mount() {
+	sync
+	umount "/dev/${1}"|| true
+	sync
+	mount "/dev/${1}1" /var/log/installer/ghost || true
+	dev_name="/dev/${1}1"
+}
+
+mkdir -p /var/log/installer
+os_disk_list=$(lsblk -d | grep -v NAME | grep -v loop | grep -v sr | grep -v cdrom | awk '{print $1}')
+
+os_disk_list_test=
+os_disk_list_test=$(echo ${os_disk_list})
+os_disk_list_bc=
+if [ -f /var/log/installer/ghost-dev.log ]; then
+        os_disk_list_bc=$(cat /var/log/installer/ghost-dev.log)
+else
+	echo ${os_disk_list_test} >/var/log/installer/ghost-dev.log
+fi
+
+
+ghost_file=true
+if [ -f /var/log/installer/ghost.log ]; then
+	ghost_file_list=$(cat /var/log/installer/ghost.log)
+	if [ -z ${ghost_file_list} ]; then
+		ghost_file=false
+	fi
+fi
+
+if [[ ${os_disk_list_test} != ${os_disk_list_bc} ]] || [[ ${ghost_file} == false ]]; then
+        echo ${os_disk_list_test} >/var/log/installer/ghost-dev.log
+	swapoff -a >/dev/null || true
+	umount /media/*/* >/dev/null 2>&1 || true
+	umount /media/* >/dev/null 2>&1 || true
+
+	mkdir -p /var/log/installer/ghost
+	>/var/log/installer/ghost.log
+
+	for os_disk in ${os_disk_list}
+	do
+        	disk_remove=$(readlink /sys/block/${os_disk} | grep usb)|| true
+        	if [ -n "${disk_remove}" ]; then
+                    	echo "${os_disk} is usb disk" 
+                    	umount "/dev/${os_disk}"|| true
+		    	dev_name="/dev/${os_disk}"
+                    	mount "/dev/${os_disk}" /var/log/installer/ghost || do_other_mount ${os_disk}
+                    	if [[ -d /var/log/installer/ghost ]]; then
+                            	ghost_list=$(ls /var/log/installer/ghost |grep .kyimg | grep "${m_arch}")
+                            	if [ -n "${ghost_list}" ]; then
+                                	echo "${ghost_list}" | while read ghost_num
+                                        do
+                                                echo "${ghost_num}(${dev_name})" >>/var/log/installer/ghost.log
+                                        done
+                            	fi
+                    	fi
+                    	if [[ -d /var/log/installer/ghost/ghost ]]; then
+                            	ghost_list=$(ls /var/log/installer/ghost/ghost |grep .kyimg | grep "${m_arch}")
+                            	if [ -n "${ghost_list}" ]; then
+                                	echo "${ghost_list}" | while read ghost_num
+                                        do
+                                                echo "${ghost_num}(${dev_name})" >>/var/log/installer/ghost.log
+                                        done
+                            	fi
+                    	fi
+		    	sync
+                    	umount /var/log/installer/ghost || true
+        	fi
+	done
+	rmdir /var/log/installer/ghost || true
+
+	ghost_cdrom=
+	ghost_cdrom=$(ls /cdrom |grep .kyimg | grep "${m_arch}")
+	if [ -n "${ghost_cdrom}" ]; then
+		echo "${ghost_cdrom}" | while read ghost_num
+                do
+                        echo "${ghost_num}" >>/var/log/installer/ghost.log
+                done
+	fi
+
+	ghost_cdrom=
+	ghost_cdrom=$(ls /cdrom/ghost |grep .kyimg | grep "${m_arch}")
+	if [ -n "${ghost_cdrom}" ]; then
+		echo "${ghost_cdrom}" | while read ghost_num
+                do
+                        echo "${ghost_num}" >>/var/log/installer/ghost.log
+                done
+	fi
+else 
+	echo "Device is not update"
+fi

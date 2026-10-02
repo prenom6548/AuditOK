@@ -1,0 +1,21 @@
+// SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#ifndef _EFFECT_SCALE_H_
+#define _EFFECT_SCALE_H_
+
+#include "view/view.h"
+
+enum scale_action {
+    SCALE_MAXIMIZE = 0,
+    SCALE_FULLSCREEN,
+    SCALE_MINIMIZE,
+    SCALE_RESIZE,
+};
+
+bool view_add_scale_effect_pre(struct view *view);
+
+bool view_add_scale_effect(struct view *view, enum scale_action action);
+
+#endif /* _EFFECT_SCALE_H_ */

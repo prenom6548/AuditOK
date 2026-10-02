@@ -1,0 +1,841 @@
+From: cckylin-cibot <cckylin-cibot@kylinos.cn>
+Date: Mon, 11 Jul 2022 06:14:02 +0000
+Subject: =?utf-8?b?ITMg6Kej5YazV2F5bGFuZOeOr+Wig+e8luivkeS+nei1lumXrumimA==?=
+
+---
+ UI/ukui-wayland/plasma-shell-manager.cpp    | 145 ------------------------
+ UI/ukui-wayland/plasma-shell-manager.h      |  36 ------
+ UI/ukui-wayland/ukui-decoration-client.h    | 164 ----------------------------
+ UI/ukui-wayland/ukui-decoration-core.c      |  79 --------------
+ UI/ukui-wayland/ukui-decoration-manager.cpp | 101 -----------------
+ UI/ukui-wayland/ukui-decoration-manager.h   |  20 ----
+ UI/ukui-wayland/ukui-raise.c                |  30 -----
+ UI/ukui-wayland/waylanddialog.cpp           |  20 ----
+ UI/ukui-wayland/waylanddialog.h             |  26 -----
+ UI/ukui-wayland/waylanddialog.ui            |  83 --------------
+ kylin-music.pro                             |   9 --
+ translations/kylin-music_bo_CN.qm           | Bin 10239 -> 10229 bytes
+ translations/kylin-music_zh_CN.qm           | Bin 7923 -> 7913 bytes
+ 13 files changed, 713 deletions(-)
+ delete mode 100644 UI/ukui-wayland/plasma-shell-manager.cpp
+ delete mode 100644 UI/ukui-wayland/plasma-shell-manager.h
+ delete mode 100644 UI/ukui-wayland/ukui-decoration-client.h
+ delete mode 100644 UI/ukui-wayland/ukui-decoration-core.c
+ delete mode 100644 UI/ukui-wayland/ukui-decoration-manager.cpp
+ delete mode 100644 UI/ukui-wayland/ukui-decoration-manager.h
+ delete mode 100644 UI/ukui-wayland/ukui-raise.c
+ delete mode 100644 UI/ukui-wayland/waylanddialog.cpp
+ delete mode 100644 UI/ukui-wayland/waylanddialog.h
+ delete mode 100644 UI/ukui-wayland/waylanddialog.ui
+
+diff --git a/UI/ukui-wayland/plasma-shell-manager.cpp b/UI/ukui-wayland/plasma-shell-manager.cpp
+deleted file mode 100644
+index 64e6117..0000000
+--- a/UI/ukui-wayland/plasma-shell-manager.cpp
++++ /dev/null
+@@ -1,145 +0,0 @@
+-#include "plasma-shell-manager.h"
+-
+-#include <QApplication>
+-
+-#include <KWayland/Client/connection_thread.h>
+-#include <KWayland/Client/registry.h>
+-
+-#include <KWayland/Client/surface.h>
+-
+-static PlasmaShellManager* global_instance = nullptr;
+-
+-PlasmaShellManager *PlasmaShellManager::getInstance()
+-{
+-    if (!global_instance)
+-        global_instance = new PlasmaShellManager;
+-    return global_instance;
+-}
+-
+-bool PlasmaShellManager::setAppWindowActive()
+-{
+-    if (!supportPlasmaWindowManagement())
+-        return false;
+-
+-    m_appWindow->requestActivate();
+-    return true;
+-}
+-
+-bool PlasmaShellManager::setAppWindowKeepAbove(bool keep)
+-{
+-    if (!supportPlasmaWindowManagement())
+-        return false;
+-
+-    if(keep != m_appWindow->isKeepAbove()) {
+-        m_appWindow->requestToggleKeepAbove();
+-    }
+-    return true;
+-}
+-
+-bool PlasmaShellManager::setMaximized(QWindow *window)
+-{
+-    if (!supportShell())
+-        return false;
+-
+-    auto surface = KWayland::Client::Surface::fromWindow(window);
+-    if (!surface)
+-        return false;
+-
+-    auto shellSurface = m_shell->createSurface(surface, window);
+-    if (!shellSurface)
+-        return false;
+-
+-    shellSurface->setMaximized();
+-    return true;
+-}
+-
+-bool PlasmaShellManager::setRole(QWindow *window, KWayland::Client::PlasmaShellSurface::Role role)
+-{
+-    if (!supportPlasmaShell())
+-        return false;
+-
+-    auto surface = KWayland::Client::Surface::fromWindow(window);
+-    if (!surface)
+-        return false;
+-
+-    auto plasmaShellSurface = m_plasmaShell->createSurface(surface, window);
+-    if (!plasmaShellSurface)
+-        return false;
+-
+-    plasmaShellSurface->setRole(role);
+-    return true;
+-}
+-
+-bool PlasmaShellManager::setPos(QWindow *window, const QPoint &pos)
+-{
+-    if (!supportPlasmaShell())
+-        return false;
+-
+-    auto surface = KWayland::Client::Surface::fromWindow(window);
+-    if (!surface)
+-        return false;
+-
+-    auto plasmaShellSurface = m_plasmaShell->createSurface(surface, window);
+-    if (!plasmaShellSurface)
+-        return false;
+-
+-    plasmaShellSurface->setPosition(pos);
+-    return true;
+-}
+-
+-bool PlasmaShellManager::supportPlasmaShell()
+-{
+-    return m_plasmaShell;
+-}
+-
+-bool PlasmaShellManager::supportShell()
+-{
+-    return m_shell;
+-}
+-
+-bool PlasmaShellManager::supportPlasmaWindowManagement()
+-{
+-    return m_windowManager && m_appWindow;
+-}
+-
+-PlasmaShellManager::PlasmaShellManager(QObject *parent) : QObject(parent)
+-{
+-    auto connection = KWayland::Client::ConnectionThread::fromApplication(qApp);
+-    auto registry = new KWayland::Client::Registry(this);
+-    registry->create(connection->display());
+-
+-    connect(registry, &KWayland::Client::Registry::plasmaShellAnnounced, this, [=](){
+-        const auto interface = registry->interface(KWayland::Client::Registry::Interface::PlasmaShell);
+-        if (interface.name != 0) {
+-            m_plasmaShell = registry->createPlasmaShell(interface.name, interface.version, this);
+-        }
+-    });
+-
+-    connect(registry, &KWayland::Client::Registry::plasmaWindowManagementAnnounced, this, [=](){
+-        const auto interface = registry->interface(KWayland::Client::Registry::Interface::PlasmaWindowManagement);
+-        if (interface.name != 0) {
+-            m_windowManager = registry->createPlasmaWindowManagement(interface.name, interface.version, this);
+-        }
+-        if(m_windowManager) {
+-            connect(m_windowManager, &KWayland::Client::PlasmaWindowManagement::windowCreated,
+-                [this](KWayland::Client::PlasmaWindow *window) {
+-               if(window->appId() == QApplication::applicationName()){
+-                   if(isFirstCreate) {
+-                       isFirstCreate = false;
+-                       m_appWindow = window;
+-                   }
+-               }
+-            });
+-        }
+-    });
+-
+-    connect(registry, &KWayland::Client::Registry::shellAnnounced, this, [=](){
+-        const auto interface = registry->interface(KWayland::Client::Registry::Interface::Shell);
+-        if (interface.name != 0) {
+-            m_shell = registry->createShell(interface.name, interface.version, this);
+-        }
+-    });
+-
+-    registry->setup();
+-    connection->roundtrip();
+-}
+diff --git a/UI/ukui-wayland/plasma-shell-manager.h b/UI/ukui-wayland/plasma-shell-manager.h
+deleted file mode 100644
+index 1edc439..0000000
+--- a/UI/ukui-wayland/plasma-shell-manager.h
++++ /dev/null
+@@ -1,36 +0,0 @@
+-#ifndef PLASMASHELLMANAGER_H
+-#define PLASMASHELLMANAGER_H
+-
+-#include <QObject>
+-#include <QWindow>
+-#include <KWayland/Client/plasmawindowmanagement.h>
+-#include <KWayland/Client/plasmashell.h>
+-#include <KWayland/Client/shell.h>
+-
+-class PlasmaShellManager : public QObject
+-{
+-    Q_OBJECT
+-public:
+-    static PlasmaShellManager *getInstance();
+-
+-    bool setAppWindowActive();
+-    bool setAppWindowKeepAbove(bool keep);
+-    bool setMaximized(QWindow *window);
+-    bool setRole(QWindow *window, KWayland::Client::PlasmaShellSurface::Role role);
+-    bool setPos(QWindow *window, const QPoint &pos);
+-    bool supportPlasmaShell();
+-    bool supportShell();
+-    bool supportPlasmaWindowManagement();
+-
+-private:
+-    explicit PlasmaShellManager(QObject *parent = nullptr);
+-
+-    KWayland::Client::PlasmaShell *m_plasmaShell = nullptr;
+-    KWayland::Client::Shell *m_shell = nullptr;
+-    KWayland::Client::PlasmaWindowManagement *m_windowManager = nullptr;
+-    KWayland::Client::PlasmaWindow *m_appWindow = nullptr;
+-
+-    bool isFirstCreate = true;
+-};
+-
+-#endif // PLASMASHELLMANAGER_H
+diff --git a/UI/ukui-wayland/ukui-decoration-client.h b/UI/ukui-wayland/ukui-decoration-client.h
+deleted file mode 100644
+index 12c131f..0000000
+--- a/UI/ukui-wayland/ukui-decoration-client.h
++++ /dev/null
+@@ -1,164 +0,0 @@
+-/* Generated by wayland-scanner 1.18.0 */
+-
+-#ifndef CUSTOM_CLIENT_PROTOCOL_H
+-#define CUSTOM_CLIENT_PROTOCOL_H
+-
+-#include <stdint.h>
+-#include <stddef.h>
+-#include "wayland-client.h"
+-
+-#ifdef  __cplusplus
+-extern "C" {
+-#endif
+-
+-/**
+- * @page page_custom The custom protocol
+- * @section page_ifaces_custom Interfaces
+- * - @subpage page_iface_ukui_decoration - UKUI Wayland extension
+- * @section page_copyright_custom Copyright
+- * <pre>
+- *
+- * Copyright (C) 2015 The Qt Company Ltd.
+- * Contact: http://www.qt.io/licensing/
+- *
+- * This file is part of the examples of the Qt Wayland module
+- *
+- * $QT_BEGIN_LICENSE:BSD$
+- * You may use this file under the terms of the BSD license as follows:
+- *
+- * "Redistribution and use in source and binary forms, with or without
+- * modification, are permitted provided that the following conditions are
+- * met:
+- * * Redistributions of source code must retain the above copyright
+- * notice, this list of conditions and the following disclaimer.
+- * * Redistributions in binary form must reproduce the above copyright
+- * notice, this list of conditions and the following disclaimer in
+- * the documentation and/or other materials provided with the
+- * distribution.
+- * * Neither the name of The Qt Company Ltd nor the names of its
+- * contributors may be used to endorse or promote products derived
+- * from this software without specific prior written permission.
+- *
+- *
+- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
+- *
+- * $QT_END_LICENSE$
+- * </pre>
+- */
+-struct ukui_decoration;
+-struct wl_surface;
+-
+-/**
+- * @page page_iface_ukui_decoration ukui_decoration
+- * @section page_iface_ukui_decoration_desc Description
+- *
+- * This example shows how to add extra functionality to Wayland
+- * through an extension. This is the global object of the extension.
+- * @section page_iface_ukui_decoration_api API
+- * See @ref iface_ukui_decoration.
+- */
+-/**
+- * @defgroup iface_ukui_decoration The ukui_decoration interface
+- *
+- * This example shows how to add extra functionality to Wayland
+- * through an extension. This is the global object of the extension.
+- */
+-extern const struct wl_interface ukui_decoration_interface;
+-
+-#define UKUI_DECORATION_MOVE_SURFACE 0
+-#define UKUI_DECORATION_SET_UKUI_DECORATION_MODE 1
+-#define UKUI_DECORATION_SET_UNITY_BORDER_RADIUS 2
+-
+-
+-/**
+- * @ingroup iface_ukui_decoration
+- */
+-#define UKUI_DECORATION_MOVE_SURFACE_SINCE_VERSION 1
+-/**
+- * @ingroup iface_ukui_decoration
+- */
+-#define UKUI_DECORATION_SET_UKUI_DECORATION_MODE_SINCE_VERSION 1
+-/**
+- * @ingroup iface_ukui_decoration
+- */
+-#define UKUI_DECORATION_SET_UNITY_BORDER_RADIUS_SINCE_VERSION 1
+-
+-/** @ingroup iface_ukui_decoration */
+-static inline void
+-ukui_decoration_set_user_data(struct ukui_decoration *ukui_decoration, void *user_data)
+-{
+-	wl_proxy_set_user_data((struct wl_proxy *) ukui_decoration, user_data);
+-}
+-
+-/** @ingroup iface_ukui_decoration */
+-static inline void *
+-ukui_decoration_get_user_data(struct ukui_decoration *ukui_decoration)
+-{
+-	return wl_proxy_get_user_data((struct wl_proxy *) ukui_decoration);
+-}
+-
+-static inline uint32_t
+-ukui_decoration_get_version(struct ukui_decoration *ukui_decoration)
+-{
+-	return wl_proxy_get_version((struct wl_proxy *) ukui_decoration);
+-}
+-
+-/** @ingroup iface_ukui_decoration */
+-static inline void
+-ukui_decoration_destroy(struct ukui_decoration *ukui_decoration)
+-{
+-	wl_proxy_destroy((struct wl_proxy *) ukui_decoration);
+-}
+-
+-/**
+- * @ingroup iface_ukui_decoration
+- *
+- * Inform the compositor that the client has a new surface that is
+- * covered by the extension.
+- */
+-static inline void
+-ukui_decoration_move_surface(struct ukui_decoration *ukui_decoration, struct wl_surface *surface)
+-{
+-	wl_proxy_marshal((struct wl_proxy *) ukui_decoration,
+-			 UKUI_DECORATION_MOVE_SURFACE, surface);
+-}
+-
+-/**
+- * @ingroup iface_ukui_decoration
+- *
+- * The compositor should perform a move animation on the surface.
+- */
+-static inline void
+-ukui_decoration_set_ukui_decoration_mode(struct ukui_decoration *ukui_decoration, struct wl_surface *surface, uint32_t mode)
+-{
+-	wl_proxy_marshal((struct wl_proxy *) ukui_decoration,
+-			 UKUI_DECORATION_SET_UKUI_DECORATION_MODE, surface, mode);
+-}
+-
+-/**
+- * @ingroup iface_ukui_decoration
+- *
+- * The compositor should perform a move animation on the surface.
+- */
+-static inline void
+-ukui_decoration_set_unity_border_radius(struct ukui_decoration *ukui_decoration, struct wl_surface *surface, uint32_t topleft, uint32_t topright, uint32_t bottomleft, uint32_t bottomright)
+-{
+-	wl_proxy_marshal((struct wl_proxy *) ukui_decoration,
+-			 UKUI_DECORATION_SET_UNITY_BORDER_RADIUS, surface, topleft, topright, bottomleft, bottomright);
+-}
+-
+-#ifdef  __cplusplus
+-}
+-#endif
+-
+-#endif
+diff --git a/UI/ukui-wayland/ukui-decoration-core.c b/UI/ukui-wayland/ukui-decoration-core.c
+deleted file mode 100644
+index f96bde4..0000000
+--- a/UI/ukui-wayland/ukui-decoration-core.c
++++ /dev/null
+@@ -1,79 +0,0 @@
+-/* Generated by wayland-scanner 1.18.0 */
+-
+-/*
+- * Copyright (C) 2015 The Qt Company Ltd.
+- * Contact: http://www.qt.io/licensing/
+- *
+- * This file is part of the examples of the Qt Wayland module
+- *
+- * $QT_BEGIN_LICENSE:BSD$
+- * You may use this file under the terms of the BSD license as follows:
+- *
+- * "Redistribution and use in source and binary forms, with or without
+- * modification, are permitted provided that the following conditions are
+- * met:
+- * * Redistributions of source code must retain the above copyright
+- * notice, this list of conditions and the following disclaimer.
+- * * Redistributions in binary form must reproduce the above copyright
+- * notice, this list of conditions and the following disclaimer in
+- * the documentation and/or other materials provided with the
+- * distribution.
+- * * Neither the name of The Qt Company Ltd nor the names of its
+- * contributors may be used to endorse or promote products derived
+- * from this software without specific prior written permission.
+- *
+- *
+- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+- * "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+- * LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+- * A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT
+- * OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+- * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT
+- * LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
+- * DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
+- * THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+- * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE."
+- *
+- * $QT_END_LICENSE$
+- */
+-
+-#include <stdlib.h>
+-#include <stdint.h>
+-#include "wayland-util.h"
+-
+-#ifndef __has_attribute
+-# define __has_attribute(x) 0  /* Compatibility with non-clang compilers. */
+-#endif
+-
+-#if (__has_attribute(visibility) || defined(__GNUC__) && __GNUC__ >= 4)
+-#define WL_PRIVATE __attribute__ ((visibility("hidden")))
+-#else
+-#define WL_PRIVATE
+-#endif
+-
+-extern const struct wl_interface wl_surface_interface;
+-
+-static const struct wl_interface *custom_types[] = {
+-	&wl_surface_interface,
+-	&wl_surface_interface,
+-	NULL,
+-	&wl_surface_interface,
+-	NULL,
+-	NULL,
+-	NULL,
+-	NULL,
+-};
+-
+-static const struct wl_message ukui_decoration_requests[] = {
+-	{ "move_surface", "o", custom_types + 0 },
+-	{ "set_ukui_decoration_mode", "ou", custom_types + 1 },
+-	{ "set_unity_border_radius", "ouuuu", custom_types + 3 },
+-};
+-
+-WL_PRIVATE const struct wl_interface ukui_decoration_interface = {
+-	"ukui_decoration", 1,
+-	3, ukui_decoration_requests,
+-	0, NULL,
+-};
+-
+diff --git a/UI/ukui-wayland/ukui-decoration-manager.cpp b/UI/ukui-wayland/ukui-decoration-manager.cpp
+deleted file mode 100644
+index 64aee9e..0000000
+--- a/UI/ukui-wayland/ukui-decoration-manager.cpp
++++ /dev/null
+@@ -1,101 +0,0 @@
+-#include "ukui-decoration-manager.h"
+-
+-#include "ukui-decoration-client.h"
+-
+-#include <QApplication>
+-#include <qpa/qplatformnativeinterface.h>
+-#include <KWayland/Client/connection_thread.h>
+-
+-static UKUIDecorationManager *global_instance = nullptr;
+-
+-static wl_display *display = nullptr;
+-static ukui_decoration *ukui_decoration_manager = nullptr;
+-
+-static void handle_global(void *data, struct wl_registry *registry,
+-                          uint32_t name, const char *interface, uint32_t version) {
+-    if (strcmp(interface, ukui_decoration_interface.name) == 0) {
+-        ukui_decoration_manager = (ukui_decoration *) wl_registry_bind(registry, name, &ukui_decoration_interface, version);
+-    }
+-}
+-
+-static void handle_global_remove(void *data, struct wl_registry *registry,
+-                                 uint32_t name) {
+-    // Who cares
+-}
+-
+-static const struct wl_registry_listener registry_listener = {
+-    .global = handle_global,
+-    .global_remove = handle_global_remove,
+-};
+-
+-UKUIDecorationManager *UKUIDecorationManager::getInstance()
+-{
+-    if (!global_instance)
+-        global_instance = new UKUIDecorationManager;
+-    return global_instance;
+-}
+-
+-bool UKUIDecorationManager::supportUKUIDecoration()
+-{
+-    return ukui_decoration_manager;
+-}
+-
+-bool UKUIDecorationManager::moveWindow(QWindow *windowHandle)
+-{
+-    if (!supportUKUIDecoration())
+-        return false;
+-
+-    auto nativeInterface = qApp->platformNativeInterface();
+-    wl_surface *surface = reinterpret_cast<wl_surface *>(nativeInterface->nativeResourceForWindow(QByteArrayLiteral("surface"), windowHandle));
+-    if (!surface)
+-        return false;
+-
+-    ukui_decoration_move_surface(ukui_decoration_manager, surface);
+-    wl_surface_commit(surface);
+-    wl_display_roundtrip(display);
+-    return true;
+-}
+-
+-bool UKUIDecorationManager::removeHeaderBar(QWindow *windowHandle)
+-{
+-    if (!supportUKUIDecoration())
+-        return false;
+-
+-    auto nativeInterface = qApp->platformNativeInterface();
+-    wl_surface *surface = reinterpret_cast<wl_surface *>(nativeInterface->nativeResourceForWindow(QByteArrayLiteral("surface"), windowHandle));
+-    if (!surface)
+-        return false;
+-
+-    ukui_decoration_set_ukui_decoration_mode(ukui_decoration_manager, surface, 1);
+-    wl_surface_commit(surface);
+-    wl_display_roundtrip(display);
+-    return true;
+-}
+-
+-bool UKUIDecorationManager::setCornerRadius(QWindow *windowHandle, int topleft, int topright, int bottomleft, int bottomright)
+-{
+-    if (!supportUKUIDecoration())
+-        return false;
+-
+-    auto nativeInterface = qApp->platformNativeInterface();
+-    wl_surface *surface = reinterpret_cast<wl_surface *>(nativeInterface->nativeResourceForWindow(QByteArrayLiteral("surface"), windowHandle));
+-    if (!surface)
+-        return false;
+-
+-    ukui_decoration_set_unity_border_radius(ukui_decoration_manager, surface, topleft, topright, bottomleft, bottomright);
+-    wl_surface_commit(surface);
+-    wl_display_roundtrip(display);
+-    return true;
+-}
+-
+-UKUIDecorationManager::UKUIDecorationManager()
+-{
+-    auto connectionThread = KWayland::Client::ConnectionThread::fromApplication(qApp);
+-    display = connectionThread->display();
+-
+-    struct wl_registry *registry = wl_display_get_registry(display);
+-
+-    // get ukui_decoration_manager
+-    wl_registry_add_listener(registry, &registry_listener, nullptr);
+-    wl_display_roundtrip(display);
+-}
+diff --git a/UI/ukui-wayland/ukui-decoration-manager.h b/UI/ukui-wayland/ukui-decoration-manager.h
+deleted file mode 100644
+index 4c97d5b..0000000
+--- a/UI/ukui-wayland/ukui-decoration-manager.h
++++ /dev/null
+@@ -1,20 +0,0 @@
+-#ifndef UKUIDECORATIONMANAGER_H
+-#define UKUIDECORATIONMANAGER_H
+-
+-#include <QWindow>
+-
+-class UKUIDecorationManager
+-{
+-public:
+-    static UKUIDecorationManager *getInstance();
+-    bool supportUKUIDecoration();
+-
+-    bool moveWindow(QWindow *windowHandle);
+-    bool removeHeaderBar(QWindow *windowHandle);
+-    bool setCornerRadius(QWindow *windowHandle, int topleft, int topright, int bottomleft, int bottomright);
+-
+-private:
+-    UKUIDecorationManager();
+-};
+-
+-#endif // UKUIDECORATIONMANAGER_H
+diff --git a/UI/ukui-wayland/ukui-raise.c b/UI/ukui-wayland/ukui-raise.c
+deleted file mode 100644
+index 7ec34d3..0000000
+--- a/UI/ukui-wayland/ukui-raise.c
++++ /dev/null
+@@ -1,30 +0,0 @@
+-#include <stdlib.h>
+-#include <stdint.h>
+-#include "wayland-util.h"
+-
+-#ifndef __has_attribute
+-# define __has_attribute(x) 0  /* Compatibility with non-clang compilers. */
+-#endif
+-
+-#if (__has_attribute(visibility) || defined(__GNUC__) && __GNUC__ >= 4)
+-#define WL_PRIVATE __attribute__ ((visibility("hidden")))
+-#else
+-#define WL_PRIVATE
+-#endif
+-
+-extern const struct wl_interface wl_surface_interface;
+-static const struct wl_interface *custom_types[] = {
+-	&wl_surface_interface,
+-	NULL,
+-};
+-	static const struct wl_message ukui_raise_requests[] = {
+-		{ "set_top", "o", custom_types + 0 }
+-	};
+-
+-	WL_PRIVATE const struct wl_interface ukui_raise_interface = {
+-		"ukui_raise", 1,
+-		1, ukui_raise_requests,
+-		0, NULL,
+-	};
+-
+-
+diff --git a/UI/ukui-wayland/waylanddialog.cpp b/UI/ukui-wayland/waylanddialog.cpp
+deleted file mode 100644
+index 8155c2e..0000000
+--- a/UI/ukui-wayland/waylanddialog.cpp
++++ /dev/null
+@@ -1,20 +0,0 @@
+-#include "waylanddialog.h"
+-#include "ui_waylanddialog.h"
+-
+-WaylandDialog::WaylandDialog(QWidget *parent) :
+-    QDialog(parent),
+-    ui(new Ui::WaylandDialog)
+-{
+-    ui->setupUi(this);
+-    setFixedSize(400, 170);
+-}
+-
+-WaylandDialog::~WaylandDialog()
+-{
+-    delete ui;
+-}
+-
+-void WaylandDialog::setText(QString text)
+-{
+-    ui->textBrowser->setText(text);
+-}
+diff --git a/UI/ukui-wayland/waylanddialog.h b/UI/ukui-wayland/waylanddialog.h
+deleted file mode 100644
+index 5a2aa69..0000000
+--- a/UI/ukui-wayland/waylanddialog.h
++++ /dev/null
+@@ -1,26 +0,0 @@
+-#ifndef WAYLANDDIALOG_H
+-#define WAYLANDDIALOG_H
+-
+-#include <QDialog>
+-#include "ukui-decoration-client.h"
+-#include "ukui-decoration-manager.h"
+-
+-namespace Ui {
+-class WaylandDialog;
+-}
+-
+-class WaylandDialog : public QDialog
+-{
+-    Q_OBJECT
+-
+-public:
+-    explicit WaylandDialog(QWidget *parent = nullptr);
+-    ~WaylandDialog();
+-
+-    void setText(QString text);
+-
+-private:
+-    Ui::WaylandDialog *ui;
+-};
+-
+-#endif // WAYLANDDIALOG_H
+diff --git a/UI/ukui-wayland/waylanddialog.ui b/UI/ukui-wayland/waylanddialog.ui
+deleted file mode 100644
+index bafe038..0000000
+--- a/UI/ukui-wayland/waylanddialog.ui
++++ /dev/null
+@@ -1,83 +0,0 @@
+-<?xml version="1.0" encoding="UTF-8"?>
+-<ui version="4.0">
+- <class>WaylandDialog</class>
+- <widget class="QDialog" name="WaylandDialog">
+-  <property name="geometry">
+-   <rect>
+-    <x>0</x>
+-    <y>0</y>
+-    <width>400</width>
+-    <height>210</height>
+-   </rect>
+-  </property>
+-  <property name="windowTitle">
+-   <string>Dialog</string>
+-  </property>
+-  <layout class="QVBoxLayout" name="verticalLayout">
+-   <property name="leftMargin">
+-    <number>20</number>
+-   </property>
+-   <property name="topMargin">
+-    <number>40</number>
+-   </property>
+-   <property name="rightMargin">
+-    <number>20</number>
+-   </property>
+-   <property name="bottomMargin">
+-    <number>20</number>
+-   </property>
+-   <item>
+-    <widget class="QTextBrowser" name="textBrowser">
+-     <property name="styleSheet">
+-      <string notr="true">background-color: rgba(255, 255, 255, 0);</string>
+-     </property>
+-    </widget>
+-   </item>
+-   <item>
+-    <widget class="QDialogButtonBox" name="buttonBox">
+-     <property name="orientation">
+-      <enum>Qt::Horizontal</enum>
+-     </property>
+-     <property name="standardButtons">
+-      <set>QDialogButtonBox::Cancel|QDialogButtonBox::Ok</set>
+-     </property>
+-    </widget>
+-   </item>
+-  </layout>
+- </widget>
+- <resources/>
+- <connections>
+-  <connection>
+-   <sender>buttonBox</sender>
+-   <signal>accepted()</signal>
+-   <receiver>WaylandDialog</receiver>
+-   <slot>accept()</slot>
+-   <hints>
+-    <hint type="sourcelabel">
+-     <x>248</x>
+-     <y>254</y>
+-    </hint>
+-    <hint type="destinationlabel">
+-     <x>157</x>
+-     <y>274</y>
+-    </hint>
+-   </hints>
+-  </connection>
+-  <connection>
+-   <sender>buttonBox</sender>
+-   <signal>rejected()</signal>
+-   <receiver>WaylandDialog</receiver>
+-   <slot>reject()</slot>
+-   <hints>
+-    <hint type="sourcelabel">
+-     <x>316</x>
+-     <y>260</y>
+-    </hint>
+-    <hint type="destinationlabel">
+-     <x>286</x>
+-     <y>274</y>
+-    </hint>
+-   </hints>
+-  </connection>
+- </connections>
+-</ui>
+diff --git a/kylin-music.pro b/kylin-music.pro
+index 6c3685b..3710dc8 100644
+--- a/kylin-music.pro
++++ b/kylin-music.pro
+@@ -104,11 +104,6 @@ SOURCES += \
+     UI/tableview/tableviewdelegate.cpp \
+     UI/titlebar/menumodule.cpp \
+     UI/titlebar/titlebar.cpp \
+-    UI/ukui-wayland/plasma-shell-manager.cpp \
+-    UI/ukui-wayland/ukui-decoration-core.c \
+-    UI/ukui-wayland/ukui-decoration-manager.cpp \
+-    UI/ukui-wayland/ukui-raise.c \
+-    UI/ukui-wayland/waylanddialog.cpp \
+     UIControl/base/daemonipcdbus.cpp \
+     UIControl/base/musicDataBase.cpp \
+     UIControl/base/musicfileinformation.cpp \
+@@ -149,10 +144,6 @@ HEADERS += \
+     UI/tableview/tableviewdelegate.h \
+     UI/titlebar/menumodule.h \
+     UI/titlebar/titlebar.h \
+-    UI/ukui-wayland/plasma-shell-manager.h \
+-    UI/ukui-wayland/ukui-decoration-client.h \
+-    UI/ukui-wayland/ukui-decoration-manager.h \
+-    UI/ukui-wayland/waylanddialog.h \
+     UIControl/base/daemonipcdbus.h \
+     UIControl/base/musicDataBase.h \
+     UIControl/base/musicfileinformation.h \
+diff --git a/translations/kylin-music_bo_CN.qm b/translations/kylin-music_bo_CN.qm
+index 4f80061..6b659bb 100644
+--- a/translations/kylin-music_bo_CN.qm
++++ b/translations/kylin-music_bo_CN.qm
+@@ -1,4 +1,4 @@
+-<∏d ÔúïÕ!ø`°Ω›ß   bo_CNB  ¿ åØ   $ ®ã   Y Ï0   å 6`  œ 6`  
++<∏d ÔúïÕ!ø`°Ω›B  ¿ åØ   $ ®ã   Y Ï0   å 6`  œ 6`  
+ « 6`  #> LÙ  Y râ  ï râ   râ  ⁄ å  !@ ¶G  Q ¶G  ± ∞5  ä ∞5   áõ  ñ Eï  $ >í    >í   >í   >í  ô >í  Â >í   ˇ >í  #ã Gñƒ  Ù H)Ω  ‹ H)Ω  e H)Ω  Ï LGπ  ” R˝Ù   ¡ T…Û  ° Våï  G ZÏ5  !Â \t≥  ∆ j6ï  Õ ÷T†  ^Â:ê  Ç«B  ¶ZÑê  Xzd„  Ìzd„  yãC\  õ˜@  çª$  4⁄•‘  ›˘à…  R    	¨    "c]DL  °7Ä‰  ¢ïäƒ  ïäƒ  ûïäƒ  ‰òIº    òIº  ”¨,•  œ¨,•  ûµ6≈  µ6≈  
+ Ñµ6≈  µ6≈  õµ6≈  "˝‹¿  G#C$  ∂àK]  	$àK]  #àK]  #ÃåH5   åH5  ﬁ†M¬  †M¬  Ÿ†M¬  Ä∏àÉ  Ô÷<5  t∫q  µ√ò‘  Åƒ≈‘  "Z3  Z3  .Go’  RO˘o  µáÑ  ñΩ˛  Õ≥  ‚H5  MH5  u	VÒ  <	ó¿  !y	†   "+	».¥  
+ d–Õ   C
+diff --git a/translations/kylin-music_zh_CN.qm b/translations/kylin-music_zh_CN.qm
+index 0cc4de7..3709f46 100644
+--- a/translations/kylin-music_zh_CN.qm
++++ b/translations/kylin-music_zh_CN.qm
+@@ -1,4 +1,4 @@
+-<∏d ÔúïÕ!ø`°Ω›ß   zh_CNB  ¯ åØ  / ®ã  Z Ï0  Å 6`  > 6`  ∂ 6`  P LÙ  	 râ  v râ  ¿ râ  ! å  Ó ¶G  û ¶G  j ∞5  … ∞5  ä áõ  â Eï   >í   ‡ >í  ¶ >í  „ >í  > >í  V >í  – >í  { Gñƒ   H)Ω  E H)Ω  
++<∏d ÔúïÕ!ø`°Ω›B  ¯ åØ  / ®ã  Z Ï0  Å 6`  > 6`  ∂ 6`  P LÙ  	 râ  v râ  ¿ râ  ! å  Ó ¶G  û ¶G  j ∞5  … ∞5  ä áõ  â Eï   >í   ‡ >í  ¶ >í  „ >í  > >í  V >í  – >í  { Gñƒ   H)Ω  E H)Ω  
+ b H)Ω  Ì LGπ  f R˝Ù  ® T…Û  
+ å Våï  L ZÏ5  W \t≥  © j6ï  Æ ÷T†  /∑%Ñ  <Â:ê  «B  ŸZÑê  Åzd„   zd„  ÆãC\  Fõ˜@  Úª$  ≥⁄•‘  p˘à…      ﬂ    ≠]DL  ™7Ä‰  ïäƒ  Ãïäƒ  óïäƒ  èòIº    òIº  $¨,•  Ù¨,•  ;µ6≈  µ6≈  âµ6≈  
+ ·µ6≈  ¯µ6≈  %‹¿  ⁄‡ƒ  ò#C$  ÌàK]  qàK]  	†àK]  ™åH5  üåH5  †M¬  q†M¬  

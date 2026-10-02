@@ -1,0 +1,623 @@
+From: zouxiaoyi <zouxiaoyi@kylinos.cn>
+Date: Thu, 6 Jun 2024 19:55:00 +0800
+Subject: kylin-model-management-tools: 0.0.0.1-ok6
+
+---
+ CMakeLists.txt                            |   2 +
+ data/com.kylin.ai.model.management.policy |  19 +++++
+ data/kylin-model-management-tools.desktop |  10 +++
+ download-in-venv                          |  33 ++++----
+ modelsmd5                                 |  21 +++--
+ src/downloader.cpp                        |  83 ++++++++++++++-----
+ src/downloader.h                          |  10 +++
+ src/mainwindow.cpp                        | 128 +++++++++++++++++++-----------
+ src/mainwindow.h                          |   7 +-
+ 9 files changed, 227 insertions(+), 86 deletions(-)
+ create mode 100644 data/com.kylin.ai.model.management.policy
+ create mode 100644 data/kylin-model-management-tools.desktop
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index 84ef865..67f7b4a 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -40,4 +40,6 @@ include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
+ install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/download.py DESTINATION bin)
+ install(PROGRAMS ${CMAKE_CURRENT_SOURCE_DIR}/download-in-venv DESTINATION bin)
+ install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/modelsmd5 DESTINATION share/kylin-ai/ondevice/)
++install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/kylin-model-management-tools.desktop DESTINATION share/applications)
++install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/data/com.kylin.ai.model.management.policy DESTINATION share/polkit-1/actions)
+ install(TARGETS kylin-model-downloader DESTINATION bin)
+diff --git a/data/com.kylin.ai.model.management.policy b/data/com.kylin.ai.model.management.policy
+new file mode 100644
+index 0000000..e5b959e
+--- /dev/null
++++ b/data/com.kylin.ai.model.management.policy
+@@ -0,0 +1,19 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<!DOCTYPE policyconfig PUBLIC
++ "-//freedesktop//DTD PolicyKit Policy Configuration 1.0//EN"
++ "http://www.freedesktop.org/standards/PolicyKit/1.0/polkit-policy-configuration-1.0.dtd">
++<policyconfig>
++  <vendor>Kylin OS</vendor>
++  <vendor_url>https://www.kylinos.cn/</vendor_url>
++
++  <action id="com.kylin.ai.model.management.download-model">
++    <description>需要管理员权限以下载端侧模型</description>
++    <message>需要管理员权限以下载端侧模型</message>
++    <defaults>
++      <allow_any>yes</allow_any> <!-- 允许所有用户执行 -->
++      <allow_inactive>auth_admin_keep</allow_inactive> <!-- 认证后保持一段时间 -->
++      <allow_active>auth_admin_keep</allow_active> <!-- 认证后保持一段时间 -->
++    </defaults>
++    <annotate key="org.freedesktop.policykit.exec.path">/usr/bin/download-in-venv</annotate>
++  </action>
++</policyconfig>
+diff --git a/data/kylin-model-management-tools.desktop b/data/kylin-model-management-tools.desktop
+new file mode 100644
+index 0000000..8fcde08
+--- /dev/null
++++ b/data/kylin-model-management-tools.desktop
+@@ -0,0 +1,10 @@
++[Desktop Entry]
++Version=1.0
++Type=Application
++Name=Kylin Model Management Tools
++Name[zh_CN]=麒麟模型管理工具
++Comment=Efficiently download models from the web
++Exec=/usr/bin/kylin-model-downloader
++Terminal=false
++Icon=/usr/share/icons/kylin-model-downloader.svg
++Categories=Internet;Download;Utility;
+diff --git a/download-in-venv b/download-in-venv
+index 07d1dda..2d4ec84 100755
+--- a/download-in-venv
++++ b/download-in-venv
+@@ -1,24 +1,29 @@
+ #!/bin/bash
+ 
+-set -e
++if [ "$1" == "/usr/bin/download.py" ]; then
++    echo $@
+ 
+-echo $@
++    modelenv_path=$HOME/.cache/pythonvenv/modelenv
+ 
+-modelenv_path=$HOME/.cache/pythonvenv/modelenv
++    echo ${modelenv_path}
+ 
+-echo ${modelenv_path}
++    python3 -m venv ${modelenv_path}
+ 
+-python3 -m venv ${modelenv_path}
++    source ${modelenv_path}/bin/activate
+ 
+-source ${modelenv_path}/bin/activate
++    if ! pip show modelscope > /dev/null 2>&1; then
++        echo "installing modelscope"
++        python3 -m pip install modelscope -i https://pypi.tuna.tsinghua.edu.cn/simple
++    fi
+ 
+-if ! pip show modelscope > /dev/null 2>&1; then
+-    echo "installing modelscope"
+-    python3 -m pip install modelscope -i https://pypi.tuna.tsinghua.edu.cn/simple
+-fi
+-
+-echo "依赖下载完成"
++    echo "依赖下载完成"
+ 
+-python3 $@
++    python3 $@
+ 
+-deactivate
++    deactivate
++else
++    echo "模型保存路径" $@
++    [ -d "$2" ] || mkdir -p $2
++    chmod -R a+r $1
++    ln -s $@
++fi
+diff --git a/modelsmd5 b/modelsmd5
+index 9bcae14..bbe9563 100644
+--- a/modelsmd5
++++ b/modelsmd5
+@@ -6,8 +6,21 @@ dccb5814f54d995dd66e46f5cef41254  /usr/share/kylin-ai/ondevice/speech/keyword-sp
+ 1bc455adb0fbffca81051fa81eae7502  /usr/share/kylin-ai/ondevice/speech/keyword-spotter/tokens.txt
+ 3c3a2532960ccb0f370ba90b1c289cc1  /usr/share/kylin-ai/ondevice/speech/offline-recognizer/paraformer.onnx
+ 82ff0397f2cfcec996fa3624179e620e  /usr/share/kylin-ai/ondevice/speech/offline-recognizer/tokens.txt
+-66805da2552e7fc97997faf7dd467732  /usr/share/kylin-ai/ondevice/speech/offline-tts/lexicon.txt
+-02f51dbc8cd837b77053bb63956ed6f0  /usr/share/kylin-ai/ondevice/speech/offline-tts/model.onnx
++c808788fb1d79ea37115f2b46cce1a40  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/hmm_model.utf8
++bfc058f151f127a2a8d059ada39464ff  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/idf.utf8
++16ec3c325cc189b6ed0c74fcd5636e58  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/jieba.dict.utf8
++cecb26565d4a543f19affc1b444f3a59  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/lexicon.txt
++ce08d688cd7020a674e71c8d5bef582c  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/model.onnx
++9a1f96e25a711c3d9e77315e08a69cc8  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/pos_dict/char_state_tab.utf8
++3d0322fd505092f1816bb18a3a3c072e  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/pos_dict/prob_emit.utf8
++7d22fe82b00442a8d6527ceb233177f1  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/pos_dict/prob_start.utf8
++a6c0d90c9b56401bb84b2ca2ff5ce54a  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/pos_dict/prob_trans.utf8
++5faac573ca881619c82d4fd057d57525  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/README.md
++498350b8d78d8acbb88ce57829b5a935  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/stop_words.utf8
++cfdebc0800c8b078c9fad56b5bbfc6fd  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/tokens.txt
++997b04b487f6042d63b14824b2ce948d  /usr/share/kylin-ai/ondevice/speech/offline-tts/dict/user.dict.utf8
++cecb26565d4a543f19affc1b444f3a59  /usr/share/kylin-ai/ondevice/speech/offline-tts/lexicon.txt
++ce08d688cd7020a674e71c8d5bef582c  /usr/share/kylin-ai/ondevice/speech/offline-tts/model.onnx
+ cfdebc0800c8b078c9fad56b5bbfc6fd  /usr/share/kylin-ai/ondevice/speech/offline-tts/tokens.txt
+ 01865aa7cc4c355c3b084c85b30d7891  /usr/share/kylin-ai/ondevice/speech/online-recognizer/decoder.onnx
+ 5aa47543bc2d18ee53acc0e10e0a3401  /usr/share/kylin-ai/ondevice/speech/online-recognizer/encoder.onnx
+@@ -15,22 +28,18 @@ cfdebc0800c8b078c9fad56b5bbfc6fd  /usr/share/kylin-ai/ondevice/speech/offline-tt
+ 340cf59fbaa377335be1eee96fc5b9e6  /usr/share/kylin-ai/ondevice/speech/online-recognizer/tokens.txt
+ 2cedf9c9ecd4cbd5febe60e03bb3ed77  /usr/share/kylin-datamanagement-models/bge-m3-onnx/bgem3_model.py
+ 12002482b5ba2d0ee4b9a8663654d945  /usr/share/kylin-datamanagement-models/bge-m3-onnx/config.json
+-efc89fa3a39364d6bf817229705e9261  /usr/share/kylin-datamanagement-models/bge-m3-onnx/configuration.json
+ c2f301357fc67b74855008b231de8fdc  /usr/share/kylin-datamanagement-models/bge-m3-onnx/Constant_685_attr__value
+ 4a1470014491253b8c68c2a2c514bb1e  /usr/share/kylin-datamanagement-models/bge-m3-onnx/export_onnx.py
+ 692a4f50fb20c8676967e4e09fe2f7d5  /usr/share/kylin-datamanagement-models/bge-m3-onnx/model.onnx
+ 6efdf793ec2e0428a89f7afe45125813  /usr/share/kylin-datamanagement-models/bge-m3-onnx/model.onnx.data
+ be4047a56484f3fb54e498f4ac09d803  /usr/share/kylin-datamanagement-models/bge-m3-onnx/ort_config.json
+-6372a9a1e37fc0da19aae27f50d851f1  /usr/share/kylin-datamanagement-models/bge-m3-onnx/README.md
+ 078433dd128628a59ce317b523b7b9bb  /usr/share/kylin-datamanagement-models/bge-m3-onnx/requirements.txt
+ bf25eb5120ad92ef5c7d8596b5dc4046  /usr/share/kylin-datamanagement-models/bge-m3-onnx/sentencepiece.bpe.model
+ 33e57d2dda50a13c4c62ed8afb6c6773  /usr/share/kylin-datamanagement-models/bge-m3-onnx/special_tokens_map.json
+ 6df4969983b3fd7a3f44025d0bda9eae  /usr/share/kylin-datamanagement-models/bge-m3-onnx/tokenizer_config.json
+ 0407e37fba38f555d08c2eb994979dc0  /usr/share/kylin-datamanagement-models/bge-m3-onnx/tokenizer.json
+ f2d828c10090a70514c11e23bd485d18  /usr/share/kylin-datamanagement-models/cn-clip-onnx/config.json
+-efc89fa3a39364d6bf817229705e9261  /usr/share/kylin-datamanagement-models/cn-clip-onnx/configuration.json
+ 0c3d1663ee531b99947305c308d50f45  /usr/share/kylin-datamanagement-models/cn-clip-onnx/preprocessor_config.json
+-6d38e690b78f66aeb0c7af6abb1305ad  /usr/share/kylin-datamanagement-models/cn-clip-onnx/README.md
+ 05c5e0c652cf8eeb3192e16b7d6ebd89  /usr/share/kylin-datamanagement-models/cn-clip-onnx/vit-b-16.img.fp16.onnx
+ 499d8ad1c34d1edaac5a5499b9b3898d  /usr/share/kylin-datamanagement-models/cn-clip-onnx/vit-b-16.img.fp16.onnx.extra_file
+ 24e69c094ba300d3c2436054469a36f1  /usr/share/kylin-datamanagement-models/cn-clip-onnx/vit-b-16.img.fp32.onnx
+diff --git a/src/downloader.cpp b/src/downloader.cpp
+index c907b42..bdb952a 100644
+--- a/src/downloader.cpp
++++ b/src/downloader.cpp
+@@ -1,10 +1,10 @@
+ #include "downloader.h"
+ 
+ #include <QDebug>
+-#include <QDir>
++#include <QFile>
+ 
+ static const QString DOWNLOAD_LOG = "/tmp/download-log";
+-static const QString MODEL_CACHE_DIR = QDir::homePath() + "/.cache/modelscope/";
++static const QString MODEL_CACHE_DIR = "/usr/share/kylin-ai/ondevice/models/";
+ 
+ Downloader::Downloader(QObject *parent) { initModelMaps(); }
+ 
+@@ -41,23 +41,53 @@ bool Downloader::isDownloading() const {
+     return downloadProcess_ && (downloadProcess_->state() == QProcess::Running);
+ }
+ 
+-void Downloader::download() {
++void Downloader::downloadOne(const QString &modelType, const QString &modelName,
++                             const QString &modelFile) {
++    setDownloadParams(modelType, modelName, modelFile, "", "");
++    download();
++
++    loop_.reset(new QEventLoop());
++
++    QObject::connect(this, &Downloader::linkFinished, loop_.get(),
++                     &QEventLoop::quit);
++
++    loop_->exec();
++}
++
++void Downloader::downloadAllModels() {
+     if (isDownloading()) {
+         return;
+     }
+ 
++    for (auto modelType : getModelTypes()) {
++        for (auto modelName : getModelNames(modelType)) {
++            auto modelFiles = getModelFiles(modelName);
++            if (modelFiles.isEmpty()) {
++                downloadOne(modelType, modelName, "");
++            } else {
++                for (auto modelFile : modelFiles) {
++                    downloadOne(modelType, modelName, modelFile);
++                }
++            }
++        }
++    }
++    emit allModelsDownloaded();
++}
++
++void Downloader::download() {
++    emit downloadStart();
+     downloadProcess_.reset(new QProcess());
+     downloadProcess_->setProcessChannelMode(QProcess::MergedChannels);
+ 
+     QStringList arguments;
+-    arguments << "/usr/bin/download.py" << modelNameToDownload_
+-              << "--cache-dir=" + MODEL_CACHE_DIR;
++    arguments << "download-in-venv" << "/usr/bin/download.py"
++              << modelNameToDownload_ << "--cache-dir=" + MODEL_CACHE_DIR;
+ 
+     if (!modelFileToDownload_.isEmpty()) {
+         arguments << "--file-path=" + modelFileToDownload_;
+     }
+ 
+-    downloadProcess_->start("download-in-venv", arguments);
++    downloadProcess_->start("pkexec", arguments);
+     connect(downloadProcess_.get(),
+             QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished), this,
+             &Downloader::downloadProcessFinished);
+@@ -92,6 +122,16 @@ void Downloader::checkModelFiles() {
+     checkProcess.waitForFinished();
+ }
+ 
++void Downloader::quitProcess() {
++    if (!downloadProcess_) {
++        return;
++    }
++    downloadProcess_->terminate();
++    if (!downloadProcess_->waitForFinished(3000)) {
++        downloadProcess_->kill();
++    }
++}
++
+ void Downloader::initModelMaps() {
+     // TODO init map with local file
+     modelTypeToNameMap_ = {
+@@ -119,8 +159,6 @@ void Downloader::processOutput(QByteArray output) {
+     for (const QString &line : lines) {
+         if (line.contains("Model directory:")) {
+             const QString modelCacheDirectory = line.split(":")[1].trimmed();
+-            qDebug() << "MMMMMMMMMM I get Model directory:"
+-                     << modelCacheDirectory;
+             setModelCacheDirectory(modelCacheDirectory);
+             break;
+         }
+@@ -136,22 +174,27 @@ void Downloader::downloadProcessFinished(int exitCode,
+         return;
+     }
+ 
++    QProcess p;
++    QStringList args;
++    p.setProcessChannelMode(QProcess::MergedChannels);
++
++    connect(&p, &QProcess::readyReadStandardOutput, this,
++            [this, &p]() { emit downloadOutput(p.readAllStandardOutput()); });
++    connect(&p, &QProcess::readyReadStandardError, this,
++            [this, &p]() { emit downloadOutput(p.readAllStandardError()); });
++
++    args << "download-in-venv" << modelCacheDirectory_;
+     if (QFile::exists(modelCacheDirectory_)) {
+         if (modelTypeToDownload_ == "nlp") {
+-            system(QString("pkexec ln -s " + modelCacheDirectory_ + " " +
+-                           "/usr/share/kylin-ai/ondevice/nlp/")
+-                       .toStdString()
+-                       .c_str());
++            args << "/usr/share/kylin-ai/ondevice/nlp/";
+         } else if (modelTypeToDownload_ == "speech") {
+-            system(QString("pkexec ln -s " + modelCacheDirectory_ + " " +
+-                           "/usr/share/kylin-ai/ondevice/speech/")
+-                       .toStdString()
+-                       .c_str());
++            args << "/usr/share/kylin-ai/ondevice/speech/";
+         } else if (modelTypeToDownload_ == "搜索") {
+-            system(QString("pkexec ln -s " + modelCacheDirectory_ + " " +
+-                           "/usr/share/kylin-datamanagement-models/")
+-                       .toStdString()
+-                       .c_str());
++            args << "/usr/share/kylin-datamanagement-models/";
+         }
+     }
++    p.start("pkexec", args);
++    p.waitForFinished();
++
++    emit linkFinished();
+ }
+\ No newline at end of file
+diff --git a/src/downloader.h b/src/downloader.h
+index fa442b0..37d1298 100644
+--- a/src/downloader.h
++++ b/src/downloader.h
+@@ -2,6 +2,7 @@
+ 
+ #include <memory>
+ 
++#include <QEventLoop>
+ #include <QMap>
+ #include <QObject>
+ #include <QProcess>
+@@ -24,14 +25,22 @@ public:
+                            const QString &modelscopeCacheDir);
+ 
+     bool isDownloading() const;
++    void downloadOne(const QString &modelType, const QString &modelName,
++                     const QString &modelFile);
++    void downloadAllModels();
+     void download();
+ 
+     void checkModelFiles();
+ 
++    void quitProcess();
++
+ signals:
+     void downloadOutput(QByteArray);
++    void downloadStart();
+     void downloadSucceed();
+     void downloadFailed();
++    void allModelsDownloaded();
++    void linkFinished();
+ 
+ private:
+     void initModelMaps();
+@@ -50,4 +59,5 @@ private:
+     QString modelCacheDirectory_;
+ 
+     std::unique_ptr<QProcess> downloadProcess_;
++    std::unique_ptr<QEventLoop> loop_;
+ };
+diff --git a/src/mainwindow.cpp b/src/mainwindow.cpp
+index a0e9fe7..b1027c7 100644
+--- a/src/mainwindow.cpp
++++ b/src/mainwindow.cpp
+@@ -23,6 +23,8 @@ void MainWindow::initUi() {
+ 
+ void MainWindow::initLayout() {
+     mainLayout_.reset(new QVBoxLayout());
++    advancedOptionsLayout_.reset(new QHBoxLayout());
++    advancedOptionsLayout_->addStretch();
+     modelTypeLayout_.reset(new QHBoxLayout());
+     modelNameLayout_.reset(new QHBoxLayout());
+     modelRevisionLayout_.reset(new QHBoxLayout());
+@@ -33,20 +35,21 @@ void MainWindow::initLayout() {
+ }
+ 
+ void MainWindow::initLabel() {
+-    modelTypeLabel_.reset(new QLabel("Model Type:"));
+-    modelNameLabel_.reset(new QLabel("Model Name:"));
+-    modelRevisionLabel_.reset(new QLabel("Model Revision:"));
+-    cacheDirLabel_.reset(new QLabel("Cache Directory:"));
+-    modelFileToDownloadLabel_.reset(new QLabel("Model File To Download:"));
+-    modelFileToDownloadInfoLabel_.reset(new QLabel("Prefer the q5_k_m model."));
++    modelTypeLabel_.reset(new QLabel("模型类型"));     // Model Type:
++    modelNameLabel_.reset(new QLabel("模型名称"));     // Model Name:
++    modelRevisionLabel_.reset(new QLabel("模型版本")); // Model Revision:
++    cacheDirLabel_.reset(new QLabel("缓存目录"));      // Cache Directory:
++    modelFileToDownloadLabel_.reset(
++        new QLabel("要下载的单个模型文件")); // Model File To Download:
++    modelFileToDownloadInfoLabel_.reset(
++        new QLabel("优先选用 q5_k_m 模型")); // Prefer the q5_k_m model.
+     modelFileToDownloadInfoLabel_->setStyleSheet(
+         "font-size: 12px; color: gray;");
+ }
+ 
+ void MainWindow::initLineEdit() {
+     modelRevisionLineEdit_.reset(new QLineEdit());
+-    modelRevisionLineEdit_->setPlaceholderText(
+-        "leave this blank. 可以不填，没用");
++    modelRevisionLineEdit_->setPlaceholderText("可以不填，没用");
+ 
+     cacheDirLineEdit_.reset(new QLineEdit());
+     cacheDirLineEdit_->setPlaceholderText("模型下载后的保存路径，可以不填");
+@@ -77,10 +80,15 @@ void MainWindow::initComboBox() {
+ }
+ 
+ void MainWindow::initButton() {
+-    tutorialButton_.reset(new QPushButton("工具使用方法"));
+-    downloadButton_.reset(new QPushButton("Download Model"));
+-    quitButton_.reset(new QPushButton("Quit"));
++    onClickDownloadButton_.reset(new QPushButton("一键下载"));
++    downloadButton_.reset(new QPushButton("下载模型")); // Download Model
++    quitButton_.reset(new QPushButton("退出"));         // Quit
+     checkButton_.reset(new QPushButton("检查本地模型文件"));
++
++    advancedOptionsButton_.reset(new QToolButton());
++    advancedOptionsButton_->setArrowType(Qt::DownArrow); // 设置为下箭头
++    advancedOptionsButton_->setCheckable(true); // 设置可选中/取消选中
++    advancedOptionsButton_->setChecked(false);  // 初始状态为收起
+ }
+ 
+ void MainWindow::initTerminalTextEdit() {
+@@ -89,6 +97,7 @@ void MainWindow::initTerminalTextEdit() {
+ }
+ 
+ void MainWindow::loadLayout() {
++    advancedOptionsLayout_->addWidget(advancedOptionsButton_.get());
+     modelTypeLayout_->addWidget(modelTypeLabel_.get());
+     modelTypeLayout_->addWidget(modelTypeComboBox_.get());
+ 
+@@ -109,7 +118,8 @@ void MainWindow::loadLayout() {
+ 
+     terminalLayout_->addWidget(terminalTextEdit_.get());
+ 
+-    mainLayout_->addWidget(tutorialButton_.get());
++    mainLayout_->addWidget(onClickDownloadButton_.get());
++    mainLayout_->addLayout(advancedOptionsLayout_.get());
+     mainLayout_->addLayout(modelTypeLayout_.get());
+     mainLayout_->addLayout(modelNameLayout_.get());
+     // 版本和缓存路径暂时不显示
+@@ -123,37 +133,26 @@ void MainWindow::loadLayout() {
+     setLayout(mainLayout_.get());
+ 
+     resize(600, 600);
++
++    {
++        modelTypeLabel_->setVisible(false);
++        modelNameLabel_->setVisible(false);
++        modelFileToDownloadLabel_->setVisible(false);
++
++        modelTypeComboBox_->setVisible(false);
++        modelNameComboBox_->setVisible(false);
++        modelFileToDownloadComboBox_->setVisible(false);
++
++        downloadButton_->setVisible(false);
++        quitButton_->setVisible(false);
++    }
+ }
+ 
+ void MainWindow::connectSignals() {
+-    connect(tutorialButton_.get(), &QPushButton::clicked, this, [this]() {
+-        QWidget *w = new QWidget();
+-        QLabel *label = new QLabel(w);
+-        label->setText(
+-            " - speech 模型(共4个)下载：\n1. Model Type 选择 speech；\n2. "
+-            "Model Name 共 4 个，都需要下载，依次选择进行下载；\n\n"
+-            " - nlp 模型(共1个)下载：\n1. Model Type 选择 nlp；\n2. "
+-            "其他不用修改，点击 Download Model 按钮下载；\n\n"
+-            " - 搜索 模型(共2个)下载：\n1. Model Type 选择 搜索；\n2. "
+-            "Model Name 共 2 个，都需要下载，依次选择进行下载；\n\n"
+-            "注意事项：\n1. 第一次下载时，会安装依赖，可能时间较长，"
+-            "如果遇到下载失败，可以尝试切换网络后重试；\n2. "
+-            "如果窗口日志中有“依赖下载完成”，则表示依赖已经下载完成。模型下载时"
+-            "使用可以访问 https://www.modelscope.cn/ 的网络进行下载；\n3. "
+-            "下载完模型后，工具会将模型链接到系统目录，此时会有弹窗要求输入密码"
+-            "；\n4. 下载完一个模型后，再下载其他模型。\n5. 所有模型下载完成后，"
+-            "可以点击 检查本地模型文件 "
+-            "按钮，如果输出中全是成功，则可以开始测试；"
+-            "否则，请重新下载有失败的模型。");
+-        label->setAlignment(Qt::AlignLeft);
+-        label->setStyleSheet("font-size: 16px;");
+-        label->setWordWrap(true);
+-        label->setMinimumSize(500, 600);
+-        // 使 label 的内容可复制
+-        w->setWindowTitle("工具使用方法");
+-        w->resize(500, 600);
+-        w->show();
+-    });
++    connect(advancedOptionsButton_.get(), &QAbstractButton::clicked, this,
++            &MainWindow::onAdvancedOptionsClicked);
++    connect(onClickDownloadButton_.get(), &QPushButton::clicked, downloader_,
++            &Downloader::downloadAllModels);
+     connect(downloadButton_.get(), &QPushButton::clicked, this,
+             &MainWindow::onDownloadButtonClicked);
+     connect(quitButton_.get(), &QPushButton::clicked, this, &MainWindow::close);
+@@ -162,10 +161,41 @@ void MainWindow::connectSignals() {
+ 
+     connect(downloader_, &Downloader::downloadOutput, this,
+             &MainWindow::onDownloadOutput);
++    connect(downloader_, &Downloader::downloadStart, this,
++            [this]() { terminalTextEdit_->clear(); });
+     connect(downloader_, &Downloader::downloadSucceed, this,
+             &MainWindow::onDownloadSucceed);
+     connect(downloader_, &Downloader::downloadFailed, this,
+             &MainWindow::onDownloadFailed);
++
++    connect(downloader_, &Downloader::allModelsDownloaded, this, [this]() {
++        QMessageBox::information(this, "模型下载工具", "所有模型下载完成");
++    });
++
++    connect(this, &MainWindow::destroyed, downloader_,
++            &Downloader::quitProcess);
++}
++
++void MainWindow::onAdvancedOptionsClicked() {
++    bool isChecked = advancedOptionsButton_->isChecked();
++
++    modelTypeLabel_->setVisible(isChecked);
++    modelNameLabel_->setVisible(isChecked);
++    modelFileToDownloadLabel_->setVisible(isChecked);
++
++    modelTypeComboBox_->setVisible(isChecked);
++    modelNameComboBox_->setVisible(isChecked);
++    modelFileToDownloadComboBox_->setVisible(isChecked);
++
++    downloadButton_->setVisible(isChecked);
++    quitButton_->setVisible(isChecked);
++
++    // 改变箭头方向，表示展开/收起
++    if (isChecked) {
++        advancedOptionsButton_->setArrowType(Qt::UpArrow);
++    } else {
++        advancedOptionsButton_->setArrowType(Qt::DownArrow);
++    }
+ }
+ 
+ void MainWindow::setDownloadParams() {
+@@ -183,7 +213,7 @@ void MainWindow::startDownloading() {
+ 
+ void MainWindow::onDownloadButtonClicked() {
+     if (downloader_->isDownloading()) {
+-        QMessageBox::warning(this, "Warning", "Download is already running.");
++        QMessageBox::warning(this, "模型下载工具", "已经有模型在下载了");
+         return;
+     }
+ 
+@@ -193,22 +223,31 @@ void MainWindow::onDownloadButtonClicked() {
+ }
+ 
+ void MainWindow::onDownloadOutput(QByteArray output) {
++    if (!terminalTextEdit_) {
++        return;
++    }
+     terminalTextEdit_->appendPlainText(output);
+ }
+ 
+ void MainWindow::onDownloadSucceed() {
+-    QMessageBox::information(this, "Success", "Download succeed.");
++    // QMessageBox::information(this, "模型下载工具", "模型下载完成！");
++    if (!terminalTextEdit_) {
++        return;
++    }
+     terminalTextEdit_->appendPlainText("模型下载完成！");
+ }
+ 
+ void MainWindow::onDownloadFailed() {
+-    QMessageBox::critical(this, "Error", "Download failed.");
++    QMessageBox::critical(this, "模型下载工具",
++                          "模型下载失败！可以尝试重新下载。");
++    if (!terminalTextEdit_) {
++        return;
++    }
+     terminalTextEdit_->appendPlainText("模型下载失败！");
+ }
+ 
+ void MainWindow::modelTypeComboBoxChanged(int index) {
+     QString selectedModelType = modelTypeComboBox_->itemText(index);
+-    qDebug() << "MMMMMM selectedModelType: " << selectedModelType;
+ 
+     modelNameComboBox_->clear();
+ 
+@@ -220,7 +259,6 @@ void MainWindow::modelTypeComboBoxChanged(int index) {
+ 
+ void MainWindow::modelNameComboBoxChanged(int index) {
+     QString selectedModelName = modelNameComboBox_->itemText(index);
+-    qDebug() << "MMMMMM selectedModelName: " << selectedModelName;
+ 
+     modelFileToDownloadComboBox_->clear();
+ 
+diff --git a/src/mainwindow.h b/src/mainwindow.h
+index a0ee5df..1d5b23f 100644
+--- a/src/mainwindow.h
++++ b/src/mainwindow.h
+@@ -12,6 +12,7 @@
+ #include <QPushButton>
+ #include <QString>
+ #include <QStringList>
++#include <QToolButton>
+ #include <QVBoxLayout>
+ #include <QWidget>
+ 
+@@ -33,6 +34,8 @@ private:
+     void loadLayout();
+     void connectSignals();
+ 
++    void onAdvancedOptionsClicked();
++
+     void setDownloadParams();
+     void startDownloading();
+ 
+@@ -47,6 +50,7 @@ private slots:
+ 
+ private:
+     std::unique_ptr<QVBoxLayout> mainLayout_;
++    std::unique_ptr<QHBoxLayout> advancedOptionsLayout_;
+     std::unique_ptr<QHBoxLayout> modelTypeLayout_;
+     std::unique_ptr<QHBoxLayout> modelNameLayout_;
+     std::unique_ptr<QHBoxLayout> modelRevisionLayout_;
+@@ -70,10 +74,11 @@ private:
+     std::unique_ptr<QComboBox> modelNameComboBox_;
+     std::unique_ptr<QComboBox> modelFileToDownloadComboBox_;
+ 
+-    std::unique_ptr<QPushButton> tutorialButton_;
++    std::unique_ptr<QPushButton> onClickDownloadButton_;
+     std::unique_ptr<QPushButton> downloadButton_;
+     std::unique_ptr<QPushButton> quitButton_;
+     std::unique_ptr<QPushButton> checkButton_;
++    std::unique_ptr<QToolButton> advancedOptionsButton_;
+ 
+     std::unique_ptr<QPlainTextEdit> terminalTextEdit_;
+ 

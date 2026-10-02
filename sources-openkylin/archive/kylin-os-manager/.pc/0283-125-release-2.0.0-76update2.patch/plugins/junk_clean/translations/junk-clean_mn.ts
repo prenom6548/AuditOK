@@ -1,0 +1,428 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="mn_MN">
+<context>
+    <name>QObject</name>
+    <message>
+        <location filename="../junk_clean.cpp" line="52"/>
+        <source>JunkClean</source>
+        <translation>ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠶᠢ ᠴᠡᠪᠡᠷᠯᠡᠨ᠎ᠡ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::BootPartitionCleaner</name>
+    <message>
+        <location filename="../cleaner/boot_partition_cleaner.cpp" line="50"/>
+        <source>boot partition</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../cleaner/boot_partition_cleaner.cpp" line="54"/>
+        <source>Boot partition space cleaning</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::CleanUpEntryWidget</name>
+    <message>
+        <location filename="../clean_up_entry_widget.cpp" line="86"/>
+        <source>%1 in total, clean carefully</source>
+        <translation>ᠨᠡᠶᠢᠲᠡ %1᠂ ᠪᠣᠯᠭᠣᠮᠵᠢᠲᠠᠶ ᠴᠡᠪᠡᠷᠯᠡᠨ᠎ᠡ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_entry_widget.cpp" line="95"/>
+        <source>%1 entries in total, carefully clean up</source>
+        <translation>ᠨᠡᠶᠢᠲᠡ %1 ᠵᠤᠷᠪᠤᠰ ᠪᠠᠶᠢᠵᠤ᠂ ᠪᠣᠯᠭᠣᠮᠵᠢᠲᠠᠶ ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠤᠨ᠎ᠠ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_entry_widget.cpp" line="98"/>
+        <source>%1 entries</source>
+        <translation>%1 ᠵᠤᠷᠪᠤᠰ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_entry_widget.cpp" line="111"/>
+        <source>Scanning...</source>
+        <translation>ᠶᠠᠭ ᠰᠢᠷᠦᠭᠦᠨ ᠁...</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_entry_widget.cpp" line="115"/>
+        <source>Very clean</source>
+        <translation>ᠮᠠᠰᠢ ᠴᠡᠪᠡᠷ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::CleanUpFinishWidget</name>
+    <message>
+        <location filename="../clean_up_finish_widget.cpp" line="66"/>
+        <source>Complete</source>
+        <translation>ᠪᠡᠶᠡᠯᠡᠭᠦᠯᠦᠨ᠎ᠡ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_finish_widget.cpp" line="76"/>
+        <source>Deep clean</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../clean_up_finish_widget.cpp" line="107"/>
+        <source>Successfully cleaned up %1 of garbage</source>
+        <translation>%1 ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠶᠢ ᠠᠮᠵᠢᠯᠲᠠ ᠲᠠᠢ ᠪᠠᠷ ᠴᠡᠪᠡᠷᠯᠡᠨ᠎ᠡ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_finish_widget.cpp" line="111"/>
+        <source>Cleaning files: %1 entries</source>
+        <translation>ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠤᠭᠰᠠᠨ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠄ %1 ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_finish_widget.cpp" line="115"/>
+        <source>Cleaning time: %1 second</source>
+        <translation>ᠬᠣᠷᠣᠭᠳᠠᠭᠤᠯᠭ᠎ᠠ ᠶᠢ ᠴᠡᠪᠡᠷᠯᠡᠬᠦ ᠦᠶᠡᠰ᠄ %1 ᠰᠧᠺᠦᠨᠳ᠋᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::CleanUpGroupWidget</name>
+    <message>
+        <location filename="../clean_up_group_widget.cpp" line="61"/>
+        <source>%1 items of %2 in total, %3 selected</source>
+        <translation>ᠨᠡᠶᠢᠲᠡ %1 ᠵᠦᠢᠯ ᠦᠨ ᠬᠢ ᠶᠢ %2᠂ ᠨᠢᠭᠡᠨᠲᠡ %3 ᠶᠢ ᠰᠣᠩᠭᠣᠪᠠ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_group_widget.cpp" line="67"/>
+        <source>%1 items with %2 traces, %3 selected</source>
+        <translation>ᠨᠡᠶᠢᠲᠡ %1 ᠵᠦᠢᠯ ᠦᠨ ᠮᠥᠷ ᠢ ᠨᠡᠶᠢᠲᠡ %2 ᠵᠦᠢᠯ ᠦᠨ ᠮᠥᠷ ᠢᠶᠡᠷ ᠨᠢᠭᠡᠨᠲᠡ %3 ᠵᠤᠷᠪᠤᠰ ᠰᠣᠩᠭᠣᠵᠠᠶ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_group_widget.cpp" line="91"/>
+        <source>System junk</source>
+        <translation>ᠰᠢᠰᠲ᠋ᠧᠮ ᠦᠨ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_group_widget.cpp" line="93"/>
+        <source>Internet junk</source>
+        <translation>ᠰᠦᠯᠵᠢᠶᠡᠨ ᠳᠦ ᠭᠠᠷᠬᠤ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_group_widget.cpp" line="95"/>
+        <source>Usage traces</source>
+        <translation>ᠮᠥᠷ ᠢ ᠬᠡᠷᠡᠭᠯᠡᠨ᠎ᠡ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../clean_up_group_widget.cpp" line="97"/>
+        <source>Other</source>
+        <translation>ᠪᠤᠰᠤᠳ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::CommandLineTraceCleaner</name>
+    <message>
+        <location filename="../cleaner/command_line_trace_cleaner.cpp" line="40"/>
+        <source>Command line history</source>
+        <translation>ᠵᠠᠷᠯᠢᠭ ᠪᠠᠩᠭᠢ ᠶᠢᠨ ᠲᠡᠦᠬᠡ ᠶᠢᠨ ᠲᠡᠮᠳᠡᠭ᠍ᠯᠡᠯ ᠢ ᠵᠠᠷᠯᠢᠭᠳᠠᠵᠠᠢ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/command_line_trace_cleaner.cpp" line="44"/>
+        <source>Historical traces generated by using the command line</source>
+        <translation>ᠵᠠᠷᠯᠢᠭ ᠪᠠᠩᠭᠢ ᠠᠴᠠ ᠪᠤᠶ ᠪᠣᠯᠤᠭᠰᠠᠨ ᠲᠡᠦᠬᠡᠨ ᠲᠡᠮᠳᠡᠭ᠍ᠯᠡᠯ ᠢ ᠬᠡᠷᠡᠭ᠍ᠯᠡᠬᠦ</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::EnterpriseWechatCleaner</name>
+    <message>
+        <location filename="../cleaner/enterprise_wechat_cleaner.cpp" line="28"/>
+        <source>Enterprise Wechat</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../cleaner/enterprise_wechat_cleaner.cpp" line="32"/>
+        <source>Clean up files received on enterprise wechat</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::FileTraceCleaner</name>
+    <message>
+        <location filename="../cleaner/file_trace_cleaner.cpp" line="39"/>
+        <source>File recording</source>
+        <translation>ᠪᠢᠴᠢᠭ᠌ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠤᠨ ᠲᠡᠮᠳᠡᠭ᠍ᠯᠡᠯ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/file_trace_cleaner.cpp" line="43"/>
+        <source>Recently opened file records</source>
+        <translation>ᠣᠷᠴᠢᠮ ᠨᠡᠭᠡᠭᠡᠭ᠍ᠰᠡᠨ ᠪᠢᠴᠢᠭ᠌ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠤᠨ ᠲᠡᠮᠳᠡᠭ᠍ᠯᠡᠯ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::Homepage</name>
+    <message>
+        <location filename="../homepage.cpp" line="32"/>
+        <source>One click cleaning of computer junk</source>
+        <translation>ᠺᠣᠮᠫᠢᠦ᠋ᠲ᠋ᠧᠷ ᠦᠨ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠶᠢ ᠨᠢᠭᠡ ᠲᠠᠷᠤᠭᠤᠯ ᠢ ᠴᠡᠪᠡᠷᠯᠡᠨ᠎ᠡ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="34"/>
+        <source>Regular cleaning makes your computer light, fast, and safe</source>
+        <translation>ᠦᠷᠭᠦᠯᠵᠢ ᠴᠡᠪᠡᠷᠯᠡᠵᠦ ᠂ ᠲᠠᠨ ᠤ ᠺᠣᠮᠫᠢᠦ᠋ᠲ᠋ᠧᠷ ᠢ ᠬᠥᠩᠭᠡᠨ ᠮᠥᠷᠲᠡᠭᠡᠨ ᠠᠮᠤᠷ ᠲᠦᠪᠰᠢᠨ ᠪᠣᠯᠭᠠᠳᠠᠭ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="52"/>
+        <source>System garbage</source>
+        <translation>ᠰᠢᠰᠲ᠋ᠧᠮ ᠦᠨ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="54"/>
+        <source>Clean up the garbage generated during the daily use of the system</source>
+        <translation>ᠡᠳᠦᠷ ᠲᠤᠲᠤᠮ ᠤᠨ ᠬᠡᠷᠡᠭᠯᠡᠯᠲᠡ ᠶᠢᠨ ᠶᠠᠪᠤᠴᠠ ᠳᠤ ᠪᠤᠶ ᠪᠣᠯᠤᠭᠰᠠᠨ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠶᠢ ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠤᠨ᠎ᠠ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="71"/>
+        <source>Interface garbage</source>
+        <translation>ᠰᠦᠯᠵᠢᠶᠡᠨ ᠳᠦ ᠭᠠᠷᠬᠤ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="73"/>
+        <source>Cleaning browser generated cache files and login information</source>
+        <translation>ᠦᠵᠡᠭᠦᠯᠦᠭᠦᠷ ᠡᠴᠡ ᠪᠤᠶ ᠪᠣᠯᠤᠭᠰᠠᠨ ᠬᠣᠶᠢᠰᠢᠯᠠᠭᠤᠯᠤᠭᠰᠠᠨ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ᠂ ᠲᠡᠮᠳᠡᠭᠯᠡᠭᠰᠡᠨ ᠮᠡᠳᠡᠭᠡ ᠵᠠᠩᠭᠢ ᠶᠢ ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠬᠤ ᠬᠡᠷᠡᠭᠲᠡᠶ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="90"/>
+        <source>Usage traces</source>
+        <translation>ᠮᠥᠷ ᠢ ᠬᠡᠷᠡᠭᠯᠡᠨ᠎ᠡ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="92"/>
+        <source>Clean up computer usage traces and protect privacy and security</source>
+        <translation>ᠺᠣᠮᠫᠢᠦ᠋ᠲ᠋ᠧᠷ ᠬᠡᠷᠡᠭᠯᠡᠬᠦ ᠮᠥᠷ ᠢ ᠴᠡᠪᠡᠷᠯᠡᠵᠦ᠂ ᠨᠢᠭᠤᠴᠠ ᠶᠢᠨ ᠠᠮᠤᠷ ᠲᠦᠪᠰᠢᠨ ᠢ ᠬᠠᠮᠠᠭᠠᠯᠠᠬᠤ ᠬᠡᠷᠡᠭᠲᠡᠶ᠃</translation>
+    </message>
+    <message>
+        <location filename="../homepage.cpp" line="110"/>
+        <source>Start scan</source>
+        <translation>ᠡᠬᠢᠯᠡᠨ ᠰᠢᠷᠪᠡᠭᠳᠡᠨ᠎ᠡ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::InstallationPackageCleaner</name>
+    <message>
+        <location filename="../cleaner/installation_package_cleaner.cpp" line="55"/>
+        <source>Installation package cache</source>
+        <translation>ᠪᠣᠭᠣᠳᠠᠯ ᠤᠭᠰᠠᠷᠠᠵᠤ ᠤᠳᠠᠭᠠᠰᠢᠷᠠᠭᠤᠯᠤᠨ᠎ᠠ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/installation_package_cleaner.cpp" line="59"/>
+        <source>Garbage files generated during software installation</source>
+        <translation>ᠵᠥᠭᠡᠯᠡᠨ ᠲᠣᠨᠣᠭ ᠤᠭᠰᠠᠷᠠᠬᠤ ᠦᠶᠡᠰ᠂ ᠡᠭᠦᠰᠦᠭᠰᠡᠨ ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠶᠢᠨ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::JunkEntryWidget</name>
+    <message>
+        <location filename="../junk_entry_widget.cpp" line="28"/>
+        <source>0 entries</source>
+        <translation>0 ᠵᠤᠷᠪᠤᠰ᠃</translation>
+    </message>
+    <message>
+        <location filename="../junk_entry_widget.cpp" line="30"/>
+        <source>0 B</source>
+        <translation>0 B</translation>
+    </message>
+    <message>
+        <location filename="../junk_entry_widget.cpp" line="75"/>
+        <source>%1 entries</source>
+        <translation>%1 ᠵᠤᠷᠪᠤᠰ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::LogCleaner</name>
+    <message>
+        <location filename="../cleaner/log_cleaner.cpp" line="68"/>
+        <source>Log file</source>
+        <translation>ᠡᠳᠦᠷ ᠦᠨ ᠲᠡᠮᠳᠡᠭ᠍ ᠦᠨ ᠪᠢᠴᠢᠭ᠌ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/log_cleaner.cpp" line="72"/>
+        <source>Logs generated by software operation</source>
+        <translation>ᠵᠥᠭᠡᠯᠡᠨ ᠲᠣᠨᠣᠭ ᠤᠨ ᠠᠵᠢᠯᠯᠠᠭᠠᠨ ᠤ ᠶᠠᠪᠤᠴᠠ ᠳᠤ ᠡᠭᠦᠰᠦᠭᠰᠡᠨ ᠡᠳᠦᠷ ᠦᠨ ᠲᠡᠮᠳᠡᠭᠯᠡᠯ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::MainWindow</name>
+    <message>
+        <location filename="../mainwindow.cpp" line="66"/>
+        <source>Return</source>
+        <translation>ᠪᠤᠴᠠᠵᠤ ᠢᠷᠡᠨ᠎ᠡ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="68"/>
+        <source>Clean</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="204"/>
+        <source>Scanning in progress...</source>
+        <translation>ᠶᠠᠭ ᠰᠢᠷᠦᠭᠦᠨ ᠁...</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="208"/>
+        <source>Cancel scan</source>
+        <translation>ᠰᠢᠷᠦᠭᠦᠨ ᠰᠢᠷᠦᠭᠦᠨ ᠲᠠᠲᠠᠬᠤ ᠶᠢ ᠬᠦᠴᠦᠨ ᠦᠭᠡᠢ ᠪᠣᠯᠭᠠᠨ᠎ᠠ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="214"/>
+        <location filename="../mainwindow.cpp" line="222"/>
+        <source>Canceling in progress</source>
+        <translation>ᠶᠠᠭ ᠬᠦᠴᠦᠨ ᠦᠭᠡᠢ ᠪᠣᠯᠵᠤ ᠪᠠᠢ᠌ᠨ᠎ᠠ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="252"/>
+        <source>No cleanable files found</source>
+        <translation>ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠵᠤ ᠪᠣᠯᠬᠤ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠢ ᠣᠯᠵᠤ ᠮᠡᠳᠡᠭᠰᠡᠨ ᠦᠭᠡᠶ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="254"/>
+        <source>Found %1 of cleanable files in total</source>
+        <translation>ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠵᠤ ᠪᠣᠯᠬᠤ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠢ ᠨᠡᠶᠢᠲᠡ %1 ᠶᠢ ᠣᠯᠵᠤ ᠮᠡᠳᠡᠪᠡ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="256"/>
+        <source>Selected %1 of garbage and %2 usage traces</source>
+        <translation>ᠬᠣᠭ ᠨᠣᠪᠰᠢ ᠶᠢ ᠨᠢᠭᠡᠨᠲᠡ ᠰᠣᠩᠭᠣᠵᠤ %1᠂ ᠣᠷᠣ ᠮᠥᠷ ᠢ %2 ᠵᠤᠷᠪᠤᠰ ᠬᠡᠷᠡᠭᠯᠡᠵᠡᠶ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="277"/>
+        <source>%1 garbage cleaning in progress...</source>
+        <translation>%1 ᠬᠤᠭ ᠨᠣᠪᠰᠢ ᠶᠢ ᠴᠡᠪᠡᠷᠯᠡᠬᠦ ᠳᠤᠮᠳᠠ ᠁...</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="279"/>
+        <source>Cleaning up %1 traces...</source>
+        <translation>ᠶᠠᠭ %1 ᠵᠤᠷᠪᠤᠰ ᠬᠡᠷᠡᠭᠯᠡᠬᠦ ᠮᠥᠷ ᠢ ᠴᠡᠪᠡᠷᠯᠡᠵᠦ ᠁...</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="287"/>
+        <source>Canecl cleanup</source>
+        <translation>ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠬᠤ ᠶᠢ ᠦᠭᠡᠶᠢᠰᠬᠡᠨ᠎ᠡ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="336"/>
+        <source>Scanning for garbage...</source>
+        <translation>ᠶᠠᠭ ᠬᠤᠭ ᠨᠣᠪᠰᠢ ᠰᠢᠷᠦᠭᠦᠷᠳᠡᠵᠦ ᠪᠠᠶᠢᠨ᠎ᠠ ᠁...</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="375"/>
+        <source>Scanning: %1</source>
+        <translation>ᠶᠠᠭ ᠰᠢᠷᠦᠭᠦᠷᠯᠡᠵᠦ ᠪᠠᠶᠢᠨ᠎ᠠ ᠄ %1 ᠃</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="788"/>
+        <source>Cleaning up garbage...</source>
+        <translation>ᠶᠠᠭ ᠬᠤᠭ ᠨᠣᠪᠰᠢ ᠶᠢ ᠴᠡᠪᠡᠷᠯᠡᠵᠦ ᠁...</translation>
+    </message>
+    <message>
+        <location filename="../mainwindow.cpp" line="847"/>
+        <source>Cleaning up: %1</source>
+        <translation>ᠶᠠᠭ ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠵᠤ ᠪᠠᠶᠢᠨ᠎ᠠ᠄ %1᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::QQCleaner</name>
+    <message>
+        <location filename="../cleaner/qq_cleaner.cpp" line="75"/>
+        <source>QQ</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../cleaner/qq_cleaner.cpp" line="79"/>
+        <source>Temporary data generated using QQ</source>
+        <translation type="unfinished"></translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::QaxBrowserCleaner</name>
+    <message>
+        <location filename="../cleaner/qax_browser_cleaner.cpp" line="39"/>
+        <source>QaxBrowser</source>
+        <translation>ᠴᠢ ᠠᠨ ᠤ ᠵᠠᠬᠢᠳᠠᠯ ᠤᠨ ᠦᠵᠡᠭᠦᠯᠦᠭᠦᠷ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/qax_browser_cleaner.cpp" line="43"/>
+        <source>Some web pages or resources cached by the browser when loading pages</source>
+        <translation>ᠦᠵᠡᠭᠦᠯᠦᠭᠦᠷ ᠨᠢ ᠨᠢᠭᠤᠷ ᠨᠡᠮᠡᠬᠦ ᠦᠶ᠎ᠡ ᠳᠦ ᠬᠣᠶᠢᠰᠢᠯᠠᠭᠤᠯᠤᠨ ᠬᠠᠳᠠᠭᠠᠯᠠᠵᠤ ᠪᠠᠶᠢᠭ᠎ᠠ ᠵᠠᠷᠢᠮ ᠲᠣᠣᠷ ᠤᠨ ᠨᠢᠭᠤᠷ ᠪᠤᠶᠤ ᠡᠬᠢ ᠪᠠᠶᠠᠯᠢᠭ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::QaxBrowserCookiesCleaner</name>
+    <message>
+        <location filename="../cleaner/qax_browser_cookies_cleaner.cpp" line="39"/>
+        <source>Cookies information</source>
+        <translation>Cookies ᠮᠡᠳᠡᠭᠡ ᠵᠠᠩᠭᠢ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/qax_browser_cookies_cleaner.cpp" line="43"/>
+        <source>Browser saved login information</source>
+        <translation>ᠦᠵᠡᠭᠦᠯᠦᠭᠴᠢ ᠶᠢᠨ ᠬᠠᠳᠠᠭᠠᠯᠠᠭᠰᠠᠨ ᠲᠡᠮᠳᠡᠭᠯᠡᠯ ᠦᠨ ᠮᠡᠳᠡᠭᠡ ᠵᠠᠩᠭᠢ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::ResidualCleaner</name>
+    <message>
+        <location filename="../cleaner/residual_cleaner.cpp" line="53"/>
+        <source>Uninstall residual</source>
+        <translation>ᠠᠴᠢᠶ᠎ᠠ ᠪᠠᠭᠤᠯᠭᠠᠵᠤ ᠦᠯᠡᠳᠡᠭᠳᠡᠯ ᠦᠯᠡᠳᠡᠭᠳᠡᠯ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/residual_cleaner.cpp" line="57"/>
+        <source>Residual configuration files and cache after software uninstallation</source>
+        <translation>ᠵᠥᠭᠡᠯᠡᠨ ᠲᠣᠨᠣᠭ ᠢ ᠪᠠᠭᠤᠯᠭᠠᠭᠰᠠᠨ ᠤ ᠳᠠᠷᠠᠭᠠᠬᠢ ᠦᠯᠡᠳᠡᠭᠰᠡᠨ ᠲᠣᠬᠢᠷᠠᠭᠤᠯᠤᠯᠲᠠ ᠶᠢᠨ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠪᠣᠯᠤᠨ ᠬᠣᠶᠢᠰᠢᠯᠠᠭᠤᠯᠤᠨ ᠬᠠᠳᠠᠭᠠᠯᠠᠬᠤ ᠬᠡᠷᠡᠭᠲᠡᠶ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::SystemMemoryCleaner</name>
+    <message>
+        <location filename="../cleaner/system_memory_cleaner.cpp" line="33"/>
+        <source>System cache</source>
+        <translation>ᠰᠢᠰᠲ᠋ᠧᠮ ᠨᠢ ᠠᠯᠭᠤᠷᠬᠠᠨ ᠬᠠᠳᠠᠭᠠᠯᠠᠪᠠ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/system_memory_cleaner.cpp" line="37"/>
+        <source>Release system memory</source>
+        <translation>ᠰᠢᠰᠲ᠋ᠧᠮ ᠦᠨ ᠳᠣᠲᠣᠭᠠᠳᠤ ᠬᠠᠳᠠᠭᠠᠯᠠᠭᠤᠷ ᠢ ᠲᠠᠯᠪᠢᠨ᠎ᠠ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::ThumbnailCleaner</name>
+    <message>
+        <location filename="../cleaner/thumbnail_cleaner.cpp" line="40"/>
+        <source>Thumbnail cache</source>
+        <translation>ᠵᠢᠷᠤᠭ ᠢ ᠠᠯᠭᠤᠷᠬᠠᠨ ᠬᠠᠳᠠᠭᠠᠯᠠᠬᠤ ᠶᠢ ᠤᠮᠳᠤᠭᠠᠢ᠌ᠯᠠ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/thumbnail_cleaner.cpp" line="44"/>
+        <source>After cleaning, viewing thumbnails will slow dowm. Please clean as needed</source>
+        <translation>ᠴᠡᠪᠡᠷᠯᠡᠭᠰᠡᠨ ᠦ ᠳᠠᠷᠠᠭ᠎ᠠ ᠂ ᠠᠭᠰᠢᠭᠠᠬᠤ ᠵᠢᠷᠤᠭ ᠤᠳᠠᠭᠠᠨ ᠪᠣᠯᠵᠤ ᠮᠡᠳᠡᠨ᠎ᠡ ᠂ ᠬᠡᠷᠡᠭᠴᠡᠭᠡ ᠶᠣᠰᠣᠭᠠᠷ ᠴᠡᠪᠡᠷᠯᠡᠭᠡᠷᠡᠢ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::TrashCleaner</name>
+    <message>
+        <location filename="../cleaner/trash_cleaner.cpp" line="26"/>
+        <source>Trash</source>
+        <translation>ᠡᠭᠡᠭᠦᠯᠦᠨ ᠬᠤᠷᠢᠶᠠᠬᠤ ᠥᠷᠲᠡᠭᠡ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/trash_cleaner.cpp" line="30"/>
+        <source>Before cleaning, please confirm that all files in the recycle bin are removable</source>
+        <translation>ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠬᠤ ᠠᠴᠠ ᠡᠮᠦᠨ᠎ᠡ ᠡᠭᠡᠭᠦᠯᠦᠨ ᠬᠤᠷᠢᠶᠠᠬᠤ ᠥᠷᠲᠡᠭᠡᠨ ᠳᠡᠬᠢ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠢ ᠴᠥᠮ ᠬᠠᠰᠤᠵᠤ ᠪᠣᠯᠬᠤ ᠶᠢ ᠨᠤᠲᠠᠯᠠᠬᠤ ᠬᠡᠷᠡᠭᠲᠡᠶ ᠃</translation>
+    </message>
+</context>
+<context>
+    <name>junk_clean::WechatCleaner</name>
+    <message>
+        <location filename="../cleaner/wechat_cleaner.cpp" line="153"/>
+        <source>Wechat</source>
+        <translation>ᠸᠢᠴᠠᠲ ᠃</translation>
+    </message>
+    <message>
+        <location filename="../cleaner/wechat_cleaner.cpp" line="157"/>
+        <source>Clean up files received on wechat</source>
+        <translation>ᠸᠢᠴᠠᠲ ᠤᠨ ᠬᠦᠯᠢᠶᠡᠨ ᠠᠪᠤᠭᠰᠠᠨ ᠪᠢᠴᠢᠭ ᠮᠠᠲ᠋ᠧᠷᠢᠶᠠᠯ ᠢ ᠢᠯᠭᠠᠷᠠᠭᠤᠯᠤᠨ᠎ᠠ᠃</translation>
+    </message>
+</context>
+</TS>

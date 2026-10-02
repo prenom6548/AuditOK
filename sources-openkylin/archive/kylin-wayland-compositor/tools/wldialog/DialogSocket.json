@@ -1,0 +1,445 @@
+{
+    "protocol_version": "1.0",
+    "description": "客户端与 wldialog 通信的协议标准",
+    "routing_logic": {
+        "description": "接收端通过检查根对象中存在的特定键名来判断消息类型。'control' 和 'dialog' 键互斥，必须且只能存在一个。",
+        "rules": [
+            "若存在 'control' 键，则为控制信号，忽略其他业务键。",
+            "若存在 'dialog' 键，则为对话框请求，忽略其他业务键。",
+            "若存在 'update' 键，则为对话框数据更新请求，update请求之前没有dialog请求发送时该请求无效，当update键与control或dialog键同时存在时，update键内容会被忽略。",
+            "若同时存在或都不存在，则视为协议错误。",
+            "【注意】对话框具有‘一次性’特征：一旦 'dialog' 请求被处理并显示，后续任何尝试创建新对话框的 'dialog' 请求都将被拒绝，直到当前对话框通过 'control' 指令或用户操作被关闭"
+        ]
+    },
+    "control": {
+        "request": {
+            "description": "进程控制（如关闭进程等操作）。",
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "integer",
+                    "required": true,
+                    "description": "进程控制操作类型。",
+                    "values": {
+                        "0": "请求关闭进程",
+                        "1": "保留（未使用）",
+                        "2": "保留（未使用）"
+                    }
+                }
+            }
+        },
+        "response": {
+            "description": "wldialog 处理后不返回任何数据。",
+            "format": "none"
+        }
+    },
+    "update": {
+        "type": "object",
+        "description": "请求对话框内容更新，发送端可以发送dialog请求中已发送控件的最新内容用于更新对话框，客户端通过name键值更新对应控件",
+        "request": {
+            "properties": {
+                "list": {
+                    "description": "用于更新列表内容，该列表数据会完全替代对应的旧数据。新列表的mode键值必须和原列表的键值内容一致。",
+                    "$ref": "#/dialog/request/fields/list"
+                }
+            }
+        }
+    },
+    "dialog": {
+        "type": "object",
+        "request": {
+            "description": "构建对话框，根据字段内容设置控件。wldialog进程同一时间只允许存在一个由dialog字段创建的对话框实例。如果对话框已存在，新的 'dialog' 请求会被接收端忽略。",
+            "properties": {
+                "parent_window": {
+                    "type": "string",
+                    "required": false,
+                    "description": "父窗口标识，用于窗口归属。格式为wayland:<HANDLE>，<HANDLE> 是通过 xdg_foreign 协议获取的surface handle",
+                    "example": "wayland:cfce5d9ff2237badc8239b8116e22f9f"
+                },
+                "modal": {
+                    "type": "boolean",
+                    "required": false,
+                    "description": "模态窗口属性，必须设置parent_window字段才有效。"
+                },
+                "title_bar": {
+                    "type": "string",
+                    "description": "窗口装饰栏按钮状态，如果当前字段未设置，则窗口装饰栏为正常三联状态",
+                    "required": false,
+                    "default": "close_only",
+                    "enum": [
+                        "close_only",
+                        "no_minimizable",
+                        "no_maximizable"
+                    ]
+                },
+                "window_title": {
+                    "type": "string",
+                    "required": false,
+                    "description": "标题栏名称",
+                    "example": "Permission Request"
+                },
+                "window_icon": {
+                    "type": "string",
+                    "required": false,
+                    "description": "标题栏对话框图标名称。",
+                    "example": "dialog-warning"
+                },
+                "title_icon": {
+                    "type": "string",
+                    "required": false,
+                    "description": "对话框内图标名称。。",
+                    "example": "dialog-warning"
+                },
+                "title": {
+                    "type": "object",
+                    "required": false,
+                    "description": "对话框主标题。",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "标题文本内容",
+                            "required": true,
+                            "example": "Remote Desktop Request"
+                        },
+                        "font_bold": {
+                            "type": "boolean",
+                            "required": false,
+                            "default": false,
+                            "description": "字体是否加粗，如果字段未设置，则为默认状态。"
+                        }
+                    }
+                },
+                "sub_title": {
+                    "type": "object",
+                    "required": false,
+                    "description": "对话框副标题（辅助说明信息）。",
+                    "properties": {
+                        "text": {
+                            "type": "string",
+                            "description": "副标题文本内容",
+                            "required": true,
+                            "example": "Application: MyApp"
+                        },
+                        "font_light": {
+                            "type": "boolean",
+                            "required": false,
+                            "default": true,
+                            "description": "是否使用细体字体，如果字段未设置，则为默认状态。"
+                        }
+                    }
+                },
+                "message": {
+                    "type": "string",
+                    "required": false,
+                    "description": "正文内容（主要说明文本）。",
+                    "example": "MyApp wants to control your input devices."
+                },
+                "details": {
+                    "type": "string",
+                    "required": false,
+                    "description": "正文内容的额外说明（支持简单 HTML 标签显示）。必须要有message的信息才能够设置",
+                    "example": "• <b>Keyboard:</b> Control your keyboard input<br/>"
+                },
+                "button_mode": {
+                    "type": "string",
+                    "enum": [
+                        "normal",
+                        "deny_only",
+                        "allow_only"
+                    ],
+                    "required": false,
+                    "default": "normal",
+                    "description": "【底部按钮】按钮显示模式：normal=Allow 和 Deny 双按钮；deny_only=仅 Allow 按钮；allow_only=仅 Deny 按钮。（注意：底部按钮点击之后wldialog进程会发送完返回信息后立即退出。）"
+                },
+                "allow_text": {
+                    "type": "string",
+                    "required": false,
+                    "description": "【底部按钮】自定义 'Allow' 按钮的显示文本。在 button_mode=normal 或 allow_only 时生效。"
+                },
+                "deny_text": {
+                    "type": "string",
+                    "required": false,
+                    "description": "【底部按钮】自定义 'Deny' 按钮的显示文本。在 button_mode=normal 或 deny_only 时生效。"
+                },
+                "check_boxes": {
+                    "type": "array",
+                    "required": false,
+                    "description": "复选框",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": {
+                                "type": "string",
+                                "description": "唯一标识符，用于返回结果（必须在对话框中全局唯一）。"
+                            },
+                            "text": {
+                                "type": "string",
+                                "description": "复选框的说明文本。"
+                            },
+                            "default": {
+                                "type": "boolean",
+                                "default": false,
+                                "description": "默认是否勾选。"
+                            }
+                        },
+                        "required": [
+                            "name",
+                            "text"
+                        ]
+                    },
+                    "example": [
+                        {
+                            "name": "check_box1",
+                            "text": "remember this choice"
+                        },
+                        {
+                            "name": "check_box2",
+                            "text": "enable"
+                        }
+                    ]
+                },
+                "list": {
+                    "type": "object",
+                    "description": "列表",
+                    "required": [
+                        "name",
+                        "data"
+                    ],
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "唯一标识符，用于返回结果（必须在对话框中全局唯一）"
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": [
+                                "list",
+                                "icon"
+                            ],
+                            "default": "list",
+                            "description": "显示模式, list：列表模式，icon：图标模式"
+                        },
+                        "multiple": {
+                            "type": "boolean",
+                            "default": false,
+                            "description": "列表选中模式是否为多选，默认false为单选"
+                        },
+                        "data": {
+                            "type": "array",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "required": [
+                                    "key",
+                                    "title"
+                                ],
+                                "description": "每个item里面的字段及字段的属性必须一致",
+                                "properties": {
+                                    "key": {
+                                        "type": "string",
+                                        "description": "选项的唯一标识符，将作为该 list 的选中结果返回"
+                                    },
+                                    "title": {
+                                        "type": "string",
+                                        "description": "主标题"
+                                    },
+                                    "sub_title": {
+                                        "type": "string",
+                                        "description": "次标题"
+                                    },
+                                    "icon": {
+                                        "type": "string",
+                                        "description": "图标路径"
+                                    },
+                                    "text": {
+                                        "type": "string",
+                                        "description": "显示文本"
+                                    },
+                                    "selected": {
+                                        "type": "boolean",
+                                        "default": false,
+                                        "description": "是否默认选中"
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    "example": {
+                        "name": "list",
+                        "mode": "icon",
+                        "items": [
+                            {
+                                "key": "item1",
+                                "title": "peony",
+                                "sub_title": "/home/kylin/",
+                                "icon": "system-file-manager",
+                                "text": "394bbe58-03c8-454e-9c51-274aa0ee5eb9"
+                            },
+                            {
+                                "key": "item2",
+                                "title": "terminal",
+                                "sub_title": "kylin@kylin-pc: ~",
+                                "icon": "utilities-terminal",
+                                "text": "d1ef03b1-443c-4a91-92e3-1f4d301e0dea"
+                            }
+                        ]
+                    }
+                },
+                "customs": {
+                    "type": "array",
+                    "required": false,
+                    "description": "通用容器，用于组织多个控件。",
+                    "items": {
+                        "type": "object",
+                        "required": [
+                            "title"
+                        ],
+                        "properties": {
+                            "title": {
+                                "type": "string",
+                                "description": "控件组合的名称"
+                            },
+                            "check_boxes": {
+                                "$ref": "#/dialog/request/fields/check_boxes"
+                            },
+                            "list": {
+                                "$ref": "#/dialog/request/fields/list"
+                            }
+                        }
+                    }
+                }
+            },
+            "tab_page": {
+                "type": "object",
+                "description": "标签页容器，每个标签页作为容器可包含多种控件。",
+                "required": [
+                    "name",
+                    "data"
+                ],
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "唯一标识符，用于返回结果（必须在对话框中全局唯一）"
+                    },
+                    "data": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "required": [
+                                "title"
+                            ],
+                            "properties": {
+                                "title": {
+                                    "type": "string",
+                                    "description": "标签页标题。"
+                                },
+                                "check_boxes": {
+                                    "$ref": "#/dialog/request/fields/check_boxes"
+                                },
+                                "list": {
+                                    "$ref": "#/dialog/request/fields/list"
+                                },
+                                "customs": {
+                                    "$ref": "#/dialog/request/fields/customs"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    },
+    "response": {
+        "description": "wldialog 返回的用户决策结果。仅返回对话框当前显示页面的所有结果。",
+        "format": "UTF-8 JSON object",
+        "fields": {
+            "user_action": {
+                "type": "integer",
+                "enum": [
+                    0,
+                    1,
+                    2
+                ],
+                "description": "用户操作结果：0 = 用户点击了允许（Allow）按钮；1 = 用户点击了拒绝（Deny）按钮；2 = 用户未通过按钮确认，而是直接关闭了对话框（例如点击窗口关闭按钮或按 Esc 键）。"
+            },
+            "check_boxes": {
+                "type": "array",
+                "description": "对应所有check_box结果",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "当前check_box的唯一标识符,如果是在tabpage等可切换容器下的check_box，name格式为tabPage_name|page_title|checkBox_name"
+                        },
+                        "checked": {
+                            "type": "boolean",
+                            "description": "当前check_box的结果"
+                        }
+                    },
+                    "required": [
+                        "name",
+                        "checked"
+                    ]
+                }
+            },
+            "lists": {
+                "type": "array",
+                "description": "对应所有list结果",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "name",
+                        "items"
+                    ],
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "list的唯一标识符, 如果是在tabpage等可切换容器下的list，name格式为parent_name|cur_name(例：tabPage_name|page_title|list_name）"
+                        },
+                        "items": {
+                            "type": "array",
+                            "key": {
+                                "type": "string",
+                                "description": "list里面每个选中item的标识符"
+                            }
+                        }
+                    }
+                }
+            },
+            "tab_pages": {
+                "type": "array",
+                "description": "对应所有tabPage的操作结果",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "name",
+                        "cur_page",
+                        "data"
+                    ],
+                    "properties": {
+                        "name": {
+                            "type": "string",
+                            "description": "对应tabPage容器的唯一标识符"
+                        },
+                        "cur_page": {
+                            "type": "string",
+                            "description": "对应tabPage选中的页面标题"
+                        },
+                        "data": {
+                            "type": "object",
+                            "description": "对应tabPage选中页面内可交互控件的结果",
+                            "check_boxes": {
+                                "$ref": "#/dialog/response/fields/check_boxes"
+                            },
+                            "lists": {
+                                "$ref": "#/dialog/response/fields/lists"
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

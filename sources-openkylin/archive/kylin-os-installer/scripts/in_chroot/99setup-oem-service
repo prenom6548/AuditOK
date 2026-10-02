@@ -1,0 +1,135 @@
+#!/bin/bash
+
+set -e
+
+if [[ "${is_minimal}" = "true" ]]; then
+    return 0
+elif [[ "${is_ghost}" = "true" ]]; then
+    return 0
+elif [[ "${is_oem_mode}" = "false" ]]; then
+    if [[ -d /opt/apps-third ]]; then
+	if [[ -f /usr/share/applications/preinstall-app.desktop ]]; then
+    		cp -a /usr/share/applications/preinstall-app.desktop /etc/xdg/autostart || true
+    	fi
+    fi
+    return 0
+fi
+
+
+# 安装器自更新
+if [[ -d /cdrom/third-party ]]; then
+    kylin_os_update=`find  /cdrom/third-party | grep  "kylin-os-installer"` || true
+    if [[ -n ${kylin_os_update} ]]; then
+           dpkg -i ${kylin_os_update} || true
+    fi
+    
+    if [[ -f /tmp/ky-installer.cfg ]]; then
+      	   cp /tmp/ky-installer.cfg /var/log/installer/ky-installer.cfg
+    fi
+fi
+
+
+oem_mode=
+if grep -q 'test-mode' /proc/cmdline; then
+    oem_mode="oem-automatic"
+    # 拷贝自定义的配置
+    if [[ -f /cdrom/kyple-installer.cfg ]]; then
+        cp /cdrom/kyple-installer.cfg /var/log/installer/ky-installer.cfg
+        echo 'test-mode=true' >>/var/log/installer/ky-installer.cfg
+    fi
+else
+    oem_mode="oem"
+fi
+
+if grep -q 'auti-mode' /proc/cmdline; then
+    	if [[ -f /usr/share/kylin-os-installer/data/oem-qc.desktop ]]; then
+        	cp -a /usr/share/kylin-os-installer/data/oem-qc.desktop /etc/xdg/autostart
+        	cp -a /usr/share/kylin-os-installer/data/oem-qc  /var/log/installer/oem-qc 
+	       
+	       	if grep -q 'auti-only' /proc/cmdline; then
+#                	cp -a /usr/share/kylin-os-installer/scripts/oem.sh /usr/sbin/oem-second
+        		cp -a /usr/share/kylin-os-installer/scripts/oem-second /usr/sbin/
+			oem_mode="oem-automatic"
+			if [[ -f /tmp/ky-installer.cfg ]]; then
+        			cp /tmp/ky-installer.cfg /var/log/installer/ky-installer.cfg
+	    		fi
+			sed -i "/auti-only/d" /var/log/installer/ky-installer.cfg
+                	echo "auti-only=true" >>/var/log/installer/ky-installer.cfg
+    		else
+        		cp -a /usr/share/kylin-os-installer/scripts/oem-second /usr/sbin/
+    		fi
+        fi
+    	if [[ -f /usr/share/kylin-os-installer/data/oem-unlock.desktop ]]; then
+        	cp -a /usr/share/kylin-os-installer/data/oem-unlock.desktop /etc/xdg/autostart
+        	cp -a /usr/share/kylin-os-installer/data/oem-unlock /var/log/installer/oem-unlock 
+	fi
+	
+    	if [[ "${is_990_9a0}" = "true" ]]; then
+		echo "this is 990_9a0"
+		if [[ -e /usr/share/lightdm/lightdm.conf.d/96-kylin-os-installer.conf ]]; then
+        		rm -f /usr/share/lightdm/lightdm.conf.d/96-kylin-os-installer.conf
+    		fi
+		if [[ -e /usr/share/lightdm/lightdm.conf.d/99-ukui-installer.conf ]]; then
+        		mv /usr/share/lightdm/lightdm.conf.d/99-ukui-installer.conf /usr/share/kylin-os-installer
+    		fi
+	fi
+	if [[ -f /usr/share/lightdm/lightdm.conf.d/96-kylin-os-installer.conf ]]; then
+		mv /usr/share/lightdm/lightdm.conf.d/96-kylin-os-installer.conf /usr/share/kylin-os-installer
+	fi
+	
+	sed -i "/exec/d" /usr/bin/kylin-os-installer-wrapper
+        echo "exec /usr/bin/kylin-os-installer-${oem_mode}" >>/usr/bin/kylin-os-installer-wrapper			
+
+else
+#    if [[ -f /usr/share/kylin-os-installer/data/oem-qc.service ]]; then
+#        cp -a /usr/share/kylin-os-installer/data/oem-qc.service /lib/systemd/system	
+#        cp -a /usr/share/kylin-os-installer/scripts/oem-second /usr/sbin/
+#        /bin/systemctl enable oem-qc.service
+#    fi
+
+    if [[ "${is_990_9a0}" = "true" ]]; then
+	echo "this is 990_9a0"
+	if [[ -e /usr/share/lightdm/lightdm.conf.d/96-kylin-os-installer.conf ]]; then
+        	rm -f /usr/share/lightdm/lightdm.conf.d/96-kylin-os-installer.conf
+    	fi
+    else
+	echo "NoDisplay=true" >>/usr/share/applications/kylin-os-installer.desktop
+    	cp -a /usr/share/applications/kylin-os-installer.desktop /etc/xdg/autostart
+    	sed -i "/Exec/d" /etc/xdg/autostart/kylin-os-installer.desktop
+  	echo "Exec=/usr/bin/kylin-os-installer-${oem_mode}" >>/etc/xdg/autostart/kylin-os-installer.desktop
+    	#sed -i "/exec/d" /usr/bin/kylin-os-installer-wrapper
+	#echo "exec /usr/bin/kylin-os-installer-${oem_mode}" >>/usr/bin/kylin-os-installer-wrapper
+    fi
+fi
+
+
+
+if [[ "${is_990_9a0}" = "true" ]]; then
+#    sed -i "s/kylin-os-installer/kylin-os-installer-${oem_mode}/" /usr/bin/start-installer
+    sed -i "/sudo/d" /usr/bin/start-installer
+    echo "kylin-os-installer-${oem_mode}" >>/usr/bin/start-installer
+else
+#    cp -a /usr/share/applications/kylin-os-installer.desktop /etc/xdg/autostart
+#    sed -i "/Exec/d" /etc/xdg/autostart/kylin-os-installer.desktop
+#    echo "Exec=/usr/bin/kylin-os-installer-${oem_mode}" >>/etc/xdg/autostart/kylin-os-installer.desktop
+    if [[ -f /usr/share/kylin-os-installer/data/oem-name.service ]]; then
+    	cp -a /usr/share/kylin-os-installer/data/oem-name.service /lib/systemd/system
+    	/bin/systemctl enable oem-name.service
+    fi
+    /bin/systemctl disable kylin-os-installer
+fi
+
+# 删除用户与重启 lightdm
+if [[ -f /usr/share/kylin-os-installer/data/delete-oem-user.service ]]; then
+    cp -a /usr/share/kylin-os-installer/data/delete-oem-user.service /lib/systemd/system
+    /bin/systemctl disable delete-oem-user.service
+fi
+
+if [[ -f /usr/share/kylin-os-installer/data/delete-oem-user.sh ]]; then
+    cp -a /usr/share/kylin-os-installer/data/delete-oem-user.sh /usr/sbin
+fi
+
+if [[ -e /etc/xdg/autostart/ukui-new-function-introduction.desktop ]]; then
+    mv /etc/xdg/autostart/ukui-new-function-introduction.desktop  /usr/share/kylin-os-installer || true
+fi
+

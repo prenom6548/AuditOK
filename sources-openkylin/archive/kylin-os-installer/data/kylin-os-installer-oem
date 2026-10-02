@@ -1,0 +1,49 @@
+#!/bin/bash
+
+set -e
+
+if [[ -f /usr/share/glib-2.0/schemas/org.ukui.flash-disk.autoload.gschema.xml ]]; then
+    gsettings set org.ukui.flash-disk.autoload ifautoload false
+fi
+
+#防止锁屏
+gsettings set org.ukui.power-manager sleep-computer-ac -1 || true
+gsettings set org.ukui.power-manager sleep-computer-battery -1 || true
+
+gsettings set org.ukui.screensaver idle-lock -1 || true
+gsettings set org.ukui.screensaver idle-delay -1 || true
+gsettings set org.ukui.screensaver idle-activation-enabled false || true
+
+gsettings set org.ukui.power-manager sleep-display-ac -1 || true
+gsettings set org.ukui.power-manager sleep-display-battery -1 || true
+
+
+GRANTED_XHOST_ROOT=no
+if env | grep XDG_SESSION_TYPE|grep wayland > /dev/null 2>&1; then
+    if ! xhost | grep -qi 'SI:localuser:root$'; then
+        xhost +SI:localuser:root
+        GRANTED_XHOST_ROOT=yes
+    fi
+fi
+
+# 卸载可能由于自动挂载的目录
+if grep -q media.oem /proc/mounts; then
+    echo 'Kylin123.' | sudo -S umount /media/oem/*
+fi
+
+# 990,9A0 wayland 需要此设置
+if egrep -qi 'kirin.?9[09]0' /proc/cpuinfo; then
+    xhost +SI:localuser:root
+fi
+
+if [[ -f /var/log/installer/ky-installer.cfg ]]; then
+      sudo cp -a /var/log/installer/ky-installer.cfg /home/oem || true
+      sudo chmod +777 /home/oem/ky-installer.cfg
+fi
+
+/usr/bin/kylin-os-installer oem
+
+if test "x$GRANTED_XHOST_ROOT" = 'xyes'; then
+                xhost -SI:localuser:root
+fi
+

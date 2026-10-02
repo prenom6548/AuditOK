@@ -1,0 +1,488 @@
+// SPDX-FileCopyrightText: 2023 KylinSoft Co., Ltd.
+//
+// SPDX-License-Identifier: GPL-1.0-or-later
+
+#include <wlr/util/region.h>
+
+#include "scene/surface.h"
+#include "view/view.h"
+#include "xwayland_p.h"
+
+struct xwayland_unmanaged {
+    struct wl_list link;
+    struct xwayland_server *xwayland;
+    struct wlr_xwayland_surface *wlr_xwayland_surface;
+    struct scene_node *surface_node;
+    struct wl_listener node_destroy;
+
+    struct wl_listener client_commit;
+    struct wl_listener associate;
+    struct wl_listener dissociate;
+    struct wl_listener map;
+    struct wl_listener unmap;
+    struct wl_listener destroy;
+
+    struct wl_listener request_activate;
+    struct wl_listener request_configure;
+    // struct wl_listener request_fullscreen;
+
+    struct wl_listener set_geometry;
+    struct wl_listener set_override_redirect;
+};
+
+static bool xwayland_unmanaged_hover(struct seat *seat, struct scene_node *node, double x, double y,
+                                     uint32_t time, bool first, bool hold, void *data)
+{
+    struct wlr_surface *surface = wlr_surface_try_from_node(node);
+
+    xwayland_update_seat(seat);
+    xwayland_update_hovered_surface(surface);
+
+    if (!hold) {
+        seat_notify_motion(seat, surface, time, xwayland_scale(x), xwayland_scale(y), first);
+        return false;
+    }
+
+    struct xwayland_unmanaged *unmanaged = data;
+    int lx, ly;
+    scene_node_coords(unmanaged->surface_node, &lx, &ly);
+    seat_notify_motion(seat, surface, time, xwayland_scale(x - lx), xwayland_scale(y - ly), first);
+    return true;
+}
+
+static bool xwayland_unmanaged_is_focusable(struct xwayland_unmanaged *unmanaged)
+{
+    struct wlr_xwayland_surface *wlr_xwayland_surface = unmanaged->wlr_xwayland_surface;
+
+    if (!wlr_xwayland_or_surface_wants_focus(wlr_xwayland_surface)) {
+        return false;
+    }
+
+    /* No Input and Globally Active clients set the input field to False,
+     * which requests that the window manager not set the input focus to their top-level window.
+     */
+    if (wlr_xwayland_surface->hints && !wlr_xwayland_surface->hints->input) {
+        return false;
+    }
+
+    return xwayland_surface_has_input(wlr_xwayland_surface, INPUT_MASK_KEYBOARD);
+}
+
+static void xwayland_unmanaged_focus(struct xwayland_unmanaged *unmanaged)
+{
+    if (!xwayland_unmanaged_is_focusable(unmanaged)) {
+        return;
+    }
+
+    struct seat *seat = seat_from_wlr_seat(unmanaged->xwayland->wlr_xwayland->seat);
+    seat_focus_surface(seat, unmanaged->wlr_xwayland_surface->surface);
+}
+
+static void xwayland_unmanaged_click(struct seat *seat, struct scene_node *node, uint32_t button,
+                                     bool pressed, uint32_t time, enum click_state state,
+                                     void *data)
+{
+    xwayland_update_seat(seat);
+
+    seat_notify_button(seat, time, button, pressed);
+
+    /* only do activated when button pressed */
+    if (!pressed) {
+        return;
+    }
+
+    /* only activate and focus top surface */
+    struct xwayland_unmanaged *unmanaged = data;
+    xwayland_unmanaged_focus(unmanaged);
+}
+
+static void xwayland_unmanaged_leave(struct seat *seat, struct scene_node *node, bool last,
+                                     void *data)
+{
+    /* so surface will call set_cursor when enter again */
+    struct wlr_surface *surface = wlr_surface_try_from_node(node);
+    seat_notify_leave(seat, surface);
+}
+
+static struct scene_node *xwayland_unmanaged_get_root(void *data)
+{
+    struct xwayland_unmanaged *unmanaged = data;
+    return unmanaged->surface_node;
+}
+
+static struct wlr_surface *xwayland_unmanaged_get_toplevel(void *data)
+{
+    struct xwayland_unmanaged *unmanaged = data;
+    /* only return surface if focusable */
+    if (!xwayland_unmanaged_is_focusable(unmanaged)) {
+        return NULL;
+    }
+    return unmanaged->wlr_xwayland_surface->surface;
+}
+
+static const struct input_event_node_impl xwayland_unmanaged_event_node_impl = {
+    .hover = xwayland_unmanaged_hover,
+    .click = xwayland_unmanaged_click,
+    .leave = xwayland_unmanaged_leave,
+};
+
+static void unmanaged_handle_request_activate(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, request_activate);
+    xwayland_unmanaged_focus(unmanaged);
+}
+
+static void unmanaged_handle_request_configure(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, request_configure);
+    struct wlr_xwayland_surface *wlr_xwayland_surface = unmanaged->wlr_xwayland_surface;
+    struct wlr_xwayland_surface_configure_event *event = data;
+    wlr_xwayland_surface_configure(wlr_xwayland_surface, event->x, event->y, event->width,
+                                   event->height);
+    if (unmanaged->surface_node) {
+        scene_node_set_position(unmanaged->surface_node, xwayland_unscale(event->x),
+                                xwayland_unscale(event->y));
+    }
+}
+
+static void unmanaged_handle_set_geometry(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, set_geometry);
+    struct wlr_xwayland_surface *wlr_xwayland_surface = unmanaged->wlr_xwayland_surface;
+    if (unmanaged->surface_node) {
+        scene_node_set_position(unmanaged->surface_node, xwayland_unscale(wlr_xwayland_surface->x),
+                                xwayland_unscale(wlr_xwayland_surface->y));
+    }
+}
+
+static void xwayland_unmanaged_try_grab_pointer(struct xwayland_unmanaged *unmanaged)
+{
+    struct wlr_xwayland_surface *wlr_xwayland_surface = unmanaged->wlr_xwayland_surface;
+
+    if (wlr_xwayland_surface->parent &&
+        (xwayland_surface_has_type(wlr_xwayland_surface, NET_WM_WINDOW_TYPE_POPUP_MENU) ||
+         xwayland_surface_has_type(wlr_xwayland_surface, NET_WM_WINDOW_TYPE_DROPDOWN_MENU) ||
+         xwayland_surface_has_type(wlr_xwayland_surface, NET_WM_WINDOW_TYPE_COMBO))) {
+        xwayland_surface_set_grab_pointer(wlr_xwayland_surface,
+                                          unmanaged->xwayland->wlr_xwayland->seat, true);
+        kywc_log(KYWC_DEBUG, "Unmanaged popup menu start grab pointer");
+    }
+}
+
+static void unmanaged_handle_map(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, map);
+    struct wlr_xwayland_surface *wlr_xwayland_surface = unmanaged->wlr_xwayland_surface;
+
+    /* Stack new surface on top */
+    wlr_xwayland_surface_restack(wlr_xwayland_surface, NULL, XCB_STACK_MODE_ABOVE);
+
+    xwayland_unmanaged_focus(unmanaged);
+    xwayland_unmanaged_try_grab_pointer(unmanaged);
+
+    unmanaged->set_geometry.notify = unmanaged_handle_set_geometry;
+    wl_signal_add(&wlr_xwayland_surface->events.set_geometry, &unmanaged->set_geometry);
+
+    scene_node_set_enabled(unmanaged->surface_node, true);
+    scene_node_set_position(unmanaged->surface_node, xwayland_unscale(wlr_xwayland_surface->x),
+                            xwayland_unscale(wlr_xwayland_surface->y));
+
+    /* workaround: fixup xwayland pointer position when no hovered surface */
+    xwayland_fixup_pointer_position(wlr_xwayland_surface->surface);
+
+    /* workaround: wechat drag icon has no NET_WM_WINDOW_TYPE_DND */
+    if ((xwayland_is_dragging_x11(NULL) &&
+         !xwayland_surface_has_input(wlr_xwayland_surface, INPUT_MASK_POINTER) &&
+         xwayland_surface_has_type(wlr_xwayland_surface, NET_WM_WINDOW_TYPE_TOOLTIP)) ||
+        xwayland_surface_has_type(wlr_xwayland_surface, NET_WM_WINDOW_TYPE_DND)) {
+        scene_node_set_input_bypassed(unmanaged->surface_node, true);
+    }
+}
+
+static void unmanaged_handle_unmap(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, unmap);
+
+    wl_list_remove(&unmanaged->set_geometry.link);
+    if (unmanaged->surface_node) {
+        scene_node_set_enabled(unmanaged->surface_node, false);
+    }
+
+    struct wlr_surface *wlr_surface = unmanaged->wlr_xwayland_surface->surface;
+    struct wlr_seat *wlr_seat = unmanaged->xwayland->wlr_xwayland->seat;
+
+    if (wlr_seat && wlr_seat->keyboard_state.focused_surface == wlr_surface) {
+        struct wlr_surface *parent_surface = unmanaged->wlr_xwayland_surface->parent
+                                                 ? unmanaged->wlr_xwayland_surface->parent->surface
+                                                 : NULL;
+        struct view *parent = parent_surface ? view_try_from_wlr_surface(parent_surface) : NULL;
+        struct view *activated_view = view_manager_get_activated();
+        struct wlr_surface *focused_surface = wlr_seat->keyboard_state.focused_surface;
+
+        if (activated_view && activated_view != parent) {
+            if (activated_view->surface != focused_surface) {
+                view_set_focus(activated_view, seat_from_wlr_seat(wlr_seat));
+            }
+            return;
+        }
+
+        if (parent && KYWC_VIEW_IS_ACTIVATABLE(&parent->base) &&
+            KYWC_VIEW_IS_FOCUSABLE(&parent->base)) {
+            view_do_activate(parent);
+            view_set_focus(parent, seat_from_wlr_seat(wlr_seat));
+        } else {
+            view_activate_topmost(false);
+        }
+    }
+}
+
+static void unmanaged_handle_node_destroy(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, node_destroy);
+    wl_list_remove(&unmanaged->node_destroy.link);
+    unmanaged->surface_node = NULL;
+}
+
+static void unmanaged_handle_client_commit(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, client_commit);
+    if (unmanaged->xwayland->scale == 1.0) {
+        return;
+    }
+
+    struct wlr_surface_state *pending = &unmanaged->wlr_xwayland_surface->surface->pending;
+    pending->width = xwayland_unscale(pending->width);
+    pending->height = xwayland_unscale(pending->height);
+
+    float scale = 1.0 / unmanaged->xwayland->scale;
+    if (pending->committed & WLR_SURFACE_STATE_SURFACE_DAMAGE) {
+        wlr_region_scale(&pending->surface_damage, &pending->surface_damage, scale);
+    }
+    if (pending->committed & WLR_SURFACE_STATE_OPAQUE_REGION) {
+        wlr_region_scale(&pending->opaque, &pending->opaque, scale);
+    }
+    if (pending->committed & WLR_SURFACE_STATE_INPUT_REGION) {
+        wlr_region_scale(&pending->input, &pending->input, scale);
+    }
+    if (pending->committed & WLR_SURFACE_STATE_OFFSET) {
+        pending->dx = xwayland_unscale(pending->dx);
+        pending->dy = xwayland_unscale(pending->dy);
+    }
+}
+
+static const char *unmanaged_handle_desc(const struct scene_node *node, void *data)
+{
+    struct wlr_xwayland_surface *xsurface = data;
+    return xsurface->class;
+}
+
+static const struct scene_node_role_interface role_impl = {
+    .desc = unmanaged_handle_desc,
+};
+
+static void unmanaged_handle_associate(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, associate);
+    struct wlr_xwayland_surface *wlr_xwayland_surface = unmanaged->wlr_xwayland_surface;
+
+    unmanaged->unmap.notify = unmanaged_handle_unmap;
+    wl_signal_add(&wlr_xwayland_surface->surface->events.unmap, &unmanaged->unmap);
+
+    struct view_layer *layer = view_manager_get_layer(LAYER_UNMANAGED, false);
+    struct scene_surface *scene_surface =
+        scene_surface_create(layer->tree, wlr_xwayland_surface->surface);
+    unmanaged->surface_node = &scene_surface->buffer->node;
+    scene_node_set_role(unmanaged->surface_node, SCENE_ROLE_XWAYLAND_UNMANAGED, &role_impl,
+                        wlr_xwayland_surface);
+    scene_node_set_enabled(unmanaged->surface_node, false);
+    input_event_node_create(unmanaged->surface_node, &xwayland_unmanaged_event_node_impl,
+                            xwayland_unmanaged_get_root, xwayland_unmanaged_get_toplevel,
+                            unmanaged);
+
+    xwayland_surface_shape_select_input(wlr_xwayland_surface, true);
+    xwayland_surface_apply_shape_region(wlr_xwayland_surface);
+    xwayland_apply_wm_window_opacity(wlr_xwayland_surface->window_id, false);
+    xwayland_apply_blur_region(wlr_xwayland_surface->window_id, false);
+    xwayland_apply_opaque_region(wlr_xwayland_surface->window_id, false);
+
+    unmanaged->client_commit.notify = unmanaged_handle_client_commit;
+    wl_signal_add(&wlr_xwayland_surface->surface->events.client_commit, &unmanaged->client_commit);
+    unmanaged->map.notify = unmanaged_handle_map;
+    wl_signal_add(&wlr_xwayland_surface->surface->events.map, &unmanaged->map);
+    unmanaged->node_destroy.notify = unmanaged_handle_node_destroy;
+    wl_signal_add(&unmanaged->surface_node->events.destroy, &unmanaged->node_destroy);
+}
+
+static void unmanaged_handle_dissociate(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, dissociate);
+
+    scene_node_destroy(unmanaged->surface_node);
+
+    wl_list_remove(&unmanaged->client_commit.link);
+    wl_list_remove(&unmanaged->map.link);
+    wl_list_remove(&unmanaged->unmap.link);
+}
+
+static void unmanaged_handle_destroy(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged = wl_container_of(listener, unmanaged, destroy);
+
+    wl_list_remove(&unmanaged->link);
+    wl_list_remove(&unmanaged->request_configure.link);
+    wl_list_remove(&unmanaged->set_override_redirect.link);
+    wl_list_remove(&unmanaged->request_activate.link);
+    wl_list_remove(&unmanaged->associate.link);
+    wl_list_remove(&unmanaged->dissociate.link);
+    wl_list_remove(&unmanaged->destroy.link);
+
+    free(unmanaged);
+}
+
+static void unmanaged_handle_set_override_redirect(struct wl_listener *listener, void *data)
+{
+    struct xwayland_unmanaged *unmanaged =
+        wl_container_of(listener, unmanaged, set_override_redirect);
+    struct wlr_xwayland_surface *wlr_xwayland_surface = unmanaged->wlr_xwayland_surface;
+    struct xwayland_server *xwayland = unmanaged->xwayland;
+
+    if (wlr_xwayland_surface->surface) {
+        if (wlr_xwayland_surface->surface->mapped) {
+            unmanaged_handle_unmap(&unmanaged->unmap, NULL);
+        }
+        unmanaged_handle_dissociate(&unmanaged->dissociate, NULL);
+    }
+    unmanaged_handle_destroy(&unmanaged->destroy, NULL);
+
+    xwayland_view_create(xwayland, wlr_xwayland_surface);
+}
+
+void xwayland_unmanaged_create(struct xwayland_server *xwayland,
+                               struct wlr_xwayland_surface *wlr_xwayland_surface)
+{
+    struct xwayland_unmanaged *unmanaged = calloc(1, sizeof(*unmanaged));
+    if (!unmanaged) {
+        return;
+    }
+
+    unmanaged->xwayland = xwayland;
+    wl_list_insert(&xwayland->unmanaged_surfaces, &unmanaged->link);
+    unmanaged->wlr_xwayland_surface = wlr_xwayland_surface;
+
+    unmanaged->associate.notify = unmanaged_handle_associate;
+    wl_signal_add(&wlr_xwayland_surface->events.associate, &unmanaged->associate);
+    unmanaged->dissociate.notify = unmanaged_handle_dissociate;
+    wl_signal_add(&wlr_xwayland_surface->events.dissociate, &unmanaged->dissociate);
+    unmanaged->destroy.notify = unmanaged_handle_destroy;
+    wl_signal_add(&wlr_xwayland_surface->events.destroy, &unmanaged->destroy);
+
+    unmanaged->request_activate.notify = unmanaged_handle_request_activate;
+    wl_signal_add(&wlr_xwayland_surface->events.request_activate, &unmanaged->request_activate);
+    unmanaged->request_configure.notify = unmanaged_handle_request_configure;
+    wl_signal_add(&wlr_xwayland_surface->events.request_configure, &unmanaged->request_configure);
+
+    unmanaged->set_override_redirect.notify = unmanaged_handle_set_override_redirect;
+    wl_signal_add(&wlr_xwayland_surface->events.set_override_redirect,
+                  &unmanaged->set_override_redirect);
+
+    wl_list_init(&unmanaged->client_commit.link);
+    wl_list_init(&unmanaged->map.link);
+    wl_list_init(&unmanaged->unmap.link);
+
+    if (wlr_xwayland_surface->surface) {
+        unmanaged_handle_associate(&unmanaged->associate, NULL);
+        if (wlr_xwayland_surface->surface->mapped) {
+            unmanaged_handle_map(&unmanaged->map, NULL);
+        }
+    }
+}
+
+void xwayland_restack_unmanaged(struct xwayland_server *xwayland)
+{
+    /* Restack unmanaged surfaces on top */
+    struct xwayland_unmanaged *unmanaged;
+    wl_list_for_each_reverse(unmanaged, &xwayland->unmanaged_surfaces, link) {
+        wlr_xwayland_surface_restack(unmanaged->wlr_xwayland_surface, NULL, XCB_STACK_MODE_ABOVE);
+    }
+}
+
+static struct xwayland_unmanaged *xwayland_unmanaged_look_surface(struct xwayland_server *xwayland,
+                                                                  xcb_window_t window_id)
+{
+    struct xwayland_unmanaged *unmanaged;
+    wl_list_for_each(unmanaged, &xwayland->unmanaged_surfaces, link) {
+        if (unmanaged->wlr_xwayland_surface->window_id == window_id) {
+            return unmanaged;
+        }
+    }
+    return NULL;
+}
+
+bool xwayland_unmanaged_set_opacity(struct xwayland_server *xwayland, xcb_window_t window_id,
+                                    float opacity)
+{
+    struct xwayland_unmanaged *unmanaged = xwayland_unmanaged_look_surface(xwayland, window_id);
+    if (!unmanaged) {
+        return false;
+    }
+
+    if (unmanaged->surface_node) {
+        scene_buffer_set_opacity(scene_buffer_from_node(unmanaged->surface_node), opacity);
+    }
+
+    return true;
+}
+
+bool xwayland_unmanaged_set_shape_region(struct xwayland_server *xwayland, xcb_window_t window_id,
+                                         xcb_shape_sk_t kind, const pixman_region32_t *region)
+{
+    struct xwayland_unmanaged *unmanaged = xwayland_unmanaged_look_surface(xwayland, window_id);
+    if (!unmanaged) {
+        return false;
+    }
+    if (!unmanaged->surface_node) {
+        return true;
+    }
+
+    if (kind == XCB_SHAPE_SK_BOUNDING || kind == XCB_SHAPE_SK_CLIP) {
+        scene_node_set_clip_region(unmanaged->surface_node, region);
+    }
+    if (kind == XCB_SHAPE_SK_BOUNDING || kind == XCB_SHAPE_SK_INPUT) {
+        scene_node_set_input_region(unmanaged->surface_node, region);
+        /* empty input region means no input support */
+        bool need_bypassed = kind == XCB_SHAPE_SK_INPUT && !pixman_region32_not_empty(region);
+        scene_node_set_input_bypassed(unmanaged->surface_node, need_bypassed);
+    }
+
+    return true;
+}
+
+bool xwayland_unmanaged_set_blur_region(struct xwayland_server *xwayland, xcb_window_t window_id,
+                                        const pixman_region32_t *region)
+{
+    struct xwayland_unmanaged *unmanaged = xwayland_unmanaged_look_surface(xwayland, window_id);
+    if (!unmanaged) {
+        return false;
+    }
+
+    if (unmanaged->surface_node) {
+        scene_node_set_blur_region(unmanaged->surface_node, region);
+    }
+
+    return true;
+}
+
+bool xwayland_unmanaged_set_opaque_region(struct xwayland_server *xwayland, xcb_window_t window_id,
+                                          const pixman_region32_t *region)
+{
+    struct xwayland_unmanaged *unmanaged = xwayland_unmanaged_look_surface(xwayland, window_id);
+    if (!unmanaged) {
+        return false;
+    }
+
+    if (unmanaged->surface_node) {
+        scene_buffer_set_opaque_region(scene_buffer_from_node(unmanaged->surface_node), region);
+    }
+
+    return true;
+}
