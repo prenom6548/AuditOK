@@ -1,0 +1,331 @@
+{
+ "lot": "P2-apt",
+ "statut": "complet",
+ "composants": [
+  "apt"
+ ],
+ "empreintes": {
+  "archive/apt": "f7795e6157d4947359e626a00e22a68526fbfa1139bd41bf8b11dc2ac2a14897",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "apt",
+   "fichier": "debian/source/format",
+   "ligne": "1",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "3.0 (native)",
+   "explication": "Arbre natif complet (890 fichiers), identique fichier par fichier au tarball dl/build/apt/apt_3.1.16-ok4.tar.xz (sha256 0ecd39d7...b635, conforme au .dsc signé). Version amont : 3.1.16 (CMakeLists.txt:207). debian/changelog ne contient QUE les 20 entrées openKylin (lignes 1-124) : l'historique Debian/Ubuntu a été retiré, ce qui empêche d'identifier la révision amont exacte.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "cmdline/apt-key.in",
+   "ligne": "645-648",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "TRUSTEDFILE=\"/etc/apt/trusted.gpg\" ... eval $(apt-config shell TRUSTEDFILE Dir::Etc::Trusted/f)",
+   "explication": "apt-key, retiré en amont, est réintroduit par openKylin (changelog 3.1.16-ok1 « restore ... apt-key » ; cmdline/CMakeLists.txt:14-20,59 ; debian/apt.install:10). Le script est identique à /usr/bin/apt-key d'apt 2.8.3 (Ubuntu), aux entités vendor près (diff vide). apt-key add écrit dans /etc/apt/trusted.gpg, qu'APT 3.1.16 ne lit plus sans Dir::Etc::Trusted (absent de apt-pkg/init.cc ; lu seulement s'il est configuré : apt-pkg/contrib/gpgv.cc:403-406) : comportement fermé par défaut. Aucune page de manuel apt-key n'est livrée (doc/apt-key.8.xml absent). debian/NEWS s'arrête à 2.5.2 (22 entrées, aucune pour 2.6→3.1) : aucun avis ne prévient que /etc/apt/trusted.gpg n'est plus lu. Risque résiduel : des outils tiers qui font « apt-key add » échouent en silence à établir la confiance, ce qui peut pousser vers trusted=yes ou allow-insecure.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "vendor/openkylin/apt-vendor.ent",
+   "ligne": "7-17",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "keyring-uri \"http://archive.build.openkylin.top/openkylin/project/openkylin-archive-keyring.gpg\" ; URIs: http://archive.build.openkylin.top/openkylin ; codename \"nile\"",
+   "explication": "Fichier vendor openKylin : URI du trousseau et sources d'exemple en HTTP clair, nom de code « nile » (2.0) alors que la version publiée est huanghe (3.0). Ces valeurs servent à la documentation et à l'exemple /usr/share/doc/apt/examples/sources.list (vendor/CMakeLists.txt:14-33), PAS à /etc. keyring-uri n'est utilisé que par « apt-key net-update », désactivé par défaut (cmdline/apt-key.in:180-185) et dépendant d'un trousseau maître que openkylin-keyring ne livre pas.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "apt-pkg/init.cc",
+   "ligne": "171-173",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "Cnf.CndSet(\"Acquire::AllowInsecureRepositories\", false); ...AllowWeakRepositories false; ...AllowDowngradeToInsecureRepositories false",
+   "explication": "Valeurs par défaut de sécurité inchangées par rapport à l'amont, relues : Check-Date et Check-Valid-Until vrais (apt-pkg/deb/debmetaindex.cc:587,607) ; Assert-Pubkey-Algo >=rsa2048 (init.cc:120-122) ; MD5, SHA1 et RIPEMD160 non fiables (methods/gpgv.cc:71-74) ; TLS Verify-Peer et Verify-Host vrais (methods/connect.cc:1037-1040) ; redirection https→http interdite (methods/basehttp.cc:428-450) ; AllowUnauthenticated faux (apt-pkg/acquire-item.cc:3450). La logique d'acceptation (acquire-item.cc:190-260, 1501-1557, 2071-2372) est conforme à l'amont.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "methods/gpgv.cc",
+   "ligne": "398-408",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "\\t\\tif (std::any_of(Signers.Good.begin(), Signers.Good.end(), ... IsTheSameKey(v, g); }))",
+   "explication": "Seul bloc réindenté de façon atypique dans les fichiers de vérification des signatures. C'est probablement la réécriture « std::ranges → API C++17 » annoncée par 3.1.16-ok1. Relu : l'ensemble Signed-By est toujours calculé comme Valid ∩ Good (clé primaire ou sous-clé), ce qui est sémantiquement équivalent à l'amont. Aucune autre trace localisée.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "apt (dépôts openKylin)",
+   "fichier": "rapport-audit/donnees/apt/archive.build.openkylin.top_huanghe-security_InRelease",
+   "ligne": "1-20",
+   "type": "confiance",
+   "severite": "moyenne",
+   "extrait": "Date: Mon, 17 Aug 2026 18:20:38 UTC (aucun champ Valid-Until)",
+   "explication": "Aucun des 6 InRelease relevés (huanghe, huanghe-security, huanghe-updates, archive.openkylin.top, software, ppa anything3.0) ne porte Valid-Until. APT n'applique l'expiration que si le champ existe ou si Acquire::Max-ValidTime est configuré (apt-pkg/deb/debmetaindex.cc:607-657), et le paquet apt ne livre aucun Max-ValidTime. APT bloque seulement le retour à un InRelease plus ancien que le dernier connu (apt-pkg/acquire-item.cc:1873-1885). Il ne détecte pas un gel. huanghe-updates est daté du 15/10/2024.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un attaquant en position réseau (sources en HTTP) rejoue indéfiniment le dernier InRelease signé valide et bloque en silence les correctifs de sécurité. Il ne peut pas injecter de paquet, mais garde le parc exploitable après la publication d'une CVE.",
+   "contre_lecture": "Pratique identique à celle des archives principales Ubuntu (pas de Valid-Until). Le risque se limite au gel, sans exécution de code. Le côté dépôt est hors de l'arbre apt."
+  },
+  {
+   "depot": "apt (configuration ISO)",
+   "fichier": "apt-pkg/contrib/gpgv.cc",
+   "ligne": "398-417",
+   "type": "confiance",
+   "severite": "moyenne",
+   "extrait": "auto Parts = GetListOfFilesInDir(_config->FindDir(\"Dir::Etc::TrustedParts\"), ...); for (auto &Part : Parts) maybeAddKeyring(Part);",
+   "explication": "Sans Signed-By, APT fait confiance à TOUTES les clés de /etc/apt/trusted.gpg.d pour TOUS les dépôts ; apt-private/private-update.cc:119-135 se contente d'une Notice ou d'un Audit. Or l'ISO installe openkylin-archive-anything (iso-3.0/casper--filesystem.manifest), qui dépose dans trusted.gpg.d la clé « openKylin Build Service PPA for kylinsoft developers » (3EA5 5C18 ... 49E9 E2C8, donnees/apt/verification-signatures-et-empreintes.txt), à côté de la clé d'archive 09FF C10E ... FF59 2D96. La clé d'un service de build PPA peut donc signer un InRelease accepté pour l'archive principale ou de sécurité.",
+   "registre": "CONSTATÉ",
+   "scenario": "Compromission de la clé du service de build PPA (clé de signature automatique, a priori moins protégée), puis service d'un InRelease forgé pour huanghe-security via MITM HTTP ou miroir. APT l'accepte et installe des paquets arbitraires en root.",
+   "contre_lecture": "Modèle de confiance APT historique (Debian/Ubuntu), clés appartenant au même éditeur, PPA effectivement utilisée par l'ISO (provenance-paquets-installes.csv). Le correctif relève des sources et du trousseau (Signed-By), hors de l'arbre apt."
+  },
+  {
+   "depot": "apt",
+   "fichier": "apt-pkg/deb/debsystem.cc",
+   "ligne": "412-421",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "Configuration::Item const *Opts = _config->Tree(\"DPkg::Options\"); ... Args.push_back(Opts->Value);",
+   "explication": "Réponse au lot updater (V1-L5) : APT transmet DPkg::Options tel quel à dpkg, sans filtre (--force-confnew, --force-all, etc.). Il lit tous les fichiers de apt.conf.d sans contrôle de propriétaire ni de droits (apt-pkg/contrib/configuration.cc:1174-1184), accepte #include (1098-1112) et exécute les hooks DPkg::Pre-Invoke, Post-Invoke et APT::Update::* via system() en root (apt-pkg/contrib/fileutl.cc:100-137 ; dpkgpm.cc:1566,2236 ; update.cc:65-148). C'est le comportement amont : APT n'atténue aucun des deux risques, et quiconque écrit dans /etc/apt/apt.conf.d obtient une exécution root au prochain apt.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "debian/rules",
+   "ligne": "27-31",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "install -m 644 debian/apt.conf.autoremove debian/apt/etc/apt/apt.conf.d/01autoremove",
+   "explication": "Le paquet apt ne livre qu'un seul fragment de configuration, 01autoremove (NeverAutoRemove, VersionedKernelPackages), sans aucun hook. vendor/openkylin ne contient aucun apt.conf-* (vendor/CMakeLists.txt:36-43). Aucun sources.list n'est installé dans /etc. Les scripts de mainteneur (apt.postinst:4-12, apt.postrm:15-21), les unités systemd et apt.systemd.daily sont conformes à l'amont.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "methods/aptmethod.h",
+   "ligne": "175",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "if (_config->FindB(\"APT::Sandbox::Seccomp\", false) == false)",
+   "explication": "Le filtre seccomp des méthodes est désactivé par défaut (valeur amont). Les méthodes réseau passent bien sous l'utilisateur _apt (init.cc:176 ; fileutl.cc:3277-3336, PR_SET_NO_NEW_PRIVS).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "debian/control",
+   "ligne": "6-22",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "Standards-Version: 4.1.1 ; debhelper-compat (= 12) ; libgcrypt20-dev ; libgnutls28-dev (>= 3.4.6) ; libssl-dev",
+   "explication": "Les dépendances de build libgcrypt20-dev (forcée en 2.7.3-ok2) et libgnutls28-dev sont résiduelles : CMake n'utilise qu'OpenSSL (CMakeLists.txt:94 ; methods/CMakeLists.txt:26). debian/rules garde hardening=+all (ligne 6) et les tests (aucun override_dh_auto_test). Pas de dépendance sqv à l'exécution : l'ISO a gpgv 2.4.9, la vérification passe donc par methods/gpgv (acquire-item.cc:1423-1437).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "cmdline/apt-extracttemplates.cc",
+   "ligne": "231-240",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "strprintf(tplname, \"%s.%s\", package, prefix); GetTempFile(tplname, false, &f);",
+   "explication": "apt-extracttemplates est restauré par 3.1.16-ok1 (cmdline/CMakeLists.txt:10,31,48 ; debian/apt-utils.install). Il s'agit du code 2.x amont : les fichiers temporaires passent par GetTempFile/mkstemp et aucune commande externe n'est lancée. Le paquet apt-utils est absent du manifeste de l'ISO.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apt",
+   "fichier": "apt-pkg/acquire-item.cc",
+   "ligne": "127-168",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "string const report = _config->Find(\"Methods::Mirror::ProblemReporting\", LIBEXEC_DIR \"/apt-report-mirror-failure\"); if(!FileExists(report)) return;",
+   "explication": "Signalement des pannes de miroir hérité de l'amont. Le script cmdline/apt-report-mirror-failure (Python 2, URL vide par défaut) et mirror-failure.py ne sont installés par aucun CMakeLists ni *.install : le code est inerte. Recherche exhaustive dans le C++ (apt-pkg, apt-private, cmdline, methods) : aucun socket ou getaddrinfo hors methods/connect.cc ; aucune URL codée en dur hors valeurs amont (changelogs et snapshots Debian/Ubuntu, init.cc:199-212) ; aucune variable d'environnement ni clé de configuration inconnue de l'amont (comparaison avec doc/examples/configure-index) ; aucune chaîne chinoise hors po/ (traductions zh_CN et zh_TW cohérentes en types de format).",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "patches": [
+  {
+   "nom": "bloc vendor/openkylin/* (apt-vendor.ent, sources.list.in)",
+   "titre_declare": "2.0.2-ok4/ok5 « Add&Mod vendor config files for openKylin » ; 2.5.4-ok4/ok5 ; 3.1.16-ok4 « update keyring package name from kylin to openkylin »",
+   "contenu_reel": "Entités DocBook (nom du trousseau, chemins, URI HTTP, nom de code nile) et exemple de sources.list placé dans /usr/share/doc. keyring-package fixe la dépendance apt → openkylin-keyring (debian/rules:34).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "vendor/openkylin/apt-vendor.ent",
+    "vendor/openkylin/sources.list.in"
+   ],
+   "resume": "Mécanisme vendor prévu par l'amont (vendor/README)."
+  },
+  {
+   "nom": "bloc vendor/getinfo:64 + doc/apt-verbatim.ent:279",
+   "titre_declare": "2.5.4-ok4 « 更正vendor/openkylin/apt-vendor.ent中的codename变量名 »",
+   "contenu_reel": "Ajout de l'entité openkylin-codename (nile) à la liste verbatim.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "vendor/getinfo",
+    "doc/apt-verbatim.ent"
+   ],
+   "resume": "Documentation uniquement."
+  },
+  {
+   "nom": "bloc completions/bash/apt:204-205",
+   "titre_declare": "2.5.4-ok3 « 修复bash自动补齐, apt在openkylin上总是查询deb包 »",
+   "contenu_reel": "Le test de distribution est remplacé par « if true » : la complétion utilise toujours dpkg.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "completions/bash/apt"
+   ],
+   "resume": "Complétion shell, sans effet de sécurité."
+  },
+  {
+   "nom": "bloc réintroduction apt-key (cmdline/apt-key.in, cmdline/CMakeLists.txt:14-20,59, debian/apt.install:10, debian/control:73)",
+   "titre_declare": "3.1.16-ok1 « restore and align packaging outputs (apt-extracttemplates, apt-key, manpages, vendor keyring fields) »",
+   "contenu_reel": "Script apt-key d'apt 2.8.x réinjecté tel quel (diff vide avec /usr/bin/apt-key 2.8.3, entités vendor exceptées). net-update désactivé par défaut. add/update écrivent dans /etc/apt/trusted.gpg, ignoré par APT 3.1.16. Le même bloc restaure apt-extracttemplates (code 2.x amont, mkstemp) dans apt-utils.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "cmdline/apt-key.in",
+    "cmdline/CMakeLists.txt"
+   ],
+   "resume": "Outil obsolète réintroduit pour compatibilité ; il ne crée pas de confiance effective par défaut."
+  },
+  {
+   "nom": "bloc compat gcc9 (methods/gpgv.cc:398-408 identifié ; autres non localisés)",
+   "titre_declare": "3.1.16-ok1 « fix compile compatibility for gcc9/libstdc++9 (replace unavailable std::ranges APIs) »",
+   "contenu_reel": "Aucun std::ranges ne reste dans l'arbre. Le seul bloc réécrit repéré dans le code de vérification est sémantiquement équivalent. Incohérence : CMakeLists.txt:67 impose toujours CMAKE_CXX_STANDARD 23, que gcc 9 ne prend pas en charge.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "methods/gpgv.cc"
+   ],
+   "resume": "Réécriture non différentiable sans l'amont exact ; le bloc sensible relu est équivalent."
+  },
+  {
+   "nom": "bloc debian/ (control, rules, changelog)",
+   "titre_declare": "2.0.2-ok1..3.1.16-ok4 (Build for openKylin, Fix dh_auto_test error, Disable prebuild for gbp, 加入强制依赖libgcrypt20-dev, fix build error, No change rebuild)",
+   "contenu_reel": "Maintainer et Vcs openKylin, Standards-Version 4.1.1, debhelper-compat 12, build-deps gcrypt et gnutls résiduelles, historique Debian supprimé du changelog. Durcissement hardening=+all conservé, tests non désactivés. Les entrées ok2 (« No change rebuild ») et ok3 (« fix build error ») portent le même horodatage, et le contenu d'ok3 n'est pas identifiable.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [],
+   "resume": "Empaquetage, sans affaiblissement constaté."
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "methods/http (http, https ; OpenSSL)",
+   "nature": "Téléchargement des InRelease, index et .deb depuis les sources configurées ; User-Agent « Debian APT-HTTP/1.3 (3.1.16) »",
+   "fichier": "methods/http.cc",
+   "ligne": "344",
+   "condition": "apt update/install, ou minuteries apt-daily si APT::Periodic::* ≠ 0. Défaut 0 dans le paquet apt (debian/apt.systemd.daily:396-414) ; activation éventuelle par un autre paquet.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apt-daily.timer / apt-daily-upgrade.timer",
+   "nature": "Déclenchement de apt-get update, du téléchargement et de unattended-upgrade s'il est installé",
+   "fichier": "debian/apt-daily.timer",
+   "ligne": "5-6",
+   "condition": "Unités activées (WantedBy=timers.target) ; sans effet si APT::Periodic n'est pas configuré",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apt-key net-update",
+   "nature": "wget en HTTP de http://archive.build.openkylin.top/openkylin/project/openkylin-archive-keyring.gpg",
+   "fichier": "cmdline/apt-key.in",
+   "ligne": "180-212",
+   "condition": "Désactivé sauf APT::Key::Net-Update-Enabled ; exige en outre un trousseau maître absent",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apt changelog",
+   "nature": "URI de changelog HTTPS Debian ou Ubuntu uniquement ; aucun champ Changelogs dans les InRelease openKylin, donc pas de requête pour l'origine openKylin",
+   "fichier": "apt-pkg/init.cc",
+   "ligne": "199-200",
+   "condition": "Commande utilisateur",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "apt (dpkgpm)",
+   "donnees": "Journal local /var/log/apt/history.log (commande, Requested-By = utilisateur sudo, paquets) et term.log",
+   "condition": "Systématique, local, rotation mensuelle sur 12 mois (debian/apt.logrotate:1-15)",
+   "fichier": "apt-pkg/deb/dpkgpm.cc",
+   "ligne": "1089",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apt.bug-script (reportbug)",
+   "donnees": "apt-config dump, preferences et sources.list",
+   "condition": "Rapport de bogue avec consentement explicite (yesno)",
+   "fichier": "debian/apt.bug-script",
+   "ligne": "10-29",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/apt",
+   "patches_total": 0,
+   "patches_lus": 0,
+   "blocs_modification_identifies": 6,
+   "fichiers_debian": 45,
+   "pct_patches": 100,
+   "patches_lus_liste": [],
+   "fichiers_lus_integralement": 36,
+   "fichiers_lus_partiellement": 7,
+   "fichiers_non_lus": 2,
+   "pct_fichiers_integral": 80.0,
+   "detail_partiels": "debian/NEWS (en-têtes et grep) ; 6 fichiers doc-base (champs Files et Index). Non lus : debian/copyright (copie de COPYING, rules:24) et debian/libapt-pkg6.0t64.symbols (1382 lignes).",
+   "code_amont_lu_integralement": [
+    "apt-pkg/contrib/gpgv.cc (751 l.)",
+    "methods/gpgv.cc (622 l.)",
+    "methods/sqv.cc (418 l.)",
+    "apt-pkg/init.cc (290 l.)",
+    "cmdline/apt-key.in (diff complet avec apt-key 2.8.3)",
+    "CMakeLists.txt",
+    "methods/CMakeLists.txt",
+    "cmdline/CMakeLists.txt",
+    "vendor/* (CMakeLists, getinfo, README, openkylin/*)",
+    "debian/apt.systemd.daily"
+   ],
+   "code_amont_lu_partiellement": [
+    "apt-pkg/acquire-item.cc (≈1 000 l. sur 4 204 : 105-300, 340-412, 1372-1560, 1831-2372, 3430-3500)",
+    "apt-pkg/deb/debmetaindex.cc (575-700, 840-870, 1140-1250, 1430-1470)",
+    "methods/connect.cc (925-1088, TLS)",
+    "methods/basehttp.cc (redirections, 955-975)",
+    "apt-pkg/contrib/configuration.cc",
+    "apt-pkg/contrib/fileutl.cc (RunScripts, DropPrivileges)",
+    "apt-pkg/deb/debsystem.cc",
+    "methods/aptmethod.h (seccomp)",
+    "apt-private/private-sources.cc",
+    "apt-private/private-update.cc",
+    "cmdline/apt-extracttemplates.cc",
+    "completions/bash/apt"
+   ],
+   "balayages_globaux": [
+    "kylin et openkylin (arbre entier)",
+    "caractères CJK hors po/",
+    "socket, getaddrinfo, system, popen, exec*",
+    "URL et IPv4 codées en dur",
+    "getenv",
+    "530 clés de configuration comparées à configure-index",
+    "heuristique d'indentation (blocs réécrits)",
+    "types de format des traductions zh_CN et zh_TW",
+    "identité arbre/tarball .dsc (890/890)"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "Pas de source amont APT 3.1.16 hors ligne : aucun diff fichier par fichier n'a été possible. Les modifications openKylin ont été repérées par indices (changelog, kylin, CJK, indentation, clés de config). Le reste de la réécriture « std::ranges » (3.1.16-ok1) n'a pas été localisé hors methods/gpgv.cc:398-408. Le contenu de 3.1.16-ok3 « fix build error » n'est pas identifiable.",
+  "Lu partiellement : apt-pkg/acquire-item.cc (≈25 %), debmetaindex.cc, connect.cc, basehttp.cc. Non relus : methods/http.cc, rred.cc, mirror.cc, store.cc, apt-pkg/deb/dpkgpm.cc (hors hooks), solver3.cc, ftparchive/, dselect/.",
+  "sources.list et sources.list.d réellement installés sur l'ISO (HTTP ou HTTPS, présence de Signed-By ou trusted=yes) : fournis par d'autres paquets, non audités ici.",
+  "Fragments apt.conf.d livrés par d'autres paquets (hors lot, repérés seulement) : kylin-os-manager (patches 0181/0191 référençant la config APT), aptss/spark-store (apt-fast-conf/aptss-apt.conf), live-build 0121-dpkg-force-confnew-bootstrap-chroot.patch, update-manager. À croiser avec le lot updater (V1-L5).",
+  "Paquets de trousseaux openkylin-keyring et openkylin-archive-anything (contenu, scripts de mainteneur) : hors lot ; constat F7 fondé sur donnees/apt/verification-signatures-et-empreintes.txt et le manifeste de l'ISO.",
+  "Chemin sqv non exercé (sqv absent de l'ISO). /usr/share/apt/default-sequoia.config n'est pas livré.",
+  "Fichiers debian/copyright et debian/libapt-pkg6.0t64.symbols non lus."
+ ],
+ "synthese": "Empreinte archive/apt conforme (f7795e61…a14897, 890 fichiers). L'arbre est identique au tarball du .dsc signé apt_3.1.16-ok4 [CONSTATÉ]. Paquet natif fondé sur APT 3.1.16. L'historique Debian a été retiré du changelog, si bien que la révision amont exacte n'est pas vérifiable ; faute d'amont hors ligne, aucun diff exhaustif n'a été fait. Six blocs de modifications openKylin repérés : vendor/openkylin, getinfo et apt-verbatim, complétion bash, réintroduction d'apt-key et d'apt-extracttemplates, compat gcc9 (methods/gpgv.cc:398-408), empaquetage debian/. 4 sont [LÉGITIME], 2 [À EXAMINER], aucun [SUSPECT] [CONSTATÉ]. Aucun code de télémétrie, appel réseau ou exécution ajouté n'a été trouvé : balayages kylin, CJK, socket/exec, URL, getenv, clés de config [CONSTATÉ]. Vérification des signatures conforme à l'amont : défauts AllowInsecure, AllowWeak et AllowDowngrade à faux ; Check-Valid-Until et Check-Date à vrai ; SHA1 et MD5 refusés ; Assert-Pubkey-Algo >=rsa2048 ; TLS Verify-Peer et Verify-Host à vrai ; https→http interdit ; Signed-By imposé à la méthode gpgv [CONSTATÉ]. Le paquet apt ne livre aucun hook ni sources.list dans /etc, seulement 01autoremove [CONSTATÉ]. apt-key 2.8 réintroduit à l'identique : ses ajouts vont dans /etc/apt/trusted.gpg, qu'APT 3.1.16 ignore ; fermé par défaut, sévérité faible [CONSTATÉ]. Sévérité moyenne, hors code apt : aucun InRelease openKylin ne porte Valid-Until, ce qui permet un gel des mises à jour par un attaquant réseau sur des sources HTTP [CONSTATÉ]. Sévérité moyenne : la clé « Build Service PPA » d'openkylin-archive-anything, installée dans trusted.gpg.d sur l'ISO, est acceptée par APT pour tous les dépôts sans Signed-By (apt-pkg/contrib/gpgv.cc:398-417) [CONSTATÉ]. Réponse au lot updater : APT transmet DPkg::Options sans filtre (debsystem.cc:412-421), lit apt.conf.d sans contrôle de propriétaire et exécute les hooks via system() en root (fileutl.cc:100-137). Il n'atténue donc ni --force-confnew ni l'injection dans apt.conf (comportement amont) [CONSTATÉ]. Seccomp des méthodes désactivé par défaut (amont) ; méthodes sous _apt. Couverture : 36 fichiers debian/ sur 45 lus intégralement, 7 partiellement ; code de vérification gpgv, sqv et init lu intégralement, acquire-item.cc environ 25 %."
+}

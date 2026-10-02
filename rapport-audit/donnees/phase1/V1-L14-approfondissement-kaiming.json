@@ -1,0 +1,246 @@
+{
+  "lot": "V1-L14-approfondissement-kaiming",
+  "statut": "complet",
+  "composants": ["kaiming"],
+  "empreintes": {
+    "archive/kaiming": "4c1ff5fb5307e804c1f5b4d1e8b4c14fc6ea5f1fe1cf9d3f38680701fda3e871",
+    "conforme": true,
+    "note": "453 fichiers ; identique a empreintes-arbres-sources.tsv colonne 3 (archive/kaiming)."
+  },
+  "findings": [
+    {
+      "depot": "kaiming",
+      "fichier": "shells/kaiming + app/KMApplication.cpp + app/install/KMInstall.cpp",
+      "ligne": "kaiming:10-16 ; KMApplication.cpp:174-213 ; KMInstall.cpp:95,104,195-231",
+      "type": "privileges",
+      "severite": "elevee",
+      "extrait": "exec ${KAIMING_DIR}/${KAIMING_CLI} \"$@\" (wrapper) ; parseCommandLine(argc,argv) puis createKMSubCommand(subcmd) ; addOption(\"skip-signature-verification\") ; addPositionOption(\"REFS\", ... -1)",
+      "explication": "REPONSE AU POINT PRIORITAIRE. /opt/kaiming-tools/bin/kaiming lance via pkexec (action org.kylin.kaiming.install, allow_any=yes, sans exec.argv1) ne valide NI l'appelant NI la sous-commande NI les chemins. Aucune lecture de PKEXEC_UID/SUDO_UID dans tout l'arbre (grep: 0 occurrence). Le script wrapper shells/kaiming transmet tout argv a km-cli/km-run ; KMApplication accepte n'importe quelle sous-commande (install/uninstall/remote/run/build-*...) ; 'install' accepte des REFS arbitraires y compris des chemins .ok locaux et l'option --skip-signature-verification. Donc l'action polkit 'install' equivaut a 'executer kaiming en root avec une ligne de commande entierement controlee par l'attaquant', sans aucune restriction.",
+      "scenario": "Un utilisateur local sans privilege invoque pkexec sur org.kylin.kaiming.install (aucune authentification demandee) avec la sous-commande et les arguments de son choix ; kaiming s'execute en root et effectue des ecritures systeme (voir findings deploiement) ou toute autre sous-commande offerte, menant a une elevation locale vers root.",
+      "contre_lecture": "Intention : permettre a la logithèque d'installer des applications sans invite. Mais l'absence totale de controle d'appelant/sous-commande/chemin fait de 'install' une primitive root generique, pas une action d'installation restreinte.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "common/KMHostAppDeploy.cpp",
+      "ligne": "1318-1397 (executeHostScript/executeScript) ; appels 218,296,737,812",
+      "type": "persistance",
+      "severite": "critique",
+      "extrait": "basePath = versionDataPath/\"files/opt/kaiming/exports/share/hostscript\"/id ; executeScript((basePath/scriptName)) ; chmod(+x) ; execl(scriptPath, scriptPath, arg, NULL)",
+      "explication": "Lors du deploiement d'un paquet 'hostapp', kaiming execute les scripts preinst/postinst/prerm/postrm fournis A L'INTERIEUR de l'image applicative (repertoire hostscript de l'arbre OSTree deploye ou du .ok), via fork+execl. Ce deploiement tourne en root (atteint par le service D-Bus systeme root ou par kaiming lance en pkexec). L'authenticite de l'image n'est pas garantie : les remotes OSTree sont gpg-verify=false en HTTP (confirme L10) et verifySignature est contourne dans de nombreux cas (base/runtime, V10SP1, lib signtool absente, safe mode<=1, outil absent) ou desactivable (--skip-signature-verification). => execution de code root a partir de contenu applicatif non authentifie.",
+      "scenario": "Un attaquant reseau (MITM sur le remote HTTP gpg-verify=false) ou un attaquant local (fichier .ok installe via l'action pkexec sans authentification) fournit une image hostapp contenant un postinst malveillant ; a l'installation, kaiming l'execute en root => execution de code arbitraire root.",
+      "contre_lecture": "Mecanisme legitime de 'maintainer scripts' type dpkg pour les applications hostapp. Mais executer ces scripts en root sans verifier l'authenticite de leur source (signature non exigee, transport non authentifie) transforme la chaine de mise a jour/installation en canal d'execution de code root.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "dbus/gdbus/KMSystemProxy.cpp + data/org.kaiming.proxy.system.conf",
+      "ligne": "KMSystemProxy.cpp:128-267,289-313 ; conf:50-57",
+      "type": "privileges",
+      "severite": "elevee",
+      "extrait": "<policy context=\"default\"><allow send_destination=\"org.kaiming.proxy\" send_interface=\"org.kaiming.proxy.system\"/> ; onHandleRun/onHandleEnter -> asyncTask -> onCommandAsync: execv(KAIMING_BOX, data) ; onHandleStartBinaryAsUser -> checkKaimingNamespace(pid)",
+      "explication": "Le service D-Bus systeme org.kaiming.proxy (User=root, active par bus) autorise, par sa policy context=default, TOUT utilisateur local a appeler run/enter/kill/ps/startBinaryAsUser. 'run' et 'enter' construisent un argv crun (KAIMING_BOX) a partir des tableaux options/suboptions/cid fournis par l'appelant et l'executent en root (fork+execv) SANS aucun controle de l'appelant. Seul startBinaryAsUser verifie checkKaimingNamespace(pid), ou le pid est lui-meme fourni par l'appelant (pas derive des credentials D-Bus du sender).",
+      "scenario": "Un utilisateur local appelle org.kaiming.proxy.system.run avec des options crun qu'il controle (p. ex. pointant vers un bundle/rootfs qu'il maitrise) ; crun s'executant en root avec une configuration arbitraire lance un conteneur/processus root => elevation locale vers root.",
+      "contre_lecture": "Le proxy est concu pour que les processus DANS un conteneur kaiming 'percent' vers l'hote pour lancer crun. Mais la policy n'impose aucun controle que le sender est reellement un conteneur kaiming (run/enter/kill sans aucune verification ; startBinaryAsUser verifie un pid fourni par l'appelant), donc l'IPC root est joignable par n'importe quel utilisateur local.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "common/KMPackageManager.cpp",
+      "ligne": "7959-7983 (initializeFixedModifications) ; 8087-8107,8134-8196 (modifyAppServiceFile/modifyFixedField) ; 10030-10061 (startTargetWantsServices)",
+      "type": "confiance",
+      "severite": "elevee",
+      "extrait": "fixedModifications: {NoNewPrivileges,false},{PrivateUsers,false},{ProtectControlGroups,false},{RestrictAddressFamilies,\"\"},{SystemCallFilter,\"\"},{NoExecPaths,\"\"} ; commentFileds: User/Group/ProtectSystem/ProtectHome/CapabilityBoundingSet/ExecStop/ExecPaths -> \"#\"+line ; insert \"User=root\",\"Group=root\" ; system(\"systemctl enable --now \"+serviceName)",
+      "explication": "Au deploiement d'une application, kaiming reecrit les unites systemd *systeme* livrees par l'image : il force User=root/Group=root, met NoNewPrivileges=false, PrivateUsers=false, ProtectControlGroups=false, vide SystemCallFilter/RestrictAddressFamilies/NoExecPaths, et commente les directives de durcissement (ProtectSystem, ProtectHome, ProtectKernelTunables, CapabilityBoundingSet, ExecStop...). Puis startTargetWantsServices active et demarre ces services en root. Une image applicative (dont l'authenticite n'est pas garantie, cf. gpg-verify=false) obtient ainsi un service root avec tout le durcissement systemd retire.",
+      "scenario": "Un paquet applicatif fournit une unite systemd systeme ; kaiming la reecrit en User=root + durcissement neutralise et la demarre ; le service applicatif tourne en root sans confinement, servant de base a une elevation ou une persistance.",
+      "contre_lecture": "Reecriture necessaire car les services d'app doivent passer par le lanceur kaiming. Mais le choix de forcer root et de retirer systematiquement NoNewPrivileges/SystemCallFilter/Protect* affaiblit fortement la posture, surtout combine a l'absence de verification d'authenticite du contenu.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "app/run/KMRunner.cpp + app/run/KMRunnerCommon.h",
+      "ligne": "KMRunner.cpp:1983-2006 (seccomp ALLOW),810-846 (privileged/setProcessCap) ; KMRunnerCommon.h:57-74 (defCap),76-120 (allCap)",
+      "type": "privileges",
+      "severite": "moyenne",
+      "extrait": "seccomp.defaultAction=\"SCMP_ACT_ALLOW\" ; defCap={CAP_SYS_ADMIN,CAP_SYS_RAWIO,CAP_NET_ADMIN,CAP_MKNOD,CAP_SETUID,...} ; privileged(): rmNameSpace(\"user\"); setProcessCap(allCap)",
+      "explication": "Isolation faible du bac a sable 'run' (conteneur crun). Le filtre seccomp par defaut est SCMP_ACT_ALLOW (aucun filtrage de syscalls ; seul 'socket' AF_BLUETOOTH est bloque). Le jeu de capabilities par defaut (defCap) inclut deja CAP_SYS_ADMIN, CAP_SYS_RAWIO, CAP_NET_ADMIN, CAP_MKNOD, CAP_SETUID/SETGID. Pour une app dont info.json porte l'annotation privilege=true, le namespace utilisateur est SUPPRIME (rmNameSpace(\"user\")) et TOUTES les capabilities hote (allCap) sont accordees, sans seccomp => quasi-equivalent root non confine. L'annotation privilege et les caps proviennent de l'image (info.json) tiree en gpg-verify=false.",
+      "scenario": "Une image applicative declare privilege=true ; lancee par un chemin root (service reecrit User=root, ou kaiming run en root), elle s'execute avec toutes les capabilities hote et sans seccomp => aucune barriere de confinement.",
+      "contre_lecture": "defCap sans userns retire reste borne par le namespace utilisateur pour les apps normales (mapping uid unique) ; le mode privilege est un opt-in documente pour pilotes/ko. Mais la combinaison seccomp=ALLOW + caps larges + opt-in pilote par le contenu non authentifie reduit fortement l'isolation reelle.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "common/KMPackageManager.cpp",
+      "ligne": "9229-9233 (.policy) ; 9224-9228 (.xml mime) ; 9234-9270 (entries/home, entries/assets) ; 9275-9322 (handleSpecialFileInstall)",
+      "type": "confiance",
+      "severite": "moyenne",
+      "extrait": "else if (srcFilePath.find(\".policy\") != npos){ destDir = isImmutable?\"/opt/system/resource/polkit-1/actions\":\"/usr/share/polkit-1/actions\"; handleSpecialFileInstall(srcFilePath,destDir,false);} ",
+      "explication": "Le deploiement copie tel quel des fichiers arbitraires de l'image applicative vers des repertoires systeme : tout *.policy de l'image va dans /usr/share/polkit-1/actions (ou /opt/system/resource/polkit-1/actions), les *.xml dans mime/packages, et des fichiers sous entries/home et entries/assets dans le home utilisateur et la racine. Une application peut ainsi deposer ses propres actions polkit a l'echelle systeme (et, via la chaine polkit du fork openKylin, potentiellement des regles), sans verification d'authenticite forte du contenu.",
+      "scenario": "Une app installee (ou injectee par MITM sur le remote HTTP) embarque un .policy accordant une action privilegiee en allow_any ; il est copie en root dans /usr/share/polkit-1/actions et devient actif.",
+      "contre_lecture": "Fonction normale d'export (une app peut legitimement livrer une action polkit). Mais la copie sans controle de proprietaire/contenu combinee a l'installation sans authentification elargit la surface d'elevation.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "common/KMPackageManager.cpp + common/KMHostAppDeploy.cpp",
+      "ligne": "KMPackageManager.cpp:2354 (killAppid),2538-2539,3004-3005,6681-6684 ; KMHostAppDeploy.cpp:280,475,499,646,675,953,1438,1449",
+      "type": "persistance",
+      "severite": "moyenne",
+      "extrait": "killCommand = \"sudo -u \"+loginUser+\" XDG_RUNTIME_DIR=\"+xdgRuntimeDir+\" -- /opt/kaiming-tools/bin/kaiming kill \"+appId ; exportCmd=\"kaiming build-export -d \\\"\"+pmOptions.subpath+\"\\\" ...\" ; system(...)",
+      "explication": "De nombreux appels system()/popen() construisent des chaines shell en concatenant des valeurs issues des metadonnees du paquet (appId, noms de service, chemins, subpath) sans echappement, et s'executent en root pendant deploiement/desinstallation (glib-compile-schemas, update-mime-database, systemctl stop/enable, build-export, commandes 'kare', killAppid via 'sudo -u'). Des valeurs controlees par le paquet peuvent contenir des metacaracteres shell.",
+      "scenario": "Un paquet fournit un appId/nom de service/subpath contenant des metacaracteres shell ; lors du deploiement en root, l'injection dans la chaine system() execute des commandes arbitraires root.",
+      "contre_lecture": "Ces noms proviennent normalement de metadonnees internes bien formees ; une injection exige un paquet malveillant (ou MITM). L'exploitabilite exacte depend du champ (PROBABLE), mais l'usage de system() non echappe sur des entrees d'origine paquet est confirme (CONSTATÉ).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "common/KMPackageManager.cpp",
+      "ligne": "1479 ; 3465 ; 6604 ; 10575 ; KMCommonUtils.cpp:509",
+      "type": "privileges",
+      "severite": "faible",
+      "extrait": "string mountPoint = \"/tmp/\" + name.substr(0,pos) + \"_\" + to_string(getpid()) ; tmpPath=\"/tmp/kaiming\" ; tmpRepoPath=\"/var/tmp/kaiming/job-\"+taskId ; args: \"/tmp/\"+cid+\".log\"",
+      "explication": "Points de montage et fichiers temporaires a chemins previsibles dans /tmp et /var/tmp, crees/supprimes (fs::remove_all) et montes par des chemins deterministes alors que le code tourne en root (service D-Bus / pkexec). Pas d'usage de O_EXCL / mkdtemp pour ces chemins ; le log crun /tmp/<cid>.log est ecrit en root a un chemin devinable.",
+      "scenario": "Un utilisateur local pre-cree /tmp/<nom>_<pid> ou /tmp/<cid>.log en tant que lien symbolique vers une cible systeme ; l'operation root (montage, ecriture de log, remove_all) suit le lien => ecriture/suppression arbitraire. Course a gagner (PROBABLE).",
+      "contre_lecture": "getpid()/taskId rendent certains noms peu previsibles et reduisent la fenetre ; plusieurs chemins verifient l'existence avant creation. Defaut de durcissement plutot qu'exploitation directe demontree.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kaiming",
+      "fichier": "shells/install_files.sh",
+      "ligne": "18-21",
+      "type": "privileges",
+      "severite": "faible",
+      "extrait": "if [ ! -d \"${kaiminglogdir}\" ]; then mkdir -p \"${kaiminglogdir}\"; chmod o+rwx \"${kaiminglogdir}\"; fi  (kaiminglogdir=/var/log/kaiming)",
+      "explication": "Le script d'installation (execute par postinst, en root) cree /var/log/kaiming et le rend accessible en ecriture a tous (chmod o+rwx). Repertoire de journaux inscriptible par le monde sous /var/log. Le binaire ecrit en realite /var/log/kaiming.log (fichier distinct), mais le repertoire monde-inscriptible reste un defaut de durcissement (depot de fichiers, attaques de liens sur d'eventuels fichiers futurs).",
+      "scenario": "Non eleve en soi ; un utilisateur peut remplir /var/log/kaiming ou y placer des liens. Impact limite tant qu'aucun composant root n'ecrit a l'interieur en suivant des noms previsibles.",
+      "contre_lecture": "Choix pour que des processus non-root puissent journaliser. Reste un defaut de permissions (o+rwx) non necessaire.",
+      "registre": "CONSTATÉ"
+    }
+  ],
+  "revision_constats_anterieurs": [
+    {
+      "constat_anterieur": "V1-L0: polkit org.kylin.kaiming.{install,unsetkysec,mount,umount} en allow_any/inactive/active=yes sans authentification",
+      "verdict": "CONFIRMÉ et PRÉCISÉ",
+      "detail": "data/org.kylin.kaiming.policy:111-165 relu : 4 actions allow_any=yes, allow_gui=true, exec.path sans exec.argv1. PRECISION majeure sur le point prioritaire : /opt/kaiming-tools/bin/kaiming ne valide NI l'appelant (aucun PKEXEC_UID/SUDO_UID dans tout l'arbre), NI la sous-commande, NI les chemins/arguments (shells/kaiming:10-16 transmet argv ; KMApplication.cpp:174-213 ; KMInstall.cpp accepte REFS arbitraires et --skip-signature-verification). L'action 'install' equivaut donc a 'kaiming root a argv libre'. Les primitives mount/setfattr a argv libre restent critiques (deja L0)."
+    },
+    {
+      "constat_anterieur": "V1-L0: generateur d'environnement systemd 60-kaiming injectant /opt/kaiming/share dans XDG_DATA_DIRS",
+      "verdict": "CONFIRMÉ",
+      "detail": "CMakeLists.txt:402-406 installe data/60-kaiming (USE_SOURCE_PERMISSIONS) dans /etc/systemd/system-environment-generators ; data/kaiming.sh (profile.d), data/20kaiming (Xsession.d) et data/60-kaimingenv.conf (ostree.conf.d) installes de meme (CMakeLists:456-467). Rien de nouveau a ajouter cote code kaiming ; l'exploitabilite via le patch polkit reste a trancher en Phase 5 (droits reels des rules.d sous /opt,/var)."
+    },
+    {
+      "constat_anterieur": "V1-L0: chaine postinst -> install_files.sh (liens vers /usr/share/polkit-1/actions, /usr/bin, etc.)",
+      "verdict": "CONFIRMÉ",
+      "detail": "debian/kaiming.postinst:256-257 appelle /opt/kaiming-tools/bin/install_files.sh ; install_files.sh:30-148 cree les liens symboliques vers /lib/systemd, /usr/share/dbus-1, /usr/share/polkit-1/actions, /usr/bin/{kaiming,km-cli,km-run,*-dbus}. Confirme ; non suivi par dpkg."
+    },
+    {
+      "constat_anterieur": "V1-L10: remotes OSTree gpg-verify=false et absence de verification de signature pour le contenu kaiming",
+      "verdict": "CONFIRMÉ et PRÉCISÉ (cote code kaiming)",
+      "detail": "Le defaut gpg-verify=false est pose par le code kaiming lui-meme : KMRemoteModify.h:70 (addRemote defauts gpgVerify=false,gpgVerifySummary=false), KMRemoteModify.cpp:256-259 ecrit ces lignes dans /opt/kaiming/repo/config ; shells/kaiming_version.sh:23-25 (gpg-verify=false, url HTTPS archive2.kylinos.cn/KM/repo-v11) ; common/KMConfig.h:13 REPO_URL. De plus verifySignature (KMPackageManager.cpp:9454-9547) se contourne dans de nombreux cas: kind base/runtime, isV10Sp1, libkylin_signtool absente, safe mode<=1 (getSafeMode echec -> 0 -> skip), kylinfilesigntool absent, et --skip-signature-verification. Seul curlApiDownload du summary.json verifie le TLS (KMCurl.cpp:48-49 VERIFYPEER=1/VERIFYHOST=2) ; le contenu applicatif (pull OSTree) n'est ni signe ni, selon la config, servi en TLS verifie. => authenticite du contenu applicatif non garantie, ce qui aggrave les findings 'executeHostScript' et 'service User=root'."
+    }
+  ],
+  "flux_reseau": [
+    {
+      "composant": "kaiming (KMPackageManager/KMOSTreeHandler)",
+      "destination": "remotes OSTree configures (defaut https://archive2.kylinos.cn/KM/repo-v11 ; http://ostree.openkylin.top/openkylin-kaiming)",
+      "protocole": "OSTree pull (ostree_repo_pull_with_options)",
+      "fichier_ligne": "common/KMPackageManager.cpp:421,747,861,3087,3754 ; shells/kaiming_version.sh:25",
+      "declencheur": "install/update/upgrade/repair (CLI, ou via service D-Bus systeme)",
+      "donnees": "refs d'applications a tirer ; recoit les objets OSTree des applications",
+      "tls_verifie": "n.d.",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kaiming (KMPackageManager::getRemoteSummary via KMCurl)",
+      "destination": "<remote_url>/summary.json",
+      "protocole": "HTTPS (curl)",
+      "fichier_ligne": "common/KMPackageManager.cpp:4446,4505 ; common/KMCurl.cpp:41-49",
+      "declencheur": "resolution de dependances avant install/update/search",
+      "donnees": "telechargement du manifeste summary.json",
+      "tls_verifie": "oui",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kaiming (checkNetworkConnection)",
+      "destination": "hote du remote (ping / TCP bash /dev/tcp)",
+      "protocole": "ICMP (ping) ou TCP via 'timeout bash -c echo >/dev/tcp'",
+      "fichier_ligne": "common/KMPackageManager.cpp:6129-6130,6248-6251",
+      "declencheur": "boucle de surveillance reseau pendant un pull",
+      "donnees": "test d'atteignabilite de l'hote du remote",
+      "tls_verifie": "n.d.",
+      "classification": "fonctionnel"
+    }
+  ],
+  "collectes": [
+    {
+      "composant": "kaiming (KMRunner / KMContainerWrap)",
+      "donnee": "/etc/machine-id (et /var/lib/dbus/machine-id) monte en lecture seule dans le conteneur applicatif",
+      "fichier_ligne": "app/run/KMRunner.cpp:2189-2190 ; app/builder/KMContainerWrap.cpp:752-758",
+      "stockage": "aucun stockage par kaiming ; expose a l'application confinee",
+      "envoi": "aucun envoi par kaiming (l'application voit le machine-id de l'hote) ; aucune telemetrie/identifiant materiel collecte ou exfiltre par kaiming lui-meme (grep machine-id/dmidecode/MAC/serial/telemetry: aucune remontee reseau)"
+    }
+  ],
+  "couverture": [
+    {
+      "arbre": "archive/kaiming",
+      "fichiers_code_propres": 399,
+      "lignes_code_propres": 94897,
+      "lus_integralement": 26,
+      "lus_partiellement": 11,
+      "pct_fichiers": 9,
+      "pct_lignes": 24,
+      "fichiers_lus": [
+        "common/KMPackageManager.cpp (integral, 11577 l.)",
+        "app/KMApplication.cpp",
+        "app/main.cpp",
+        "app/install/KMInstall.cpp",
+        "common/KMSubCommand.cpp",
+        "common/KMDynamicCreator.cpp",
+        "common/KMStorageDir.cpp",
+        "common/KMCommonUtils.cpp",
+        "common/KMCrun.cpp",
+        "common/KMCurl.cpp (extraits 41-108)",
+        "common/KMLogger.cpp (extraits 28-120)",
+        "dbus/gdbus/KMSystemServerAdaptor.cpp (integral)",
+        "dbus/gdbus/KMSystemProxy.cpp (integral)",
+        "dbus/gdbus/KMSessionProxy.cpp (integral)",
+        "dbus/kmsysteminterface.xml",
+        "dbus/kmsystemproxy.xml",
+        "dbus/kmsessionproxy.xml",
+        "app/run/KMRunnerCommon.h (caps defCap/allCap)",
+        "app/remoteModify/KMRemoteModify.cpp (extraits 80-260,340-445) + .h",
+        "common/KMConfig.h",
+        "common/KMConfigData.h (KAIMING_BOX)",
+        "common/KMHostAppDeploy.cpp (extraits 218-320,470-500,640-680,730-820,950-965,1245,1300-1500)",
+        "shells/kaiming",
+        "shells/install_files.sh",
+        "shells/start.sh",
+        "shells/x11-ext.sh",
+        "shells/kaiming_version.sh (via L0/L10)",
+        "debian/kaiming.postinst",
+        "CMakeLists.txt",
+        "data/org.kylin.kaiming.policy",
+        "data/org.kylin.kaiming.conf",
+        "data/org.kylin.kaiming.service",
+        "data/org.kaiming.proxy.system.conf/.service",
+        "data/org.kaiming.proxy.session.conf",
+        "data/km-ses-dbusproxy.service",
+        "common/KMUtil.cpp (extraits parse 330-360,585-710)",
+        "app/run/KMRunner.cpp (extraits 743-846,1900-2060,2180-2190)",
+        "common/KMContainer.cpp (extraits namespaces/caps/seccomp)",
+        "app/builder/KMContainerWrap.cpp (extraits seccomp/uid 1520-1700)",
+        "dbusproxy/KMDbusProxy.cpp (extraits socketPath)"
+      ],
+      "note": "Priorite 1 (KMPackageManager.cpp) lue integralement. Priorites 2-4 (bac a sable, reseau/ostree, IPC D-Bus) lues sur les chemins sensibles. Non lus en entier : ok/engine/* (KMOAB*, moteur .ok), KMOSTreeHandler.cpp (lu partiellement), KMHostAppDeploy.cpp (lu partiellement), KMRunner.cpp/KMContainer.cpp/KMContainerWrap.cpp (partiels), KMBrowserUnits.cpp, KMDeltas, tools/vfsredirect.c. Tests (170 fichiers), squashfuse (tiers) et dbus/gdbus/kmsysteminterface.c (genere) exclus du perimetre propre. Le pourcentage lignes est calcule sur le total 94897 (denominateur L0)."
+    }
+  ],
+  "non_couvert": [
+    "tools/vfsredirect.c (bibliotheque d'interception LD_PRELOAD vfspreload) : non analysee en detail.",
+    "ok/engine/* (KMOABElf.cpp 817 l., KMOABMount/Extract/Repackage, moteur de paquet .ok) : parsing des images .ok non audite ligne a ligne (surface de parsing non authentifie).",
+    "common/KMOSTreeHandler.cpp (1178 l.) et common/KMHostAppDeploy.cpp (1809 l.) : lus partiellement ; logique fine de pull/merge et de synchronisation hostapp a completer.",
+    "common/KMBrowserUnits.cpp, app/run/KMRunner.cpp (reste), KMContainer.cpp/KMContainerWrap.cpp (generation complete du config.json crun) : lus partiellement.",
+    "Permissions reelles, sur systeme installe, de /opt/kaiming/share/polkit-1/rules.d, /var/opt/kaiming/share, /var/log/kaiming — Phase 5.",
+    "Comportement d'execution (non teste : LECTURE SEULE)."
+  ],
+  "synthese": "Approfondissement de kaiming (installe par defaut). POINT PRIORITAIRE TRANCHE : /opt/kaiming-tools/bin/kaiming lance via pkexec (action install, allow_any=yes, sans exec.argv1) ne valide NI l'appelant (aucun PKEXEC_UID/SUDO_UID dans tout l'arbre), NI la sous-commande, NI les chemins ; le wrapper shells/kaiming transmet tout argv a km-cli/km-run et 'install' accepte des REFS arbitraires et --skip-signature-verification [CONSTATÉ, shells/kaiming:10-16, app/KMApplication.cpp:174-213, app/install/KMInstall.cpp:95,104]. L'action 'install' est donc 'kaiming root a argv libre'. NOUVEAUX constats : (1) [critique, CONSTATÉ] KMHostAppDeploy execute en root les scripts preinst/postinst/prerm/postrm fournis dans l'image applicative (KMHostAppDeploy.cpp:1318-1397), alors que l'authenticite du contenu n'est pas garantie (gpg-verify=false + verifySignature frequemment contourne) => execution de code root a l'installation (local via pkexec sans auth, ou reseau via MITM HTTP). (2) [elevee, CONSTATÉ] le service D-Bus systeme root org.kaiming.proxy autorise par policy context=default tout utilisateur local a appeler run/enter/kill, qui executent crun en root avec des arguments controles par l'appelant, sans controle du sender (KMSystemProxy.cpp:128-267, conf:50-57). (3) [elevee, CONSTATÉ] kaiming reecrit les services systemd d'app en User=root et neutralise le durcissement (NoNewPrivileges=false, SystemCallFilter vide, Protect* commentes) puis les demarre (KMPackageManager.cpp:7959-7983,8087-8196,10030-10061). (4) [moyenne, CONSTATÉ] bac a sable faible : seccomp defaultAction=SCMP_ACT_ALLOW et defCap incluant CAP_SYS_ADMIN ; apps privilege=true => userns retire + toutes capabilities hote (KMRunner.cpp:1983-2006,810-846, KMRunnerCommon.h:57-120). (5) [moyenne, CONSTATÉ] le deploiement copie des *.policy d'app dans /usr/share/polkit-1/actions et d'autres fichiers en root (KMPackageManager.cpp:9229-9270). (6) [moyenne, CONSTATÉ] nombreux system()/popen() en root avec chaines non echappees derivees des metadonnees paquet (KMPackageManager.cpp:2354,6681 ; KMHostAppDeploy.cpp). (7) [faible] /var/log/kaiming rendu world-writable (install_files.sh:18-20) ; (8) [faible] chemins /tmp et /var/tmp previsibles manipules en root. REVISIONS : constats L0 (polkit allow_any, generateur XDG, chaine postinst->install_files.sh) CONFIRMES ; le point install PRECISE (aucune validation). Constat L10 (gpg-verify=false, authenticite non verifiee) CONFIRME et PRECISE cote code kaiming (KMRemoteModify defauts false, KMConfig.h, kaiming_version.sh, verifySignature contournable). Aucune telemetrie ni collecte d'identifiants materiels exfiltree par kaiming (machine-id seulement monte RO dans le conteneur). Couverture : KMPackageManager.cpp lu integralement ; chemins privileges/IPC/bac-a-sable/reseau couverts ; ~24% des lignes propres, ~9% des fichiers (reste : ok/engine, vfsredirect, KMOSTreeHandler/KMHostAppDeploy partiels)."
+}

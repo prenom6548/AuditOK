@@ -1,0 +1,77 @@
+[
+ {
+  "id": "P2-grub2-amont#1",
+  "lot": "P2-grub2-amont",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase2/P2-grub2-amont.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/grub2"
+  ],
+  "depot": "grub2",
+  "fichier": "orig/grub-core/fs/ntfs.c",
+  "ligne": "225-245, 386-388, 575, 811, 1159-1168",
+  "type": "durcissement",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "233: grub_set_unaligned32 ((char *) pa + 0x10, … (sans contrôle pa_end) | 386-388: if (ofs + len > u32at (pa, 0x10)) … grub_memcpy (dest, pa + u32at (pa, 0x14) + ofs, len); | 1167: *label = get_utf8 (pa, len);",
+  "explication": "Le pilote NTFS de l'orig (2.12~rc1) ne contient pas les 6 correctifs amont du 2023-10-03 présents dans GNU 2.12 et chez Ubuntu/Debian : « Fix an OOB write when parsing the $ATTRIBUTE_LIST attribute for the $MFT file » (CVE-2023-4692, écriture hors limites dans le tas, lignes 225-245 : aucune vérification pa_end avant grub_set_unaligned32), « Fix an OOB read when reading data from the resident $DATA attribute » (CVE-2023-4693, lignes 386-388 : seules ofs+len sont bornées, ni la taille ni le décalage de l'attribut résident par rapport au tampon MFT), et trois lectures hors limites (étiquette de volume l.1159-1168, bitmap d'index résident l.811, entrées de répertoire list_file l.575 sans end_pos). Aucun des 133 correctifs de debian/patches/series ne touche grub-core/fs/ntfs.c (vérifié par extraction des en-têtes « +++ » et recherche « ntfs » : seules des traductions et tests/ntfs_test.in). Le module ntfs est intégré en dur dans les trois images EFI signées (debian/build-efi-images:129 dans CD_MODULES, repris par GRUB_MODULES l.171 et NET_MODULES l.203 : gcdx64.efi, grubx64.efi, grubnetx64.efi) ; openKylin signe ces images pour le démarrage sécurisé (debian/changelog:66 « 【安全启动】grub文件签名 », paquet grub2-signed). La correction amont, chez Debian/Ubuntu, s'était accompagnée du passage SBAT à grub,4 ; openKylin déclare grub,1 (debian/sbat.openkylin.csv.in:2, hors périmètre de ce lot).",
+  "scenario": "Un attaquant ayant un accès physique (clé USB contenant un volume NTFS forgé) ou déjà root (écriture d'une partition/d'une image NTFS forgée) fait analyser ce volume par GRUB au démarrage — sondage automatique des périphériques par « search », entrée Windows générée par os-prober, ou accès explicite — et déclenche le débordement de tas CVE-2023-4692 pour exécuter du code dans GRUB avant le noyau : contournement de la chaîne Secure Boot (bootkit persistant, désactivation du lockdown) ; CVE-2023-4693 permet de faire fuiter le contenu mémoire (p. ex. variables UEFI) vers le pager GRUB.",
+  "contre_lecture": "Exploitation conditionnée à un accès physique ou à des privilèges root préalables, et sans intérêt si Secure Boot est désactivé (root peut alors remplacer GRUB). La faille vient du code amont rc1 authentique, pas d'un ajout openKylin ; toutes les distributions ayant livré 2.12~rc1 avant octobre 2023 étaient exposées (Debian 2.12~rc1-11, Ubuntu 2.12~rc1-10ubuntu4 corrigées le 02/10/2023, d'après le changelog Ubuntu de référence l.271-334). Le risque concret dépend aussi de la politique SBAT du shim utilisé (non audité ici)."
+ },
+ {
+  "id": "P2-grub2#0",
+  "lot": "P2-grub2",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase2/P2-grub2.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/grub2",
+   "/home/user/openkylin-src/archive/grub2-signed"
+  ],
+  "depot": "grub2",
+  "fichier": "debian/patches/series",
+  "ligne": "1-133",
+  "type": "durcissement",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "Aucun correctif ntfs/CVE dans la série. orig : configure.ac:37 « AC_INIT([GRUB],[2.12~rc1],…) » ; grub-core/fs/ntfs.c:388 « grub_memcpy (dest, pa + u32at (pa, 0x14) + ofs, len); » sans contrôle de bornes ; debian/build-efi-images:129 « ntfs ».",
+  "explication": "L'archive amont livrée sous le nom grub2_2.12.orig.tar.xz est en réalité GRUB 2.12~rc1 (juillet 2023). Les correctifs NTFS CVE-2023-4692 (écriture hors limites, $ATTRIBUTE_LIST) et CVE-2023-4693 (lecture hors limites d'attribut résident), présents dans l'orig 2.12 d'Ubuntu (ntfs.c : first_attr_off/res_attr_data_len, contrôles pa_end) et portés en correctifs par Ubuntu sur sa base rc1 (changelog Ubuntu : d/p/ntfs-cve-fixes/*), sont absents de l'orig openKylin et aucun correctif debian/ ne les apporte. Le module ntfs est embarqué dans les trois images EFI monolithiques destinées à la signature (gcd, grub, grubnet). Portée : génération SBAT réelle < 4. Même fait que le constat « élevée » de P2-grub2-amont (orig/grub-core/fs/ntfs.c), qui détaille l'écart amont ; le présent constat porte sur l'angle debian/ : aucun correctif compensatoire dans la série et ntfs embarqué dans les images à signer. À dédoublonner lors de la consolidation.",
+  "scenario": "Un attaquant disposant d'un accès physique (clé USB) ou des droits root sur une machine en Secure Boot présente à GRUB un système de fichiers NTFS forgé (partition ou image) ; l'écriture hors limites dans le tas de GRUB peut permettre l'exécution de code dans le chargeur signé, donc le contournement de la chaîne Secure Boot (persistance pré-OS). Exploitabilité non démontrée ici (PROBABLE).",
+  "contre_lecture": "Sur l'ISO 3.0, GRUB est lancé directement (pas de shim) et la valeur réelle dépend de l'activation de Secure Boot avec une clé openKylin/Kylin en db ; sans Secure Boot, un attaquant physique a d'autres moyens. GRUB ne lit un NTFS que s'il le parcourt (search, ls, os-prober/entrées Windows, chainloader)."
+ },
+ {
+  "id": "P2-grub2#1",
+  "lot": "P2-grub2",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase2/P2-grub2.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/grub2",
+   "/home/user/openkylin-src/archive/grub2-signed"
+  ],
+  "depot": "grub2",
+  "fichier": "debian/patches/series",
+  "ligne": "1-133",
+  "type": "durcissement",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "Série openKylin sans aucun « cve-2025-jan/* » ; référence ubuntu/grub2_2.12-1ubuntu7.3/deb/patches/series:116+ (71 correctifs cve-2025-jan, p. ex. fs-ufs-Fix-a-heap-OOB-write.patch) ; changelog Ubuntu 7.3:15-55 (CVE-2024-45774…CVE-2025-1125).",
+  "explication": "Les 21 CVE GRUB publiées en février 2025 (CVE-2024-45774 à 45783, CVE-2025-0622, 0624, 0677, 0678, 0684, 0685, 0686, 0689, 0690, 1118, 1125 : débordements dans ufs/hfs/hfs+/squash4/jfs/ext4/jpeg, UAF, net OOB write, désactivation de modules sous lockdown) sont corrigées par Ubuntu noble-updates 2.12-1ubuntu7.3 (mars 2025, SBAT grub,5). openKylin 2.12-ok1.21 (avril 2026) n'en contient aucune : ni correctif debian/ ni présence dans l'orig rc1 (vérifié : aucun « grub_is_lockdown » dans grub-core/fs/ hors hfs.c). La référence la plus proche (noble 2.12-1ubuntu7, avril 2024) est antérieure à ces CVE, ce n'est donc pas un retrait mais une absence de suivi de sécurité. Le debian/changelog openKylin ne mentionne aucune CVE.",
+  "scenario": "Comme ci-dessus : système de fichiers ou image forgée (p. ex. squash4, ufs, hfs+, jpeg de thème) lu par GRUB, ou réponse réseau forgée en amorçage réseau (CVE-2025-0624, écriture hors limites dans la recherche de configuration réseau) — corruption mémoire dans GRUB, potentiellement contournement Secure Boot. PROBABLE (non démontré).",
+  "contre_lecture": "Une partie de ces CVE concerne des modules non embarqués dans les images signées et non chargeables sous Secure Boot ; sans Secure Boot, l'impact est limité à un attaquant déjà privilégié ou physique. openKylin peut corriger hors de ce dépôt (non observé dans les sources auditées)."
+ },
+ {
+  "id": "P2-outils-ubuntu#1",
+  "lot": "P2-outils-ubuntu",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase2/P2-outils-ubuntu.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/aptdaemon",
+   "/home/user/openkylin-src/archive/apport"
+  ],
+  "depot": "aptdaemon",
+  "fichier": "archive/aptdaemon/debian/changelog",
+  "ligne": "7-41",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "PROBABLE",
+  "extrait": "aptdaemon (1.1.1+bzr982-ok6) nile; * Update new version. -- 25 Apr 2024 16:46:28 / ... aptdaemon (1.1.1+bzr982-ok1) yangtze; * Sync kylin-desktop -- 14 Aug 2022",
+  "explication": "Le correctif qui retire SetEnviron (0001-update-new-version.patch, en-tête Date: Thu, 25 Apr 2024 16:46:58) est apparu en ok6 (2024-04-25). Les membres de l'orig.tar.xz sont datés 2022-08-14 11:57 (= ok1 'Sync kylin-desktop'), et ok4 indique seulement 'Update orig.tar format'. Les versions ok1 à ok5 (yangtze, openKylin 1.x, 2022-08 → 2024-01) ont donc très probablement été construites depuis cet orig SANS le correctif, c'est-à-dire avec la méthode D-Bus root non authentifiée SetEnviron, les protections de suppression des paquets essentiels désactivées et allow_downgrade=True. Ce constat porte sur des versions antérieures à 3.0 (la 3.0 livre ok7, neutralisée).",
+  "scenario": "Sur un poste openKylin 1.x équipé d'aptdaemon ok1–ok5 : tout utilisateur local appelle SetEnviron sur le bus système puis déclenche une opération aptd ; les processus root enfants héritent de l'environnement contrôlé (élévation locale). Aucun code d'exploitation n'est fourni.",
+  "contre_lecture": "Les debian/ et binaires ok1–ok5 ne sont pas disponibles : ces versions ont pu porter un autre correctif retirant SetEnviron, ou un orig différent. Indice manquant : debian/patches et paquets binaires ok1–ok5 (archives openKylin yangtze)."
+ }
+]

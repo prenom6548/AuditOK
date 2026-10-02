@@ -1,0 +1,407 @@
+{
+  "lot": "V1-L6-kylin-wget",
+  "composants": [
+    "kylin-wget"
+  ],
+  "empreintes": {
+    "archive/kylin-wget": "ce3943df2705bea3a4a3483bc36204d7a796a3b80f74031d7fbf6e7580f5e988",
+    "conforme": true
+  },
+  "findings": [
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/http.rs",
+      "ligne": "81-98",
+      "type": "privileges",
+      "severite": "moyenne",
+      "extrait": "fn http_fail<T>(out: &str, ec: ExitCode) -> Result<T, ExitCode> { if out != \"-\" { let _ = touch_empty_output(out); } Err(ec) } ... fn touch_empty_output(path: &str) ... std::fs::File::create(path)",
+      "explication": "En cas d'échec (DNS, connexion refusée, erreur TLS, HTTP 4xx/5xx, redirection refusée, échec d'authentification), fetch_one_with_body appelle http_fail(&out) (appels l.560, 615, 622, 636-638, 673, 751, 771, 793, 814, 834, 1058 ; aussi log_reqwest_connect_failure l.340-342). Or `out` est le nom local final, y compris le nom DÉRIVÉ DE L'URL quand -O n'est pas donné (l.470-483) et le chemin planifié en récursif (recursive.rs:460-466). touch_empty_output appelle File::create : crée un fichier vide ou TRONQUE un fichier existant, en suivant les liens symboliques. Le commentaire l.81 (« 且指定了本地输出路径时 ») limite l'intention au cas -O ; GNU Wget ne crée ni ne tronque rien sans -O. Effets : perte de données avec -c (fichier partiel remis à 0 sur coupure réseau), avec -N/-m (copie miroir vidée si l'amont renvoie 404), fichiers vides parasites (ex. `wget file:///etc/passwd` crée ./passwd vide). Aucun cas de tests/compare.py ne couvre l'échec sans -O.",
+      "scenario": "Tâche cron root : `cd /srv/miroir && wget -N http://depot.example/paquet.tar.gz` (ou -c / -m). L'amont renvoie 404/500 temporairement, ou un attaquant sur le chemin HTTP en clair coupe la connexion : kylin-wget tronque paquet.tar.gz à 0 octet (GNU le laisse intact). Variante locale : un utilisateur qui peut déposer, dans le répertoire de travail de root, un lien symbolique portant le nom attendu (hors protection fs.protected_symlinks) obtient de root la troncature de la cible (ex. /etc/shadow, déni de service), l'échec du téléchargement pouvant être provoqué (hôte injoignable, URL en 404).",
+      "contre_lecture": "Imitation volontaire de GNU, qui ouvre et tronque le fichier -O dès le démarrage ; l'extension au nom par défaut est vraisemblablement une omission de portage (aucun test sans -O). Aucun indice d'intention malveillante.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/output.rs",
+      "ligne": "29-37",
+      "type": "privileges",
+      "severite": "moyenne",
+      "extrait": "let f: File = if append { OpenOptions::new().create(true).append(true).open(&path)... } else { File::create(&path).map_err(|_| ExitCode::IoFail)? };",
+      "explication": "Le fichier de sortie est toujours ouvert sans O_EXCL ni O_NOFOLLOW. En mode par défaut (sans -O/-N/-c/-r), le nom est choisi par Path::exists() (http.rs:887-896 ; exists() suit les liens, un lien pendant renvoie false) puis File::create (O_CREAT|O_TRUNC, suit les liens) : fenêtre TOCTOU et écriture à travers un lien symbolique pendant. Idem en FTP (ftp.rs:432-434, tokio::fs::File::create). GNU Wget 1.21 utilise justement fopen_excl (O_EXCL) dans ce mode et échoue (« has sprung into existence ») : régression de durcissement.",
+      "scenario": "root lance `wget http://h/outil.sh` dans un répertoire inscriptible par un autre utilisateur (non sticky, ou sans fs.protected_symlinks) ; l'attaquant y a créé le lien pendant outil.sh -> /etc/cron.d/x : le contenu servi est écrit dans /etc/cron.d/x (propriétaire root, 0644). Si l'attaquant contrôle ou altère le contenu (HTTP en clair, serveur compromis), exécution de code en root.",
+      "contre_lecture": "GNU suit aussi les liens avec -O, -N, -c ; le scénario exige un répertoire de travail hostile (mauvaise pratique en soi) ; dans /tmp (sticky) la protection fs.protected_symlinks=1, active par défaut, bloque le suivi. Simple omission de portage.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/recursive.rs",
+      "ligne": "696-736",
+      "type": "reseau",
+      "severite": "moyenne",
+      "extrait": "if child.scheme() == \"http\" || child.scheme() == \"https\" { match robots.allowed(cli, &child).await {...} } if !policy.accept_domain(&child) { continue; } ... stage_url(...)",
+      "explication": "En mode récursif (-r/-m) ou -p, pour chaque lien http(s) extrait d'une page, robots.txt de l'hôte:port du lien est téléchargé (robots.rs:208-222) AVANT les filtres -D/--exclude-domains, -I/-X, regex et le contrôle « même hôte » (should_follow l.215-232, appelé seulement dans stage_url l.656). Le client utilisé vient de build_client : en-têtes par défaut = User-Agent + TOUTES les valeurs --header (client.rs:170-172, headers.rs:20-41), plus les cookies du jar s'il est activé. kylin-wget contacte donc tout hôte cité par une page explorée (externe ou interne : 127.0.0.1, 169.254.169.254, réseau local), même sans -H, en y envoyant les en-têtes fournis par l'utilisateur. GNU ne charge robots.txt que pour les hôtes qu'il a décidé de visiter.",
+      "scenario": "`wget -r --header \"Authorization: Bearer <masqué>\" https://wiki.interne/` : une page contient <a href=\"https://collecte.attaquant/x\"> ; kylin-wget envoie `GET /robots.txt` avec l'en-tête Authorization à collecte.attaquant, puis rejette le lien (autre hôte). Le jeton fuit. Même mécanisme pour sonder des services internes (GET /robots.txt).",
+      "contre_lecture": "Fonction légitime (respect de robots.txt, comme GNU) ; l'ordre des filtres ressemble à un défaut d'implémentation, pas à une collecte : chemin fixe /robots.txt, réponse seulement analysée localement. La fuite suppose un --header sensible et le parcours récursif d'un contenu non maîtrisé.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/ftp.rs",
+      "ligne": "17-22, 131-144, 214-236, 276, 293, 415, 557-561",
+      "type": "reseau",
+      "severite": "moyenne",
+      "extrait": "fn decode_ftp_path(path: &str) -> String { ... String::from_utf8_lossy(&percent_decode_str(path).collect::<Vec<u8>>()) ... } ... w.write_all(s.as_bytes()) ... w.write_all(b\"\\r\\n\") ... cmd(w, r, &format!(\"RETR {path}\"))",
+      "explication": "Le chemin FTP est décodé (%0D%0A -> CR LF) puis concaténé tel quel dans SIZE/RETR/LIST ; USER/PASS aussi. Aucune neutralisation des CR/LF (GNU ftp-basic.c:ftp_request les remplace par des espaces, précisément contre « ftp://server/fakedir%0Acommand »). Facteurs aggravants : (a) en récursif, les liens ftp:// d'une page HTML sont suivis vers N'IMPORTE QUEL hôte : html_urls.rs:28-38 ne filtre pas le schéma, should_follow (recursive.rs:215-232) ne contrôle l'hôte que si les schémas sont « similaires » (http/https), et l'option --follow-ftp n'existe pas (GNU ne suit pas FTP par défaut) ; (b) login() utilise l'entrée `default` de ~/.netrc pour tout hôte FTP (ftp.rs:214-216 avec slack_default=true, netrc.rs:538-549) et envoie USER/PASS en clair (pas de FTPS).",
+      "scenario": "`wget -r http://site/` (sans -H) sur une page contenant <a href=\"ftp://ftp.victime.interne/x%0D%0ADELE%20base.db\"> : kylin-wget se connecte à l'hôte tiers, s'authentifie avec l'entrée default de ~/.netrc (sinon anonymous) et émet `SIZE /x` puis `DELE base.db`. Avec un hôte FTP attaquant : captation en clair des identifiants .netrc « default ».",
+      "contre_lecture": "GNU avec --follow-ftp suit aussi des liens FTP inter-hôtes et utilise l'entrée default pour FTP ; l'absence de filtrage CR/LF ressemble à une omission de portage, pas à une porte dérobée. FTP et l'entrée .netrc « default » sont peu utilisés ; il faut un parcours récursif de contenu hostile.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/Cargo.toml",
+      "ligne": "17",
+      "type": "confiance",
+      "severite": "faible",
+      "extrait": "reqwest = { version = \"=0.12.4\", default-features = false, features = [\"rustls-tls\", \"http2\", ...] }  ;  Cargo.lock:1453 \"webpki-roots 0.26.11\" -> 1.0.7 ; tls_ca.rs:8 « 追加在默认 Mozilla 根库之后 »",
+      "explication": "Le magasin de confiance est la liste Mozilla embarquée à la compilation (webpki-roots 1.0.7, Cargo.lock:2118-2134) via la feature rustls-tls. Aucune crate rustls-native-certs dans Cargo.lock : /etc/ssl/certs, SSL_CERT_FILE/SSL_CERT_DIR et update-ca-certificates sont ignorés, alors que debian/control:14 déclare Depends: ca-certificates (dépendance sans usage). Conséquences : les retraits ou méfiances de CA livrés par les mises à jour du paquet ca-certificates ne s'appliquent qu'après reconstruction du binaire ; les CA d'entreprise ajoutées localement ne sont pas reconnues (incitation à --no-check-certificate). --ca-certificate/--ca-directory s'ajoutent à la liste (tls_ca.rs:9-44). Aucune CA ajoutée par Kylin, aucun épinglage.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/client.rs",
+      "ligne": "197-205",
+      "type": "crypto",
+      "severite": "informationnelle",
+      "extrait": "if url.scheme().eq_ignore_ascii_case(\"https\") { let verify = cert_check::verify_server_certificate(cli); if verify { client = tls_ca::apply_custom_ca_roots(client, cli)?; } if !verify { client = client.danger_accept_invalid_certs(true); } }",
+      "explication": "Vérification TLS ACTIVE par défaut (cert_check.rs:14-19 : `!cli.no_check_certificate`). Désactivation seulement par --no-check-certificate ou --check-certificate=off|0|false|n|no sur la ligne de commande (dernier gagnant, cert_check.rs:41-67) ; ni .wgetrc ni -e ne peuvent la couper (wgetrc.rs:108-193 sans clé check_certificate ; commande -e inconnue -> erreur). danger_accept_invalid_certs coupe la vérification de chaîne ET de nom d'hôte (comme GNU) et n'est appliqué que si l'URL initiale est https (une redirection http->https reste vérifiée). rustls 0.22.4 / ring, TLS 1.2 et 1.3 uniquement (Cargo.toml:20), nom d'hôte vérifié par webpki, pas de révocation CRL/OCSP, pas d'épinglage ; --secure-protocol, --pinnedpubkey, --certificate non implémentés (refusés par clap). Aucune désactivation par défaut constatée.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/tls_peer.rs",
+      "ligne": "112-129",
+      "type": "reseau",
+      "severite": "faible",
+      "extrait": "pub async fn fetch_peer_certificate_issuer(host: &str, port: u16) -> Option<String> { let addr = format!(\"{host}:{port}\"); let tcp = TcpStream::connect(&addr).await.ok()?; ... .dangerous().with_custom_certificate_verifier(verifier) ...",
+      "explication": "Après un échec classé TLS (http.rs:346-351, appels l.635 et 759), une seconde connexion TCP+TLS est ouverte DIRECTEMENT vers hôte:port de l'URL initiale avec un vérificateur qui accepte tout (CaptureCertVerifier l.21-50), pour lire et afficher l'émetteur du certificat. Aucune donnée applicative n'est envoyée (connexion abandonnée). Mais la sonde ignore le proxy configuré et -4/-6, et vise l'hôte initial même si l'échec s'est produit sur une cible de redirection ou sur le proxy : fuite DNS/SNI hors proxy et connexion directe non souhaitée.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/client.rs",
+      "ligne": "115-138",
+      "type": "reseau",
+      "severite": "faible",
+      "extrait": "let proxy_url = if let Some(p) = &cli.proxy_url { Some(p.clone()) } else if scheme.eq_ignore_ascii_case(\"https\") { first_env_nonempty(&[\"https_proxy\", \"HTTPS_PROXY\"]) } else { first_env_nonempty(&[\"http_proxy\", \"HTTP_PROXY\"]) };",
+      "explication": "Écarts de gestion du proxy par rapport à GNU : (1) HTTP_PROXY en majuscules est accepté (GNU ne lit que http_proxy) -> exposition de type « httpoxy » si wget est lancé depuis un CGI (l'en-tête client « Proxy: » devient HTTP_PROXY) ; (2) --proxy attend une URL (cli.rs:258-259, client.rs:127-130) alors que chez GNU c'est un booléen (--proxy/--no-proxy, -Y) : `--proxy=off` route le trafic vers l'hôte « off » ; (3) le proxy est attaché par schéma au client construit pour l'URL initiale (Proxy::http OU Proxy::https, l.134-138) : une redirection qui change de schéma part en direct ; (4) FTP se connecte toujours en direct, ftp_proxy ignoré (ftp.rs:625-630). Aucun proxy imposé ni écrit en dur ; .no_proxy() neutralise les proxys implicites de reqwest (l.173).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/wgetrc.rs",
+      "ligne": "55-59, 108-193",
+      "type": "confiance",
+      "severite": "faible",
+      "extrait": "fn wgetrc_user_file() -> Option<String> { let home = std::env::var(\"HOME\").ok()?; let p = std::path::Path::new(&home).join(\".wgetrc\"); ... }  ...  _ => {}",
+      "explication": "/etc/wgetrc (configuration système de GNU Wget) n'est jamais lu ; dans ~/.wgetrc ou $WGETRC, seules 13 clés sont prises en compte (quiet, verbose, output_document, trust_server_names, content_disposition, directory_prefix, cut_dirs, user_agent, header, progress, show_progress, spider, delete_after) ; toutes les autres sont ignorées silencieusement (`_ => {}` l.191, contraire au principe « 禁止…静默忽略 » du plan de réécriture). Les réglages administrés centralement (http_proxy/https_proxy/use_proxy, ca_certificate, https_only, hsts, tries...) sont perdus : contournement involontaire d'un proxy d'entreprise, etc. Point positif : aucune clé ne permet de désactiver TLS.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/urls.rs",
+      "ligne": "388-437",
+      "type": "confiance",
+      "severite": "faible",
+      "extrait": "if !u.username().is_empty() { s.push_str(u.username()); if let Some(pass) = u.password() { s.push(':'); s.push_str(pass); } s.push('@'); } ... s.push_str(&percent_decode_iri_component(u.path()));",
+      "explication": "Le mot de passe contenu dans l'URL est affiché en clair dans la ligne « --date--  URL » (mode verbeux, actif par défaut ; log.rs:304-326) et dans les résumés -nv et journaux -o/-a qui reprennent raw_url (log.rs:440-445, 645-651, 660-663) ; GNU le masque (« *password* »). Chemin et requête sont en outre décodés (%XX) et affichés sans filtrer les caractères de contrôle : une URL issue d'une page explorée peut injecter des séquences d'échappement terminal (%1B...) dans la console ou les journaux.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/http.rs",
+      "ligne": "718",
+      "type": "crypto",
+      "severite": "faible",
+      "extrait": "crate::hsts::observe_sts_header(cli, &url, resp.headers());",
+      "explication": "`url` est l'URL initiale, `resp` la réponse FINALE après les redirections suivies par reqwest. L'en-tête Strict-Transport-Security de cette réponse finale (éventuellement en HTTP clair ou issue d'un autre hôte) est donc enregistré pour l'hôte de l'URL INITIALE si celle-ci est https (hsts.rs:203-251) : un attaquant sur le segment HTTP d'une redirection https->http peut injecter max-age=0 et effacer l'entrée HSTS de l'hôte initial. La base ~/.wget-hsts est chargée sans contrôle de permissions (hsts.rs:279-316 ; GNU refuse une base modifiable par tous). --hsts a default_value_t=true (cli.rs:338-343), donc --no-hsts déclenche toujours « Cannot specify both --hsts and --no-hsts » (cli.rs:890-894, code 1) : HSTS non désactivable (incompatibilité de scripts, pas de baisse de sécurité).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/progress.rs",
+      "ligne": "180-198",
+      "type": "privileges",
+      "severite": "faible",
+      "extrait": "if let Ok(out) = std::process::Command::new(\"stty\").args([\"size\"]).output() {",
+      "explication": "Pour la barre de progression (stderr sur un TTY ou --progress=bar:force, sans COLUMNS), le binaire lance la commande externe `stty` résolue via PATH, potentiellement en root. GNU utilise ioctl(TIOCGWINSZ). Exploitable seulement si PATH contient un répertoire contrôlable par un tiers (« . » ou répertoire inscriptible) : défaut de durcissement. Seul autre lancement de processus : background.rs:86 (relance de argv[0] pour -b, via PATH si invoqué sous le nom « wget »).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/headers.rs",
+      "ligne": "7-14",
+      "type": "reseau",
+      "severite": "informationnelle",
+      "extrait": "let default_ua = format!(\"Wget/{WGET_COMPAT_VERSION} (linux-gnu)\");   // version.rs:4 : pub const WGET_COMPAT_VERSION: &str = \"1.20.3\";",
+      "explication": "User-Agent par défaut « Wget/1.20.3 (linux-gnu) » : aucun identifiant machine, utilisateur ou distribution. Seuls en-têtes ajoutés par le code : User-Agent, Referer (--referer), --header, Range, If-Modified-Since, Content-Type des corps. Incohérence de version : paquet 1.21.4-ok4 (.version/.tarball-version 1.21.4, debian/changelog:1) mais binaire « Kylin Wget 1.20.3 (rust 0.1.0) » (version.rs:7-17) ; un scanner fondé sur la version dpkg l'assimilera à GNU Wget 1.21.4 (faux positifs et faux négatifs : le code n'a aucun rapport avec celui de GNU).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/Cargo.toml",
+      "ligne": "17",
+      "type": "reseau",
+      "severite": "faible",
+      "extrait": "features = [\"rustls-tls\", \"http2\", \"charset\", \"gzip\", \"brotli\", \"deflate\", \"stream\", \"cookies\"]",
+      "explication": "client.rs:170-207 n'appelle ni no_gzip/no_brotli/no_deflate ni referer(false). Comportements implicites de reqwest 0.12.4 (source absente de l'arbre) : en-tête Accept-Encoding gzip/br/deflate et décompression automatique (GNU 1.21 n'en envoie pas par défaut) -> fichier enregistré différent de celui de GNU (ex. .tar.gz servi avec Content-Encoding: gzip, somme de contrôle divergente) et risque de bombe de décompression (remplissage du disque) ; négociation HTTP/2 ; en-tête Referer ajouté lors des redirections (fuite de l'URL d'origine, requête comprise, vers la cible) ; identifiants « user:pass@ » de l'URL convertis en Authorization Basic préemptif (GNU attend un défi 401). Positif probable : reqwest retire Authorization/Cookie lors d'une redirection vers un autre hôte (GNU ne le fait pas pour --header, CVE-2021-31879).",
+      "registre": "PROBABLE"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": ".cargo/config.toml",
+      "ligne": "1-12",
+      "type": "confiance",
+      "severite": "informationnelle",
+      "extrait": "[source.crates-io] replace-with = 'aliyun' [source.aliyun] registry = \"sparse+https://mirrors.aliyun.com/crates.io-index/\" [http] check-revoke = false [net] git-fetch-with-cli = true retry = 5",
+      "explication": "Construction (debian/rules:10) : `cargo build --release --locked`, sans vendor, crates téléchargées depuis le miroir aliyun. Cargo.lock : 259 paquets (258 du registre crates.io + la racine wget-rust), 258 sommes SHA-256, aucune source git ou path, aucune section [patch] ; avec --locked, cargo vérifie chaque .crate contre ces sommes : un miroir ne peut substituer un contenu sans provoquer d'échec, la confiance se reporte sur la génération initiale du Cargo.lock (peut-être via le même miroir). check-revoke n'agit que sous Windows (sans effet sur une construction Linux) ; git-fetch-with-cli est sans objet (aucune dépendance git). build.rs (163 l.) se borne à convertir po/*.po en table Rust (ni réseau ni exécution). Crates toutes courantes (reqwest, hyper, h2, rustls, ring, tokio, clap, scraper, url, cookie_store, x509-parser, serde_json -> zmij...), aucune crate inconnue ou forkée. scripts/* et tests/* ne sont pas installés (debian/rules:22-28 : seulement /usr/bin/wget et README.md).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/Cargo.lock",
+      "ligne": "881-889, 1981-1988",
+      "type": "confiance",
+      "severite": "faible",
+      "extrait": "name = \"url\" version = \"2.4.1\" ... dependencies = [ \"form_urlencoded\", \"idna 0.4.0\", \"percent-encoding\" ]   ;  Cargo.toml:7 rust-version = \"1.75\"",
+      "explication": "Toutes les dépendances directes sont figées (=) à des versions de 2023-2024 pour rester compatibles avec rustc 1.75 (Cargo.toml:6-7, 15-44), ce qui retarde les correctifs. url 2.4.1 -> idna 0.4.0 (et cookie_store 0.20 / publicsuffix 2.2.3 -> idna 0.3.0) : concernés, de mémoire, par RUSTSEC-2024-0421 (labels Punycode purement ASCII acceptés, confusion de noms d'hôte ; corrigé dans idna >= 1.0 / url >= 2.5.4). Impact limité ici (comparaisons d'hôtes pour -D/-H, HSTS, .netrc). rustls 0.22.4 et ring 0.17.14 sont postérieurs aux correctifs de RUSTSEC-2024-0336 et RUSTSEC-2025-0009.",
+      "registre": "PROBABLE"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "debian/preinst",
+      "ligne": "7-15",
+      "type": "persistance",
+      "severite": "informationnelle",
+      "extrait": "install|upgrade|reinstall) if [ -e \"$TARGET\" ] || [ -L \"$TARGET\" ]; then dpkg-divert --add --rename --package \"$PKG\" \"$TARGET\" || true ...   postrm:10 dpkg-divert --remove --package \"$PKG\" \"$TARGET\" || true",
+      "explication": "Le paquet remplace /usr/bin/wget pour tout le système (debian/control:11-13 Provides/Conflicts/Replaces: wget, plus la diversion) : tout script système ou postinst appelant wget, y compris en root, exécute ce binaire. Les erreurs de dpkg-divert sont masquées (|| true) ; au retrait, --remove sans --rename ne restaure pas un éventuel /usr/bin/wget.distrib. postinst et prerm sont vides ; aucun service, cron, hook, fichier de configuration ni interface D-Bus n'est installé.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "tests/fixtures/tls/ca.key",
+      "ligne": "1-28",
+      "type": "confiance",
+      "severite": "informationnelle",
+      "extrait": "-----BEGIN PRIVATE KEY----- <masqué>   (CA de test « CN = Wget Rust Test CA », 2026-03-30 -> 2036-03-27 ; tests/fixtures/tls/server.key:1-27 RSA <masqué>, CN=localhost)",
+      "explication": "Clés privées de test (CA et serveur) présentes dans l'arbre source ; non installées par debian/rules et non référencées par le code Rust (aucun include_bytes, aucune CA ajoutée au magasin). Risque seulement si ce CA était ajouté à un magasin de confiance.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/restrict_names.rs",
+      "ligne": "100-136",
+      "type": "privileges",
+      "severite": "informationnelle",
+      "extrait": "if bytes.as_slice() == b\"..\" { return Ok(\"%2E%2E\".to_string()); } ... RestrictOs::Unix => b == b'/' || b == 0,",
+      "explication": "Points conformes : les chemins locaux dérivés de l'URL sont normalisés par le crate url (segments . et .. supprimés), puis chaque segment est décodé et ré-échappé ('/' et NUL -> %2F/%00, caractères de contrôle échappés, '..' -> %2E%2E) ; Content-Disposition seulement sur option et réduit au dernier composant (content_disp.rs:210-224, pathgen.rs:149-156) ; --trust-server-names désactivé par défaut (nom tiré de l'URL d'origine, http.rs:840-848, équivalent du correctif GNU CVE-2010-2252) ; entrées FTP commençant par '/' ou contenant '../' rejetées (recursive.rs:547-550) ; les liens symboliques FTP ne créent pas de liens locaux (pas de faille de la classe CVE-2014-4877). Redirections : 20 au plus (client.rs:163-168), https->http suivi comme chez GNU ; -O sur un fichier existant le tronque comme GNU.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "kylin-wget",
+      "fichier": "rust/src/background.rs",
+      "ligne": "63-66",
+      "type": "obfuscation",
+      "severite": "informationnelle",
+      "extrait": "// 防止递归自我 spawn\n    if std::env::var_os(BG_CHILD_ENV).is_some() {\n        return Ok(());\n    }",
+      "explication": "Aucune obfuscation dans les 42 fichiers Rust : pas de unsafe, extern \"C\", dlopen, include_bytes!, base64/hex/XOR, ni code généré à l'exécution (hors table de traduction produite par build.rs). Variables d'environnement lues : WGETRC, HOME, http(s)_proxy/HTTP(S)_PROXY, no_proxy/NO_PROXY, LC_ALL/LC_MESSAGES/LANG (choix du catalogue de traduction, locale.rs:86-116), COLUMNS, WGET_RUST_BG_CHILD (ici : désactive seulement la remise en arrière-plan). Aucune condition d'activation (date, langue, géographie, débogueur). Code mort sans effet : html_urls.rs extract_follow_urls_from_html / extract_requisite_urls_from_html, log.rs log_ftp_cmd_done / log_ftp_cwd_not_needed / progress_render*, locale.rs is_zh. Aucune destination réseau écrite en dur dans le code Rust ; la seule URL en dur du paquet est le miroir de construction.",
+      "registre": "CONSTATÉ"
+    }
+  ],
+  "flux_reseau": [
+    {
+      "composant": "kylin-wget (/usr/bin/wget)",
+      "destination": "URL fournie par l'utilisateur (argv, -i, -F) puis cibles de redirection (20 au plus, tout hôte, https->http autorisé) ; via proxy si --proxy / http_proxy / HTTP_PROXY / https_proxy / HTTPS_PROXY",
+      "protocole": "HTTP/1.1 ou HTTP/2 (ALPN) sur TLS 1.2/1.3 rustls, ou HTTP en clair ; vérification désactivable par --no-check-certificate",
+      "fichier_ligne": "rust/src/http.rs:558-606, 735-742 ; rust/src/client.rs:153-208 ; rust/src/request.rs:53-79",
+      "declencheur": "invocation de wget (utilisateur ou script système)",
+      "donnees": "méthode/URL, User-Agent « Wget/1.20.3 (linux-gnu) », Accept-Encoding (reqwest), --header/--referer, cookies si --load-cookies, Authorization Basic après 401 (ou --auth-no-challenge / identifiants d'URL), corps --post-*/--body-*, Range (-c), If-Modified-Since (-N)",
+      "tls_verifie": "oui",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kylin-wget (/usr/bin/wget)",
+      "destination": "même URL (requête HEAD préalable)",
+      "protocole": "HTTP/HTTPS",
+      "fichier_ligne": "rust/src/http.rs:571-598",
+      "declencheur": "-N/--timestamping avec fichier local existant",
+      "donnees": "HEAD + en-têtes par défaut",
+      "tls_verifie": "oui",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kylin-wget (/usr/bin/wget)",
+      "destination": "http(s)://<hôte:port de chaque lien extrait>/robots.txt, y compris hôtes exclus par -H/-D (internes ou externes)",
+      "protocole": "HTTP/HTTPS",
+      "fichier_ligne": "rust/src/robots.rs:208-231 ; rust/src/recursive.rs:696-704, 327-333",
+      "declencheur": "mode récursif (-r/-m) ou -p : premier lien vers un hôte:port donné",
+      "donnees": "GET /robots.txt + User-Agent + toutes les valeurs --header (+ cookies du jar s'il est activé)",
+      "tls_verifie": "oui",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kylin-wget (/usr/bin/wget)",
+      "destination": "hôte:port de l'URL initiale, connexion directe (sans proxy, sans filtre -4/-6)",
+      "protocole": "TLS (poignée de main seule)",
+      "fichier_ligne": "rust/src/tls_peer.rs:113-129 ; rust/src/http.rs:346-351, 635, 759",
+      "declencheur": "échec de connexion classé TLS/certificat",
+      "donnees": "ClientHello (SNI) ; aucune donnée applicative ; lecture de l'émetteur du certificat pour le message d'erreur",
+      "tls_verifie": "non",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kylin-wget (/usr/bin/wget)",
+      "destination": "hôte de l'URL ftp:// (argv, ou lien suivi en récursif vers tout hôte), port 21 par défaut, toujours direct (ftp_proxy ignoré)",
+      "protocole": "FTP en clair (pas de FTPS)",
+      "fichier_ligne": "rust/src/ftp.rs:614-713, 182-246, 380-443, 538-592",
+      "declencheur": "URL ftp:// ou lien ftp:// rencontré en récursif",
+      "donnees": "USER/PASS en clair (anonymous/-wget@, --ftp-user/--ftp-password, --user/--password, ~/.netrc y compris l'entrée default), SYST, PWD, TYPE I, SIZE, PASV, LIST, RETR, QUIT (CR/LF du chemin non neutralisés)",
+      "tls_verifie": "non",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kylin-wget (/usr/bin/wget)",
+      "destination": "IP:port annoncés par le serveur FTP dans la réponse 227 (non contrôlés)",
+      "protocole": "TCP (canal de données FTP passif)",
+      "fichier_ligne": "rust/src/ftp.rs:146-180",
+      "declencheur": "chaque RETR/LIST",
+      "donnees": "réception du fichier ou du listing",
+      "tls_verifie": "non",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "kylin-wget (/usr/bin/wget)",
+      "destination": "résolveur DNS du système (getaddrinfo) ; aucun DNS personnalisé",
+      "protocole": "DNS système",
+      "fichier_ligne": "rust/src/client.rs:179-183 ; rust/src/dns_family.rs:47-75",
+      "declencheur": "chaque connexion",
+      "donnees": "noms d'hôte des URL ; filtrage par famille d'adresses seulement avec -4/-6",
+      "tls_verifie": "n.d.",
+      "classification": "fonctionnel"
+    },
+    {
+      "composant": "construction du paquet (non installé)",
+      "destination": "https://mirrors.aliyun.com/crates.io-index/ et téléchargement des .crate",
+      "protocole": "HTTPS (cargo)",
+      "fichier_ligne": ".cargo/config.toml:1-12 ; debian/rules:10",
+      "declencheur": "dpkg-buildpackage / cargo build --release --locked",
+      "donnees": "requêtes d'index et de crates (contenu vérifié par les sommes de Cargo.lock)",
+      "tls_verifie": "oui",
+      "classification": "fonctionnel"
+    }
+  ],
+  "collectes": [
+    {
+      "composant": "kylin-wget",
+      "donnee": "identifiants ~/.netrc (login/password, entrée default)",
+      "fichier_ligne": "rust/src/netrc.rs:21-24, 476-480, 507-549 ; rust/src/auth.rs:33-37 ; rust/src/ftp.rs:214-219",
+      "stockage": "mémoire du processus uniquement",
+      "envoi": "au serveur HTTP de l'hôte correspondant après un défi 401 (Basic) ; au serveur FTP (USER/PASS en clair), l'entrée default servant pour tout hôte FTP"
+    },
+    {
+      "composant": "kylin-wget",
+      "donnee": "hôtes HTTPS ayant émis Strict-Transport-Security (hôte, port, date, max-age)",
+      "fichier_ligne": "rust/src/hsts.rs:71-74, 203-251, 318-343",
+      "stockage": "~/.wget-hsts (ou --hsts-file), conservé jusqu'à expiration de max-age",
+      "envoi": "aucun"
+    },
+    {
+      "composant": "kylin-wget",
+      "donnee": "cookies reçus",
+      "fichier_ligne": "rust/src/cookies.rs:30-39, 66-87, 142-152",
+      "stockage": "mémoire ; fichier seulement avec --save-cookies",
+      "envoi": "aux serveurs selon les règles de domaine du crate cookie_store"
+    },
+    {
+      "composant": "kylin-wget",
+      "donnee": "journal d'exécution (URL téléchargées, mot de passe d'URL en clair)",
+      "fichier_ligne": "rust/src/log.rs:38-65 ; rust/src/background.rs:84-110 ; rust/src/urls.rs:397-403",
+      "stockage": "fichier -o/-a, ou ./wget-log(.N) en mode -b (créé en O_EXCL)",
+      "envoi": "aucun"
+    }
+  ],
+  "couverture": [
+    {
+      "arbre": "archive/kylin-wget",
+      "fichiers_code_propres": 52,
+      "lignes_code_propres": 15232,
+      "lus_integralement": 52,
+      "lus_partiellement": 0,
+      "pct_fichiers": 100,
+      "pct_lignes": 100,
+      "fichiers_lus": [
+        "rust/build.rs",
+        "rust/src/argv_skip.rs",
+        "rust/src/auth.rs",
+        "rust/src/background.rs",
+        "rust/src/backups.rs",
+        "rust/src/cert_check.rs",
+        "rust/src/cli.rs",
+        "rust/src/cli_help.rs",
+        "rust/src/client.rs",
+        "rust/src/content_disp.rs",
+        "rust/src/cookies.rs",
+        "rust/src/css_urls.rs",
+        "rust/src/dirstruct.rs",
+        "rust/src/dns_family.rs",
+        "rust/src/exit.rs",
+        "rust/src/ftp.rs",
+        "rust/src/headers.rs",
+        "rust/src/hostdir.rs",
+        "rust/src/hsts.rs",
+        "rust/src/html_urls.rs",
+        "rust/src/http.rs",
+        "rust/src/i18n.rs",
+        "rust/src/idn.rs",
+        "rust/src/locale.rs",
+        "rust/src/log.rs",
+        "rust/src/main.rs",
+        "rust/src/netrc.rs",
+        "rust/src/noclobber.rs",
+        "rust/src/output.rs",
+        "rust/src/pathgen.rs",
+        "rust/src/progress.rs",
+        "rust/src/recur_policy.rs",
+        "rust/src/recursive.rs",
+        "rust/src/request.rs",
+        "rust/src/restrict_names.rs",
+        "rust/src/resume.rs",
+        "rust/src/robots.rs",
+        "rust/src/tls_ca.rs",
+        "rust/src/tls_peer.rs",
+        "rust/src/urls.rs",
+        "rust/src/version.rs",
+        "rust/src/wgetrc.rs",
+        "scripts/build_deb.sh",
+        "scripts/build_dist.sh",
+        "scripts/inventory_gnu_wget_options.py",
+        "scripts/refresh_vendor.sh",
+        "tests/compare.py",
+        "tests/ftp_server.py",
+        "tests/proxy.py",
+        "tests/run.sh",
+        "tests/run_ftp_compare.sh",
+        "tests/server.py"
+      ]
+    }
+  ],
+  "non_couvert": [
+    "Code source des 258 crates tierces (reqwest 0.12.4, hyper, h2, rustls, webpki-roots, cookie_store...) absent de l'arbre (pas de vendor) : les comportements implicites de reqwest (retrait des en-têtes sensibles en redirection, décompression automatique, Referer, Basic préemptif depuis l'URL, refus des schémas non HTTP en redirection) sont cités au registre PROBABLE.",
+    "Sommes SHA-256 de rust/Cargo.lock non confrontées à crates.io officiel ni au contenu réellement servi par mirrors.aliyun.com (accès réseau interdit) ; à faire dans une phase ultérieure.",
+    "Binaire /usr/bin/wget de l'ISO non comparé à une reconstruction depuis ces sources (compilation interdite) : correspondance source/binaire non établie.",
+    "Base RustSec non consultée (hors ligne) : RUSTSEC-2024-0421 / 2024-0336 / 2025-0009 cités de mémoire ; passer cargo-audit sur rust/Cargo.lock.",
+    "Comportement de référence de GNU Wget 1.21 (fopen_excl, neutralisation CR/LF en FTP, --follow-ftp, lecture de /etc/wgetrc, http_proxy en minuscules seulement, masquage du mot de passe, contrôle de ~/.wget-hsts) cité de mémoire : le code GNU est absent du lot.",
+    "Documents non-code lus partiellement (recherche par mots-clés) : docs/接口说明.md, docs/测试方案.md, docs/模块对应关系.md, docs/kylin-wget-usage.txt (60 premières lignes + recherche), docs/gnu_wget_options_inventory.md ; rust/po/*.po seulement balayés (URL, caractères de contrôle : néant). 重写计划书.md, README.md, docs/兼容矩阵.md, docs/功能对等目标.md, rust/Cargo.toml, .cargo/config.toml et tout debian/ lus intégralement ; rust/Cargo.lock inventorié intégralement par script (noms, versions, sources, sommes) et lu de façon ciblée.",
+    "Aucun test dynamique (exécution interdite) : les écarts de comportement sont déduits de la lecture du code."
+  ],
+  "synthese": "kylin-wget est une réécriture Rust (reqwest/rustls/tokio ; 42 fichiers, 10,5 k lignes) installée par défaut à la place de GNU Wget via Provides/Conflicts/Replaces et dpkg-divert ; le plan de réécriture (重写计划书.md) déclare un objectif de compatibilité CLI avec GNU, sans intention cachée décelée.\n[CONSTATÉ] Aucune télémétrie, vérification de version, DNS personnalisé, proxy imposé ni identifiant machine : les seuls flux sont l'URL demandée et ses redirections, la requête HEAD de -N, robots.txt en récursif, une sonde TLS de diagnostic après échec, et FTP (contrôle + PASV) ; User-Agent « Wget/1.20.3 (linux-gnu) ».\n[CONSTATÉ] TLS : rustls 0.22.4, TLS 1.2/1.3, vérification de la chaîne et du nom d'hôte ACTIVE par défaut, désactivable seulement par --no-check-certificate sur la ligne de commande (pas par .wgetrc) ; pas d'épinglage ; magasin = racines Mozilla embarquées (webpki-roots 1.0.7), magasin système ignoré malgré Depends: ca-certificates (faible).\nAucun constat critique ni élevé.\n[CONSTATÉ, moyenne] Quatre écarts par rapport à GNU qui comptent pour les usages root :\n(1) tout échec (404, DNS, TLS...) crée ou TRONQUE le fichier de sortie, y compris le nom dérivé de l'URL (perte de données avec -c/-N/-m, troncature à travers un lien symbolique) ;\n(2) création sans O_EXCL ni protection contre les liens (GNU utilise O_EXCL) ;\n(3) robots.txt téléchargé pour tout hôte lié avant le filtrage -H/-D, avec les --header de l'utilisateur (fuite de jetons, sondage d'hôtes internes) ;\n(4) FTP : CR/LF non neutralisés (injection de commandes), liens ftp:// suivis vers tout hôte en récursif (pas de --follow-ftp), entrée default de .netrc envoyée en clair.\n[CONSTATÉ, faible] HTTP_PROXY en majuscules (httpoxy), --proxy à sémantique différente, contournement du proxy sur changement de schéma et pour FTP, /etc/wgetrc ignoré, mot de passe d'URL et séquences d'échappement dans les journaux, HSTS mis à jour depuis la réponse finale, --no-hsts inutilisable, appel de `stty` via PATH.\n[PROBABLE, faible] décompression automatique et Referer ajoutés par reqwest ; dépendances figées pour rustc 1.75 (idna 0.4.0, RUSTSEC-2024-0421).\nChaîne d'approvisionnement : 258 crates courantes verrouillées par SHA-256 (--locked), miroir aliyun, check-revoke sans effet sous Linux, build.rs inoffensif ; aucune obfuscation ni condition d'activation.\nCouverture : 52/52 fichiers de code propres (15 232 lignes) lus intégralement, plus debian/, Cargo.toml/Cargo.lock et le plan de réécriture."
+}

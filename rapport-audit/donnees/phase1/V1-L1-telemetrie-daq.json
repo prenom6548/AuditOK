@@ -1,0 +1,545 @@
+{
+ "lot": "V1-L1-telemetrie-daq",
+ "composants": [
+  "kylin-daq",
+  "libkysdk-diagnosetest (paquet binaire libkysdk-datacollect)"
+ ],
+ "empreintes": {
+  "archive/kylin-daq": "8b3a2eaf0c5d1458c4d1ec4b0a975b0389dcb8b96747e2f0a6664fc1da3bf62f",
+  "archive/libkysdk-diagnosetest": "10d09fd74691fae1d0567f4d5ede2d63ebab9ebd5f9fff226c0e1c1fb7ad51da",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/TransmitModule.cpp",
+   "ligne": "977-1010",
+   "type": "confiance",
+   "severite": "elevee",
+   "extrait": "if (url.scheme() == \"https\") { QSslConfiguration config; config.setProtocol(QSsl::TlsV1SslV3); config.setPeerVerifyMode(QSslSocket::PeerVerifyMode::VerifyNone); request.setSslConfiguration(config); }",
+   "explication": "Toutes les requêtes HTTPS du démon root (téléversement d'événements, d'états, configuration) désactivent la vérification du certificat serveur (VerifyNone) : aucune validation de chaîne ni de nom d'hôte, aucun épinglage, aucun certificat embarqué (QSslConfiguration construit vide, pas de setCaCertificates ; grep négatif sur ignoreSslErrors/CaCertificate dans src/). Le protocole est en outre forcé à QSsl::TlsV1SslV3 (obsolète). Ces flux portent en en-têtes HTTP le machine-id, le numéro de série DMI, le numéro d'enregistrement d'activation et la clé de service (cf. CommonInfoModule.cpp:279-290) et, dans le corps, les événements applicatifs (MAC, IP locale, termes de recherche éventuels). Point non tranché : la source de Qt (qsslcontext_openssl.cpp) est absente du corpus (archive/qtbase-opensource-src ne contient que debian/) ; si TlsV1SslV3 plafonne la négociation à TLS 1.0 comme le documente Qt 5.15, la poignée de main avec OpenSSL 3.5.5 (archive/openssl/debian/changelog l.1) au niveau de sécurité par défaut pourrait échouer, ce qui conditionne le succès effectif des envois (à vérifier dynamiquement en Phase 3).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un attaquant en position d'interception (Wi-Fi public, routeur compromis, usurpation DNS de datareporting.openkylin.top) présente n'importe quel certificat : il lit les identifiants matériels/licence et le contenu des événements, et répond à collect-info-server/collect/info/config/v1 avec {\"code\":200,\"bo\":{\"TransmitModule\":{\"UploadRealm\":[\"http://attaquant/\"]}}} ; la configuration est réécrite de façon persistante (ConfModule.cpp:213-266) et toute la télémétrie ultérieure part en clair vers l'attaquant.",
+   "contre_lecture": "Choix probablement fait pour des serveurs internes ou à certificat auto-signé (le changelog montre des adresses privées 172.20.43.232:30051/30053 historiques) ; les données sont surtout de l'inventaire ; l'impact réel dépend de la réussite de la négociation TLS (voir ci-dessus)."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "conf/kylinDaqConf.json",
+   "ligne": "36-39",
+   "type": "telemetrie",
+   "severite": "elevee",
+   "extrait": "\"UploadState\":1, \"UploadRealm\": [ \"https://datareporting.openkylin.top:30005/\" ]  (idem conf/defaultConf.json:123-133 « Default »:1 ; src/DBusModule.cpp:44 m_uploadState(UploadEnable))",
+   "explication": "La remontée est active par défaut : le fichier installé dans /var/cache/kylin-daq (kylin-daq.pro:136-138) et la configuration de repli embarquée (conf.qrc -> conf/defaultConf.json) fixent UploadState=1, et le module D-Bus démarre en UploadEnable. Aucun mécanisme de recueil du consentement n'existe dans les deux arbres. Au démarrage du démon : requête de configuration immédiate (DataCommon.cpp:171-173), collecte root à +120 s (DataCommon.cpp:65-67,159 -> Basic/Online/CommonInfoModule::dealInfo) puis toutes les 86 400 s, téléversement toutes les 3 600 s (TransmitModule.cpp:1067-1125) ou dès 100 lignes en cache (CacheRecv.cpp:30-31,47-48). Identifiants ajoutés par le démon à CHAQUE requête de données (en-têtes, CommonInfoModule.cpp:279-290 + TransmitModule.cpp:988-998) : X-Uid=/etc/machine-id, X-Service-Serial-No=numéro de série DMI système (dmidecode, CommonInfoCollection.cpp:23), X-Register-Number=numéro d'enregistrement d'activation (D-Bus org.freedesktop.activation register_number, RegisterNumberInfoCollection.cpp:24-50), X-Os-Serial-Number=clé de service /etc/.kyinfo [servicekey] key (CommonInfoCollection.cpp:143-149), X-Version-Id=SHA-256 du profil. Corps « commonInformation » : CPU, GPU, fabricant/modèle DMI, versions OS/build/ostree/patch, langue, machine-id, numéro de série DMI, clé de service (CommonInfoModule.cpp:113-146) ; « onlineInformation » : heures de démarrage/arrêt (OnlineInfoCollection.cpp:21-60) ; « basicInformation » : versions logicielles (BasicInfoCollection.cpp:21-35). La description du paquet le déclare (debian/control:22-23 « collect user information »).",
+   "registre": "CONSTATÉ",
+   "scenario": "Le détenteur du point de collecte (ou quiconque contrôle la configuration distante, cf. finding suivant) relie chaque poste à sa licence (clé de service + numéro d'activation, rattachables à l'acheteur) et à son numéro de série matériel, et suit son activité (horaires de démarrage/arrêt, usage des applications instrumentées) dès l'installation, sans action de l'utilisateur.",
+   "contre_lecture": "Fonction d'« amélioration produit » assumée (debian/control) ; un interrupteur existe dans ukui-control-center (page À propos, hors lot) et une case « Send optional diagnostic data » a existé dans l'installeur (kylin-os-installer/debian/changelog:453, hors lot) ; les données sont majoritairement d'inventaire et non du contenu."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/ConfModule.cpp",
+   "ligne": "213-266",
+   "type": "reseau",
+   "severite": "elevee",
+   "extrait": "void ConfModule::writeConf2(const QString &conf) { ... if(moduleName != s_transmitModuleKey || moduleConfKey != s_transmitModuleUploadStateKey) { moduleConfJsonObj[moduleConfKey] = moduleConfIterT.value(); } ... writeJson(filePath, confJsonObj);",
+   "explication": "Configuration modifiable à distance et persistante : la réponse du serveur à POST <realm>collect-info-server/collect/info/config/v1 (objet « bo », TransmitModule.cpp:126-146,454-457 -> signal sendConfig -> DataCommon.cpp:157) est fusionnée dans /var/cache/kylin-daq/kylinDaqConf.json pour toute clé connue de defaultConf.json, SAUF TransmitModule.UploadState (l.249). Le serveur peut donc changer : UploadRealm (liste d'URL de destination, n'importe quelle chaîne ; seul le schéma http ou https est contrôlé, TransmitModule.cpp:889-900, KylinDaqCommon.cpp:50-76), les intervalles (min 60 s), le nombre de lignes, la rétention (StorageDuration jusqu'à 30 j, CacheRows jusqu'à 100 000), UploadType des modules et le filtrage DBusModule (FilterState/ValidPackageName). Il ne peut PAS ajouter de nouveaux types de données collectées (liste figée dans le code) ni réactiver un UploadState=0 (contrairement à l'historique : changelog 1.2.9.1-0k2.1 « 客户端uploadState字段随着服务端配置文件同步修改 »). Aucune signature ni authentification de la réponse ; combiné à VerifyNone, le canal n'est pas authentifié. Le rechargement est automatique (QFileSystemWatcher, ConfModule.cpp:29-48).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un serveur compromis ou un intercepteur TLS impose UploadRealm=[\"http://hôte-tiers/\"] : à partir de là, les données de tous les postes concernés partent en clair vers un tiers, durablement (fichier sur disque), sans mise à jour logicielle ni trace côté utilisateur autre que les journaux.",
+   "contre_lecture": "Mécanisme classique de pilotage de flotte (régler la fréquence, migrer de serveur) ; l'exclusion explicite d'UploadState montre une intention de ne pas contourner le choix de l'utilisateur ; les bornes Min/Max limitent les valeurs numériques."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/TransmitModule.cpp",
+   "ligne": "845-886,1307-1311",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "void TransmitModule::getConfig() { qInfo()<<\"TransmitModule::getConfig start\"; startConfigFetch(QString()); }  /  startConfigFetch(): if(m_uploadRealm.isEmpty()){ return; } ...  (aucun test d'uploadState())",
+   "explication": "La requête de configuration n'est pas soumise à l'interrupteur UploadState, contrairement aux téléversements (TransmitModule.cpp:1070,1094,1119,1134,1164,1194,1224,1256). Elle part au démarrage du démon (DataCommon.cpp:156,173) puis à chaque ConfModule.PollingInterval (86 400 s ; ConfModule.cpp:51,68-73,182-187) : POST à corps vide, en-têtes limités à Content-Type et X-Upload-Timestamp (requestHead vide). Même après refus, le poste signale donc sa présence (adresse IP, heure de démarrage) au serveur une fois par jour et à chaque démarrage, et continue d'accepter une reconfiguration distante (finding précédent) qui s'appliquera si l'utilisateur réactive l'envoi.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur désactive « envoyer les données de diagnostic » ; son poste continue de contacter datareporting.openkylin.top:30005 à chaque démarrage et quotidiennement, ce qui permet au serveur de compter et localiser (par IP) les postes ayant refusé, et de préparer une destination différente.",
+   "contre_lecture": "La requête ne porte aucun identifiant applicatif ; elle sert à maintenir la configuration à jour même hors période d'envoi ; l'information révélée (IP, horaire) est faible."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/DBusModule.cpp",
+   "ligne": "463-487",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "int DBusModule::SetUploadState(int setState) { if(setState == UploadDisable || setState == UploadEnable) { ... setUploadState(uploadState); ... emit UploadStateChanged(setState); } ... }",
+   "explication": "Le démon root exporte toutes ses méthodes Q_SCRIPTABLE (DBusModule.cpp:46-59 ; DBusModule.h:308-353) sans aucun contrôle d'appelant (ni UID via calledFromDBus/connection, ni polkit : grep négatif dans src/). La politique D-Bus autorise tout le monde (data/com.kylin.daq.conf:15-16 « <policy context=\"default\"><allow send_destination=\"com.kylin.daq\" /> », sans restriction d'interface). L'interrupteur de consentement SetUploadState est donc modifiable par n'importe quel utilisateur ou processus local, pour toute la machine, et persisté (signal saveUploadState -> ConfModule::writeConf, ConfModule.cpp:189-211). Le fichier data/com.kylin.daq.limit (liste blanche de 48 exécutables, installé par kylin-daq.pro:144-152) n'est lu nulle part dans src/ (grep négatif « limit ») ; contrairement à d'autres services Kylin qui lisent eux-mêmes leur .limit (ex. libkysdk-base/.pc/0001-.patch/src/conf2/service/conf2-server.py:48-54), son application dépendrait d'un composant externe (dbus-daemon modifié ou module de sécurité) absent du corpus (archive/dbus ne contient que debian/, sans correctif de ce type).",
+   "registre": "CONSTATÉ",
+   "scenario": "Après qu'un administrateur a désactivé la remontée, un utilisateur non privilégié (ou une application compromise) exécute « gdbus call --system -d com.kylin.daq -o /com/kylin/daq -m com.kylin.daq.interface.SetUploadState 1 » : l'envoi des identifiants de la machine reprend pour tous les comptes, sans trace autre qu'un journal.",
+   "contre_lecture": "Préférence machine destinée à être basculée depuis le centre de contrôle sans demande de mot de passe ; si un mécanisme d'application des .limit est actif sur le système installé, seuls les binaires listés peuvent appeler le service (non vérifiable ici)."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/DBusModule.cpp",
+   "ligne": "490-520,523-580,583-653",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "tempUploadMessageReturnState == UploadMessageReturnState::OK; ... //    tempUploadMessageReturnState = checkHashedValue(uploadedMessage,uploadedMessageSha256);  /  // tempUploadMessageReturnState = checkUploadMessage(packageInfo,uploadedMessage,uploadedMessageSha256);",
+   "explication": "Les trois points d'entrée de données (UploadEventMessage, UploadMessage, UploadStateMessage) n'appliquent aucune validation : la ligne 497 est une comparaison sans effet, les appels de vérification (format, champs interdits, tid, empreinte chiffrée RSA) sont commentés (l.505, 531, 591, 699) et la clé privée RSA est une chaîne vide (DBusModule.h:124-125 ; DBusModule.cpp:116). UploadEventMessage n'est même pas déclarée dans data/com.kylin.daq.xml (l.3-34) mais est exportée. Les messages acceptés (si UploadState=1) sont stockés par le démon root dans /var/cache/kylin-daq/data.db puis téléversés avec les identifiants de la machine. Les tables eventMessage/eventReuploadMessage (et Data5) ne sont jamais purgées par durée ni par nombre de lignes (CacheCheck.cpp:24-35 ne traite que Data1, Data3, Data4) et un événement en échec est réinséré et retenté indéfiniment (CacheUpload.cpp:329-355).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur local appelle en boucle UploadEventMessage avec des objets JSON de plusieurs Mo pendant que le poste est hors ligne (ou que le serveur rejette) : data.db, propriété de root sous /var, croît sans borne jusqu'à saturer la partition (déni de service système). Variante : injection de faux événements attribués à la machine (pollution/usurpation de données côté serveur).",
+   "contre_lecture": "Taille par message bornée par la configuration du bus système ; avec réseau disponible et serveur acceptant, les lignes sont supprimées après envoi ; les contrôles ont pu être désactivés pour des raisons de performance (changelog libkysdk-diagnosetest 2.3.1.0-0k0.11 « 修复频繁调用时的卡顿问题 »)."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/CacheBase.cpp",
+   "ligne": "24-67,411-444",
+   "type": "obfuscation",
+   "severite": "faible",
+   "extrait": "// ============ 简单混淆：XOR 编码（仅绕过扫描） + 临时密钥 ============ ... // 原文 \"<masqué>\"（32 字节） static QByteArray makeRawKey256() { static const unsigned char encKey256[] = { <masqué> }; return xorDecode(encKey256, sizeof(encKey256), <masqué>); }",
+   "explication": "Les valeurs stockées dans la base SQLite locale sont chiffrées AES-256-GCM (IV aléatoire, préfixe « KDQ1 ») avec une clé constante compilée dans le binaire, identique sur toutes les machines, masquée par un XOR mono-octet ; le commentaire indique explicitement que ce XOR sert uniquement à « contourner les analyses » (仅绕过扫描). Un ancien format (AES-256-CBC/AES-128-CBC à IV fixe, clés et IV <masqué>) reste déchiffré (l.353-407). Il ne s'agit pas de SQLCipher : le fichier est un SQLite ordinaire (pilote QSQLITE, DataBaseInterface.cpp:20-36) dont seules les colonnes sont chiffrées. Protection équivalente à un encodage ; obfuscation destinée aux outils d'analyse de code, sans dissimulation de comportement réseau.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/DataBaseInterface.cpp",
+   "ligne": "20-36",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "m_db = QSqlDatabase::addDatabase(s_sqliteName,connectName); m_db.setDatabaseName(fileFolderPath+dataBaseName); m_db.open();  (KylinDaqCommon.h:52 \"/var/cache/kylin-daq/\", l.56 \"data.db\")",
+   "explication": "La base /var/cache/kylin-daq/data.db est créée par le démon root sans réglage de permissions ; data/kylin-daq.service ne fixe pas UMask (umask systemd par défaut 0022) et le répertoire est créé par le paquet (kylin-daq.pro:136-138). Le fichier serait donc lisible par tous (0644) ; la clé de chiffrement étant publique (finding précédent), tout utilisateur local pourrait y lire le numéro de série DMI (normalement réservé à root dans /sys/class/dmi/id), la clé de service et le numéro d'activation (table Data2), ainsi que les événements applicatifs des AUTRES utilisateurs (pages visitées, propriétés personnalisées, termes de recherche éventuels) en attente d'envoi. Ce qui manque : vérification des permissions réelles sur un système installé.",
+   "registre": "PROBABLE",
+   "scenario": "L'utilisateur B copie data.db, déchiffre les colonnes avec la clé extraite du binaire et lit l'historique d'événements d'usage de l'utilisateur A (applications ouvertes, recherches dans le menu si instrumentées) et les identifiants de licence de la machine.",
+   "contre_lecture": "Si le répertoire ou le fichier est en 0700/0600 sur l'image réelle, ou si les tables sont vidées rapidement par des envois réussis, l'exposition est nulle ou très brève ; le machine-id est de toute façon lisible par tous."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/InfoCollectionBase.cpp",
+   "ligne": "37-53",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "QStringList options; options << \"-c\"<< shellCmd; QProcess proc; proc.start(\"/bin/bash\", options); proc.waitForFinished(10 * 1000);",
+   "explication": "Le démon root exécute à chaque collecte (+120 s puis toutes les 86 400 s, intervalle réductible à 60 s par la configuration distante) une trentaine de commandes via /bin/bash -c (dmidecode, lsblk, lscpu, dpkg --status, last -x, java --version, cat /etc/machine-id…, BasicInfoCollection.cpp:21-35, CommonInfoCollection.cpp:21-44, OnlineInfoCollection.cpp:21-23, NetworkInfoCollection.cpp:28,56) et lspci via QProcess (CommonInfoCollection.cpp:155-157). Les chaînes sont constantes (aucune donnée externe : pas d'injection), mais les binaires sont résolus par PATH.",
+   "registre": "PROBABLE",
+   "scenario": "Sur un système où /usr/local/bin ou /usr/local/sbin seraient inscriptibles par un groupe non root (convention Debian historique root:staff 2775), un membre de ce groupe dépose /usr/local/bin/java ou dmidecode et obtient root à la collecte suivante.",
+   "contre_lecture": "Sur une installation standard ces répertoires appartiennent à root (0755) ; les commandes sont fixes et l'exposition est nulle."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/SingleApplication.cpp",
+   "ligne": "35,56-83",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "m_serverName = QFileInfo(QCoreApplication::applicationFilePath()).fileName() + QLatin1String(getenv(\"DISPLAY\")); ... socket.connectToServer(m_serverName); if(socket.waitForConnected(TIME_OUT)) { ... m_isRunning = true; return; }",
+   "explication": "Détection d'instance unique par QLocalServer au nom relatif « kylin-daq-daemon » (DISPLAY absent sous systemd), donc une socket dans le répertoire temporaire partagé (/tmp selon Qt, non vérifié dynamiquement). Si une socket à l'écoute existe déjà, le démon se croit lancé et quitte (main.cpp:63-71) ; Restart=always relance en boucle. Un utilisateur local pouvant créer /tmp/kylin-daq-daemon avant un (re)démarrage du service peut empêcher son fonctionnement.",
+   "registre": "PROBABLE",
+   "scenario": "Un utilisateur local maintient une socket d'écoute /tmp/kylin-daq-daemon ; à la prochaine mise à jour du paquet (postinst killall + restart) le service quitte immédiatement et l'interface com.kylin.daq disparaît (déni de service, y compris de l'interrupteur du centre de contrôle).",
+   "contre_lecture": "/tmp est vidé au démarrage et le démon y crée normalement sa socket le premier ; l'effet est un déni de service de la télémétrie elle-même, sans gain de privilège."
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "debian/postinst",
+   "ligne": "9-19",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "systemctl daemon-reload || true; systemctl enable \"${SERVICE_NAME}.service\" || true; systemctl disable \"${TIMER_NAME}\" || true; killall /usr/sbin/kylin-daq-daemon || true; systemctl restart \"${SERVICE_NAME}.service\" || true",
+   "explication": "État d'activation : kylin-daq.pro:116-152 installe /usr/lib/systemd/system/kylin-daq.service (Type=dbus, BusName=com.kylin.daq, User=root, Restart=always, After=lightdm.service, WantedBy=multi-user.target ; data/kylin-daq.service:1-14), /usr/share/dbus-1/system-services/com.kylin.daq.service (SystemdService=kylin-daq.service, User=root ; data/com.kylin.daq.service:1-4), la politique /etc/dbus-1/system.d/com.kylin.daq.conf, l'XML d'interface, les .limit et la configuration /var/cache/kylin-daq/kylinDaqConf.json. data/kylin-daq.timer (OnStartupSec=5minutes) n'est PAS installé (absent des INSTALLS, debian/install vide) : le « systemctl disable kylin-daq.timer » est sans objet (vestige ; changelog l.545, 1.2.9-10 « 删除定时启动服务 »). Le postinst ACTIVE le service (multi-user.target) et le redémarre : le démon tourne à chaque démarrage, après lightdm. En plus, tout appel D-Bus vers com.kylin.daq (autorisé à tous) le démarre à la demande ; un simple « systemctl disable » ne suffit donc pas à l'arrêter durablement (il faut « mask »). Pas de jeton #DEBHELPER# dans postinst (compat 10) : aucun fragment debhelper n'y est injecté ; pas de prerm/postrm dans debian/. data/com.kylin.daq.yaml est déclaré (kylin-daq.pro:140-141) mais absent de l'arbre.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/CommonInfoModule.cpp",
+   "ligne": "84-103,116-135",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "// commonInfoObject.insert(s_mainBoardSerialNumberKey,commonInfo.mainBoardSerialNumber); // commonInfoObject.insert(s_networkMacAddressKey, commonInfo.networkMacAddress); ... // commonInfoObject.insert(s_hardDiskSerialNumberKey, ...); // commonInfoObject.insert(s_systemUuidKey, ...)",
+   "explication": "Identifiants collectés à chaque passage mais actuellement ni stockés ni envoyés (insertion commentée) : numéro de série de la carte mère (dmidecode -t baseboard), UUID système DMI, numéros de série des disques (lsblk -o SERIAL), adresses MAC de toutes les interfaces physiques (/sys/class/net/*/address), versions kysec (CommonInfoCollection.cpp:21-31,53-99 ; NetworkInfoCollection.cpp:49-63). Code dormant réactivable uniquement par une nouvelle version du paquet (pas par la configuration distante). Le changelog trace leur historique (l.579, 1.2.9-8 « 公共信息增加主板UUID字段采集 », l.174, 1.2.9.2-0k1.8 « 修复mac数组合并异常问题 »).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/DataBaseInterface.cpp",
+   "ligne": "401,411,457",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "query.exec(QString(\"SELECT count(*) FROM %1 WHERE %2 = '%3' \").arg(tableName).arg(key).arg(value));  /  condition << QString(\"%1=\\\"%2\\\"\").arg(s_stateInfoTablePackageInfo).arg(pkgKey);  (CacheRecv.cpp:275)",
+   "explication": "Contrôle négatif : des requêtes SQL sont construites par concaténation, mais les seules valeurs interpolées sont des constantes ou des condensats SHA-256 encodés en Base64 (CacheRecv.cpp:254-255,272-276 ; CacheBase.cpp:494-519), alphabet sans guillemet : pas d'injection SQL atteignable depuis les données D-Bus. Les écritures utilisent des requêtes préparées (DataBaseInterface.cpp:124-149).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "src/DBusModule.h",
+   "ligne": "121-125",
+   "type": "obfuscation",
+   "severite": "informationnelle",
+   "extrait": "/** @brief RSA私钥 */ static constexpr const char *privateKey = \"\";  — DBusModule.cpp:115-116 : // 使用拆分+XOR+拼接后的 base64 私钥，运行时构造，并在最后清理  QByteArray privB64 = \"\";",
+   "explication": "Le commentaire décrit une clé privée RSA « découpée + XOR + concaténée » reconstruite à l'exécution (et changelog l.998, 1.2.3-0 « 增强公钥在代码中的安全性，防止通过内存抓取 »), mais la valeur est vide dans la source publiée : le déchiffrement échoue toujours et la vérification n'est de toute façon plus appelée. On ne peut pas exclure que le binaire distribué ait été construit depuis une source interne différente (Vcs interne non acquis) : à comparer en Phase 3 (strings sur le binaire).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-daq",
+   "fichier": "debian/changelog",
+   "ligne": "393,417-418,627,646,659,1021",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "* 修改上传地址为172.20.43.232:30053 / * 修改上传地址为172.20.43.232:30051 / * 150025 数据平台主线版本事项处理、深圳市委项目数据分析支持 / * 添加加密功能",
+   "explication": "Historique : adresses de collecte privées (172.20.43.232:30051/30053) avant l'URL actuelle ; mention d'un « support d'analyse de données pour le projet du comité municipal de Shenzhen » sur la plate-forme de données ; ajout du chiffrement ; synchronisation historique d'uploadState depuis le serveur (1.2.9.1-0k2.1), retirée dans le code actuel (ConfModule.cpp:249). Le paquet sert donc aussi des déploiements clients avec leur propre plate-forme de données (cohérent avec la reconfiguration distante d'UploadRealm).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-diagnosetest",
+   "fichier": "kysdk-datacollect/src/libkydatacollect.c",
+   "ligne": "828-885,361-418",
+   "type": "telemetrie",
+   "severite": "elevee",
+   "extrait": "node->globalProperty->umid = getMachineId(); node->globalProperty->serviceKey = getServiceKey(); node->globalProperty->registerNumber = getRegisterNumber(); ... getSourceMacAndIp(g_source_ip, g_source_mac); ... cJSON_AddStringToObject(globalProperty, \"sourceMac\", ...)",
+   "explication": "API publique libkysdk-datacollect (libkydatacollect.h:107-172) : kdk_dia_data_init, kdk_dia_data_free, kdk_dia_upload_program_startup, kdk_dia_upload_program_exit, kdk_dia_upload_search_content, kdk_dia_upload_default, kdk_dia_append_page_info, kdk_dia_append_page_flag, kdk_dia_append_custom_property. Chaque événement (clic, visite, recherche, exposition, démarrage, sortie, partage, personnalisé) est automatiquement lié à : machine-id (/etc/machine-id, l.631-666), IP locale et adresse MAC de la dernière interface physique active énumérée (ioctl SIOCGIFCONF/SIOCGIFADDR/SIOCGIFHWADDR, l.535-598), clé de service (/etc/.kyinfo, l.600-629), numéro d'enregistrement d'activation (D-Bus org.freedesktop.activation register_number, l.668-826), nom et version de l'application (l.428-512), horodatage ms et durée de session (l.869-871,972-979). L'appelant peut ajouter eventCode, pageName, pageUrl, pagePath, searchWord (texte de recherche, l.980-988), drapeaux d'entrée/sortie et des paires clé/valeur arbitraires (l.926-930). Le JSON est transmis au démon root par D-Bus système UploadEventMessage (l.293-359) puis téléversé tel quel vers <realm>kylin-data-collection-service/collect-api/submit/v1 avec les en-têtes d'identifiants. Le champ userId de KGlobalProperty n'est jamais rempli. Aucun appel de production à kdk_dia_upload_search_content n'a été trouvé dans ukui-menu (seulement dans ses tests) : le passage effectif de texte saisi reste à établir (Phase 3).",
+   "registre": "CONSTATÉ",
+   "scenario": "Toute application instrumentée (ukui-menu, extensions du menu, centre de contrôle via libkysdk-base, etc., hors lot) produit, par défaut et sans consentement préalable, un journal d'usage horodaté lié à la MAC, au machine-id et à la licence du poste ; si un appelant passe des termes de recherche ou des chemins/URL dans pageUrl/pagePath/customProperties, ce contenu saisi par l'utilisateur part avec ces identifiants.",
+   "contre_lecture": "Analytique produit classique ; l'IP collectée est l'adresse locale (souvent privée) ; l'envoi est conditionné par l'interrupteur UploadState du démon ; le contenu dépend entièrement des appelants."
+  },
+  {
+   "depot": "libkysdk-diagnosetest",
+   "fichier": "kysdk-datacollect/src/libkydatacollect.c",
+   "ligne": "946-955",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "char *eventMessageSha256 = base64Encode(eventMessage, strnlen(eventMessage, STRNLEN_MAX)); ... call_dbus(eventMessage, eventMessageSha256);",
+   "explication": "Le second argument nommé « Sha256 » est le message encodé en Base64, ni condensat ni signature ; le démon l'ignore (DBusModule.cpp:505 commenté). Aucune intégrité ou authenticité des événements entre application et démon. Avec KYSDK_DEBUG=1 le message complet et le numéro d'activation sont écrits dans le journal (l.813-815,951-953).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-diagnosetest",
+   "fichier": "kysdk-datacollect/src/libkydatacollect.c",
+   "ligne": "121-194,476-500",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "snprintf(exe, 128, \"/proc/%d/exe\", pid); ... readlink(exe, binPath, 128); ... snprintf(cmd, 256, \"dpkg -S %s 2>&1\", binPath); cmdResult = exec_cmd(cmd); ... snprintf(cmd, 256, \"dpkg -l |grep -iw %s |awk '{print $3}'\", pName);",
+   "explication": "Si le nom de processus ne correspond à aucun paquet dans /var/lib/dpkg/status, la bibliothèque lance, dans le processus de l'application hôte, /bin/sh -c avec le chemin de l'exécutable interpolé sans échappement (fork + execvp). readlink n'ajoute pas de terminateur si le chemin fait 128 octets (lecture hors borne possible). Pas de franchissement de privilège identifié (même UID que l'application) ; isPhysicalInterface (popen, l.514-534), isNewUser et base64Decode sont du code mort exporté.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un exécutable situé dans un chemin contenant des métacaractères shell et lié à la bibliothèque déclencherait l'exécution de commandes au premier événement, avec ses propres droits.",
+   "contre_lecture": "Les applications instrumentées sont installées dans /usr ou /opt avec des chemins fixes ; aucun gain de privilège."
+  },
+  {
+   "depot": "libkysdk-diagnosetest",
+   "fichier": "tests/auto_test.sh",
+   "ligne": "41,54",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "curl --insecure -X POST -F \"file=@/$(pwd)/result.zip\" -F \"package=libkysdk-applications\" -F \"username=wangzhenyu\" $URL  /  #upload_result",
+   "explication": "Script de test (non installé) prévoyant l'envoi des rapports de couverture sans vérification TLS vers une URL passée en argument ; l'appel est commenté. Sans effet sur le système installé.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center (hors lot, lecture ponctuelle)",
+   "fichier": "plugins/system/about/about.cpp",
+   "ligne": "606-634",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "QDBusReply<int> reply = PriDBus->call(\"GetUploadState\"); ... } else { UkccCommon::buriedSettings(name(), \"Send optional diagnostic data\", QString(\"settings\"), status ? \"true\": \"false\"); PriDBus->call(\"SetUploadState\" , (status ? 1 : 0)); }",
+   "explication": "Seule interface utilisateur de l'interrupteur repérée : page « À propos » du centre de contrôle, qui lit GetUploadState et appelle SetUploadState. Lors de la DÉSACTIVATION, l'événement de télémétrie « Send optional diagnostic data = false » est émis AVANT l'appel SetUploadState(0) : le refus lui-même est remonté. Côté installeur, la case « Send optional diagnostic data » ajoutée en 2023 (kylin-os-installer/debian/changelog:453) a sa chaîne marquée « vanished » dans les traductions (kylin-os-installer/language/fr_FR.ts:462-463) : elle semble retirée de l'installeur actuel (PROBABLE, à confirmer par le lot installeur).",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "kylin-daq (root)",
+   "destination": "https://datareporting.openkylin.top:30005/collect-info-server/collect/info/config/v1",
+   "protocole": "HTTPS POST (QNetworkAccessManager), port 30005",
+   "fichier_ligne": "src/TransmitModule.h:74 ; src/TransmitModule.cpp:845-886,1307-1311,454-457 ; src/DataCommon.cpp:156-157,173 ; src/ConfModule.cpp:51,213-266",
+   "declencheur": "démarrage du démon (t≈0) puis toutes les ConfModule.PollingInterval=86 400 s ; NON conditionné par UploadState (part aussi après refus)",
+   "donnees": "corps vide ; en-têtes Content-Type: application/json, X-Upload-Timestamp (heure UTC+8) ; réponse JSON {code:200, bo:{...}} fusionnée dans /var/cache/kylin-daq/kylinDaqConf.json (UploadRealm, intervalles, rétention, filtres ; jamais UploadState)",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "kylin-daq (root)",
+   "destination": "https://datareporting.openkylin.top:30005/collect-info-server/collect/info/submit/event/v1",
+   "protocole": "HTTPS POST JSON compact, sans compression ni chiffrement applicatif ni signature",
+   "fichier_ligne": "src/TransmitModule.h:71-72 ; src/TransmitModule.cpp:505-717,902-1010,1067-1115,1128-1185 ; src/CacheUpload.cpp:60-79,192-239",
+   "declencheur": "minuterie UploadInterval=3 600 s (tables Data1) et ReuploadInterval=3 600 s (Data3, échecs) ; immédiat dès 100 lignes en Data1 (CacheRecv.cpp:30-31) ; seulement si UploadState=1 et après la première collecte commune (+120 s)",
+   "donnees": "corps {\"messages\":[{<champs information>, packageName, messageType, tid, version:\"1.1.0\", parentTid?, uploadTimestamp}]} par lots ≈10 Ko (≥100 Ko : seul) ; messages kylin-daq basicInformation (versions logicielles), onlineInformation (heures démarrage/arrêt), commonInformation (CPU, GPU, fabricant/modèle DMI, n° série DMI, machine-id, clé de service, versions OS/build, langue) et messages d'applications via UploadMessage/UploadStateMessage ; en-têtes X-Uid (machine-id), X-Service-Serial-No (n° série DMI), X-Register-Number (n° d'activation), X-Os-Serial-Number (clé de service /etc/.kyinfo), X-Version-Id, X-Upload-Timestamp",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "kylin-daq (root)",
+   "destination": "https://datareporting.openkylin.top:30005/collect-info-server/collect/info/submit/status/v1",
+   "protocole": "HTTPS POST JSON compact",
+   "fichier_ligne": "src/TransmitModule.h:73 ; src/TransmitModule.cpp:1117-1125,1248-1305,1412-1467 ; src/CacheUpload.cpp:81-91,241-300",
+   "declencheur": "minuterie UploadStateInfoInterval=3 600 s, si UploadState=1 ; lignes Data5 non encore marquées envoyées (Value5≠3)",
+   "donnees": "dernier état connu par (packageName, messageType) : {\"messages\":[{<information>, createTimeStamp, packageName, messageType, tid, parentTid, version, uploadTimestamp, dataOperator: add|update}]} ; mêmes en-têtes d'identifiants",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "kylin-daq (root)",
+   "destination": "https://datareporting.openkylin.top:30005/kylin-data-collection-service/collect-api/submit/v1",
+   "protocole": "HTTPS POST, une requête par événement, envoyée à CHAQUE realm configuré (pas de simple bascule)",
+   "fichier_ligne": "src/TransmitModule.h:75 ; src/TransmitModule.cpp:720-842 ; src/CacheUpload.cpp:329-375 ; src/DBusModule.cpp:490-520",
+   "declencheur": "minuteries UploadInterval/ReuploadInterval=3 600 s ; immédiat dès 100 événements en table eventMessage (CacheRecv.cpp:47-48) ; si UploadState=1",
+   "donnees": "corps = JSON brut de l'événement produit par libkysdk-datacollect (eventCode, eventType, eventSourceType, ts, pageName, pageUrl, pagePath, duration, appName, appVersion, searchWord, entrancePageFlag, exitPageFlag, globalProperties{umid=machine-id, sourceIp, sourceMac, serviceSerialNo=clé de service, registerNumber}, customProperties{…}) ; en-têtes d'identifiants identiques (machine-id, n° série DMI, n° d'activation, clé de service)",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "libkysdk-datacollect (processus applicatif) -> kylin-daq",
+   "destination": "D-Bus système com.kylin.daq /com/kylin/daq com.kylin.daq.interface.UploadEventMessage",
+   "protocole": "IPC D-Bus local (asynchrone)",
+   "fichier_ligne": "kysdk-datacollect/src/libkydatacollect.c:49-52,293-359 ; kylin-daq data/com.kylin.daq.conf:15-16",
+   "declencheur": "chaque appel kdk_dia_upload_* par une application instrumentée (démarrage, sortie, clic, recherche…) ; démarre le démon par activation D-Bus s'il est arrêté",
+   "donnees": "événement JSON complet (cf. flux précédent) + copie Base64 non vérifiée",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-daq et libkysdk-datacollect",
+   "destination": "D-Bus système org.freedesktop.activation /org/freedesktop/activation org.freedesktop.activation.interface.register_number",
+   "protocole": "IPC D-Bus local (bloquant, délai 3 s côté démon)",
+   "fichier_ligne": "kylin-daq src/RegisterNumberInfoCollection.cpp:24-50 ; libkysdk-diagnosetest kysdk-datacollect/src/libkydatacollect.c:54-57,668-826",
+   "declencheur": "chaque collecte commune du démon (+120 s puis 86 400 s) ; premier événement de chaque processus applicatif (mis en cache)",
+   "donnees": "lecture du numéro d'enregistrement d'activation (chaîne + code retour)",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "kylin-daq",
+   "donnee": "machine-id (/etc/machine-id)",
+   "fichier_ligne": "src/CommonInfoCollection.cpp:31,90 ; src/CommonInfoModule.cpp:128,285",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db (colonnes AES-256-GCM, clé constante) table Data2 (ligne unique Id=0, écrasée, non purgée) ; SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé) (champ uid)",
+   "envoi": "X-Uid (en-tête HTTP de toutes les requêtes de données vers https://datareporting.openkylin.top:30005/) + champ uid de commonInformation (submit/event/v1 et submit/status/v1)"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "numéro de série système DMI (dmidecode -t system)",
+   "fichier_ligne": "src/CommonInfoCollection.cpp:23,61 ; src/CommonInfoModule.cpp:121,286",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db (colonnes AES-256-GCM, clé constante) table Data2 (ligne unique Id=0, écrasée, non purgée) ; SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé) (serviceSerialNo)",
+   "envoi": "X-Service-Serial-No (en-tête HTTP de toutes les requêtes de données vers https://datareporting.openkylin.top:30005/) + serviceSerialNo"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "numéro d'enregistrement d'activation (D-Bus org.freedesktop.activation register_number)",
+   "fichier_ligne": "src/RegisterNumberInfoCollection.cpp:24-50 ; src/CommonInfoCollection.cpp:92 ; src/CommonInfoModule.cpp:287",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db (colonnes AES-256-GCM, clé constante) table Data2 (ligne unique Id=0, écrasée, non purgée)",
+   "envoi": "X-Register-Number (en-tête HTTP de toutes les requêtes de données vers https://datareporting.openkylin.top:30005/)"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "clé de service / numéro de série de licence (/etc/.kyinfo [servicekey] key)",
+   "fichier_ligne": "src/CommonInfoCollection.cpp:143-149,59 ; src/CommonInfoModule.cpp:141,288",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db (colonnes AES-256-GCM, clé constante) table Data2 (ligne unique Id=0, écrasée, non purgée) ; SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé) (osSerialNumber)",
+   "envoi": "X-Os-Serial-Number (en-tête HTTP de toutes les requêtes de données vers https://datareporting.openkylin.top:30005/) + osSerialNumber"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "profil matériel : modèle CPU (lscpu), modèle GPU (lspci), fabricant / nom de produit / version DMI, type de réseau (filaire/sans fil par interface physique)",
+   "fichier_ligne": "src/CommonInfoCollection.cpp:22,26,29-30,53-88,151-183 ; src/NetworkInfoCollection.cpp:33-47 ; src/CommonInfoModule.cpp:118-127",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé)",
+   "envoi": "commonInformation (submit/event/v1 si UploadType≥1, submit/status/v1) ; X-Version-Id = SHA-256 de ce profil + identifiants"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "versions système : noyau, architecture, os-release (VERSION_US, RELEASE_ID), /etc/kylin-build, ostree, version de correctif, dpkg, langue (LANG du service)",
+   "fichier_ligne": "src/CommonInfoCollection.cpp:25,34,40-44,126-142 ; src/CommonInfoModule.cpp:130-143",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé)",
+   "envoi": "commonInformation"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "versions logicielles (gcc, glibc, gdb, Qt5/Qt4, Python 3/2, Java, GRUB, CUPS, libjbig, libpng, libjpeg, kylin-daq)",
+   "fichier_ligne": "src/BasicInfoCollection.cpp:21-56 ; src/BasicInfoModule.cpp:76-98",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé)",
+   "envoi": "basicInformation"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "heures de démarrage et d'arrêt, durées de session et d'arrêt (/proc/uptime, last -x wtmp)",
+   "fichier_ligne": "src/OnlineInfoCollection.cpp:21-60 ; src/OnlineInfoModule.cpp:71-83",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé)",
+   "envoi": "onlineInformation"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "n° série carte mère, UUID système DMI, n° série des disques (lsblk), adresses MAC de toutes les interfaces physiques, versions kysec",
+   "fichier_ligne": "src/CommonInfoCollection.cpp:21,24,28,82,35-39 ; src/NetworkInfoCollection.cpp:49-63 ; src/CommonInfoModule.cpp:84-103",
+   "stockage": "mémoire uniquement (insertion commentée)",
+   "envoi": "aucun dans la version auditée (code dormant)"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "messages arbitraires d'applications (packageInfo + uploadedMessage JSON) via D-Bus UploadMessage / UploadStateMessage, sans validation",
+   "fichier_ligne": "src/DBusModule.cpp:523-653",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables Data1 (message, purgé après envoi ou à 30 j / 1 000 lignes) et Data5 (dernier état, jamais purgé) ; Data4 (tid)",
+   "envoi": "submit/event/v1 et submit/status/v1 avec en-têtes d'identifiants"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "événements d'usage reçus via D-Bus UploadEventMessage (JSON de libkysdk-datacollect)",
+   "fichier_ligne": "src/DBusModule.cpp:490-520 ; src/CacheRecv.cpp:41-94",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables eventMessage / eventReuploadMessage (supprimé après envoi réussi ; aucune purge par durée ou nombre)",
+   "envoi": "kylin-data-collection-service/collect-api/submit/v1 avec en-têtes d'identifiants"
+  },
+  {
+   "composant": "kylin-daq",
+   "donnee": "configuration de collecte/transmission (dont état du consentement UploadState et URL)",
+   "fichier_ligne": "src/ConfModule.cpp:157-266 ; conf/kylinDaqConf.json:1-52",
+   "stockage": "/var/cache/kylin-daq/kylinDaqConf.json (root), réécrit par le serveur et par SetUploadState",
+   "envoi": "non envoyé ; reçu du serveur (config/v1)"
+  },
+  {
+   "composant": "libkysdk-datacollect",
+   "donnee": "machine-id (umid)",
+   "fichier_ligne": "kysdk-datacollect/src/libkydatacollect.c:631-666,848,392-393",
+   "stockage": "mémoire du processus applicatif (cache global), puis base du démon",
+   "envoi": "globalProperties.umid -> D-Bus UploadEventMessage -> collect-api/submit/v1"
+  },
+  {
+   "composant": "libkysdk-datacollect",
+   "donnee": "IP locale et adresse MAC de l'interface physique active",
+   "fichier_ligne": "kysdk-datacollect/src/libkydatacollect.c:535-598,854-868,394-397",
+   "stockage": "mémoire (cache global), puis SQLite /var/cache/kylin-daq/data.db tables eventMessage / eventReuploadMessage (supprimé après envoi réussi ; aucune purge par durée ou nombre)",
+   "envoi": "globalProperties.sourceIp / sourceMac"
+  },
+  {
+   "composant": "libkysdk-datacollect",
+   "donnee": "clé de service (/etc/.kyinfo, ligne key=) et numéro d'activation (D-Bus register_number)",
+   "fichier_ligne": "kysdk-datacollect/src/libkydatacollect.c:600-629,668-826,850-852,398-401",
+   "stockage": "mémoire (cache global), puis SQLite /var/cache/kylin-daq/data.db tables eventMessage / eventReuploadMessage (supprimé après envoi réussi ; aucune purge par durée ou nombre)",
+   "envoi": "globalProperties.serviceSerialNo / registerNumber"
+  },
+  {
+   "composant": "libkysdk-datacollect",
+   "donnee": "nom et version de l'application, horodatage ms, durée de session (démarrage->sortie)",
+   "fichier_ligne": "kysdk-datacollect/src/libkydatacollect.c:428-512,869-875,959-979",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables eventMessage / eventReuploadMessage (supprimé après envoi réussi ; aucune purge par durée ou nombre)",
+   "envoi": "appName, appVersion, ts, duration"
+  },
+  {
+   "composant": "libkysdk-datacollect",
+   "donnee": "données fournies par l'appelant : eventCode, pageName, pageUrl, pagePath, searchWord (texte de recherche), drapeaux entrée/sortie, propriétés clé/valeur arbitraires",
+   "fichier_ligne": "kysdk-datacollect/src/libkydatacollect.c:361-418,926-1014 ; libkydatacollect.h:81-98",
+   "stockage": "SQLite /var/cache/kylin-daq/data.db tables eventMessage / eventReuploadMessage (supprimé après envoi réussi ; aucune purge par durée ou nombre)",
+   "envoi": "corps de collect-api/submit/v1"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/kylin-daq",
+   "fichiers_code_propres": 59,
+   "lignes_code_propres": 11094,
+   "lus_integralement": 59,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100.0,
+   "pct_lignes": 100.0,
+   "definition": "48 fichiers C++ de src/ (10 568 lignes, wc -l ; en-tête GPL de 16 lignes identique vérifié par empreinte sur les 48 fichiers) + 11 fichiers de construction/configuration/unités (kylin-daq.pro, conf.qrc, conf/*.json, data/* ; 526 lignes). Hors debian/ (lu intégralement : control, postinst, rules, compat, install, source/format, copyright, changelog 1 139 lignes) et LICENSE.",
+   "fichiers_lus": [
+    "src/BaseModule.cpp",
+    "src/BaseModule.h",
+    "src/BasicInfoCollection.cpp",
+    "src/BasicInfoCollection.h",
+    "src/BasicInfoModule.cpp",
+    "src/BasicInfoModule.h",
+    "src/CacheBase.cpp",
+    "src/CacheBase.h",
+    "src/CacheCheck.cpp",
+    "src/CacheCheck.h",
+    "src/CacheCreate.cpp",
+    "src/CacheCreate.h",
+    "src/CacheModule.cpp",
+    "src/CacheModule.h",
+    "src/CacheRecv.cpp",
+    "src/CacheRecv.h",
+    "src/CacheUpload.cpp",
+    "src/CacheUpload.h",
+    "src/CommonInfoCollection.cpp",
+    "src/CommonInfoCollection.h",
+    "src/CommonInfoModule.cpp",
+    "src/CommonInfoModule.h",
+    "src/ConfModule.cpp",
+    "src/ConfModule.h",
+    "src/DBusModule.cpp",
+    "src/DBusModule.h",
+    "src/DataBaseInterface.cpp",
+    "src/DataBaseInterface.h",
+    "src/DataCommon.cpp",
+    "src/DataCommon.h",
+    "src/InfoCollectionBase.cpp",
+    "src/InfoCollectionBase.h",
+    "src/KylinDaqCommon.cpp",
+    "src/KylinDaqCommon.h",
+    "src/NetworkInfoCollection.cpp",
+    "src/NetworkInfoCollection.h",
+    "src/OnlineInfoCollection.cpp",
+    "src/OnlineInfoCollection.h",
+    "src/OnlineInfoModule.cpp",
+    "src/OnlineInfoModule.h",
+    "src/RegisterNumberInfoCollection.cpp",
+    "src/RegisterNumberInfoCollection.h",
+    "src/SingleApplication.cpp",
+    "src/SingleApplication.h",
+    "src/TransmitModule.cpp",
+    "src/TransmitModule.h",
+    "src/main.cpp",
+    "src/utils.h",
+    "kylin-daq.pro",
+    "conf.qrc",
+    "conf/defaultConf.json",
+    "conf/kylinDaqConf.json",
+    "data/com.kylin.daq.conf",
+    "data/com.kylin.daq.limit",
+    "data/com.kylin.daq.limit.verify",
+    "data/com.kylin.daq.service",
+    "data/com.kylin.daq.xml",
+    "data/kylin-daq.service",
+    "data/kylin-daq.timer",
+    "debian/control",
+    "debian/postinst",
+    "debian/rules",
+    "debian/compat",
+    "debian/install",
+    "debian/source/format",
+    "debian/copyright",
+    "debian/changelog"
+   ]
+  },
+  {
+   "arbre": "archive/libkysdk-diagnosetest",
+   "fichiers_code_propres": 12,
+   "lignes_code_propres": 1466,
+   "lus_integralement": 12,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100.0,
+   "pct_lignes": 100.0,
+   "definition": "5 fichiers de code (.c, .h, test .c, test .cpp, auto_test.sh ; 1 389 lignes) + 7 fichiers de construction (CMakeLists, .pro, .pc ; 77 lignes). Hors .pc/ (comparé par diff au code patché), debian/ (lu : control, rules, *.install, patches/series, compat, changelog ; coverage.xml parcouru), doxygen/ (configuration Doxygen et pages man générées : survol) et .gitignore.",
+   "fichiers_lus": [
+    "kysdk-datacollect/src/libkydatacollect.c",
+    "kysdk-datacollect/src/libkydatacollect.h",
+    "kysdk-datacollect/test/testdatanode.c",
+    "tests/test-datacollect/datacollecttest.cpp",
+    "tests/auto_test.sh",
+    "CMakeLists.txt",
+    "kysdk-datacollect/CMakeLists.txt",
+    "kysdk-datacollect/src/CMakeLists.txt",
+    "kysdk-datacollect/test/CMakeLists.txt",
+    "tests/tests.pro",
+    "tests/test-datacollect/test-datacollect.pro",
+    "development-files/kysdk-datacollect.pc",
+    "debian/control",
+    "debian/rules",
+    "debian/libkysdk-datacollect.install",
+    "debian/libkysdk-datacollect-dev.install",
+    "debian/patches/series",
+    "debian/changelog",
+    ".pc/0001-v11-3.0.1.0-0k0.8-update-changelog.patch/kysdk-datacollect/src/* (diff)"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "Effet réel de QSsl::TlsV1SslV3 avec Qt 5.15.10 + OpenSSL 3.5.5 : la source qsslcontext_openssl.cpp est absente du corpus (archive/qtbase-opensource-src ne contient que debian/) ; la réussite effective des envois HTTPS (négociation limitée à TLS 1.0 ?) doit être vérifiée dynamiquement en Phase 3.",
+  "Application du mécanisme .limit (/etc/dbus-1/conf/com.kylin.daq.limit) : non lu par le démon ; le composant qui l'appliquerait (dbus-daemon modifié, module de sécurité) n'est pas dans le corpus (archive/dbus = debian/ seul) ; le contrôle d'accès réel aux méthodes com.kylin.daq sur l'image installée reste à tester.",
+  "État réel sur l'ISO : présence du lien multi-user.target.wants/kylin-daq.service, presets systemd, valeur effective d'UploadState dans /var/cache/kylin-daq/kylinDaqConf.json après installation, permissions de /var/cache/kylin-daq/data.db et de /etc/.kyinfo ; scripts prerm/postrm générés dans le .deb binaire non examinés.",
+  "Contenu réel des réponses de configuration du serveur datareporting.openkylin.top:30005 et comportement côté serveur (pas d'accès réseau).",
+  "data/com.kylin.daq.yaml référencé par kylin-daq.pro:140-141 mais absent de l'arbre : contenu inconnu (installé vers /etc/kylin-config/basic/ si présent dans le paquet binaire).",
+  "Service org.freedesktop.activation (register_number) et format du numéro d'activation : hors lot.",
+  "Appelants de libkysdk-datacollect et de com.kylin.daq (ukui-menu src/utils/event-track.cpp, ukui-menu-extensions recent-file/event-track.cpp, libkysdk-base src/diagnostics/buriedpoint.cpp, libkysdk-applications kysdk-kabase/kabase/buried_point.cpp, kylin-system-updater backend*/SystemUpdater/Core/DataAcquisition.py, kylin-installer) : non analysés ; usage en production de kdk_dia_upload_search_content non établi (seulement des tests dans ukui-menu).",
+  "Case de consentement de l'installeur (kylin-os-installer) : présence et valeur par défaut actuelles non vérifiées (chaîne marquée vanished dans les traductions).",
+  "Divergence entre l'archive et les dépôts amont (Gitee, gitlab2.kylin.com interne) non mesurée ; correspondance binaire/source (ex. clé RSA mentionnée en commentaire mais vide dans la source) non vérifiée.",
+  "debian/patches/0001-v11-3.0.1.0-0k0.8-update-changelog.patch (1 300 lignes) non lu ligne à ligne : son effet a été vérifié par diff entre .pc/ et l'arbre patché (ajout du numéro d'activation, nouvelle lecture de version via dpkg/status, appel D-Bus asynchrone).",
+  "doxygen/doxy_config (2 534 lignes) et pages man générées : simplement survolés (configuration de documentation, non installée comme code)."
+ ],
+ "synthese": "[CONSTATÉ] kylin-daq est un démon root (Type=dbus, Restart=always) activé au démarrage par debian/postinst (systemctl enable + restart) et démarrable à la demande par tout appelant D-Bus ; kylin-daq.timer n'est pas installé (le « disable » du postinst est sans objet). [CONSTATÉ] Chaîne : les applications appellent libkysdk-datacollect (kdk_dia_*), qui ajoute à chaque événement machine-id, IP locale, MAC, clé de service (/etc/.kyinfo) et numéro d'activation, puis appelle UploadEventMessage sur le bus système ; le démon ajoute aussi ses propres collectes root (n° de série DMI, profil matériel, versions, heures de démarrage/arrêt) toutes les 24 h à partir de +120 s. [CONSTATÉ] Stockage : SQLite /var/cache/kylin-daq/data.db (pas SQLCipher), colonnes chiffrées AES-256-GCM avec une clé constante masquée par XOR « pour contourner les analyses » ; rétention 30 j / 1 000 lignes pour les messages, aucune purge pour les événements en échec ni pour les états. [CONSTATÉ] Envoi : HTTPS POST JSON non compressé, sans chiffrement applicatif ni signature, vers https://datareporting.openkylin.top:30005/ (4 points d'accès), toutes les 3 600 s ou dès 100 lignes ; en-têtes X-Uid (machine-id), X-Service-Serial-No (n° série DMI), X-Register-Number, X-Os-Serial-Number sur chaque requête de données. [CONSTATÉ] TLS : VerifyNone + protocole TlsV1SslV3 (elevee) ; aucun certificat embarqué ni épinglage. [PROBABLE] Avec OpenSSL 3.5, la négociation forcée pourrait même échouer (à vérifier en Phase 3). [CONSTATÉ] Consentement : interrupteur UploadState actif par défaut (=1 dans les deux fichiers de configuration et dans le code) ; il bloque les envois de données mais pas la collecte locale root ni la requête quotidienne de configuration ; il est modifiable par n'importe quel utilisateur local via SetUploadState (aucun contrôle d'appelant ; la liste blanche .limit n'est pas lue par le démon). [CONSTATÉ] Configuration à distance : le serveur (ou un intercepteur, faute de vérification TLS) peut réécrire durablement l'URL de destination (y compris en http), les fréquences et la rétention, mais pas UploadState ni la liste des données collectées. [CONSTATÉ] Les entrées D-Bus de données n'ont plus aucune validation (vérifications commentées, clé RSA vide) : injection de données et croissance illimitée de la base possibles par tout utilisateur local (moyenne). [PROBABLE] data.db serait lisible par tous (umask 0022) et déchiffrable avec la clé publique du binaire : divulgation locale des identifiants réservés à root et des événements des autres utilisateurs. Code dormant : n° série carte mère, UUID, n° série des disques et MAC de toutes les interfaces sont collectés mais pas envoyés. Couverture : 100 % des fichiers et des lignes de code propres des deux arbres (71 fichiers, 12 560 lignes) ; empreintes conformes."
+}

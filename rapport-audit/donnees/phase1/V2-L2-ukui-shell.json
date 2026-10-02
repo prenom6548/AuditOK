@@ -1,0 +1,610 @@
+{
+ "lot": "V2-L2-ukui-shell",
+ "statut": "complet",
+ "composants": [
+  "ukui-control-center",
+  "ukui-search",
+  "peony",
+  "ukui-sni"
+ ],
+ "empreintes": {
+  "archive/ukui-control-center": "c9301a8feab3d981c123d2ccd984861a3bcef589fdb5f74bd4fd9e3dbcc9c838",
+  "archive/ukui-search": "20693c8bb49e821ed83d19c005d35bc671a3ce9a3d1435b78a1555aa0c58519c",
+  "archive/peony": "527c3ac5bc7194102707c6243325d3909662d36f5d9159db5752e38a6b9b756d",
+  "archive/ukui-sni": "c6440b3c1da4c8efe472f056324ce84546249b75536d07a2b8e9328cc4216214",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/sysdbusregister.cpp",
+   "ligne": "547-574",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "if (!callerPathCompare(\"/usr/bin/ukui-session-service\")) { if (!authoriyGrub()) return false; } ... QString cmd = QString(\"export LANG=%1 && update-grub\").arg(lang); ... system(cmd.toLatin1().data());",
+   "explication": "Service D-Bus systeme root (com.control.center.qt.systemdbus, liblaunchSysDbus.so). updateGrub() saute la verification polkit lorsque l'executable de l'appelant (lu via /proc/<pid>/exe, callerPathCompare l.1604-1620) est /usr/bin/ukui-session-service, puis insere le parametre D-Bus 'lang', sans aucune validation, dans une ligne de commande interpretee par /bin/sh via system() en root. Le meme motif (lang non valide dans system()) existe dans setGrupBootTime l.1660-1668, setRescueMode l.1781-1787, setFailuresTimes l.1870-1876, setDefaultBootItem l.1933-1941, ceux-la derriere polkit org.control.center.qt.systemdbus.action.grub (auth_admin_keep). La politique D-Bus autorise tout utilisateur a appeler l'interface (conf l.14-16). L'identification de l'appelant par chemin d'executable n'atteste pas le code reellement execute par un processus de meme UID.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un processus local non privilegie dont la requete est attribuee a l'executable /usr/bin/ukui-session-service (meme UID que la session) obtient l'execution de commandes en root sans authentification, via la valeur 'lang' interpretee par le shell ; autre voie : un appelant ayant obtenu l'autorisation grub (auth_admin_keep, fenetre de memorisation de 5 min) execute des commandes arbitraires au-dela du perimetre prevu. Exploitabilite reelle conditionnee par le filtre externe .limit (non present dans le corpus) : a confirmer en Phase 3.",
+   "contre_lecture": "L'exemption vise a permettre au service de session de regenerer grub sans fenetre d'authentification ; 'lang' est normalement une locale fournie par l'interface ; le filtre .limit (liste blanche d'executables) restreint les appelants ; le motif callerPathCompare est un usage recurrent chez Kylin."
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/sysdbusregister.cpp",
+   "ligne": "1080-1167",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "bool SysdbusRegister::setaptproxy(QString httpIp, QString httpPort, QString httpsIp, QString httpsPort, bool open) { ... QString fileName = \"/etc/apt/apt.conf.d/80apt-proxy\"; ... QString fileName_1 = \"/etc/profile.d/80apt-proxy.sh\";",
+   "explication": "Aucune verification polkit ni controle d'appelant dans setaptproxy() (seule methode d'ecriture systeme sans aucune autorisation). Le service root ecrit ou supprime /etc/apt/apt.conf.d/80apt-proxy (Acquire::http(s)::Proxy) et /etc/profile.d/80apt-proxy.sh (export http_proxy/https_proxy pour tous les shells de connexion). Les valeurs sont filtrees par expressions regulieres hote/IPv4/port (l.1090-1117) : pas d'injection de contenu, mais choix libre de la destination du mandataire. Politique D-Bus : tout utilisateur peut appeler l'interface com.control.center.interface (conf l.14-16).",
+   "registre": "CONSTATÉ",
+   "scenario": "Sur un poste multi-utilisateur, un compte local sans privilege redirige le trafic APT et les variables http(s)_proxy de tous les utilisateurs vers un hote qu'il controle : observation du trafic HTTP en clair, des destinations HTTPS (CONNECT) et blocage des mises a jour ; la verification de signature APT protege toujours l'integrite des paquets. Peut aussi supprimer un mandataire impose par l'administrateur.",
+   "contre_lecture": "Fonction destinee a la page 'proxy' du panneau ; le filtre externe .limit (liste blanche d'executables) restreindrait les appelants ; l'impact est borne par la validation des entrees et par la signature des depots."
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/sysdbusregister.cpp",
+   "ligne": "2050-2065",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "QString cmd = QString(\"/usr/sbin/tune2fs -l /dev/%1 |grep create\").arg(part); process.start(cmd);",
+   "explication": "getSysInstallTime(part) n'a aucun controle d'autorisation. Le parametre D-Bus 'part' est concatene dans une chaine passee a QProcess::start(QString), qui decoupe la chaine en arguments (sans shell) : le contenu de 'part' devient des arguments supplementaires de /usr/sbin/tune2fs execute en root, et '/dev/%1' accepte un chemin relatif quelconque. La sequence '|grep create' est elle-meme transmise comme arguments a tune2fs (fonction probablement inoperante).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur local sans privilege transmet a l'outil root tune2fs des options non prevues ; tune2fs dispose d'options modifiant les parametres d'un systeme de fichiers ext : atteinte possible a l'integrite/disponibilite (comportement de montage, demarrage). Impact exact a confirmer en Phase 3 (PROBABLE) ; filtre .limit externe non verifie.",
+   "contre_lecture": "Methode de lecture de la date d'installation pour la page 'A propos' ; 'part' est normalement un nom de partition fourni par le panneau ; l'erreur de construction (pipe hors shell) suggere un defaut de programmation plutot qu'une porte derobee."
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/sysdbusregister.cpp",
+   "ligne": "1439-1457",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "QString SysdbusRegister::getDmiDecodeRes(QString args) { if (args == \"system-product-name\") ... else if (args == \"baseboard\") args = \"-t \" + args; ... QString program = \"/usr/sbin/dmidecode \" + args;",
+   "explication": "Methodes root sans autorisation exposant des donnees DMI a tout appelant local : getDmiDecodeRes('baseboard') renvoie la sortie complete de 'dmidecode -t baseboard' (dont le numero de serie de la carte mere, normalement lisible par root seul) ; getMemory l.1363-1401, getDmidecodeType l.1418-1437, getDiskInfo l.531-539 (taille disque via com.kylin-os-manager). GetComputerInfo (dmidecode -t system : serie, UUID) est lui protege par polkit (l.630-654). Arguments limites a deux valeurs : pas d'injection.",
+   "registre": "CONSTATÉ",
+   "scenario": "Toute application locale non privilegiee obtient un identifiant materiel stable (serie carte mere) permettant le suivi/empreinte du poste, sans passer par root.",
+   "contre_lecture": "Donnees destinees a l'affichage de la page 'A propos' ; le numero de serie n'est pas un secret au sens strict ; le filtre .limit externe restreindrait les appelants."
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "changeUserPwd/main.cpp",
+   "ligne": "335-348, 468-480",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "const char *secure_mode = getenv(\"UKCC_SECURE_MODE\"); if (secure_mode != NULL && strcmp(secure_mode, \"1\") == 0) { return secure_main(argc, argv); } else { ... return legacy_main(argc, argv); }  // legacy: old/new password = base64(argv[1]), base64(argv[2])",
+   "explication": "Binaire changeuserpwd rendu SUID root par le postinst (debian/ukui-control-center.postinst:7). Sans UKCC_SECURE_MODE=1, il fonctionne en mode 'legacy' : ancien et nouveau mots de passe passes en base64 sur la ligne de commande, visibles des autres utilisateurs locaux (liste des processus) pendant l'execution. Le postinst ecrit UKCC_SECURE_MODE_FOR_LOGINOPTION=1 dans /etc/environment (l.10-19) mais aucune ligne du corpus ne lit cette variable (recherche dans archive/, gitee/, p2full/, ref/) : la mesure est sans effet. Le panneau ukcc lui-meme force UKCC_SECURE_MODE=1 (plugins/account/userinfo/changeuserpwd.cpp:338-345, mots de passe par stdin) ; en revanche ukui-biometric-manager, installe par defaut selon le manifeste ISO, appelle toujours '/usr/bin/changeuserpwd %s %s' avec les mots de passe base64 en arguments (archive ukui-biometric-manager: biometric-plugin/changeuserpwd.cpp:460-462, pwdchangethread.cpp:39) et '/usr/bin/checkUserPwd' avec le mot de passe en clair en argument (pwdcheckthread.cpp:47-50).",
+   "registre": "CONSTATÉ",
+   "scenario": "Lors d'un changement de mot de passe depuis le greffon biometrique, un autre compte local (ou un processus d'un autre UID) qui observe la liste des processus recupere le mot de passe courant et le nouveau de l'utilisateur (base64 reversible).",
+   "contre_lecture": "Mode conserve pour compatibilite ; fenetre d'exposition breve ; hidepid peut masquer /proc ; la variable *_FOR_LOGINOPTION est peut-etre destinee a une version du greffon 'options de connexion' absente du corpus."
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "changeUserPwd/main.cpp",
+   "ligne": "341, 404, 415, 429",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "const char *username = g_get_user_name(); ... pam_start(\"passwd\", username, &conv, &pamh) ... ret = pam_chauthtok(pamh, 0);",
+   "explication": "Analyse du binaire SUID : le compte cible est celui de l'UID reel (g_get_user_name ; LOGNAME n'est retenu par GLib que s'il correspond a getuid()), la pile PAM 'passwd' exige l'ancien mot de passe pour un UID reel non root (pam_unix), longueurs bornees a 4096 (l.110, l.135), mode securise refusant tout argument (l.387-393). Variables d'environnement prises en compte : UKCC_SECURE_MODE, LOGNAME (via GLib). Aucune elevation identifiee ; le binaire duplique la fonction de passwd(1) et accroit la surface SUID (QtCore/GLib/GIO lies, QByteArray::fromBase64 sur argv). Defauts mineurs : comparaisons de pointeurs error_msg != \"\" (l.362, l.367), effacement memoire limite a 8 octets (l.230, l.322).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "debian/ukui-control-center.postinst",
+   "ligne": "7-19, 21-31",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "chmod u+s /usr/bin/changeuserpwd ... printf '\\nUKCC_SECURE_MODE_FOR_LOGINOPTION=1\\n' >> \"$environment_file\" ... #DEBHELPER# ... /usr/share/kylin-system-updater/kylin-reboot-required ... #DEBHELPER#",
+   "explication": "Les trois points de la fiche Phase 0 sont confirmes : (1) chmod u+s /usr/bin/changeuserpwd (l.7) ; (2) ecriture de UKCC_SECURE_MODE_FOR_LOGINOPTION=1 dans /etc/environment, fichier global d'un autre paquet, cree s'il n'existe pas (l.10-19), sans postrm de nettoyage ; variable lue par aucun code du corpus ; (3) execution de kylin-reboot-required s'il existe (l.23-25). Jeton #DEBHELPER# present deux fois (l.21, l.31). Le service ukui-group-manager.service n'est pas active (l.28-29 commentees).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "debian/libukcc3.postinst",
+   "ligne": "3-14",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "kysec_set -n exectl -v verified $file_path ... dpkg-divert --package libukcc3  --rename --remove \"$path\"\".old\"",
+   "explication": "Sans set -e. Si /etc/kylin-build contient V10-SP1-hwe, marque libukcc.so.1.0.0.old comme 'verified' dans le controle d'execution kysec (l.5-7) : une ancienne bibliotheque est ajoutee a la liste de confiance. Les dpkg-divert --remove visent les chemins '.old' alors que le preinst a detourne les chemins d'origine (debian/libukcc3.preinst, debian/ukui-control-center.preinst) : les detournements risquent de subsister. Depend aussi de dpkg-architecture (paquet dpkg-dev) a l'installation.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/sysdbusregister.cpp",
+   "ligne": "2067-2081",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "if (!callerPathCompare(\"/usr/bin/ukui-control-center\")) { if (!checkAuthorization(conn.interface()->servicePid(msg.service()).value()), \"org.control.center.qt.systemdbus.action.remote\"){ return; } } QString cmd = QString(\"systemctl %1 xrdp.service\")...; system(...)",
+   "explication": "Parenthese mal placee : l'operateur virgule rend la condition toujours vraie, donc tout appelant autre que /usr/bin/ukui-control-center est rejete (echec ferme, apres une demande polkit sur l'action par defaut). Pour un appelant identifie comme /usr/bin/ukui-control-center (chemin d'executable), aucune authentification : demarrage/arret de xrdp.service en root. xrdp n'est pas installe par defaut (manifeste ISO), d'ou la severite faible ; a reevaluer (moyenne) si xrdp est present.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/conf/com.control.center.qt.systemdbus.policy",
+   "ligne": "142-152, 166",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "<action id=\"org.control.center.qt.systemdbus.action.packageuninstall\"> ... </defaults>\n  <action id=\"org.control.center.qt.systemdbus.action.remote\">",
+   "explication": "Fichier polkit mal forme : l'element action 'packageuninstall' n'est jamais ferme (erreur XML 'mismatched tag' en l.166). polkitd interrompt l'analyse : au minimum les actions packageuninstall et remote ne sont pas enregistrees (PROBABLE quant au comportement exact de polkitd), les verifications correspondantes echouent alors en refus. Defaut fonctionnel, pas d'affaiblissement.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/sysdbusregister.cpp",
+   "ligne": "695-733, 744-753, 1031-1078",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "cmd = QString(\"gpasswd  -a %1 nopasswdlogin\").arg(username); QProcess::execute(cmd); ... autoSettings->setValue(\"autologin-user\", username); ... file.write(serverAddress.toLatin1().data());",
+   "explication": "Parametres non valides apres autorisation polkit auth_admin : setNoPwdLoginStatus concatene 'username' dans une chaine decoupee en arguments de gpasswd (root) ; setAutoLoginStatus ecrit le nom tel quel dans /etc/lightdm/lightdm.conf ; setNtpSerAddress ecrit l'adresse (retours a la ligne compris) dans /etc/systemd/timesyncd.conf.d/kylin.conf. Meme motif dans group-manager-server/group_manager_server.cpp:390-425. Defauts de durcissement : l'appelant est deja administrateur authentifie.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredQDbus/conf/com.control.center.qt.systemdbus.yaml",
+   "ligne": "1-11",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "whitelist: '[\"/usr/bin/ukui-control-center\",\"/usr/bin/ukui-session-service\",\"/usr/bin/hedron-client\",\"/etc/hedron/policy-manager.py\",\"/usr/bin/d-feet\",...]' envwhitelist: '[\"LD_LIBRARY_PATH\"]'",
+   "explication": "Listes blanches d'appelants par chemin d'executable (yaml installe dans /etc/kylin-config/basic/, et .limit l.1-12 dans /etc/dbus-1/conf et /usr/share/dbus-1/conf) incluant d-feet (client D-Bus generique, non installe par defaut), des produits tiers (/opt/WST/eps, /opt/AQTJ/TIP/SFJB, /etc/hedron) et kylin-nm ; 'envwhitelist' LD_LIBRARY_PATH. Le code qui applique ces listes n'est pas dans le corpus (aucune occurrence de 'envwhitelist' ni de '.limit.verify' dans le code d'archive/) ; le SKILL kylinbot mentionne une erreur 'dbus limit control' a l'execution, ce qui suggere une application effective (PROBABLE). Une liste blanche par chemin d'executable n'authentifie pas le code execute dans un processus de meme UID.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "group-manager-server/group_manager_server.cpp",
+   "ligne": "263-287, 579-601",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "result = PolkitQt1::Authority::instance()->checkAuthorizationSync(\"org.ukui.groupmanager.action.edit\", ...); ... struct spwd *sp = getspnam(ba.constData());",
+   "explication": "Service root org.ukui.groupmanager : toutes les methodes de modification (groupes, utilisateurs, auto-connexion, avatar, type de compte, suppression) passent par polkit auth_admin_keep (policy l.27-29). La politique D-Bus autorise tout utilisateur a envoyer n'importe quelle interface a la destination (conf l.14-17). isPasswordMinAgeReached(username) lit /etc/shadow (getspnam) sans autorisation pour n'importe quel nom : fuite mineure (existence d'une entree shadow, etat de l'age minimal). Les commandes privilegiees sont lancees avec listes d'arguments (QProcess::execute(prog,args)) sauf setNoPwdLoginStatus (l.408-419).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "changeOtherUserPwd/main.cpp",
+   "ligne": "248-254, 275-289",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "if (argc > 1) { fprintf(stderr, \"Error: This program can only be invoked via pipe.\\n\"); ... return EXIT_FAILURE; } ... pam_start(\"passwd\", username, &conv, &pamh) ... pam_chauthtok(pamh, 0);",
+   "explication": "changeotheruserpwd n'est pas SUID : il est lance via pkexec (annotation exec.path dans group-manager-server/conf/org.ukui.groupmanager.policy:31, auth_admin_keep). Lecture du nom et du mot de passe par stdin uniquement, longueurs bornees ; changement du mot de passe d'un autre compte apres authentification administrateur : comportement attendu.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "checkUserPwdWithPAM/childCheckPwdWithPAM/main.cpp",
+   "ligne": "138",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "ret = pam_get_item(pamh, PAM_USER, (const void **)&newUser); ... free(newUser);",
+   "explication": "Helpers non privilegies de verification de mot de passe (service PAM 'control-center' : @include common-auth, conf/control-center l.1-2). free() d'un pointeur appartenant a PAM (memoire invalide, aussi checkUserPwd/auth-pam.cpp:291) ; lancement par execlp avec recherche dans PATH (auth-pam.cpp:72). checkUserPwd recoit le mot de passe en argument (main.cpp:36-38) mais se refuse en mode securise (main.cpp:30-33). Aucun franchissement de privilege (meme UID).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "libukcc/interface/ukcccommon.cpp",
+   "ligne": "349-376",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "KTrackData *trackData = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_CUSTOM); kdk_dia_upload_default(trackData, \"openfile\", \"mainwindow\"); ... pt[2].key = strdup(\"value\"); pt[2].value = toHeap(value); ... kdk_dia_upload_default(trackData, trackData->eventCode, trackData->pageName);",
+   "explication": "Points d'enfouissement : UkccCommon::buriedSettings transmet chaque action de reglage a libkysdk-datacollect (kdk_dia_upload_default -> kylin-daq, cf. lot V1-L1) ; 189 appels dans le code construit. Valeurs transmises comprenant : fuseau horaire (plugins/time-language/datetime/datetime.cpp:227, 241), nom du compte choisi pour l'auto-connexion (plugins/account/userinfo/userinfo.cpp:1522), mode + chemin du fond d'ecran (plugins/personalized/wallpaper/wallpaper.cpp:303), chemins de fichiers ajoutes au demarrage automatique (plugins/application/autoboot/autoboot.cpp:361, 377), chemin de page recherchee (shell/searchwidget.cpp:348). Un evenement parasite 'openfile/mainwindow' est emis a chaque appel (l.355). Le greffon reseau/proxy, qui enverrait URL/IP/ports du mandataire (plugins/network/proxy/proxy.cpp:530-570), n'est pas construit (absent de plugins/plugins.pro SUBDIRS) : code mort.",
+   "registre": "CONSTATÉ",
+   "scenario": "Avec l'interrupteur d'envoi actif par defaut (UploadState=1, constat V1-L1), le serveur de collecte recoit, associes par le SDK/demon aux identifiants machine (machine-id, serie DMI), des noms de comptes locaux et des chemins de fichiers revelant l'arborescence personnelle.",
+   "contre_lecture": "Mesure d'usage des pages de reglage ; la plupart des valeurs sont des choix d'interface non sensibles ; l'utilisateur peut couper l'envoi depuis 'A propos' ; le SDK peut filtrer ou tronquer (non verifie ici)."
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "plugins/system/about/about.cpp",
+   "ligne": "608-632",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "QDBusInterface *PriDBus = new QDBusInterface(\"com.kylin.daq\", \"/com/kylin/daq\", \"com.kylin.daq.interface\", ...); QDBusReply<int> reply = PriDBus->call(\"GetUploadState\"); ... PriDBus->call(\"SetUploadState\" , (status ? 1 : 0));",
+   "explication": "La page 'A propos' lit et modifie l'interrupteur d'envoi de kylin-daq (bus systeme). C'est le seul controle utilisateur de la telemetrie dans ce lot.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "data/ukui-control-center/SKILL.toml",
+   "ligne": "1-96",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "【关于诊断】必须 --system + com.kylin.daq.interface.SetUploadState 1|0 ... 【远程桌面】com.kylin.RemoteDesktop Start/StartRDP/Stop、SetAllowControl、SetNeedConfirm、SetPassword ... 【Grub】com.control.center.qt.systemdbus setGrupPasswd true/false <密码> ... 【账户】org.ukui.groupmanager",
+   "explication": "Competence kylinbot installee dans /opt/kylinbot/skills/ukui-control-center (shell/shell.pro:87-88, debian/ukui-control-center.install). Le manifeste prescrit a l'agent IA d'executer en shell des appels gdbus/gsettings : bascule de l'envoi de telemetrie (SetUploadState), demarrage du bureau a distance, autorisation de controle, desactivation de la confirmation et definition du mot de passe (com.kylin.RemoteDesktop), mot de passe grub passe en ligne de commande, creation/suppression de comptes. Le script scripts/ukcc_scripts.sh (244 lignes, lu integralement) n'opere qu'au niveau session (gsettings/dconf/gdbus --session), variables citees, pas d'eval, pas de reseau.",
+   "registre": "CONSTATÉ",
+   "scenario": "Combine a la configuration kylinbot livree sans approbation (constat V1-L7, elevee), une instruction injectee dans un contenu traite par l'agent peut l'amener a activer le partage de bureau a distance sans confirmation, a fixer son mot de passe, ou a reactiver la telemetrie ; les operations systeme restent soumises a polkit, pas celles de session (RemoteDesktop : controle d'acces non verifie dans ce lot).",
+   "contre_lecture": "Competence de commodite pour piloter les reglages en langage naturel ; l'agent agit avec les droits de l'utilisateur, qui peut faire la meme chose dans l'interface ; le risque principal provient de l'autonomie de kylinbot, pas du manifeste."
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "registeredSession/plugins/about/aboutinterface.cpp",
+   "ligne": "51-74, 305-333, 390-440",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "mNtphostNameList.append(QString(\"0.cn.pool.ntp.org\")); ... mNtphostNameList.append(QString(\"time.windows.com\")); ... i=sendto(s,msg,sizeof(msg),0,(struct sockaddr *)&server_addr,sizeof(server_addr));",
+   "explication": "Service de session : requete NTP UDP/123 non authentifiee vers des serveurs publics (cn/tw/pool.ntp.org, time.windows.com, pools continentaux) pour comparer la date d'activation sur la page 'A propos' (lecture de la propriete netDate, plugins/system/about/about.cpp:952). Paquet NTP standard de 48 octets, aucune donnee utilisateur. Socket jamais ferme (fuite de descripteur). Flux fonctionnel.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-control-center",
+   "fichier": "shell/qtsingleapplication/qtlocalpeer.cpp",
+   "ligne": "n.d.",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "QLocalServer (instance unique)",
+   "explication": "Seuls points d'ecoute : QLocalServer d'instance unique (code tiers Qt Solutions) et socket netlink NETLINK_KOBJECT_UEVENT pour les imprimantes (plugins/devices/printer/usbthread.cpp). Aucun serveur TCP/UDP. Le lien https://www.ubuntukylin.com/wallpaper.html n'est ouvert dans le navigateur que sur clic (plugins/personalized/wallpaper/wallpaper.cpp:287).",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "ukui-search",
+   "fichier": "ukuisearch-systemdbus/inotify-config.cpp",
+   "ligne": "62-112",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "constexpr int kMaxUserWatches = 9999999; ... writeSysctlValue(kMaxUserWatchesPath, kMaxUserWatches) ... instances = currentValue + addNum; if (instances > kMaxUserInstances) instances = kMaxUserInstances;",
+   "explication": "Module root (libinotify-config-service.so charge par register-ukui-system-service, User=root) appelable par tout utilisateur (conf/com.ukui.search.qt.systemdbus.conf l.14-20) sans polkit : porte fs.inotify.max_user_watches a 9 999 999 et max_user_instances jusqu'a 8192 (pas de 1 a 128, valeurs bornees, aucune entree libre). Supprime la limite par defaut du noyau proportionnelle a la memoire : un utilisateur local peut ensuite consommer davantage de memoire noyau via inotify (deni de service local). Comportement voulu pour l'indexation (appele par libsearch/index/ukui-search-qdbus.cpp:42-47).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-search",
+   "fichier": "libsearch/common.h",
+   "ligne": "31-33",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "INDEX_PATH = HOME_PATH + \"/.config/org.ukui/ukui-search/index_data\"; CONTENT_INDEX_PATH = ... \"/content_index_data\"; OCR_CONTENT_INDEX_PATH = ... \"/ocr_content_index_data\";",
+   "explication": "Index Xapian locaux par utilisateur : noms/chemins de fichiers, contenu textuel des documents et texte extrait des images par OCR (libsearch/index/file-reader.cpp:43, en-tete ocr-utils.h externe). Indexation de fichiers, de contenu, OCR et IA desactivees par defaut (data/org.ukui.search.data.gschema.xml:8-34, defaut false).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-search",
+   "fichier": "libsearch/index/file-indexer-config.cpp",
+   "ligne": "83-108",
+   "type": "telemetrie",
+   "severite": "faible",
+   "extrait": "if (oldVersion == \"0.0\") { ... if (fileIndexEnable) { ... m_gsettings->set(CONTENT_INDEX_ENABLE_KEY, true); ... m_gsettings->set(CONTENT_INDEX_ENABLE_OCR_KEY, true);",
+   "explication": "Migration de configuration : lors d'une mise a jour, si l'indexation des fichiers etait active (version 0.0), l'indexation du contenu ET l'OCR des images sont activees automatiquement ; si le contenu etait indexe (version 1.0), l'OCR est active. Extension silencieuse du perimetre de l'index local, sans action de l'utilisateur (donnees restant locales).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-search",
+   "fichier": "libsearch/websearch/web-search-plugin.cpp",
+   "ligne": "113-145",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "address = \"https://www.so.com/s?q=\" + m_keyWord; ... address = \"https://www.sogou.com/web?query=\" + m_keyWord; ... address = \"https://baidu.com/s?word=\" + m_keyWord; ... call(\"LaunchDefaultAppWithUrl\", address)",
+   "explication": "Recherche web : sur clic de l'utilisateur uniquement, le mot-cle saisi est ouvert dans le navigateur par defaut vers Baidu (defaut, gschema web-engine=baidu), 360 ou Sogou, en HTTPS ; mot-cle non encode. Flux fonctionnel initie par l'utilisateur ; moteur par defaut chinois.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-search",
+   "fichier": "libsearch/data-collecter.cpp",
+   "ligne": "23-36",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "property->key = strdup(\"pluginName\"); property->value = strdup(button...); KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP,KEVENT_CLICK); ... kdk_dia_upload_default(node, \"search_plugin_launch_event\", plugin)",
+   "explication": "Telemetrie ukui-search : 31 appels DataCollecter::collectLaunchEvent ne transmettant que le nom du greffon et du bouton (open, openFile, copyPath, launch...), sans mot-cle ni chemin ; s'y ajoutent les identifiants machine du SDK (V1-L1). Le greffon ukcc de recherche envoie des bascules de reglages (search-ukcc-plugin/search.cpp:160-245).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony",
+   "fichier": "debian/upgrade-utils/desktop-grid/update-desktop-grid",
+   "ligne": "182-196",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "config_file=\"$home_dir/.peony-desktop-grid.conf\"; rm -f \"$config_file\"; if touch \"$config_file\" ... && chmod +rw \"$config_file\" ...; then if calculate_user_desktop_grid \"$user\" > \"$config_file\" ...; then chmod -w \"$config_file\"; chown \"$user\" \"$config_file\"",
+   "explication": "Script installe dans /usr/bin et execute en root par le postinst de peony-utils (debian/peony-utils.postinst:5) a chaque installation/mise a jour. Pour chaque compte UID>=1000 ayant un shell et un repertoire personnel (l.161-179), root supprime puis recree $HOME/.peony-desktop-grid.conf (l.185-188), y ecrit par redirection pendant un calcul de plusieurs secondes qui lance plusieurs 'sudo -u' (l.190, l.138-144), puis applique chmod -w et chown \"$user\" sur ce chemin (l.191-192). Ces operations portent sur un chemin situe dans un repertoire controle par l'utilisateur ; chown (sans -h), chmod et la redirection suivent les liens symboliques ; la protection noyau protected_symlinks ne couvre pas ce cas (repertoire non 'sticky'). Classe de defaut : course TOCTOU / suivi de lien par un processus root dans un repertoire utilisateur. Le contenu ecrit derive en outre des noms de fichiers du bureau de l'utilisateur (l.53-54).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur local disposant d'un processus actif pendant l'execution du postinst (mise a jour systeme de peony-utils) modifie l'entree de son repertoire personnel entre la creation du fichier et le chown : root attribue alors a cet utilisateur, ou rend non inscriptible, un fichier systeme arbitraire, ce qui peut conduire a une elevation de privileges. Exploitabilite a confirmer en Phase 3 (PROBABLE).",
+   "contre_lecture": "Script de migration de la grille d'icones, execute rarement et sans intention malveillante apparente ; la fenetre temporelle est limitee a l'installation ; l'absence de 'chown -h' / d'ecriture via 'sudo -u' releve d'une erreur de conception courante dans les scripts mainteneur."
+  },
+  {
+   "depot": "peony",
+   "fichier": "src/control/navigation-side-bar.cpp",
+   "ligne": "505-517",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP,KEVENT_CLICK); kdk_dia_upload_default(node,\"peony\",\"secondLevelChildClick\");",
+   "explication": "Unique point d'enfouissement de peony : evenement de clic 'secondLevelChildClick' (deploiement d'un sous-arbre de la barre laterale), sans chemin ni nom de fichier, transmis a libkysdk-datacollect/kylin-daq (identifiants machine ajoutes par le SDK, cf. V1-L1). Compile seulement si l'en-tete SDK est present au build (common.pri:65-68, src/src.pro:37).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony",
+   "fichier": "peony-qt-desktop/peony-desktop-application.cpp",
+   "ligne": "153-195",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "process.start(\"lspci\"); ... if (match.indexOf(\"88SE9215\") >=0) ... process1.start(\"cat /sys/class/dmi/id/modalias\"); ... if (manufacturer.toUpper() == \"GREATWALL\") GlobalSettings::getInstance()->setValue(TRASH_MOBILE_FILES, true);",
+   "explication": "Au demarrage du bureau, lecture locale de lspci et du modalias DMI (fabricant) pour activer une option de corbeille propre aux machines GreatWall a controleur SE9215. Aucune transmission.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony",
+   "fichier": "src/control/toolbar-manager.cpp",
+   "ligne": "859-895",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "QStringList files = IDMDBusManager::getInstance()->getFilesInSpaceByName(spaceName); ... semanticKBCreate(spaceName); semanticKBAddDocumentsForSpace(spaceName); ... QProcess::startDetached(\"kylin-aiassistant\", QStringList() << \"--appid\" << \"peony-idm\" << \"--dbpath\" << dbPath",
+   "explication": "Integration IA : sur clic du bouton 'Ai Question Answer' dans un espace IDM, peony demande au service IDM (peony-extensions, hors lot) de creer une base de connaissances semantique a partir des fichiers de l'espace puis lance kylin-aiassistant sur cette base (aussi libpeony-qt/controls/menu/idm-actions-manager.cpp:532). Declenchement par l'utilisateur ; destination finale du contenu non couverte ici.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony",
+   "fichier": "peony-qt-desktop/controls/file-action-controler.cpp",
+   "ligne": "587-734",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "p.startDetached(\"/usr/bin/peony\", QStringList()<<\"--show-folders\"<<args);",
+   "explication": "Aucun code reseau propre dans peony (recherche des API reseau/URL negative hors commentaires) ; acces distants via GVFS (dependances). Lancements de processus par listes d'arguments (peony, ukui-control-center, save-blurBackground), pas de shell. Seul point d'ecoute : QLocalServer d'instance unique (3rd-parties).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-sni",
+   "fichier": "status-notifier-watcher/watcher.cpp",
+   "ligne": "101-112",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "if(realService.contains(QStringLiteral(\"org.ukui.proxy.StatusNotifierItem\"))) { QString pidStr = realService.section(\"-\", 1, 1); if(!pidStr.isEmpty()) { pid = pidStr; } } else { ... servicePid(message().service()) ...",
+   "explication": "Le PID associe a un element de zone de notification est lu dans le suffixe du nom de bus (auto-declare) pour les noms contenant 'org.ukui.proxy.StatusNotifierItem', au lieu d'etre obtenu du bus. La zone de notification convertit ce PID en fichier .desktop (ukui-system-tray/plugin/tray-items-model.cpp:291-294, 437) et applique les listes blanches/noires d'administration par suffixe de nom (endsWith, ukui-system-tray/plugin/security-function-control.cpp:65-106). Un client de la meme session peut se faire passer pour une autre application : contournement de la politique d'affichage/clic de la zone de notification ou usurpation d'icone. Pas de franchissement d'UID.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-sni",
+   "fichier": "ukui-system-tray/plugin/security-function-control.cpp",
+   "ligne": "113-118",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "UkuiQuick::FunctionControl::instance()->addWatch(QStringLiteral(\"ukui-sni-v11\"));",
+   "explication": "Aucune telemetrie, aucun code reseau ni lancement de processus dans ukui-sni (recherche negative). Politique de controle 'ukui-sni-v11' recue de UkuiQuick::FunctionControl (hors lot). Services de session : org.kde.StatusNotifierWatcher et xembed-sni-proxy (derives de KDE plasma-workspace) ; seul point d'ecoute QLocalServer (3rd-parties/qtsingleapplication).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-search",
+   "fichier": "libsearch/index/writable-database.cpp",
+   "ligne": "80, 102",
+   "type": "telemetrie",
+   "severite": "faible",
+   "extrait": "qDebug() << \"Create writable database\" << m_path<< database.mkpath(m_path);",
+   "explication": "Les repertoires d'index (contenu et texte OCR des documents/images) sont crees par QDir::mkpath sans permission explicite : droits herites du umask (en general 0755/0644). Si le repertoire personnel est traversable par les autres comptes, le contenu indexe devient lisible par eux. Mode par defaut des repertoires personnels sur l'ISO non verifie.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "ukui-search",
+   "fichier": "libsearch/aisearch/ai-search-plugin.cpp",
+   "ligne": "419-477",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "DataManagementStatus status = data_management_similarity_search(s_session, QJsonDocument(keyword).toJson().data(), &results);",
+   "explication": "Recherche 'IA' par similarite via la bibliotheque kylin-ai (data_management_*, hors lot), desactivee par defaut (ai-index-enable=false). Le service de donnees d'applications conserve localement le nombre de lancements par application (ukui-search-app-data-service/app-db-manager.cpp:170-185).",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "ukui-control-center",
+   "destination": "0-3.cn.pool.ntp.org, 0-3.tw.pool.ntp.org, pool.ntp.org, time.windows.com, *.pool.ntp.org (UDP/123)",
+   "protocole": "NTP (UDP)",
+   "fichier_ligne": "registeredSession/plugins/about/aboutinterface.cpp:51-74,390-440",
+   "declencheur": "ouverture de la page 'A propos' (propriete netDate, plugins/system/about/about.cpp:952)",
+   "donnees": "paquet NTP client standard (48 octets)",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-control-center",
+   "destination": "com.kylin.daq (bus systeme) -> kylin-daq -> datareporting.openkylin.top (cf. V1-L1)",
+   "protocole": "D-Bus puis HTTPS (V1-L1)",
+   "fichier_ligne": "libukcc/interface/ukcccommon.cpp:349-376",
+   "declencheur": "chaque action de reglage dans le panneau (189 appels)",
+   "donnees": "nom de greffon, nom du reglage, action, valeur (dont fuseau, nom du compte d'auto-connexion, chemins de fond d'ecran et d'autostart)",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "ukui-control-center",
+   "destination": "https://www.ubuntukylin.com/wallpaper.html (navigateur)",
+   "protocole": "HTTPS",
+   "fichier_ligne": "plugins/personalized/wallpaper/wallpaper.cpp:287",
+   "declencheur": "clic 'Online Pictures'",
+   "donnees": "aucune (ouverture d'URL)",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-search",
+   "destination": "https://baidu.com/s, https://www.so.com/s, https://www.sogou.com/web (navigateur)",
+   "protocole": "HTTPS",
+   "fichier_ligne": "libsearch/websearch/web-search-plugin.cpp:113-145",
+   "declencheur": "clic de l'utilisateur sur la recherche web",
+   "donnees": "mot-cle saisi",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-search",
+   "destination": "com.kylin.daq via libkysdk-datacollect (cf. V1-L1)",
+   "protocole": "D-Bus puis HTTPS (V1-L1)",
+   "fichier_ligne": "libsearch/data-collecter.cpp:23-36",
+   "declencheur": "ouverture d'un resultat / action",
+   "donnees": "nom du greffon et du bouton",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "peony",
+   "destination": "com.kylin.daq via libkysdk-datacollect (cf. V1-L1)",
+   "protocole": "D-Bus puis HTTPS (V1-L1)",
+   "fichier_ligne": "src/control/navigation-side-bar.cpp:505-517",
+   "declencheur": "clic sur un sous-arbre de la barre laterale",
+   "donnees": "evenement 'secondLevelChildClick' (sans chemin)",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "ukui-control-center",
+   "donnee": "sortie dmidecode -t baseboard (serie carte mere), memoire, type de chassis, taille disque",
+   "fichier_ligne": "registeredQDbus/sysdbusregister.cpp:1363-1457,531-539",
+   "stockage": "aucun (renvoye a l'appelant D-Bus)",
+   "envoi": "a tout appelant local du bus systeme, sans autorisation"
+  },
+  {
+   "composant": "ukui-control-center",
+   "donnee": "dmidecode -t system (serie, UUID)",
+   "fichier_ligne": "registeredQDbus/sysdbusregister.cpp:630-654",
+   "stockage": "aucun",
+   "envoi": "a l'appelant apres polkit auth_admin"
+  },
+  {
+   "composant": "ukui-control-center",
+   "donnee": "reglages modifies (fuseau, nom d'auto-connexion, chemins fond d'ecran/autostart, pages recherchees)",
+   "fichier_ligne": "libukcc/interface/ukcccommon.cpp:349-376",
+   "stockage": "base kylin-daq /var/cache/kylin-daq/data.db (V1-L1)",
+   "envoi": "kylin-daq -> serveur de collecte si UploadState=1 (defaut)"
+  },
+  {
+   "composant": "ukui-search",
+   "donnee": "noms/chemins de fichiers, contenu textuel, texte OCR des images (si actives)",
+   "fichier_ligne": "libsearch/common.h:31-33 ; libsearch/index/file-reader.cpp:43",
+   "stockage": "~/.config/org.ukui/ukui-search/{index_data,content_index_data,ocr_content_index_data} (Xapian)",
+   "envoi": "aucun envoi reseau identifie"
+  },
+  {
+   "composant": "peony",
+   "donnee": "sortie lspci, fabricant DMI (modalias)",
+   "fichier_ligne": "peony-qt-desktop/peony-desktop-application.cpp:153-195",
+   "stockage": "gsettings (booleen TRASH_MOBILE_FILES)",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "ukui-search",
+   "donnee": "nombre de lancements par application",
+   "fichier_ligne": "ukui-search-app-data-service/app-db-manager.cpp:170-185",
+   "stockage": "base locale ~/.config/org.ukui/ukui-search/appdata",
+   "envoi": "aucun identifie"
+  },
+  {
+   "composant": "ukui-sni",
+   "donnee": "PID et fichier .desktop des applications presentes dans la zone de notification",
+   "fichier_ligne": "status-notifier-watcher/watcher.cpp:101-112",
+   "stockage": "memoire",
+   "envoi": "aucun"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/ukui-control-center",
+   "fichiers_code_propres": 628,
+   "lignes_code_propres": 121795,
+   "lus_integralement": 13,
+   "lus_partiellement": 14,
+   "pct_fichiers": 2.07,
+   "pct_lignes": 3.53,
+   "fichiers_lus": [
+    "changeUserPwd/main.cpp",
+    "changeOtherUserPwd/main.cpp",
+    "checkUserPwdWithPAM/childCheckPwdWithPAM/main.cpp",
+    "checkUserPwdWithPAM/checkUserPwd/auth-pam.cpp",
+    "checkUserPwdWithPAM/checkUserPwd/main.cpp",
+    "checkUserPwdWithPAM/checkUserPwd/widget.cpp",
+    "plugins/account/userinfo/pwdcheckthread.cpp",
+    "plugins/account/userinfo/pwdcheckthread.h",
+    "registeredQDbus/sysdbusregister.cpp",
+    "registeredQDbus/sysdbusregister.h",
+    "registeredQDbus/main.cpp",
+    "registeredQDbus/sysdbusregisterservice.cpp",
+    "data/ukui-control-center/scripts/ukcc_scripts.sh"
+   ],
+   "fichiers_lus_partiellement": [
+    "group-manager-server/group_manager_server.cpp",
+    "group-manager-server/group_manager_server.h",
+    "plugins/account/userinfo/changeuserpwd.cpp",
+    "libukcc/interface/ukcccommon.cpp",
+    "libukcc/interface/common.cpp",
+    "registeredSession/plugins/about/aboutinterface.cpp",
+    "plugins/system/about/about.cpp",
+    "plugins/network/proxy/proxy.cpp",
+    "shell/utils/utils.h",
+    "plugins/account/userinfo/userinfo.cpp",
+    "shell/searchwidget.cpp",
+    "plugins/personalized/wallpaper/wallpaper.cpp",
+    "plugins/application/autoboot/autoboot.cpp",
+    "plugins/time-language/datetime/datetime.cpp"
+   ],
+   "note": "Hors comptage (debian/ et configuration) mais lus integralement : debian/ukui-control-center.postinst, debian/ukui-control-center.preinst, debian/libukcc3.preinst, debian/libukcc3.postinst, debian/rules, registeredQDbus/conf/* (conf, limit, yaml, service, policy), group-manager-server/conf/* (conf, limit, yaml, policy), checkUserPwdWithPAM/conf/control-center, data/ukui-control-center/SKILL.toml, les fichiers .pro des helpers. Code tiers exclu : shell/qtsingleapplication."
+  },
+  {
+   "arbre": "archive/ukui-search",
+   "fichiers_code_propres": 374,
+   "lignes_code_propres": 61004,
+   "lus_integralement": 5,
+   "lus_partiellement": 10,
+   "pct_fichiers": 1.34,
+   "pct_lignes": 0.44,
+   "fichiers_lus": [
+    "ukuisearch-systemdbus/inotify-config.cpp",
+    "ukuisearch-systemdbus/inotify-config-service.cpp",
+    "libsearch/data-collecter.cpp",
+    "libsearch/data-collecter.h",
+    "libsearch/index/ukui-search-qdbus.cpp"
+   ],
+   "fichiers_lus_partiellement": [
+    "libsearch/websearch/web-search-plugin.cpp",
+    "libsearch/index/file-indexer-config.cpp",
+    "libsearch/common.h",
+    "libsearch/index/file-reader.cpp",
+    "libsearch/appsearch/app-search-plugin.cpp",
+    "libsearch/aisearch/ai-search-plugin.cpp",
+    "libsearch/file-utils.cpp",
+    "search-ukcc-plugin/search.cpp",
+    "ukui-search-app-data-service/app-db-manager.cpp",
+    "libsearch/index/writable-database.cpp"
+   ],
+   "note": "Hors comptage mais lus : debian/ukui-search-service.postinst, ukuisearch-systemdbus/conf/*, data/org.ukui.search.data.gschema.xml, debian/patches/0090 (seul patch non traduction). Code tiers exclu : 3rd-parties, perftools (gperftools), cppjieba, pinyin4cpp, cedar, darts-clone."
+  },
+  {
+   "arbre": "archive/peony",
+   "fichiers_code_propres": 716,
+   "lignes_code_propres": 189587,
+   "lus_integralement": 0,
+   "lus_partiellement": 3,
+   "pct_fichiers": 0.0,
+   "pct_lignes": 0.0,
+   "fichiers_lus": [],
+   "fichiers_lus_partiellement": [
+    "src/control/navigation-side-bar.cpp",
+    "src/control/toolbar-manager.cpp",
+    "peony-qt-desktop/peony-desktop-application.cpp"
+   ],
+   "note": "Hors comptage (debian/) mais lus integralement : debian/peony-utils.postinst, debian/peony.postinst, debian/upgrade-utils/desktop-grid/update-desktop-grid (204 lignes, execute en root). Non lus : meta-get/meta-set/metatree.c (executes en tant qu'utilisateur via sudo -u). Code tiers exclu : 3rd-parties (SingleApplication, qtsingleapplication)."
+  },
+  {
+   "arbre": "archive/ukui-sni",
+   "fichiers_code_propres": 64,
+   "lignes_code_propres": 8283,
+   "lus_integralement": 3,
+   "lus_partiellement": 2,
+   "pct_fichiers": 4.69,
+   "pct_lignes": 6.07,
+   "fichiers_lus": [
+    "status-notifier-watcher/watcher.cpp",
+    "ukui-system-tray/plugin/security-function-control.cpp",
+    "ukui-system-tray/plugin/security-function-control.h"
+   ],
+   "fichiers_lus_partiellement": [
+    "ukui-system-tray/plugin/tray-items-model.cpp",
+    "ukui-system-tray/plugin/items-filter-model.cpp"
+   ],
+   "note": "Code tiers exclu : 3rd-parties/qtsingleapplication, status-notifier-host/libdbusmenu-qt. xembed-sni-proxy (derive de KDE) compte comme code propre, non lu."
+  }
+ ],
+ "non_couvert": [
+  "Mecanisme d'application des listes blanches .limit/.yaml (whitelist, envwhitelist) des services D-Bus systeme : code absent du corpus (dbus-daemon modifie ou composant binaire).",
+  "register-ukui-system-service / register-ukui-session-service (ukui-service-manager) qui chargent les modules root : hors lot.",
+  "Comportement exact de polkitd face au fichier .policy mal forme (enregistrement partiel ou rejet complet) : a verifier en Phase 3.",
+  "Controle d'acces de com.kylin.RemoteDesktop (pilote par la competence kylinbot) : hors lot.",
+  "Bibliotheques ocr-utils / mime-utils / libkysdk-datacollect utilisees par ukui-search : hors lot.",
+  "peony : ~189 k lignes de code propre non lues (operations de fichiers libpeony-qt/file-operation, vfs, montage d'images, greffons) ; seules les recherches par motifs A-E ont ete faites sur tout l'arbre.",
+  "peony : meta-get, meta-set, meta-conf-parser (debian/upgrade-utils, ~5 300 lignes C) non lus ; executes en tant qu'utilisateur pendant le postinst.",
+  "peony : destination finale des documents envoyes a la base semantique IDM et a kylin-aiassistant (peony-extensions, kylin-aiassistant hors lot).",
+  "ukui-search : ~60 k lignes non lues (indexation, extraction de contenu, frontend) ; bibliotheques kylin-ai (data_management_*) hors lot ; mode par defaut des repertoires personnels sur l'ISO.",
+  "ukui-control-center : registeredSession (~10 k lignes, service de session) et greffons d'interface lus seulement par motifs ; vino/RemoteDesktop non analyse.",
+  "ukui-sni : xembed-sni-proxy (traitement X11 XEmbed) et status-notifier-host non lus.",
+  "ukui-biometric-manager (consommateur en mode 'legacy' de changeuserpwd) : constat limite aux lignes citees, arbre hors lot."
+ ],
+ "synthese": "Empreintes des 4 arbres conformes a empreintes-arbres-sources.tsv. Couverture faible (L2 cible sur les chemins privilegies) : ukcc 13 fichiers integraux/628 (3,5 % des lignes), ukui-search 5/374 (0,4 %), peony 0/716 hors debian/ (script root du postinst lu integralement), ukui-sni 3/64 (6,1 %) ;\nmotifs A-E recherches sur tout le code.\n[CONSTATÉ] Points Phase 0 verifies : chmod u+s /usr/bin/changeuserpwd (postinst l.7) ; ecriture de UKCC_SECURE_MODE_FOR_LOGINOPTION=1 dans /etc/environment, variable lue par aucun code du corpus alors que le binaire lit UKCC_SECURE_MODE ; competence kylinbot installee dans /opt/kylinbot/skills.\n[CONSTATÉ] changeuserpwd : utilisateur = UID reel, ancien mot de passe exige par PAM, entrees bornees : pas d'elevation trouvee ; mais mode 'legacy' par defaut (mots de passe base64 en argv) encore utilise par ukui-biometric-manager installe par defaut (moyenne).\n[CONSTATÉ] Service root com.control.center.qt.systemdbus : updateGrub contourne polkit pour un appelant identifie par chemin d'executable (ukui-session-service) et passe le parametre 'lang' non filtre a system() (elevee ; exploitabilite dependante du filtre .limit externe) ;\nsetaptproxy sans aucune autorisation ecrit le mandataire APT et http(s)_proxy de tous les shells (moyenne) ; getSysInstallTime sans autorisation injecte des arguments dans tune2fs root (moyenne) ;\nserie carte mere (dmidecode) exposee a tout appelant (moyenne) ; parenthese erronee dans setXrdpService ; fichier polkit mal forme (echec ferme).\norg.ukui.groupmanager : modifications sous polkit auth_admin_keep.\n[CONSTATÉ] peony : le script root update-desktop-grid (postinst peony-utils) cree/chown un fichier dans chaque repertoire personnel avec suivi de liens possible : course TOCTOU menant potentiellement a root (elevee, exploitabilite PROBABLE).\n[CONSTATÉ] Telemetrie : ukcc envoie via libkysdk-datacollect les actions de reglage (189 points d'appel) avec leurs valeurs (fuseau, nom du compte d'auto-connexion, chemins de fond d'ecran/autostart) (moyenne) ; ukui-search et peony n'envoient que des noms d'evenements ; ukui-sni rien.\n[CONSTATÉ] Reseau : aucun serveur TCP/UDP ; flux = NTP public (ukcc, page A propos), recherche web Baidu/360/Sogou sur clic (ukui-search), telemetrie via kylin-daq.\n[CONSTATÉ] ukui-search : index locaux (contenu, OCR) desactives par defaut, mais la migration de configuration active contenu+OCR si l'indexation etait deja active ; module root ouvert a tous qui releve les limites inotify (faible).\n[CONSTATÉ] Competence kylinbot : scripts de session sans eval ; le manifeste pilote telemetrie, bureau a distance et comptes : amplifie le risque d'injection de consignes de kylinbot (moyenne).\n[CONSTATÉ] ukui-sni : PID auto-declare permettant de contourner la politique de la zone de notification (faible)."
+}

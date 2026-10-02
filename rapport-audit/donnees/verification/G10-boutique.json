@@ -1,0 +1,59 @@
+[
+ {
+  "id": "V3-L1-boutique#0",
+  "lot": "V3-L1-boutique",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L1-boutique.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-software-center",
+   "/home/user/openkylin-src/gitee/kylin-software-center"
+  ],
+  "depot": "kylin-software-center (+3 greffons)",
+  "fichier": "(4 .deb 5.0.9.1-ok4.77) vs archive/kylin-software-center (coquille dh_make, 19 fichiers) + gitee ubuntu-kylin-software-center 4.5.77",
+  "ligne": "n/a",
+  "type": "confiance",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "archive:debian/* = squelette dh_make sans code ; gitee = AUTRE produit (ubuntu-kylin-software-center 4.5.77, Python) ; livré = 5.0.9.1 (C++/Qt + greffon Python) sans source publiée.",
+  "explication": "Les 4 binaires installés par défaut sur l'ISO 3.0 (dont un chemin d'installation privilégié et une collecte d'identifiants matériels) n'ont AUCUNE source publiée correspondante : la 5.0.9.1 n'existe ni dans l'archive (coquille vide) ni sur Gitee (produit/version différents). Build non reproductible, revue de source impossible ; seul le contenu binaire distribué est auditable. SHA-256 des .deb conformes à la provenance signée (voir empreintes).",
+  "scenario": "Une version malveillante ou altérée pourrait être livrée sans détection possible par comparaison au source amont ; aucun tiers ne peut reconstruire ni diff. L'écart source/binaire masque tout ajout (collecte, porte dérobée) introduit à la compilation.",
+  "contre_lecture": "Pratique courante chez Kylin de ne publier que des coquilles d'empaquetage ; le code réel vit sur un GitLab interne (Homepage gitlab2.kylin.com). L'absence de source peut être pure négligence de publication, sans intention. Les .deb proviennent bien de la chaîne signée openKylin."
+ },
+ {
+  "id": "V3-L1-boutique#1",
+  "lot": "V3-L1-boutique",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L1-boutique.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-software-center",
+   "/home/user/openkylin-src/gitee/kylin-software-center"
+  ],
+  "depot": "kylin-software-center-plugin-synchrodata",
+  "fichier": "/usr/bin/kylin-software-center-plugin-synchrodata",
+  "ligne": "RemoterDaemon::execution_strategy @0x54e99c ; force_app_installation @0x553f7e ; force_app_uninstallation @0x5543e2 ; get_latest_app_strategy @0x4dc804",
+  "type": "persistance",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": ".rodata 'force_app_installation list:' / 'force_app_uninstallation list:' / 'only allow view list:' ; SQL app_strategy (typeId 3/5) ; appStrategy/getLatestAppStrategy ; install_app::install_application_list/remove_application_list -> InstallServer (InstallPackages/PurgePackages)",
+  "explication": "Le démon de synchronisation (service user, minuterie) télécharge depuis api.kylinos.cn des 'stratégies' (table app_strategy) et exécute execution_strategy() : installation forcée (typeId=3), désinstallation forcée (typeId=5) ou 'vue seule'. L'exécution passe par InstallServer::installApplication/removeApplication -> D-Bus système com.kylin.systemupgrade / com.kylin.UpgradeStrategies (InstallDebFile/InstallPackages/PurgePackages) du démon root kylin-system-updater. La requête get_latest_app_strategy envoie ip/mac/hostname/serviceSerialNumber comme sélecteur : le serveur cible des machines par identifiant matériel.",
+  "scenario": "Le serveur api.kylinos.cn (ou un intercepteur si le flux bascule en HTTP via la conf modifiable) pousse une stratégie d'installation forcée ciblant une machine par son n° de série/MAC ; le démon installe silencieusement un paquet via le canal root de l'updater. Combiné aux faiblesses du canal updater (V1-L5 : InstallDebFile context=default, vérif signature consultative), c'est un canal d'installation piloté serveur.",
+  "contre_lecture": "Fonction de gestion de parc légitime (politiques d'applications obligatoires/interdites en entreprise) ; l'installation réelle reste soumise à l'updater root et à ses dépôts APT signés gpg. La vérification TLS par défaut de Qt protège le flux si la conf n'est pas altérée."
+ },
+ {
+  "id": "V3-L1-boutique#2",
+  "lot": "V3-L1-boutique",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L1-boutique.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-software-center",
+   "/home/user/openkylin-src/gitee/kylin-software-center"
+  ],
+  "depot": "kylin-software-center-plugin-synchrodata / kylin-software-center-plugin-expand",
+  "fichier": "/usr/bin/kylin-software-center-plugin-{synchrodata,expand}",
+  "ligne": "PistonRemoter::get_http_res @syn 0x4b274c (setRawHeader x-ky-*) ; globals::getSerialNumber/getMac/getIp/getActivationCode ; PistonRemoter::get_serial_number @0x4b1712",
+  "type": "telemetrie",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "en-têtes HTTP x-ky-mac-address, x-ky-serial-number, x-ky-service-serial-number, x-ky-auth-ip, x-ky-auth-code, x-ky-auth-cpu, x-ky-auth-osversion, x-ky-auth-osname, x-ky-kcm-dept-id, x-ky-store-version posés sur CHAQUE requête vers api.kylinos.cn/api/v1/",
+  "explication": "Chaque appel serveur de la boutique joint, en en-têtes, des identifiants matériels/organisationnels : adresse MAC (cat /sys/class/net/*/address), n° de série disque (lsblk --nodeps -no serial) et n° de série carte-mère DMI (D-Bus com.kylin.assistant.systemdaemon mdObtainSystemBoardInfo / com.kylin-os-manager getPcInfo), IP, modèle CPU (/proc/cpuinfo), code d'activation (org.freedesktop.activation register_number), ID région (/etc/kylin-region_id), dépt KCM. Envoi dès le démarrage du démon et à chaque synchro, hors interaction explicite.",
+  "scenario": "Corrélation/suivi d'un poste par identifiants matériels stables côté serveur, sur un canal déclenché automatiquement (minuterie), au-delà du simple catalogue applicatif.",
+  "contre_lecture": "Identifiants utilisés pour l'upload ciblé (stratégies), le support et l'anti-fraude des avis ; déclaré en partie dans la politique de confidentialité openKylin (collecte boutique : nom logiciel installé/désinstallé, ID communauté, version, mot-clé recherche, architecture). MAC/série ne figurent toutefois PAS explicitement dans la liste 'software store' de la politique."
+ }
+]

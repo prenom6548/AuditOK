@@ -1,0 +1,74 @@
+[
+ {
+  "id": "V3-L3-kba-kpr-backend#0",
+  "lot": "V3-L3-kba-kpr-backend",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L3-kba-kpr-backend.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kba"
+  ],
+  "depot": "kba",
+  "fichier": "kpr-backend/src/securityquestionanswer.cpp",
+  "ligne": "92-100,138-148,183-193,194-205",
+  "type": "privileges",
+  "severite": "critique",
+  "registre": "CONSTATÉ",
+  "extrait": "int BindUserSecurityAnswers(int nUId, QList<AnswerInfo>){...setUserSecurityAnswers(nodeHead);} / int ChangePassword(int nUId,const QString&strPasswd,QString strToken){ struct passwd*pwinfo=getpwuid(nUId); ... changePassword(pwinfo->pw_name, strPasswd.toUtf8().data(), ...token...);}",
+  "explication": "Aucune des méthodes exportées de SecurityQuestionAnswer ne vérifie l'identité de l'appelant D-Bus (pas de QDBusContext::message().service()/connection(), pas de GetConnectionUnixUser/SO_PEERCRED, pas de polkit). Le service tourne root (org.kylin.KprBackend.service:4 User=root) et la politique .conf ouvre l'appel à context=default (tout utilisateur local). nUId (compte cible) est un simple paramètre : rien n'impose que l'appelant possède ce compte. BindUserSecurityAnswers écrit les réponses de sécurité d'un uid arbitraire sans aucune authentification, et ChangePassword change le mot de passe de n'importe quel compte (y compris root/uid 0 présent dans /etc/passwd) sur présentation d'un jeton local.",
+  "scenario": "Un utilisateur local non privilégié appelle sur le bus système, dans l'ordre : BindUserSecurityAnswers(uid_victime, réponses_choisies_par_lui) pour écraser les réponses de la victime (aucun contrôle d'appelant ni de propriété du compte), puis VerifyUserSecurityAnswers(uid_victime, ces mêmes réponses) qui renvoie un jeton valide, puis ChangePassword(uid_victime, nouveau_mdp, jeton). Le mot de passe de la victime (ou de root) est réinitialisé sans connaître l'ancien : prise de contrôle de compte et élévation locale de privilèges.",
+  "contre_lecture": "Service pensé pour n'être appelé que par la liste blanche .limit (installateur, greeter, ukui-screensaver, control-center) ; dans ce modèle l'authentification de l'utilisateur serait assurée en amont par l'IHM appelante. Mais la liste blanche .limit n'est pas appliquée par défaut (dbus-daemon patché kysdk absent du corpus ; .limit:[auth] RootOnly=false) : la restriction n'existe pas sur l'image livrée."
+ },
+ {
+  "id": "V3-L3-kba-kpr-backend#1",
+  "lot": "V3-L3-kba-kpr-backend",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L3-kba-kpr-backend.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kba"
+  ],
+  "depot": "kba",
+  "fichier": "kpr-backend/org.kylin.KprBackend.conf",
+  "ligne": "14-16",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "<policy context=\"default\"> <allow send_destination=\"org.kylin.KprBackend\" send_interface=\"org.kylin.KprBackend\"/> ...",
+  "explication": "La politique D-Bus système autorise tout utilisateur local (context=default) à envoyer des messages à l'interface org.kylin.KprBackend. Couplée au service root (org.kylin.KprBackend.service:4) et à l'absence totale de contrôle applicatif de l'appelant, cette politique rend l'intégralité de la surface (BindUserSecurityAnswers, VerifyUserSecurityAnswers, ChangePassword, SetUserPasswdHint, GetUserPasswdHint, EncodeSecurityInfo) atteignable par n'importe quel processus local.",
+  "scenario": "Tout processus local, même sous un compte invité/non administrateur, ouvre une connexion au bus système et invoque directement les slots root sans passer par aucune IHM ni authentification.",
+  "contre_lecture": "La commande changelog 1.0.0.1-0k0.12 ('DBUS认证管控', KVE-2024-0621) indique une intention de restreindre l'accès ; le mécanisme retenu (fichiers .limit lus par un dbus-daemon modifié) remplacerait context=default. Mais ce mécanisme n'est pas présent/appliqué par défaut (cf. verdicts G2/G5), donc la politique effective reste ouverte."
+ },
+ {
+  "id": "V3-L3-kba-kpr-backend#2",
+  "lot": "V3-L3-kba-kpr-backend",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L3-kba-kpr-backend.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kba"
+  ],
+  "depot": "kba",
+  "fichier": "lib/tdes.c",
+  "ligne": "36-37,1143-1146,1160-1161",
+  "type": "crypto",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "char triple_des_key[16]={<masqué : 16 octets>}; ... TDes(0,&t_plain[8*i],triple_des_key,&t_crypt[8*i]);",
+  "explication": "Le jeton de réinitialisation est produit par cipher2()/decipher2() (lib/kba.c:648 verify, :823 changePassword). Or cipher2/decipher2 IGNORENT le paramètre 'key' qui leur est passé (g_key généré aléatoirement en kba.c:635) et utilisent TOUJOURS la clé TDES codée en dur triple_des_key[16] compilée dans libkba.so (installée /usr/lib/libkba.so, lisible par tous). Le jeton = TDES(clé fixe publique, \"uid timestamp hash_réponse\"). Sa confidentialité et son intégrité sont donc nulles vis-à-vis de quiconque lit la bibliothèque : le jeton est forgeable par tout attaquant connaissant le hash de réponse stocké de la cible.",
+  "scenario": "Un attaquant local extrait la clé TDES de libkba.so (triviale, binaire monde-lisible) et, s'il obtient le hash enc2_answer stocké d'un compte (ou le fixe lui-même via BindUserSecurityAnswers non authentifié), fabrique hors-ligne un jeton accepté par ChangePassword sans jamais passer par VerifyUserSecurityAnswers.",
+  "contre_lecture": "Le jeton n'est qu'un porteur d'état court (1h) entre Verify et Change dans le même service root ; l'attaquant doit de toute façon connaître ou fixer le hash de réponse. Mais rien n'empêche de le fixer (Bind non authentifié), donc la clé fixe supprime la seule barrière cryptographique."
+ },
+ {
+  "id": "V3-L3-kba-kpr-backend#3",
+  "lot": "V3-L3-kba-kpr-backend",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L3-kba-kpr-backend.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kba"
+  ],
+  "depot": "kba",
+  "fichier": "lib/kba.c",
+  "ligne": "900-919",
+  "type": "privileges",
+  "severite": "critique",
+  "registre": "CONSTATÉ",
+  "extrait": "char *cmd=(char*)malloc(strlen(username)+strlen(password)+20); ... sprintf(cmd, \"echo '%s:%s' |chpasswd\", username, password); ret = excute_cmd(cmd); // excute_cmd -> system(strcmd) (kba.c:752)",
+  "explication": "changePassword() construit une commande shell avec le nouveau mot de passe (password) placé entre apostrophes puis l'exécute via system() en root (excute_cmd/system, kba.c:745-752). 'password' provient du paramètre D-Bus strPasswd (securityquestionanswer.cpp:187), entièrement contrôlé par l'appelant. Aucun échappement : une apostrophe dans le mot de passe sort du quoting et injecte des commandes shell arbitraires exécutées en root.",
+  "scenario": "Un utilisateur local obtient un jeton valide pour SON PROPRE compte (Bind + Verify sur son uid, non authentifiés) puis appelle ChangePassword(son_uid, \"x';<commande>;'\", jeton). Le token_match passe (c'est son compte), et <commande> s'exécute en root : exécution de code arbitraire root depuis un compte non privilégié, au-delà du simple changement de mot de passe.",
+  "contre_lecture": "Il faut franchir token_match (jeton valide). Mais obtenir un jeton pour son propre compte est trivial et non authentifié, donc la barrière est inexistante en pratique."
+ }
+]

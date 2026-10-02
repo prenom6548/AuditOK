@@ -1,0 +1,340 @@
+{
+ "lot": "V1-L12-approfondissement-kylin-bot",
+ "statut": "complet",
+ "composants": [
+  "kylin-bot"
+ ],
+ "empreintes": {
+  "archive/kylin-bot": "f127062100bdf338582cf82e6f210bf16d38afd406414a557057f5d4b9a3ca31",
+  "conforme": true
+ },
+ "revision_constats_anterieurs": [
+  {
+   "constat": "Garde-fous retirés dans la config empaquetée (autonomie full, allowed_commands=['*'], forbidden_paths vide, sandbox none, pas d'approbation)",
+   "verdict": "CONFIRMÉ et PRÉCISÉ",
+   "detail": "Boucle agent lue : en mode Full, ApprovalManager::needs_approval renvoie false (approval/mod.rs:114-116) ; aucun hook câblé par défaut (loop_.rs:1572, config.toml:512-523 command_logger/webhook_audit off) ; PromptGuard seulement dans des tests (prompt_guard.rs:298-336) ; aucune isolation des contenus non fiables avant insertion dans l'historique. is_command_allowed court-circuite même le filtre sous-shell quand '*'+block_high_risk=false (policy.rs:1078-1110). Deux parcours de boucle (run_tool_call_loop et Agent::execute_tool_call) : le masquage regex des secrets n'est appliqué que dans le premier (tool_execution.rs:103), pas dans le parcours passerelle. file_write/file_edit gardent chemins, liens symboliques et refus de config.toml ; ces gardes tombent avec forbidden_paths vide + workspace_only=false."
+  },
+  {
+   "constat": "allowed_users=['*'] écrit par tous les parcours de liaison",
+   "verdict": "CONFIRMÉ",
+   "detail": "Vérification des expéditeurs lue dans chaque canal : is_user_allowed teste u=='*'||u==id (dingtalk.rs:56-58, wecom.rs:82-84, wechat.rs:671-677, lark.rs:1043-1045, lansenger.rs:184-187). Avec '*', tout expéditeur que la plateforme route vers le bot est accepté. Les groupes Lansenger restent fermés par défaut (group_allow_from vide)."
+  },
+  {
+   "constat": "SkillHub non signé (SHA-256 tautologique, manifeste de mise à niveau arbitraire)",
+   "verdict": "CONFIRMÉ (non réexaminé en détail)",
+   "detail": "Chargeur de skills relu : les répertoires /usr/share/system-skills et /opt/kylinbot/skills (délta Kylin) sont chargés en plus du workspace et audités par audit_skill_directory ; mais allow_scripts=true dans la config livrée autorise les scripts de skills, exécutés par validate_command_execution(approved=true) sans échappement des arguments (skill_tool.rs:72-120)."
+  },
+  {
+   "constat": "Capture d'écran envoyée au LLM",
+   "verdict": "CONFIRMÉ",
+   "detail": "Outil screenshot toujours enregistré (tools/mod.rs:721) ; appelle kylin-screenshot full (delta Kylin) ; dans auto_approve de la config livrée (config.toml:57-58 browser/browser_open, et jamais soumis à approbation en Full). Image renvoyée en base64 au fournisseur via le pipeline multimodal."
+  },
+  {
+   "constat": "Update non signé (kylin-bot update, GitHub kylinbot/kylinbot)",
+   "verdict": "CONFIRMÉ (PROBABLE sur la propriété du dépôt)",
+   "detail": "Inchangé : commande CLI manuelle, aucune signature ni somme, binaire exécuté puis installé dans /usr/bin. Non appelé par le démon. Propriété réelle de github.com/kylinbot non vérifiable sans réseau."
+  },
+  {
+   "constat": "Secrets en clair (jetons de bots dans config.toml / account.json)",
+   "verdict": "CONFIRMÉ et PRÉCISÉ",
+   "detail": "Le secret store chiffre par défaut (ChaCha20-Poly1305, secrets.encrypt=true, clé 0600) les clés d'API de config ; mais les parcours de liaison écrivent les jetons de bots en clair (api.rs:3406-3437) et account.json WeChat par le canal utilise write_private 0600 (wechat.rs:410-421) alors que le même écrit par la passerelle n'impose pas le mode (api.rs:3419-3421). Nuance : le cœur chiffre, les ajouts de liaison contournent."
+  },
+  {
+   "constat": "Route paircode en loopback / modèle de confiance passerelle",
+   "verdict": "CONFIRMÉ et ÉTENDU",
+   "detail": "require_localhost ne consulte que l'adresse pair (lib.rs:2786-2797) ; nouveau constat : un tunnel sortant (module tunnel) fait arriver le trafic distant en 127.0.0.1, donc traité comme local — /admin/paircode/new et /pair/code deviennent joignables de l'extérieur si TCP+tunnel sont actifs. Confirmé aussi : /ws/nodes exige l'appairage (nodes.rs:231-260) ; [node_transport] activé mais sans appelant ni secret."
+  }
+ ],
+ "findings": [
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-tools/src/model_routing_config.rs",
+   "ligne": "383-444, 502-535 ; crates/kylinbot-providers/src/lib.rs:890-926, 1068-1089, 1766-1786 ; crates/kylinbot-runtime/src/tools/mod.rs:394-399 ; crates/kylinbot-channels/src/orchestrator/mod.rs:940-947, 966-980",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "cfg.providers.fallback = Some(provider.clone()); … cfg.save().await?; … let api_key = self.config.providers.fallback_provider().and_then(|e| e.api_key.as_deref()); … create_provider_with_url(provider_name, api_key, …) … name if name.starts_with(\"custom:\") => { … OpenAiCompatibleProvider::new_with_vision(\"Custom\", &base_url, key, AuthStyle::Bearer, true)",
+   "explication": "L'outil model_routing_config est toujours enregistré et, en autonomie 'full', appelable sans confirmation. L'action set_default accepte un nom de fournisseur libre ; la forme « custom:<URL> » (http ou https) est acceptée par la fabrique. Elle écrit d'abord le nouveau fournisseur par défaut dans config.toml (cfg.save, alors que file_write refuse justement ce fichier : policy.rs:1450-1455, file_write.rs:127-136). Elle sonde ensuite le modèle en envoyant la clé d'API du fournisseur ACTUEL (config d'exécution) en en-tête Bearer vers l'URL choisie. resolve_provider_credential renvoie la clé fournie telle quelle pour un fournisseur custom. Si la sonde réussit, la configuration est conservée. L'orchestrateur des canaux recharge fournisseur et URL dès que l'horodatage de config.toml change. Le point de terminaison ainsi désigné recevrait alors le contexte des conversations suivantes et produirait les appels d'outils. proxy_config fonctionne de même (proxy_config.rs:171-266) : il réécrit config.toml et peut rediriger le trafic sortant du démon via un proxy arbitraire.",
+   "scenario": "Un contenu non fiable (page web résumée, message d'un canal lié) amène le modèle à appeler cet outil de configuration ; en autonomie 'full', aucune confirmation n'est demandée. La clé d'API du fournisseur courant peut alors être transmise à un point de terminaison tiers lors de la sonde, et la redirection du fournisseur par défaut peut persister dans config.toml, ce qui place les conversations ultérieures sous le contrôle de ce tiers.",
+   "contre_lecture": "Fonction amont prévue pour que l'utilisateur change de modèle par la conversation. La sonde évite d'enregistrer un identifiant de modèle invalide. Il faut d'abord réussir une injection de prompt, et l'outil shell offre déjà un pouvoir équivalent en autonomie full. En mode supervisé (défaut amont), l'outil n'est pas dans auto_approve et exige une approbation.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-gateway/src/lib.rs",
+   "ligne": "515-547, 938-952, 2786-2797, 2933-2950 ; crates/kylinbot-runtime/src/tunnel/mod.rs:60-120 ; tunnel/pinggy.rs:34-61",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "if listen_tcp && let Some(ref tun) = tunnel { … tun.start(host, actual_port) … } … fn require_localhost(peer: &SocketAddr) { if peer.ip().is_loopback() { Ok(()) } … } … Command::new(\"ssh\") … \"-R\" … \"StrictHostKeyChecking=accept-new\" … \"free.pinggy.io\"",
+   "explication": "Module tunnel (cloudflared, ngrok, tailscale funnel, pinggy via ssh sans compte, openvpn, commande libre). Il expose la passerelle TCP sur Internet quand listen_tcp=true et [tunnel] provider≠none. Dans ce cas les requêtes Internet arrivent par le processus de tunnel local : l'adresse pair TCP est 127.0.0.1. require_localhost les accepte alors comme « locales » : /admin/paircode/new délivre un code d'appairage valide à n'importe quel internaute, et /pair/code est public tant qu'aucun appareil n'est appairé. Avec le jeton obtenu, l'internaute accède à toute l'API, dont POST /api/cron (commande sh -c). trust_forwarded_headers=false n'y change rien : require_localhost ne consulte que l'adresse pair. Le tunnel est désactivé dans la config empaquetée (config.toml:356-357, 362) et absent de l'UI web_kbot (seules des chaînes i18n). Il reste activable par /api/config/prop (authentifié) ou par édition de config.toml, donc aussi par l'agent lui-même via shell.",
+   "scenario": "Si TCP et un tunnel sont activés (par l'utilisateur, ou par l'agent lui-même après une injection de prompt réussie, puisque le shell peut modifier config.toml), les clients distants passant par le tunnel sont vus comme locaux par la passerelle ; les routes d'administration réservées au bouclage leur deviennent accessibles, ce qui ouvre l'API complète, planificateur compris.",
+   "contre_lecture": "Comportement amont ZeroClaw. Kylin a justement conditionné le tunnel à listen_tcp et désactivé TCP par défaut. Aucune configuration livrée n'active de tunnel. L'activation exige une action authentifiée ou une compromission préalable de l'agent.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-runtime/src/tools/shell.rs",
+   "ligne": "124-148 ; crates/kylinbot-runtime/src/approval/mod.rs:129-136 ; crates/kylinbot-config/src/policy.rs:981-1015 ; crates/kylinbot-runtime/src/tools/skill_tool.rs:72-81, 111-113",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "\"approved\": {\"type\": \"boolean\", \"description\": \"Set true to explicitly approve medium/high-risk commands in supervised mode\"} … if self.non_interactive && tool_name == \"shell\" { return false; } … self.security.validate_command_execution(&command, true)",
+   "explication": "Défauts de conception amont, inactifs avec la config livrée (autonomie full) mais présents si l'on revient au mode supervisé. (1) En supervisé, le drapeau 'approved' qui lève la confirmation des commandes à risque moyen/élevé est un argument de l'outil, donc fourni par le modèle lui-même. (2) Pour les canaux non interactifs, la barrière d'approbation externe est sautée pour 'shell' : seule reste la politique de commandes, que ce drapeau contourne. (3) Les outils shell des skills ([[tools]] kind=shell) substituent les arguments du modèle dans le gabarit de commande sans échappement, et valident avec approved=true. Une injection de prompt peut ainsi s'auto-approuver en mode supervisé, dans la limite de l'allowlist (laquelle inclut python3/node par défaut : policy.rs:184-213).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-tools/src/http_request.rs",
+   "ligne": "35-66, 403-428 ; comparer web_fetch.rs:455-461, 597-626",
+   "type": "reseau",
+   "severite": "faible",
+   "extrait": "if !self.allow_private_hosts && is_private_or_local_host(&host) { anyhow::bail!(\"Blocked local/private host: {host}\"); } … if let Ok(ip) = bare.parse::<std::net::IpAddr>() { … } false",
+   "explication": "La protection SSRF de http_request (auto-approuvé implicitement en mode full, allowed_domains=['*']) ne porte que sur le littéral d'hôte. Un nom DNS public qui résout vers 127.0.0.1 ou une adresse du réseau local passe, alors que web_fetch résout le nom et vérifie les IP obtenues. Les redirections sont désactivées dans http_request (Policy::none). Les services locaux (CUPS, sidecar computer_use 127.0.0.1:8787, passerelle TCP si activée) sont donc joignables par un nom DNS choisi par l'attaquant. Impact marginal tant que l'outil shell n'est pas restreint.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-runtime/src/agent/loop_.rs",
+   "ligne": "142-190, 1555-1961, 3446-3453, 3545-3547 ; agent.rs:814-1015 ; tool_execution.rs:103 ; security/mod.rs:77 ; security/prompt_guard.rs:298-336",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "// Full autonomy never prompts. … if config.autonomy.level != AutonomyLevel::Full { excluded_tools.extend(config.autonomy.non_cli_excluded_tools…) } … writeln!(tool_results, \"<tool_result name=\\\"{}\\\">\\n{}\\n</tool_result>\", tool_name, result_output)",
+   "explication": "Inventaire des barrières de la boucle agent. Il y en a deux parcours : run_tool_call_loop (CLI, canaux, cron) et Agent::execute_tool_call (passerelle /ws/chat, ACP). On y trouve : (a) hook before_tool_call, mais aucun hook enregistré par défaut (command_logger=false, webhook_audit désactivé) ; (b) ApprovalManager, qui renvoie false en mode Full ; (c) la politique propre à chaque outil (SecurityPolicy : allowlist, chemins, limite 1000 actions/h) ; (d) le dédoublonnage et le détecteur de boucles ; (e) la troncature des sorties à 50 000 caractères ; (f) le masquage heuristique des secrets par regex clé=valeur, appliqué dans tool_execution.rs:103 mais PAS dans le parcours passerelle Agent::execute_tool_call ; une clé privée PEM n'est couverte par aucun des deux. Aucune isolation des contenus non fiables : sorties de web_fetch, réponses HTTP, messages de canaux, texte des skills et rappels mémoire sont insérés tels quels dans l'historique. PromptGuard n'est utilisé que dans des tests. Fonctions présentes mais inertes : SkillImprover (skill_improvement.enabled=true sans aucun appelant, skills/improver.rs), NodeTransport ([node_transport] enabled=true, shared_secret vide, aucun appelant hors réexport nodes/mod.rs:3), OTP et estop désactivés (config.toml:88-107). /ws/nodes exige l'appairage (gateway/nodes.rs:231-260).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-channels/src/lansenger.rs",
+   "ligne": "833-900, 1026-1035 ; crates/kylinbot-channels/src/util.rs:125-171 ; crates/kylinbot-channels/src/orchestrator/mod.rs:641-648 ; comparer wechat.rs:720-757",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "let (text_without_markers, markers) = crate::util::parse_attachment_markers(content); … let path = Path::new(target); let data = tokio::fs::read(path).await … if is_http_url(target) { return self.download_outbound_attachment(kind, target).await; }",
+   "explication": "Canal Lansenger/蓝信 (passerelle CEC, delta Kylin) : toute réponse de l'agent contenant un marqueur [IMAGE|PHOTO|DOCUMENT|FILE|VIDEO|AUDIO|VOICE:<cible>] provoque, AU NIVEAU DU CANAL, la lecture du chemin local indiqué (tokio::fs::read) sans aucune vérification de SecurityPolicy, de workspace ni de forbidden_paths ; le fichier est téléversé chez Lansenger puis envoyé au destinataire. Une cible http(s) est téléchargée par le démon sans filtre d'hôtes privés (SSRF réfléchie vers 127.0.0.1/LAN). Le prompt système du canal (orchestrator/mod.rs:641-648) demande explicitement des chemins absolus. Ce chemin d'exfiltration ne passe par AUCUN outil : il échappe à l'approbation, à l'autonomie (même read_only) et à forbidden_paths. Le canal WeChat confine ses pièces jointes au workspace (wechat.rs:741-757) ; Lansenger ne le fait pas. En message direct, les correspondants sont acceptés avec allowed_users=['*'] (écrit par la liaison) ; les groupes sont refusés par défaut (group_allow_from vide).",
+   "scenario": "Après liaison volontaire du bot Lansenger de l'organisation, un correspondant (ou un document piégé que l'agent lit) demande l'envoi d'un fichier sensible sous forme de marqueur ; le modèle produit le marqueur et le canal lit puis transmet le fichier. Cela fonctionne même après durcissement de l'autonomie, puisque aucun outil n'est invoqué. Variante : une cible en http://127.0.0.1 renvoie le contenu d'un service local.",
+   "contre_lecture": "Mécanisme prévu pour envoyer des fichiers générés (captures, rapports) et hérité du canal openclaw-lansenger (lansenger.rs:26-27). Il exige une liaison Lansenger volontaire, les correspondants directs sont limités à l'annuaire de l'organisation, et c'est le modèle qui doit produire le marqueur.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-providers/src/lib.rs",
+   "ligne": "1216-1810 ; models_dev.rs:22-47 ; openrouter.rs:504-505 ; crates/kylinbot-config/src/secrets.rs:1-21, 150-200",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "const QIANFAN_BASE_URL: &str = \"https://qianfan.baidubce.com/v2\"; … QWEN_CN_BASE_URL \"https://dashscope.aliyuncs.com/compatible-mode/v1\"; … GLM_CN_BASE_URL \"https://open.bigmodel.cn/api/paas/v4\"; … CATALOG_URL \"https://models.dev/api.json\" ; .header(\"HTTP-Referer\", \"https://github.com/kylinbot/kylinbot\")",
+   "explication": "Inventaire des fournisseurs LLM (≈33 k lignes). Tous les points de terminaison intégrés sont en https ; reqwest/rustls conserve la vérification TLS par défaut (aucun danger_accept_invalid_certs/VerifyNone dans tout le crate). Un fournisseur 'custom:' accepte http:// (déjà couvert dans le constat model_routing_config). Données envoyées au fournisseur choisi par l'utilisateur, à chaque requête : prompt système (nom d'hôte, chemin du workspace/nom d'utilisateur, date/fuseau, liste des skills, IDENTITY/SOUL), historique (50 derniers messages), rappels mémoire, sorties d'outils (fichiers lus, sorties de commandes, captures d'écran en base64). OpenRouter ajoute HTTP-Referer github.com/kylinbot/kylinbot et X-Title KylinBot. Aucun identifiant utilisateur ni métadonnée de session supplémentaire. Catalogue de modèles : la passerelle et l'onboarding interrogent models.dev/api.json (public, sans clé) et le /models natif de certains fournisseurs. Les callbacks OAuth n'écoutent qu'en 127.0.0.1 (ports 1455/1456). Clés : aucune clé d'API ni secret client embarqué (seuls des client_id OAuth publics, déjà relevés en vague 1). Au repos, les clés configurées sont chiffrées par défaut en ChaCha20-Poly1305 (secrets.encrypt=true) avec clé dans ~/.kylinbot/.secret_key (0600) — sauf les secrets de bots écrits en clair par les parcours de liaison (constat L7 maintenu). Aucun fournisseur par défaut : aucun flux LLM tant que l'utilisateur n'a pas configuré de clé/URL.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-memory/src/sqlite.rs",
+   "ligne": "40-200, 561-760 ; crates/kylinbot-memory/src/hygiene.rs:42-78, 179-240 ; crates/kylinbot-runtime/src/tunnel/mod.rs:60-140",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "let db_path = workspace_dir.join(\"memory\").join(\"brain.db\"); … PRAGMA journal_mode = WAL; … INSERT INTO memories (...) ; … const HYGIENE_INTERVAL_HOURS: i64 = 12; pruned_conversation_rows: prune_conversation_rows(workspace_dir, conversation_retention)",
+   "explication": "Mémoire/stockage : brain.db SQLite en clair (aucune prise en charge SQLCipher dans le crate ; le chiffrement ne couvre que les secrets de config). Cloisonnement par session : store/recall filtrent sur session_id lorsqu'il est fourni (les canaux utilisent une clé {canal}_{cible}_{expéditeur}) ; la mémoire des exécutions cron/heartbeat exclut la catégorie Conversation (loop_.rs:269-294). Rétention : l'hygiène (toutes les 12 h) archive puis purge selon archive_after_days=7 / purge_after_days=30 / conversation_retention_days=30 de la config livrée — donc, contrairement au constat L7 (« conservation indéfinie »), les lignes de conversation SONT élaguées à 30 jours et les fichiers de session archivés/purgés ; en revanche session_ttl_hours=0 ne borne pas la table sessions.db et brain.db n'a pas de purge temporelle (mémoires persistantes). PRÉCISION du constat L7. Tunnel (kylinbot-runtime/src/tunnel) : fournit un accès distant (cloudflared, ngrok, tailscale funnel, pinggy via ssh -R, openvpn, commande libre) ; il n'est démarré que si listen_tcp=true ET provider≠none ; provider='none' dans la config livrée. Hooks : webhook_audit et command_logger désactivés. SOP/knowledge/nodes/node_transport : désactivés ou sans appelant.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "debian/kylinbot/.kylinbot/workspace/skills/network-manager/SKILL.md",
+   "ligne": "1-40 (nmcli, bash) ; srceen/SKILL.md ; power/SKILL.md ; bluetooth/ukui-bluetooth-cli.py:14-17 ; crates/kylinbot-runtime/src/skills/mod.rs:336-354 ; crates/kylinbot-config/src/schema.rs:1805-1829",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "gdbus call --session --dest org.ukui.Framework … ; nmcli … ; SERVICE_NAME = \"com.ukui.bluetooth\" ; default_system_skills_dirs() -> [\"/usr/share/system-skills\"] ; default_store_skills_dirs() -> [\"/opt/kylinbot/skills\"]",
+   "explication": "Delta Kylin confirmé côté skills : les 12 skills empaquetées (audio, bluetooth, keyboard, mouse, navigations, network-manager, osdserver, panel, power, shortcut-navigations, srceen [sic], touchpad) pilotent le bureau UKUI via gdbus/nmcli/python+dbus sur le bus de SESSION (aucun sudo/pkexec). Elles confirment l'intention de l'assistant de commander la machine et expliquent la levée des garde-fous (docs/release-note-4.73.md). En plus du workspace, le chargeur lit deux répertoires Kylin : /usr/share/system-skills et /opt/kylinbot/skills (défauts de schema.rs, delta Kylin), audités par audit_skill_directory (scripts rejetés si allow_scripts=false, mais la config livrée met allow_scripts=true). filter_enabled_skills restreint à enabled_skills. Autres marqueurs delta vus par grep (confirmant L7) : socket unix + listen_tcp (schema.rs, gateway/lib.rs), parcours de liaison QR (gateway/api.rs), kylin-screenshot (screenshot.rs), canal Lansenger/CEC (lansenger.rs). L'UI web_kbot rend les réponses via react-markdown SANS rehype-raw (HTML brut neutralisé) et l'éditeur TOML échappe <>& : pas de XSS évident ; aucune CSP trouvée.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-bot",
+   "fichier": "crates/kylinbot-channels/src/lark.rs",
+   "ligne": "1831-1918, 1585-1616, 1043-1045 ; crates/kylinbot-config/src/schema.rs:8180-8184, 13652",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "let token_ok = payload.get(\"token\")….is_none_or(|t| t == state.verification_token); … // Parse event messages let messages = state.channel.parse_event_payload_async(&payload).await; … let addr = std::net::SocketAddr::from(([0, 0, 0, 0], port));",
+   "explication": "En mode réception webhook de Feishu/Lark (receive_mode='webhook' + port), le canal ouvre un serveur HTTP sur 0.0.0.0:<port> (POST /lark). Le verification_token n'est contrôlé que sur la requête de challenge d'URL ; sur la livraison d'événement réelle (parse_event_payload), aucun jeton ni signature n'est vérifié. Le seul filtre est l'allowlist d'expéditeurs sur l'open_id du corps JSON, que l'émetteur contrôle entièrement. Un tiers pouvant joindre ce port peut donc forger un événement im.message.receive_v1 avec un open_id autorisé (ou '*' si allowed_users=['*'] comme l'écrit la liaison) et piloter l'agent. Le mode par défaut est 'websocket' (sortant, pas d'écoute) ; ce risque n'existe que si l'utilisateur choisit le mode webhook. Les autres canaux de messagerie confirmés en vague 2 (DingTalk, WeCom, WeChat iLink, Lansenger) utilisent des connexions SORTANTES (WebSocket/long-poll), sans port entrant ; leur authentification des messages repose sur le transport TLS de la plateforme plus l'allowlist d'expéditeurs (allowed_users=['*'] par la liaison).",
+   "scenario": "Un utilisateur configure Feishu en mode webhook sur un port accessible. Un tiers qui atteint ce port envoie un POST JSON imitant un message d'un expéditeur autorisé ; l'agent, en autonomie full, exécute les instructions (shell, lecture de fichiers, exfiltration par le canal).",
+   "contre_lecture": "Le mode webhook n'est pas le défaut (websocket l'est) et Feishu signe normalement ses rappels ; un déploiement correct place un proxy qui valide la signature. L'allowlist limite les expéditeurs utiles, et en pratique Feishu n'accepte qu'une URL publique enregistrée. Aucun port n'est ouvert dans la configuration livrée.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "outils model_routing_config / proxy_config (sonde + config)",
+   "destination": "point de terminaison LLM choisi par le modèle, y compris 'custom:<URL>' (http ou https) ; proxy arbitraire",
+   "protocole": "HTTP(S)",
+   "fichier_ligne": "crates/kylinbot-tools/src/model_routing_config.rs:502-535 ; proxy_config.rs:171-266 ; crates/kylinbot-providers/src/lib.rs:1766-1786",
+   "declencheur": "appel d'outil décidé par le modèle (aucune confirmation en autonomie full)",
+   "donnees": "clé d'API du fournisseur courant en en-tête Bearer lors de la sonde ; ensuite tout le contexte des tours suivants",
+   "tls_verifie": "oui (non si 'custom:http://')",
+   "classification": "indetermine"
+  },
+  {
+   "composant": "catalogue de modèles (onboarding/passerelle)",
+   "destination": "https://models.dev/api.json ; /models natif de certains fournisseurs",
+   "protocole": "HTTPS",
+   "fichier_ligne": "crates/kylinbot-providers/src/models_dev.rs:22-47",
+   "declencheur": "onboarding / liste de modèles dans l'UI",
+   "donnees": "aucune (GET public, sans clé)",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "canal Lansenger (CEC/Lanxin) — pièces jointes sortantes",
+   "destination": "chemin local lu puis téléversé chez Lansenger ; ou URL arbitraire (hôtes privés non filtrés) téléchargée par le démon",
+   "protocole": "fichier local / HTTP(S)",
+   "fichier_ligne": "crates/kylinbot-channels/src/lansenger.rs:833-900, 1026-1035",
+   "declencheur": "marqueur [KIND:<chemin|URL>] dans une réponse de l'agent (hors tout outil et toute approbation)",
+   "donnees": "contenu de n'importe quel fichier lisible par l'utilisateur ; réponse d'un service local (SSRF réfléchie)",
+   "tls_verifie": "oui (sortie Lansenger)",
+   "classification": "opaque"
+  },
+  {
+   "composant": "canal Feishu/Lark en mode webhook",
+   "destination": "écoute entrante 0.0.0.0:<port> (POST /lark)",
+   "protocole": "HTTP",
+   "fichier_ligne": "crates/kylinbot-channels/src/lark.rs:1900-1918",
+   "declencheur": "uniquement si receive_mode='webhook' (défaut: websocket sortant)",
+   "donnees": "événements reçus ; aucun jeton/signature vérifié sur la livraison",
+   "tls_verifie": "non (HTTP en clair, à placer derrière un proxy)",
+   "classification": "indetermine"
+  },
+  {
+   "composant": "canaux de messagerie liés (sortants)",
+   "destination": "api.dingtalk.com/openws.work.weixin.qq.com (wss), open.feishu.cn (wss), ilinkai.weixin.qq.com + novac2c.cdn.weixin.qq.com, open.e.lanxin.cn ou apigw-cec.cec.com.cn",
+   "protocole": "HTTPS/WSS",
+   "fichier_ligne": "crates/kylinbot-channels/src/dingtalk.rs:104 ; wecom.rs:14 ; wechat.rs:20-22 ; lansenger.rs:14",
+   "declencheur": "permanent une fois un canal lié (redémarrage démon)",
+   "donnees": "messages entrants/sortants, médias (téléchargés/déchiffrés AES puis enregistrés dans le workspace)",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "module tunnel (accès distant)",
+   "destination": "free.pinggy.io / pro.pinggy.io (ssh -R), cloudflared, ngrok, tailscale funnel, openvpn, commande libre",
+   "protocole": "SSH / propriétaire",
+   "fichier_ligne": "crates/kylinbot-runtime/src/tunnel/mod.rs:75-140 ; pinggy.rs:34-61 ; gateway/lib.rs:938-952",
+   "declencheur": "uniquement si listen_tcp=true ET [tunnel] provider≠none (provider='none' par défaut)",
+   "donnees": "expose la passerelle entière ; le trafic distant apparaît en 127.0.0.1 côté passerelle",
+   "tls_verifie": "n.d.",
+   "classification": "indetermine"
+  },
+  {
+   "composant": "OAuth fournisseurs (callback local)",
+   "destination": "127.0.0.1:1455 (OpenAI), 127.0.0.1:1456 (Gemini)",
+   "protocole": "HTTP loopback",
+   "fichier_ligne": "crates/kylinbot-providers/src/auth/openai_oauth.rs:229 ; gemini_oauth.rs:362",
+   "declencheur": "flux OAuth lancé par l'utilisateur",
+   "donnees": "code d'autorisation OAuth",
+   "tls_verifie": "n.d. (loopback)",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "canal Lansenger (exfiltration par marqueur)",
+   "donnee": "tout fichier lisible par l'utilisateur, cité comme [KIND:/chemin] dans une réponse",
+   "fichier_ligne": "crates/kylinbot-channels/src/lansenger.rs:875-882",
+   "stockage": "non stocké (lu à la volée)",
+   "envoi": "téléversé chez Lansenger puis envoyé au correspondant ; hors tout outil et toute approbation"
+  },
+  {
+   "composant": "outil model_routing_config (sonde)",
+   "donnee": "clé d'API du fournisseur LLM configuré",
+   "fichier_ligne": "crates/kylinbot-tools/src/model_routing_config.rs:505-535",
+   "stockage": "config.toml (chiffrée si secrets.encrypt=true)",
+   "envoi": "en-tête Bearer vers le point de terminaison choisi par le modèle (y compris tiers via 'custom:')"
+  },
+  {
+   "composant": "médias de canaux",
+   "donnee": "images/fichiers/vidéos/voix reçus (déchiffrés AES pour WeChat/WeCom)",
+   "fichier_ligne": "crates/kylinbot-channels/src/wecom.rs:833-860 ; wechat.rs:710-757 ; lansenger.rs:520-543",
+   "stockage": "~/.kylinbot/workspace/{wecom_files,lansenger_files} et ~/.zeroclaw/workspace/wecom_files (chemin résiduel amont)",
+   "envoi": "vers le fournisseur LLM si l'agent lit/joint le fichier"
+  },
+  {
+   "composant": "mémoire / sessions",
+   "donnee": "historique de conversation, mémoires extraites, sorties d'outils",
+   "fichier_ligne": "crates/kylinbot-memory/src/sqlite.rs:155-200, 561-595",
+   "stockage": "~/.kylinbot/workspace/memory/brain.db et sessions/sessions.db (SQLite en clair, pas de SQLCipher)",
+   "envoi": "rappels injectés dans les prompts LLM ; conversation élaguée à 30 j par l'hygiène, brain.db persistant"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/kylin-bot",
+   "fichiers_code_propres": 1033,
+   "lignes_code_propres": 424821,
+   "lus_integralement": 16,
+   "lus_partiellement": 24,
+   "pct_fichiers": 9.0,
+   "pct_lignes": 7.0,
+   "note": "Lot d'APPROFONDISSEMENT : cumul avec V1-L7. Base inchangée (1 033 fichiers .rs/.ts/.tsx/.sh/.py/.js hors debian/, 424 821 lignes ; hors tiers 1 032/422 212). Ce lot a ajouté ~16 fichiers lus intégralement (hors #[cfg(test)]) et ~24 partiellement, soit ≈13 000 lignes nouvelles ciblées sur boucle agent, outils exécutables/réseau, 5 canaux de messagerie (dingtalk, wecom, wechat, lark, lansenger), fournisseurs (fabrique+TLS+clés), mémoire/hygiène, tunnel, nodes, skills système. CUMUL V1-L7+V1-L12 : ≈93 fichiers touchés (≈9 % des fichiers), ≈27 000 lignes lues (≈6,4 % des lignes de code ; le champ pct_lignes=7,0 est arrondi au cumul fichiers intégraux+partiels). Toujours < budget Phase 0 (30 %) : arbre de 425 k lignes, ciblage sur delta Kylin et chemins à risque. Balayage par motifs A-E refait sur canaux, providers, tunnel, nodes, hooks, sop.",
+   "fichiers_lus": [
+    "crates/kylinbot-runtime/src/approval/mod.rs",
+    "crates/kylinbot-runtime/src/tools/shell.rs",
+    "crates/kylinbot-runtime/src/tools/skill_tool.rs",
+    "crates/kylinbot-runtime/src/skills/improver.rs",
+    "crates/kylinbot-runtime/src/agent/memory_loader.rs",
+    "crates/kylinbot-channels/src/dingtalk.rs",
+    "crates/kylinbot-channels/src/lansenger.rs (hors #[cfg(test)], 1-1376)",
+    "crates/kylinbot-providers/src/models_dev.rs",
+    "crates/kylinbot-tools/src/http_request.rs (hors tests)",
+    "crates/kylinbot-tools/src/file_write.rs (hors tests)",
+    "crates/kylinbot-runtime/src/tunnel/mod.rs",
+    "crates/kylinbot-tools/src/proxy_config.rs (1-330, cœur)",
+    "crates/kylinbot-config/src/secrets.rs (cœur, hors tests)",
+    "debian/kylinbot/.kylinbot/config.toml (707 l., relu intégralement)",
+    "debian/kylinbot/.kylinbot/workspace/skills/network-manager/SKILL.md",
+    "debian/kylinbot/.kylinbot/workspace/skills/srceen/SKILL.md"
+   ],
+   "fichiers_lus_partiellement": [
+    "crates/kylinbot-runtime/src/agent/loop_.rs (≈1 100/7 817 : scrub_credentials, build_context, run_tool_call_loop, process_message)",
+    "crates/kylinbot-runtime/src/agent/agent.rs (≈400/3 187 : execute_tool_call, from_config, turn)",
+    "crates/kylinbot-runtime/src/agent/tool_execution.rs (≈60/230)",
+    "crates/kylinbot-runtime/src/tools/mod.rs (≈400/1 395 : all_tools_with_runtime)",
+    "crates/kylinbot-runtime/src/tools/cron_add.rs (≈120/818)",
+    "crates/kylinbot-config/src/policy.rs (≈420/3 722 : validate_command_execution, is_command_allowed, is_path_allowed, defaults)",
+    "crates/kylinbot-tools/src/model_routing_config.rs (≈200/1 252 : set_default, probe_model)",
+    "crates/kylinbot-tools/src/web_fetch.rs (≈120/1 510 : validate_url, SSRF/DNS)",
+    "crates/kylinbot-tools/src/browser.rs (≈120/2 665 : backends, validate_url, computer_use)",
+    "crates/kylinbot-tools/src/browser_open.rs (≈60/533)",
+    "crates/kylinbot-providers/src/lib.rs (≈450/4 101 : fabrique, custom:, resolve_provider_credential, endpoints)",
+    "crates/kylinbot-providers/src/multimodal.rs (≈180/1 058 : normalize_image, local/remote)",
+    "crates/kylinbot-memory/src/sqlite.rs (≈300/2 948 : schema, store, recall, session scoping)",
+    "crates/kylinbot-memory/src/hygiene.rs (≈240/586 : rétention, archivage, purge)",
+    "crates/kylinbot-channels/src/wecom.rs (≈400/1 286 : callbacks, médias AES, allowlist)",
+    "crates/kylinbot-channels/src/wechat.rs (≈450/2 002 : pairing, marqueurs pièces jointes, send)",
+    "crates/kylinbot-channels/src/lark.rs (≈300/3 882 : webhook/ws, parse_event, allowlist)",
+    "crates/kylinbot-channels/src/util.rs (≈170/327 : parse_attachment_markers)",
+    "crates/kylinbot-channels/src/orchestrator/mod.rs (≈400/13 000+ : leak detector, delivery instructions, keys, autosave, config reload)",
+    "crates/kylinbot-gateway/src/lib.rs (≈300 compl. : run_gateway, tunnel, require_localhost, paircode)",
+    "crates/kylinbot-gateway/src/nodes.rs (≈120/622 : /ws/nodes auth)",
+    "crates/kylinbot-runtime/src/hooks/* , sop/* , skills/mod.rs (≈400 : inventaire, chargement skills système/store)",
+    "crates/aardvark-sys/src/lib.rs (≈95 : chargement dlopen, stub)",
+    "web_kbot/src/components/chat/ChatMarkdown.tsx, pages/config/ConfigTomlEditor.tsx (rendu, échappement)"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "Boucle agent : loop_.rs lu à ~15 % (run_tool_call_loop et process_message couverts ; run(), context_compressor, delegate.rs (3 081 l.), swarm, pipeline non lus en détail).",
+  "Canaux non lus en détail : telegram (5 807 l.), slack (5 276), matrix (4 374), qq, whatsapp*, discord, signal, imessage, mattermost, irc, email, voice_call — hors périmètre Kylin prioritaire ; seuls dingtalk/wecom/wechat/lark/lansenger audités.",
+  "Providers : anthropic.rs/gemini.rs/bedrock.rs/openai.rs/compatible.rs/reliable.rs lus par extraits (endpoints, TLS, custom:) ; construction fine des requêtes et gestion OAuth par fournisseur non exhaustives.",
+  "Outils non relus intégralement : delegate.rs, composio.rs, google_workspace.rs, jira/notion/linkedin, git_operations.rs (worktree), claude_code*/codex/gemini_cli, mcp_* — lus par motifs.",
+  "kylinbot-hardware (10 301 l.), robot-kit (3 468), firmware ESP32/Pico/Nucleo, aardvark SDK : non compilés dans le paquet (features optionnelles hardware/peripheral-rpi absentes de la build Debian) ; lus par survol — intérêt sécurité nul pour l'ISO.",
+  "web_kbot/src pages/composants (~31 k l.) : seuls rendu markdown, éditeur TOML et quelques lib/ lus ; pont QtWebEngine vers gateway.sock relève du lot kylin-aiassistant (B01).",
+  "Pas d'accès réseau : propriété de github.com/kylinbot et de api.skillhub.cn, comportement réel de models.dev, portée des bots sur chaque plateforme non vérifiables.",
+  "Pas de compilation/exécution : exploitabilité effective (injection de prompt dépendant du modèle, chemin Lansenger) non testée ; binaire installé non comparé aux sources.",
+  "Historique git absent : delta Kylin non isolable ligne à ligne (seuls marqueurs : debian/, skills système/store, screenshot.rs, lansenger.rs, socket unix/listen_tcp, parcours de liaison QR, web_kbot)."
+ ],
+ "synthese": "Approfondissement du fork renommé ZeroClaw 0.7.5 (empreinte conforme). NOUVEAUX constats. [elevee, CONSTATÉ] Canal Lansenger/CEC (delta Kylin) : tout marqueur [KIND:/chemin] dans une réponse de l'agent fait LIRE ce fichier local AU NIVEAU DU CANAL (tokio::fs::read) puis l'envoie au correspondant, sans SecurityPolicy ni workspace ni forbidden_paths — chemin d'exfiltration hors de tout outil et de toute approbation, actif même en mode durci ; une URL [KIND:http://127.0.0.1/..] donne une SSRF réfléchie (lansenger.rs:833-900). [moyenne, CONSTATÉ] L'outil model_routing_config (toujours enregistré, auto en mode full) accepte provider='custom:<URL>' : à la sonde il envoie la clé d'API courante en Bearer vers une URL tierce, puis persiste ce fournisseur dans config.toml ; les tours suivants passent par ce serveur, qui dicte les appels d'outils => canal C2 par injection de prompt. proxy_config permet de même de rediriger le trafic (model_routing_config.rs:502-535). [moyenne, CONSTATÉ] Module tunnel (pinggy/cloudflared/ngrok/tailscale/openvpn/commande libre) : si listen_tcp=true ET tunnel≠none, le trafic distant arrive en 127.0.0.1 et require_localhost le traite comme local => /admin/paircode/new et /pair/code exposés sur Internet ; désactivés par défaut mais activables par l'agent via shell (tunnel/mod.rs, gateway/lib.rs:938-952, 2786-2797). [moyenne, CONSTATÉ] Feishu/Lark en mode webhook écoute 0.0.0.0:<port> et ne vérifie ni jeton ni signature sur la livraison d'événement (seul l'open_id du corps, forgeable, est filtré) ; non-défaut (websocket par défaut). Les 5 canaux Kylin audités (dingtalk, wecom, wechat, lark, lansenger) authentifient sinon par TLS plateforme + allowlist, laquelle vaut ['*'] après liaison (lark.rs:1900-1918). [faible, CONSTATÉ] Le drapeau 'approved' du shell est fourni par le modèle ; en canal non interactif la barrière externe d'approbation est sautée pour shell ; les skills substituent les arguments sans échappement — défauts amont inertes en mode full mais exploitables en supervisé (shell.rs:124-148, approval/mod.rs:129-136). [faible, CONSTATÉ] SSRF http_request ne filtre que le littéral d'hôte (pas la résolution DNS), contrairement à web_fetch (http_request.rs:403-428). RÉVISIONS : garde-fous retirés, allowed_users=['*'], SkillHub non signé, screenshot au LLM, update non signé, paircode loopback : tous CONFIRMÉS ; précisions — aucun hook/PromptGuard câblé par défaut, masquage de secrets absent du parcours passerelle, chargement de skills système/store (/usr/share/system-skills, /opt/kylinbot/skills), tunnel étendant le risque paircode. Secrets en clair : NUANCÉ — le cœur chiffre les clés (ChaCha20, secrets.encrypt=true), seuls les ajouts de liaison contournent. Rétention mémoire : PRÉCISÉE — l'hygiène élague les conversations à 30 j (pas 'indéfini'), mais brain.db reste persistant. [info] Fournisseurs : tous endpoints https, TLS vérifié par défaut (aucun VerifyNone) ; données au LLM = prompt système (hostname, user, fuseau, skills, IDENTITY/SOUL)+historique+mémoire+sorties d'outils+captures ; aucune clé embarquée ; catalogue public models.dev. Hardware/robot-kit/firmware non compilés dans le paquet. UI web_kbot sans rendu HTML brut (pas de XSS évident). COUVERTURE cumulée V1-L7+V1-L12 : ≈9 % des fichiers, ≈6-7 % des lignes ; canaux majeurs non chinois, gros modules d'outils et web_kbot restent non lus."
+}

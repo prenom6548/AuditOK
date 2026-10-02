@@ -1,0 +1,221 @@
+#!/bin/bash
+
+FUNCTIONS_FILE="/usr/share/debootstrap/functions"
+
+if [ -f "/usr/share/bash-completion/completions/kare_completion.sh" ]; then
+    mv /usr/share/bash-completion/completions/kare_completion.sh /usr/share/bash-completion/completions/kare
+fi
+
+system_conf="/usr/share/dbus-1/system.conf"
+system_service_dirs="<servicedir>/opt/kare/usr/share/dbus-1/system-services</servicedir>"
+
+system_include_dirs="<includedir>/opt/kare/etc/dbus-1/system.d</includedir>"
+system_additional_include_dirs="<includedir>/opt/kare/usr/share/dbus-1/system.d</includedir>"
+
+sed -i "/<standard_system_servicedirs\/>/a $system_service_dirs" "$system_conf"
+sed -i "/<includedir>\/etc\/dbus-1\/system.d<\/includedir>/a $system_include_dirs"   "$system_conf"
+sed -i "/<includedir>\/etc\/dbus-1\/system.d<\/includedir>/a $system_additional_include_dirs"   "$system_conf"
+
+session_conf="/usr/share/dbus-1/session.conf"                             
+session_service_dirs="<servicedir>/opt/kare/usr/share/dbus-1/services</servicedir>" 
+
+session_include_dirs="<includedir>/opt/kare/etc/dbus-1/session.d</includedir>"
+session_additional_include_dirs="<includedir>/opt/kare/usr/share/dbus-1/session.d</includedir>"
+
+sed -i "/<standard_session_servicedirs \/>/a $session_service_dirs" "$session_conf"
+sed -i "/<includedir>\/etc\/dbus-1\/session.d<\/includedir>/a $session_include_dirs"   "$session_conf"
+sed -i "/<includedir>\/etc\/dbus-1\/session.d<\/includedir>/a $session_additional_include_dirs"   "$session_conf"
+
+
+if ! grep -q "127.0.0.1 kare" /etc/hosts; then
+    echo "127.0.0.1 kare" | sudo tee -a /etc/hosts > /dev/null
+fi
+
+mkdir -p /opt/kare/usr/share/applications
+mkdir -p /opt/kare/usr/share/icons
+mkdir -p /opt/kare/usr/share/icons/hicolor/16x16/apps
+mkdir -p /opt/kare/usr/share/icons/hicolor/24x24/apps
+mkdir -p /opt/kare/usr/share/icons/hicolor/32x32/apps
+mkdir -p /opt/kare/usr/share/icons/hicolor/48x48/apps
+mkdir -p /opt/kare/usr/share/icons/hicolor/64x64/apps
+mkdir -p /opt/kare/usr/share/icons/hicolor/64x64/apps
+mkdir -p /opt/kare/usr/share/icons/hicolor/128x128/apps
+mkdir -p /opt/kare/usr/share/fonts
+mkdir -p /opt/kare/usr/share/themes
+mkdir -p /opt/kare/usr/share/pixmaps
+mkdir -p /opt/kare/usr/share/mime/packages
+mkdir -p /opt/kare/usr/bin
+mkdir -p /opt/kare/usr/sbin
+mkdir -p /opt/kare/bin
+mkdir -p /opt/kare-applications/config
+mkdir -p /var/log/kare
+touch /var/log/kare/kare-run.log
+touch /opt/kare-applications/config/install.json
+touch /opt/kare-applications/config/release.json
+
+ln -s /opt/kare-applications/config/install.json /etc/kare/install.json
+ln -s /opt/kare-applications/config/release.json /etc/kare/release.json
+
+chmod 777 /var/log/kare/kare-run.log
+
+chmod +x /usr/share/kare/host-scripts/system-host-service.py /usr/share/kare/host-scripts/session-host-service.py
+cp "/usr/share/kare/plugins/flatpak/org.freedesktop.Flatpak.kare.service" "/usr/share/dbus-1/services/org.freedesktop.Flatpak.service"
+
+python_script='
+import json
+import sys
+
+file = sys.argv[1]
+new_data = {
+  "v10sp1Driver": {
+    "path": "/opt/kare-applications/v10sp1",
+    "base_env": "v10sp1",
+    "upgrade": False,
+    "driver": True,
+    "file": [],
+    "container_file": []
+  }
+}
+
+try:
+  with open(file, "r") as f:
+    data = json.load(f)
+except Exception as e:
+  data = {}
+
+data.update(new_data)
+
+with open(file, "w") as f:
+  json.dump(data, f, indent=2)
+'
+python3 -c "$python_script" "/opt/kare-applications/config/install.json"
+
+dirs=("usr" "var" "etc" "opt" "root")
+for dir in "${dirs[@]}"; do
+    mkdir -p "/opt/kare-applications/v10sp1/lower/$dir"
+    mkdir -p "/opt/kare-applications/v10sp1/upper/$dir"
+    mkdir -p "/opt/kare-applications/v10sp1/work/$dir"
+    mkdir -p "/opt/kare-applications/v10sp1/merge/$dir"
+done
+
+systemctl enable kare-base-config-copy.service
+ln -sf /usr/share/kare/host-scripts/buildCompatibilityEnv.sh /usr/bin/buildCompatibilityEnv.sh
+chmod +x /usr/bin/buildCompatibilityEnv.sh
+
+# 新增环境变量，写到/etc/bash.bashrc，使得主机sane可以访问容器内sane配置及sane库
+ARCH=`arch`
+LIBPATH_NAME="LIBPATH"
+LIBPATH_VALUE="/opt/kare-applications/v10sp1/merge/usr/lib/${ARCH}-linux-gnu/sane"
+SANE_CONFIG_DIR_NAME="SANE_CONFIG_DIR"
+SANE_CONFIG_DIR_VALUE="/opt/kare-applications/v10sp1/merge/etc/sane.d"
+
+function kare_sane_env(){
+	if ! grep -q "export ${1}=" /etc/bash.bashrc; then
+		echo "[INFO] 变量 ${1} 未定义，正在添加..."
+		echo "export ${1}=${2}" | tee -a /etc/bash.bashrc > /dev/null
+		echo "[SUCCESS] 变量已添加"
+	else
+		echo "[SKIP] 变量${1} 已定义，无需操作。"
+	fi
+}
+# sw相关改动
+if [ "$ARCH" = "sw_64" ]; then
+  mv /usr/share/debootstrap/scripts/10.1 /usr/share/debootstrap/scripts/10.1-sw64
+  mv /etc/kare/base/v10sp1-sw64 /etc/kare/base/v10sp1
+  
+  # 检查目标代码是否存在
+  if ! grep -A 3 '^    case "$CODENAME" in' "$FUNCTIONS_FILE" | grep -A 1 '10\.1\*)' | grep -q 'MERGED_USR=""'; then
+    START_LINE=$(grep -n '^setup_merged_usr() {' "$FUNCTIONS_FILE" | cut -d: -f1)
+    END_LINE=$(grep -n '^}' "$FUNCTIONS_FILE" | awk -F: -v start="$START_LINE" '$1 > start {print $1; exit}')
+    FI_LINE=$(awk -v start="$START_LINE" -v end="$END_LINE" 'NR >= start && NR <= end && /^[[:space:]]*fi[[:space:]]*$/ {print NR; exit}' "$FUNCTIONS_FILE")
+    INSERT_LINE=$((FI_LINE + 1))
+
+    sed -i "${INSERT_LINE}i\\
+    case \\\"\$CODENAME\\\" in \\
+        10.1\*) \\
+            MERGED_USR=\\\"\\\" \\
+            ;; \\
+    esac" "$FUNCTIONS_FILE"
+  fi
+
+  if ! grep -q 'sw64).*lib32 lib64' "$FUNCTIONS_FIEL" 2>/dev/null; then
+      lineno=$(grep -n 'x32)' "$FUNCTIONS_FILE" | grep 'libx32' | cut -d: -f1 | head -n1)
+      if [ -n "$lineno" ]; then
+          sed -i "$((lineno+1))i\    sw64)  link_dir=\"lib32 lib64\" ;;" "$FUNCTIONS_FILE"
+      fi
+  fi
+fi
+
+if [ "$ARCH" = "loongarch64" ]; then
+  mv /etc/kare/base/v10sp1-loongarch64 /etc/kare/base/v10sp1
+fi
+setcap cap_bpf,cap_perfmon+ep /usr/share/kare/plugins/kare-polkit/polkit-kare-authentication-agent-1
+# 取消设置环境变量
+#kare_sane_env ${LIBPATH_NAME} ${LIBPATH_VALUE}
+#kare_sane_env ${SANE_CONFIG_DIR_NAME} ${SANE_CONFIG_DIR_VALUE}
+
+# 迁移 overlay 目录结构，将真实目录改为符号链接以保持兼容性
+
+# 卸载 kare-applications 目录下的挂载点，确保迁移操作可以正常进行
+for mount_point in $(cat /proc/mounts | grep -E "/opt/kare-applications/v10sp1|/opt/kare-applications/shadow" | awk '{print $2}' | sort -r); do
+    umount "$mount_point" 2>/dev/null || true
+done
+
+migrate_script='
+import os
+import shutil
+
+def migrate_overlay_to_symlink(package_path, link_dirs=None):
+    """
+    迁移 overlay 目录结构，将真实目录改为符号链接以保持兼容性
+
+    @param package_path: overlay 根路径（包含 lower/upper/work/merge 目录）
+    @param link_dirs: 需要迁移的目录列表，默认为 ["bin", "lib", "sbin", "lib64"]
+    """
+    # 判断 package_path 是否存在
+    if not os.path.exists(package_path):
+        return
+
+    if link_dirs is None:
+        link_dirs = ["bin", "lib", "sbin", "lib64"]
+
+    for path in link_dirs:
+        merge_link_dir = os.path.join(package_path, "merge", path)
+        upper_dir = os.path.join(package_path, "upper", path)
+        upper_usr_dir = os.path.join(package_path, "upper", "usr", path)
+
+        # 如果已经存在符号链接，跳过
+        if os.path.islink(merge_link_dir):
+            continue
+
+        # 如果是真实目录（旧代码创建），需要迁移 upper 层的修改
+        if os.path.isdir(merge_link_dir):
+            if os.path.exists(upper_dir) and os.path.exists(upper_usr_dir):
+                # 将 upper/{path} 的内容迁移到 upper/usr/{path}
+                for root, dirs, files in os.walk(upper_dir):
+                    for f in files:
+                        src = os.path.join(root, f)
+                        rel_path = os.path.relpath(src, upper_dir)
+                        dst = os.path.join(upper_usr_dir, rel_path)
+                        # 如果 dest 存在则跳过，否则复制（保留符号链接）
+                        if os.path.exists(dst):
+                            continue
+                        os.makedirs(os.path.dirname(dst), exist_ok=True)
+                        shutil.copy2(src, dst, follow_symlinks=False)
+
+            # 删除旧的 merge 目录和 upper 目录
+            shutil.rmtree(merge_link_dir)
+            if os.path.exists(upper_dir):
+                shutil.rmtree(upper_dir)
+
+        # 创建符号链接
+        os.symlink(os.path.join("usr", path), merge_link_dir)
+
+# 对两个 package_path 执行迁移
+for pkg_path in ["/opt/kare-applications/v10sp1", "/opt/kare-applications/shadow"]:
+    migrate_overlay_to_symlink(pkg_path)
+'
+python3 -c "$migrate_script"
+
+# 重启 kareAgent 进程
+kill -9 $(pidof -x kareAgent) 2>/dev/null || true

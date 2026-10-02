@@ -1,0 +1,524 @@
+{
+ "lot": "P2-crypto-libs",
+ "statut": "complet",
+ "composants": [
+  "gnutls28",
+  "nss",
+  "libgcrypt20",
+  "gnupg2",
+  "glib-networking",
+  "curl"
+ ],
+ "empreintes": {
+  "archive/gnutls28": "83ab0882a9f2e89ae21b782f2f7b9210e830b9e075711e51fc7c2b01fd01862e",
+  "archive/nss": "68559fd48c6659b304ee29a14523a2b6aa05d7ac9cd9ad63fce42538f6f4f9c0",
+  "archive/libgcrypt20": "ceb4c8214e8dd7666b3d7dc93e33d16019e91e8482ce424c2edb91e1c01d0c6a",
+  "archive/gnupg2": "47018553917bf610e0c20b09411642a5fa5a9d02fa1ad2e5cbf7078f3105e8d3",
+  "archive/glib-networking": "08e45c32d567160f444ff948017111e45f7fe4e5f379b3f37d0500dcc61ea821",
+  "archive/curl": "efddd51b873a2c0dd68c151c7117189e0dae84bb29b3105aa54882e615c36b5c",
+  "conforme": true,
+  "detail": "Les 6 empreintes et nombres de fichiers (40, 19, 21, 83, 15, 42) sont identiques a empreintes-arbres-sources.tsv (lignes 42, 210, 171, 41, 39, 24). Chaque arbre est en outre identique, fichier par fichier, au .debian.tar.xz de dl/build/<nom>/, dont le sha256 figure dans le .dsc. curl : 2 liens symboliques supplementaires, hors empreinte (methode find -type f)."
+ },
+ "findings": [
+  {
+   "depot": "curl",
+   "fichier": "debian/libcurl3t64-gnutls.install ; debian/libcurl3t64-gnutls.symbols ; debian/rules ; debian/ (absence de patches/)",
+   "ligne": "install:1 ; symbols:1,3 ; rules:63-74",
+   "type": "confiance",
+   "severite": "moyenne",
+   "extrait": "usr/lib/*/libcurl-gnutls.so.4* | libcurl-gnutls.so.4 libcurl3t64-gnutls #MINVER# | CURL_GNUTLS_3@CURL_GNUTLS_3 7.16.2 | (aucun repertoire debian/patches)",
+   "explication": "L'arbre curl n'a AUCUN repertoire debian/patches (42 fichiers reguliers, aucun patch). Pourtant l'empaquetage attend des artefacts que l'amont curl 8.18.0 ne produit pas tel quel : une bibliotheque renommee libcurl-gnutls.so.4 et un noeud de version de symboles CURL_GNUTLS_3. Dans Debian, ces deux points viennent des patches de la serie Debian (renommage de la variante GnuTLS et compatibilite des symboles). debian/rules (configure-curl, lignes 63-74) copie l'arbre et lance autoreconf + configure --with-gnutls sans aucune etape de renommage. Ces modifications sont donc tres probablement pre-appliquees dans curl_8.18.0.orig.tar.gz (dsc:30, sha256 bfaeb060...926b), dont l'empreinte DIFFERE de celle d'Ubuntu resolute 8.18.0-1ubuntu2 (donnees/forks-p2-delta-preliminaire.csv:12, EMPREINTE-DIFFERENTE). Consequence : pour curl, le delta openKylin n'est PAS entierement dans debian/ ; une partie (au minimum les patches Debian) est fondue dans l'orig, absent du corpus et donc non auditable. curl, libcurl4t64 et libcurl3t64-gnutls sont installes par defaut.",
+   "registre": "PROBABLE",
+   "scenario": "Une modification de la verification TLS (par exemple dans lib/vtls/ ou dans la gestion de CURLOPT_SSL_VERIFYPEER) inseree dans l'orig serait invisible a toute revue de debian/ et a l'outillage quilt, tout en etant livree dans libcurl, utilise par de nombreux programmes du systeme (mises a jour, telechargements). Ce qui manque pour conclure : l'orig openKylin, a comparer a curl-8.18.0.tar.gz signe par l'amont (cle 27ED EAF2 2F3A BCEB 50DB 9A12 5CC9 08FD B71E 12C2 presente dans debian/upstream/signing-key.asc) et a l'orig Ubuntu.",
+   "contre_lecture": "Flux de travail openKylin courant : le depot gitee stocke l'arbre source complet avec les patches Debian/Ubuntu deja appliques, puis l'orig est regenere depuis git. L'ecart d'empreinte serait alors exactement la serie Debian/Ubuntu (renommage libcurl-gnutls, symboles CURL_GNUTLS_3, correctifs de pages de manuel), sans code ajoute. Les symboles et fichiers .install observes sont strictement ceux de Debian."
+  },
+  {
+   "depot": "curl",
+   "fichier": "debian/rules",
+   "ligne": "20-21",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "--with-ca-path=/etc/ssl/certs --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt",
+   "explication": "CA par defaut des deux variantes (OpenSSL et GnuTLS) : repertoire /etc/ssl/certs et bundle /etc/ssl/certs/ca-certificates.crt, comme Debian. Aucune option de configure desactivant la verification (pas de --without-ssl, pas de --disable-*verif*). Durcissement : hardening=+all (rules:7), -Wl,--no-undefined (rules:38). Tests amont executes (rules:125-133, cible test-nonflaky) hors profil nocheck ; ~40 tests exclus pour les constructeurs IPv6 seuls (rules:112), liste identique a Debian (bug #1032343). Le bundle est produit par update-ca-certificates, qui integre (lot V1-L10) tout .crt/.cer de /opt/system/resource/ca-certificates : curl herite donc de ce mecanisme dormant.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "curl",
+   "fichier": "debian/rules ; debian/curl.NEWS",
+   "ligne": "rules:16 ; NEWS:3-4",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "--without-ngtcp2 --without-nghttp3 | HTTP/3 support is still there",
+   "explication": "HTTP/3 (QUIC) est desactive a la compilation dans les deux variantes, alors que curl.NEWS (copie de Debian 8.13.0-2) annonce que le support HTTP/3 est conserve. Reduction de fonctionnalite et de surface reseau, pas un affaiblissement. Documentation incoherente avec le binaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "curl",
+   "fichier": "debian/tests/build-using-libcurl-gnutls ; debian/tests/build-using-libcurl-openssl",
+   "ligne": "lien symbolique",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "-> /home/ll-v11/桌面/gitee传包/curl已上传/debian/tests/build-using-libcurl",
+   "explication": "Deux liens symboliques ABSOLUS et pendants vers le poste d'un developpeur (utilisateur 'll-v11', repertoire 'gitee传包/curl已上传' = 'envoi gitee/curl deja envoye'). Dans Debian ce sont des liens relatifs vers build-using-libcurl. Effets : deux autopkgtests references par tests/control:21-27 sont casses ; fuite d'un chemin de poste de travail ; preuve que le paquet source a ete prepare depuis une copie locale. Aucun effet sur les binaires livres. Note methodologique : la commande d'empreinte de la consigne (find -type f) ignore les liens symboliques ; l'arbre compte 42 fichiers reguliers + 2 liens (44 membres dans curl_8.18.0-ok2k0.1.debian.tar.xz, tous identiques a l'arbre).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "curl",
+   "fichier": "debian/control ; debian/changelog",
+   "ligne": "control:3 ; changelog:1-11",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com> | * openkylin init | * rebuild 8.18.0-ok2",
+   "explication": "Le controle reste celui d'Ubuntu (Maintainer Ubuntu Developers, XSBC-Original-Maintainer Debian) ; le changelog openKylin ne contient que deux entrees sans contenu ('openkylin init', 'rebuild'). L'historique Debian/Ubuntu a ete retire du changelog. Tracabilite faible du delta, coherente avec un orig pre-patche.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnutls28",
+   "fichier": "dl/build/gnutls28/gnutls28_3.8.12-ok3.dsc ; donnees/forks-p2-delta-preliminaire.csv",
+   "ligne": "dsc:30 ; csv:6",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "601b126abf05de9b0985ee285b619705fb2655e32575291e31ac93e8dc39167e 6936480 gnutls28_3.8.12.orig.tar.xz | EMPREINTE-DIFFERENTE",
+   "explication": "L'orig gnutls28 3.8.12 d'openKylin a une empreinte differente de celui d'Ubuntu resolute 3.8.12-2ubuntu1. L'orig n'est pas dans le corpus : son contenu n'est pas auditable ici. Contrairement a curl, l'empaquetage ne trahit aucune modification pre-appliquee (le patch Debian 14_version_gettextcat.diff est bien present en quilt et debian/*.install correspond a l'amont). La cle de publication amont presente (debian/upstream/signing-key.asc : 1F42 4189 05D8 206A A754 CCDC 29EE 58B9 9686 5171, 4622 25C3 B46F 3487 9FC8 496C D605 848E D7E6 9871, E987 AB7F 7E89 6677 76D0 5B3B B0E9 DD20 B29F 1432) permet une verification ulterieure contre gnutls-3.8.12.tar.xz.sig.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnutls28",
+   "fichier": "debian/rules",
+   "ligne": "4, 14-24, 94-95",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "hardening=+bindnow | --with-default-trust-store-file=/etc/ssl/certs/ca-certificates.crt | dh_auto_test $(BDIR) --verbose -- VERBOSE=1",
+   "explication": "Aucune option de configure ne touche aux priorites TLS : pas de --with-default-priority-string, pas de --with-system-priority-file, pas d'option de version de protocole. Le niveau de securite et la chaine de priorite restent ceux de l'amont (NORMAL, fichier systeme /etc/gnutls/config par defaut amont). Magasin de confiance : /etc/ssl/certs/ca-certificates.crt (standard Debian, alimente par update-ca-certificates, y compris le repertoire /opt/system/resource/ca-certificates releve par V1-L10). Tests amont executes a la construction. Script autopkgtest : exclusions system-override-*, ktls, dtls (tests/run-upstream-testsuite:47), pratique Debian. Aucun algorithme SM2/SM3/SM4 dans debian/.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnutls28",
+   "fichier": "debian/patches/0003-Description-Backport-of-status-request-revoked.c-fro.patch",
+   "ligne": "3, 10, 21",
+   "type": "obfuscation",
+   "severite": "informationnelle",
+   "extrait": "Subject: Description: Backport of status-request-revoked.c from groovy | tests/testpkcs11.sh | +skip_if_no_datefudge",
+   "explication": "Titre inexact : le patch annonce le retroportage de status-request-revoked.c (et un commit amont ed208fe) mais ajoute seulement 'skip_if_no_datefudge' au script de test tests/testpkcs11.sh. Patch Kylin (cckylin-cibot@kylinos.cn, 2022) herite de 3.6.13-ok2 (changelog:104-105). Effet limite aux tests ; aucun code de bibliotheque modifie.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnutls28",
+   "fichier": "debian/changelog",
+   "ligne": "1-17",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "gnutls28 (3.8.12-ok3) huanghe ... * Build for openKylin 3.0 (x3)",
+   "explication": "Trois revisions 3.8.12-ok1 a ok3 au meme libelle generique 'Build for openKylin 3.0' ; aucune description du delta. Le changelog ne garde que l'historique openKylin (rien de Debian).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "nss",
+   "fichier": "debian/patches/38_hurd.patch ; 80_security_tools.patch ; CVE-2026-2781.patch ; c23-const.patch",
+   "ligne": "1-3 de chaque",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "From: openKylin Developers <packaging@lists.openkylin.top> | Date: Tue, 2 Jun 2026 18:36:01 +0800 | Subject: _hurd",
+   "explication": "Les 4 en-tetes de patch ont ete reecrits (auteur 'openKylin Developers', meme date) alors que le contenu vient de Debian (38_hurd, 80_security_tools : '## ... by Mike Hommey <glandium@debian.org>'), de Mozilla (CVE-2026-2781 : changeset HG 245385e16fa6, bug 2009552) ou de NSS amont (c23-const : commit 5c4ef88c, bug Ubuntu 2142897). Le contenu correspond aux descriptions internes. Attribution trompeuse dans l'en-tete, sans effet technique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "nss",
+   "fichier": "debian/patches/38_hurd.patch",
+   "ligne": "53-63",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "nss/lib/freebl/unix_rand.c ... +#ifndef PATH_MAX +#define PATH_MAX 1024 +#endif",
+   "explication": "Seule modification touchant un fichier du generateur d'alea (unix_rand.c) dans les six arbres : ajout d'une valeur par defaut de PATH_MAX pour Hurd, avant ReadFileOK. Aucune logique de collecte d'entropie modifiee. Patch Debian historique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "nss",
+   "fichier": "debian/rules",
+   "ligne": "4, 142-153, 181-191",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "hardening=+all | $(DISTDIR)/lib/libnssckbi.so | modutil -fips true -dbdir debian/tmp",
+   "explication": "Durcissement maximal (+all). libnssckbi.so (module de racines integrees Mozilla) est construit depuis l'orig, IDENTIQUE a Ubuntu (csv:7) : aucune racine ajoutee par debian/. Les .chk FIPS sont signes par shlibsign et le mode FIPS est teste a la construction. Les applications NSS (navigateurs) s'appuient sur ce module et non sur /etc/ssl/certs : le repertoire /opt/system/resource/ca-certificates (V1-L10) ne les affecte pas, sauf remplacement de libnssckbi par p11-kit (hors lot). Pas de SM2/SM3/SM4.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libgcrypt20",
+   "fichier": "debian/upstream/signing-key.asc ; debian/watch ; donnees/forks-p2-delta-preliminaire.csv",
+   "ligne": "asc (2 cles) ; watch:2 ; csv:8",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "pub rsa2048 2011-01-12 [expired: 2019-12-31] D869 2123 C406 5DEA 5E0F 3AB5 249B 39D2 4F25 E3B6 | pub rsa2048 2014-10-29 [expired: 2020-10-30] 031E C253 6E58 0D8E A286 A9F2 2071 B08A 33BD 3F06 | pgpsigurlmangle=s/$/.sig/",
+   "explication": "Le trousseau amont du paquet ne contient que deux cles expirees en 2019 et 2020. libgcrypt 1.12.1 (2026) est publie par le projet GnuPG avec des cles plus recentes (p. ex. 6DAA 6E64 A76D 2840 571B 4902 5288 97B8 2640 3ADA, presente dans le trousseau de gnupg2). La verification de la signature de l'orig par uscan, demandee par debian/watch, ne peut donc pas reussir avec ce trousseau. L'orig est en outre 'amont-inconnu' (aucune reference Debian/Ubuntu 1.12.1, csv:8) et absent du corpus : sa provenance n'est pas etablie.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "libgcrypt20",
+   "fichier": "debian/rules ; debian/ (absence de patches/ et de libgcrypt20.symbols)",
+   "ligne": "4-5, 16-18",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "DPKG_GENSYMBOLS_CHECK_LEVEL = 4 | hardening=+bindnow | --enable-noexecstack --enable-ld-version-script --enable-static",
+   "explication": "Aucun patch quilt. Configure : aucune option sur le generateur d'alea (pas de --enable-random=, pas de --disable-jent-support), ni sur les algorithmes (pas de --enable-ciphers/--enable-digests restrictifs ou elargis), ni sur le mode FIPS. Tests amont executes par defaut (pas de override_dh_auto_test). DPKG_GENSYMBOLS_CHECK_LEVEL=4 est defini mais aucun fichier libgcrypt20.symbols n'est livre : pas de controle d'ABI des symboles exportes.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libgcrypt20",
+   "fichier": "debian/control",
+   "ligne": "36-40",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "Arcfour, Blowfish, CAST5, DES, AES, ... ECC (Curve25519, sec256k1, GOST R 34.10-2001 and GOST R 34.10-2012, etc.)",
+   "explication": "Algorithmes nationaux chinois : AUCUN ajout SM2/SM3/SM4 dans debian/ des six arbres (recherche sm2|sm3|sm4|国密|guomi|gmssl|tongsuo). Pour information, libgcrypt amont (>= 1.9) inclut nativement SM3, SM4 et SM2 ; c'est du code amont, non un ajout openKylin, et libgcrypt ne fournit pas les suites TLS (GnuTLS utilise nettle). Rien n'entre dans des suites TLS par defaut ni dans un magasin de confiance via ces arbres.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch ; debian/source/lintian-overrides ; debian/changelog",
+   "ligne": "patch:1-3 ; lintian-overrides:5-8 ; changelog:9",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "Subject: 2.4.9-ok1.1 | 63 files changed, 1548 insertions(+), 499 deletions(-) | debian/patches/freepg/0001-Add-gitlab-build-toolchain.patch | * apply debian patch",
+   "explication": "La serie Debian (dont le sous-repertoire freepg/, encore cite par source/lintian-overrides:5-8 alors qu'il n'existe plus) a ete ecrasee en UN patch de 3 695 lignes, sans en-tetes DEP-3, auteur linleiyong@kylinos.cn. Lu integralement : chaque bloc correspond a un patch Debian/FreePG, a un retroportage amont ou a un correctif 'gpg.fail' (voir patches[]). Aucun element etranger identifie. L'equivalence octet a octet avec la serie Debian 2.4.9-x n'est pas verifiable sans reference locale.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (configure.ac ; doc/dirmngr.texi) ; debian/NEWS",
+   "ligne": "patch:1447-1448 ; NEWS:45-62",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "-                   \"hkps://keyserver.ubuntu.com\", +                   \"hkps://keys.openpgp.org\",",
+   "explication": "Serveur de cles par defaut de dirmngr : hkps://keys.openpgp.org (choix Debian documente dans debian/NEWS 2.2.17-1), au lieu de keyserver.ubuntu.com en amont. Aucun serveur de cles chinois ou Kylin. Flux uniquement sur action utilisateur (recv-keys, refresh, auto-key-retrieve si configure).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (dirmngr/dirmngr.c ; doc/dirmngr.texi)",
+   "ligne": "1487-1488 ; 1763-1765",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "-      if (opt.allow_version_check) -        dirmngr_load_swdb (&ctrlbuf, 0); | On debian-packaged versions, this option does nothing",
+   "explication": "La verification automatique de version vers https://versions.gnupg.org est supprimee du thread de maintenance de dirmngr (patch Debian). Moins de flux sortants que l'amont ; une requete n'a lieu que via 'gpgconf --query-swdb' explicite.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (g10/gpg.c ; g10/main.h ; g10/keygen.c ; g10/encrypt.c)",
+   "ligne": "2299, 2372, 2393, 2413, 2467, 2743, 2806-2807",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "+    set_compliance_option (oOpenPGP); | +      opt.flags.allow_old_cipher_algos = 0; | +#define DEFAULT_DIGEST_ALGO ((PGP7||RFC2440)?DIGEST_ALGO_SHA1:((PGP8)?DIGEST_ALGO_SHA256:DIGEST_ALGO_SHA512))",
+   "explication": "Valeurs par defaut crypto (FreePG/Debian, cf. debian/NEWS:10-34) : compliance par defaut 'openpgp' (RFC 9580) au lieu de 'gnupg' (LibrePGP) ; algorithmes anciens (64 bits) refuses par defaut ; condensat par defaut SHA-512 en mode openpgp/rfc4880 (l'amont utilisait SHA-1 hors mode gnupg) ; preference de hachage SHA-512 en tete ; ElGamal minimum 3072 bits ; OCB/AEAD et cles v5 reserves a --compliance=gnupg. SHA-1/3DES pour le S2K ne sont actives que sous --rfc4880/--rfc2440 explicites, comme en amont. Aucune reactivation d'algorithme faible par defaut ; les changements renforcent ou alignent sur la norme.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (g10/parse-packet.c ; g10/mainproc.c + g10/mdfilter.c ; g10/plaintext.c ; g10/openfile.c ; tpm2d/tpm2.c) ; debian/gpg.fail.md",
+   "ligne": "3053-3121 ; 2811-2945 ; 3122-3179 ; 3005 ; 3653-3695 ; gpg.fail.md:1-105",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "+        log_error(_(\"Packet type %d not allowed in detached signature\\n\"), | + if (name && namelen && (opt.compat_flags & COMPAT_SUGGEST_EMBEDDED_NAME))",
+   "explication": "Correctifs de verification de signature issus de la divulgation 'gpg.fail' (dec. 2025) : rejet des paquets de longueur partielle ou indeterminee dans les signatures detachees et les trousseaux, refus des types de paquets autres que signature/marqueur en signature detachee, normalisation CRLF pour les signatures texte (issue 7539), nom de fichier embarque non suggere, bornes de taille dans tpm2d. debian/gpg.fail.md (fichier Debian) laisse sans statut 'fixed' plusieurs points (formfeed CVE-2025-68972, malleability, notdash, notsoclear, noverify, nullbyte, polyglot, trust) : etat amont/Debian, non un retrait openKylin.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (agent/gpg-agent.c ; scd/scdaemon.c ; agent/cache.c)",
+   "ligne": "723 ; 3354 ; 126-588",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "+  prctl(PR_SET_DUMPABLE, 0);",
+   "explication": "gpg-agent et scdaemon se rendent non 'dumpables' (pas de ptrace ni de core par un processus du meme utilisateur) : renforcement (patch Debian/Ubuntu historique). Le cache des phrases secretes passe d'un ticker de 4 s a des minuteries par entree (retroportage amont 2.5, agent_kick_the_loop) ; la logique d'expiration (ttl apres dernier acces, max-cache-ttl apres creation, purge des entrees inutilisees apres 30 min) est conservee.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (g10/import.c ; g10/gpg.c ; README ; common/homedir.c)",
+   "ligne": "2471-2567 ; 2457 ; 91-104 ; 1417",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "-                                            | IMPORT_CLEAN); | +        log_info( _(\"key %s: new key but contains no user ID - skipped\\n\"), keystr(keyid)); | +#if 0",
+   "explication": "Trousseaux et import : les mises a jour de cles connues sans identifiant utilisateur (revocations et sous-cles servies par keys.openpgp.org) sont acceptees ; une NOUVELLE cle sans UID reste refusee ; import-clean retire des options d'import par defaut depuis un serveur. keyboxd n'est plus active par defaut (common.conf non cree, README) : le trousseau par defaut reste ~/.gnupg/pubring.kbx. Aucun trousseau systeme ni chemin Kylin (/opt/system/resource/keyrings, cite par V1-L10 pour ostree) n'est ajoute dans gnupg2.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnupg2",
+   "fichier": "debian/rules ; debian/changelog",
+   "ligne": "rules:110-115 ; changelog:1-5",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "ifeq (,$(filter $(DEB_HOST_ARCH), riscv64)) ... @echo 'riscv64 architecture skip dh_auto_test' | -- linleiyong <ok@kysdk>",
+   "explication": "Seul ajout openKylin a debian/rules : la suite de tests amont est sautee sur riscv64 (2.4.9-ok1.2). Sans effet sur amd64/arm64, ou les tests restent actifs (--enable-all-tests, rules:53). hardening=+all (rules:15). Adresse de mainteneur non valide 'ok@kysdk' dans la derniere entree du changelog.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "glib-networking",
+   "fichier": "debian/rules ; debian/control",
+   "ligne": "rules:5-6, 11-16 ; control:12-13",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "hardening=+all | -Wl,-O1 -Wl,-z,defs | -Dinstalled_tests=true | libgnutls28-dev (>= 3.7.4)",
+   "explication": "Aucun patch, aucune option meson autre que les tests installes : backend TLS GnuTLS par defaut, verification de certificats amont. Le magasin de confiance est celui de GnuTLS (/etc/ssl/certs/ca-certificates.crt, gnutls28/rules:21), donc soumis au repertoire /opt/system/resource/ca-certificates (V1-L10). Tests amont executes (rules:15-16).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "gnutls28,curl,glib-networking,nss",
+   "fichier": "gnutls28/debian/rules ; curl/debian/rules ; nss/debian/rules",
+   "ligne": "gnutls28:21 ; curl:20-21 ; nss:153",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "--with-default-trust-store-file=/etc/ssl/certs/ca-certificates.crt | --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt | libnssckbi.so",
+   "explication": "Aucun des six arbres ne definit un magasin de confiance ou un chemin de CA alternatif. GnuTLS, glib-networking et curl (deux variantes) lisent le magasin systeme standard. Le mecanisme releve par V1-L10 (update-ca-certificates integre tout .crt/.cer de /opt/system/resource/ca-certificates, hors debconf, vide a l'installation) s'applique donc a ces trois composants, sans modification de leur part. NSS utilise ses racines integrees. La severite de ce mecanisme est portee par V1-L10 (moyenne, dormant).",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "patches": [
+  {
+   "depot": "gnutls28",
+   "nom": "0003-Description-Backport-of-status-request-revoked.c-fro.patch",
+   "titre_declare": "Description: Backport of status-request-revoked.c from groovy (Origin: upstream, Applied-Upstream ed208fe55f31...)",
+   "contenu_reel": "Ajoute 'skip_if_no_datefudge' au debut de tests/testpkcs11.sh (2 lignes). Aucun fichier status-request-revoked.c, aucun code de bibliotheque.",
+   "titre_fidele": false,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "tests/testpkcs11.sh"
+   ],
+   "resume": "Patch Kylin (cckylin-cibot@kylinos.cn, 2022) herite de 3.6.13-ok2. Titre inexact ; tests uniquement, sans effet sur la bibliotheque livree. A EXAMINER plutot que SUSPECT : le titre est errone mais ne masque aucun code fonctionnel."
+  },
+  {
+   "depot": "gnutls28",
+   "nom": "14_version_gettextcat.diff",
+   "titre_declare": "Version filename of locale data (gnutls30.mo instead of gnutls.mo)",
+   "contenu_reel": "Definit GNUTLSDOMAIN=${PACKAGE}${DLL_VERSION} (configure.ac), l'utilise dans bindtextdomain/dgettext (lib/global.c, lib/str.h, libdane/errors.c) et DOMAIN=$(PACKAGE)30 (po/Makevars).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "configure.ac",
+    "lib/global.c",
+    "lib/str.h",
+    "libdane/errors.c",
+    "po/Makevars"
+   ],
+   "resume": "Patch Debian (Andreas Metzler), i18n uniquement."
+  },
+  {
+   "depot": "nss",
+   "nom": "38_hurd.patch",
+   "titre_declare": "_hurd (DP: Fix FTBFS on Hurd because of MAXPATHLEN ; by glandium@debian.org)",
+   "contenu_reel": "shlibsign.c : tampon readlink dynamique (realloc) au lieu de MAXPATHLEN ; unix_rand.c : #define PATH_MAX 1024 si absent. Aucune logique d'alea modifiee.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "nss/cmd/shlibsign/shlibsign.c",
+    "nss/lib/freebl/unix_rand.c"
+   ],
+   "resume": "Patch Debian historique ; en-tete From reecrit 'openKylin Developers'."
+  },
+  {
+   "depot": "nss",
+   "nom": "80_security_tools.patch",
+   "titre_declare": "_security_tools (DP: Enable building of some NSS tools. Disable rpath. ; by Mike Hommey)",
+   "contenu_reel": "Entoure le bloc RPATH de nss/cmd/platlibs.mk par ifdef ENABLE_RPATH (rpath desactive). La partie 'outils' est realisee dans debian/rules (NSS_TOOLS).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "nss/cmd/platlibs.mk"
+   ],
+   "resume": "Patch Debian d'empaquetage ; en-tete From reecrit."
+  },
+  {
+   "depot": "nss",
+   "nom": "CVE-2026-2781.patch",
+   "titre_declare": "CVE-2026-2781 (Bug 2009552 - avoid integer overflow in platform-independent ghash ; HG 245385e16fa6, John Schanck)",
+   "contenu_reel": "nss/lib/freebl/gcm.c gcmHash_Update : ghash->cLen += ((uint64_t)len * PR_BITS_PER_BYTE) au lieu d'un produit 32 bits.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "nss/lib/freebl/gcm.c"
+   ],
+   "resume": "Retroportage amont Mozilla (correctif de securite GCM). La correspondance numero CVE / bug 2009552 n'est pas verifiable hors ligne."
+  },
+  {
+   "depot": "nss",
+   "nom": "c23-const.patch",
+   "titre_declare": "fix FTBFS caused by C23 const and glibc 2.43 (Origin: upstream 5c4ef88c ; Bug-Ubuntu 2142897)",
+   "contenu_reel": "nss/lib/freebl/genload.c : 'char* c' devient 'const char* c'.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "nss/lib/freebl/genload.c"
+   ],
+   "resume": "Retroportage amont (via Ubuntu), correctif de compilation."
+  },
+  {
+   "depot": "gnupg2",
+   "nom": "2.4.9-ok1.1.patch",
+   "titre_declare": "2.4.9-ok1.1 (changelog 2.4.9-ok1.1 : 'apply debian patch')",
+   "contenu_reel": "Consolidation en un seul patch (3 695 lignes, 63 fichiers) de la serie Debian/FreePG 2.4.9 : (1) keyboxd non utilise par defaut (README, common/homedir.c) ; (2) cache de l'agent par minuteries + threads de surveillance (retroportage amont 2.5) ; (3) PR_SET_DUMPABLE=0 pour gpg-agent et scdaemon ; (4) suppression de l'avertissement --supervised, --supervised pour keyboxd, unites systemd --user (sockets 0600, repertoires 0700) ; (5) compliance par defaut openpgp, SHA-512, OCB/v5/Ed448 reserves a --compliance=gnupg, ElGamal >= 3072, RSA 8192 avec --enable-large-rsa ; (6) serveur de cles par defaut hkps://keys.openpgp.org, verification swdb automatique supprimee, reanimation paresseuse des hotes HKP ; (7) import de mises a jour sans UID, import-clean retire ; (8) correctifs gpg.fail (paquets partiels en signature detachee, CRLF en mode texte, nom de fichier embarque, armor, bornes tpm2d) ; (9) g10/internal-keydb.c : extraction de keydb_* pour gpgv sans keyboxd (aucune cle ni chemin embarque) ; (10) build : autogen sans suffixe -unknown, UnicodeData systeme, reproductibilite doc ; (11) tests (import-incomplete, issue7539, cle RSA 8192) avec cles de test publiques.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "README",
+    "agent/agent.h",
+    "agent/cache.c",
+    "agent/divert-tpm2.c",
+    "agent/gpg-agent.c",
+    "agent/trustlist.c",
+    "autogen.sh",
+    "common/Makefile.am",
+    "common/compliance.c",
+    "common/compliance.h",
+    "common/homedir.c",
+    "configure.ac",
+    "dirmngr/dirmngr.c",
+    "dirmngr/dirmngr.h",
+    "dirmngr/ks-engine-hkp.c",
+    "dirmngr/ldap-parse-uri.c",
+    "doc/Makefile.am",
+    "doc/dirmngr.texi",
+    "doc/examples/README",
+    "doc/examples/systemd-user/* (10 fichiers nouveaux)",
+    "doc/gpg.texi",
+    "g10/Makefile.am",
+    "g10/armor.c",
+    "g10/encrypt.c",
+    "g10/filter.h",
+    "g10/gpg.c",
+    "g10/import.c",
+    "g10/internal-keydb.c (nouveau)",
+    "g10/keygen.c",
+    "g10/main.h",
+    "g10/mainproc.c",
+    "g10/mdfilter.c",
+    "g10/misc.c",
+    "g10/openfile.c",
+    "g10/options.h",
+    "g10/packet.h",
+    "g10/parse-packet.c",
+    "g10/plaintext.c",
+    "kbx/keyboxd.c",
+    "regexp/Makefile.am",
+    "scd/scdaemon.c",
+    "tests/openpgp/* (12 fichiers)",
+    "tpm2d/tpm2.c"
+   ],
+   "resume": "Titre = numero de version, non descriptif mais non trompeur : le changelog 'apply debian patch' correspond au contenu lu integralement. Aucun bloc n'ecarte la posture de securite de l'amont ; plusieurs la renforcent. Classe A EXAMINER parce que le patch modifie des mecanismes sensibles (verification de signature, valeurs crypto par defaut, cache de secrets) et que l'equivalence exacte avec la serie Debian n'est pas verifiable localement (provenance DEP-3 perdue)."
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "gnupg2/dirmngr",
+   "nature": "Requetes HKPS vers le serveur de cles par defaut hkps://keys.openpgp.org",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (configure.ac)",
+   "ligne": "1447-1448",
+   "condition": "Action utilisateur (recv-keys, refresh-keys, search) ou auto-key-retrieve configure ; dirmngr active par socket systemd --user (dirmngr.socket)",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "gnupg2/dirmngr",
+   "nature": "Verification de version vers https://versions.gnupg.org (swdb)",
+   "fichier": "debian/patches/2.4.9-ok1.1.patch (dirmngr/dirmngr.c)",
+   "ligne": "1487-1488",
+   "condition": "Appel automatique SUPPRIME ; seulement via 'gpgconf --query-swdb' explicite",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "glib-networking-services (glib-pacrunner)",
+   "nature": "Resolution de proxy (PAC) via libproxy pour les applications GIO ; service D-Bus de session",
+   "fichier": "debian/glib-networking-services.install",
+   "ligne": "1-3",
+   "condition": "Configuration proxy automatique de la session ; comportement amont, fichier .service non lu (dans l'orig)",
+   "registre": "PROBABLE"
+  }
+ ],
+ "collectes": [],
+ "couverture": [
+  {
+   "arbre": "archive/gnutls28",
+   "patches_total": 2,
+   "patches_lus": 2,
+   "fichiers_debian": 40,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "0003-Description-Backport-of-status-request-revoked.c-fro.patch",
+    "14_version_gettextcat.diff"
+   ],
+   "fichiers_lus_integralement": 37,
+   "fichiers_lus_partiellement": 3,
+   "detail_partiels": "debian/copyright (55 Ko : strophes Files/License parcourues par recherche) ; libgnutls30t64.symbols (63 Ko : noeuds de version de toutes les lignes verifies, GNUTLS_3_4 a GNUTLS_3_8_4, FIPS140_3_4, PRIVATE_3_4) ; upstream/signing-key.asc (empreintes extraites)"
+  },
+  {
+   "arbre": "archive/nss",
+   "patches_total": 4,
+   "patches_lus": 4,
+   "fichiers_debian": 19,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "38_hurd.patch",
+    "80_security_tools.patch",
+    "CVE-2026-2781.patch",
+    "c23-const.patch"
+   ],
+   "fichiers_lus_integralement": 18,
+   "fichiers_lus_partiellement": 1,
+   "detail_partiels": "debian/copyright (lignes 1-85 lues, suite verifiee par filtre : texte de licence uniquement). libnss3.symbols : toutes les lignes verifiees (noeuds symver NSS_*, aucune entree hors format)."
+  },
+  {
+   "arbre": "archive/libgcrypt20",
+   "patches_total": 0,
+   "patches_lus": 0,
+   "fichiers_debian": 21,
+   "pct_patches": 100,
+   "patches_lus_liste": [],
+   "fichiers_lus_integralement": 19,
+   "fichiers_lus_partiellement": 2,
+   "detail_partiels": "debian/copyright (546 lignes, format non DEP-5 : lignes 1-40 et adresses parcourues) ; upstream/signing-key.asc (empreintes extraites)"
+  },
+  {
+   "arbre": "archive/gnupg2",
+   "patches_total": 1,
+   "patches_lus": 1,
+   "fichiers_debian": 83,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "2.4.9-ok1.1.patch (3 695 lignes, integral)"
+   ],
+   "fichiers_lus_integralement": 75,
+   "fichiers_lus_partiellement": 8,
+   "detail_partiels": "copyright (recherche) ; pages de manuel kbxutil.1, keyboxd.1, migrate-pubring-from-classic-gpg.1 (recherche d'URL) ; package-dependencies.dot (aretes) ; tests/verify-openpgp (lignes 1-200), tests/emacs-epg-message-mode (lignes 1-48) ; upstream/signing-key.asc (empreintes)"
+  },
+  {
+   "arbre": "archive/glib-networking",
+   "patches_total": 0,
+   "patches_lus": 0,
+   "fichiers_debian": 15,
+   "pct_patches": 100,
+   "patches_lus_liste": [],
+   "fichiers_lus_integralement": 15,
+   "fichiers_lus_partiellement": 0,
+   "detail_partiels": ""
+  },
+  {
+   "arbre": "archive/curl",
+   "patches_total": 0,
+   "patches_lus": 0,
+   "fichiers_debian": 42,
+   "pct_patches": 100,
+   "patches_lus_liste": [],
+   "fichiers_lus_integralement": 39,
+   "fichiers_lus_partiellement": 3,
+   "detail_partiels": "copyright (strophes Files) ; tests/LDAP-bindata.c (lignes 85-110 et recherche ciblee : system(dpkg-reconfigure slapd) en autopkgtest needs-root/isolation-container, CURLOPT_UNIX_SOCKET_PATH /run/slapd/ldapi) ; upstream/signing-key.asc (empreintes). libcurl*.symbols compares integralement. Plus 2 liens symboliques pendants hors empreinte.",
+   "note": "Aucun repertoire debian/patches : 0 patch a lire, mais l'orig contient tres probablement des patches pre-appliques (voir findings)."
+  }
+ ],
+ "non_couvert": [
+  "Archives .orig des six paquets, absentes du corpus : gnutls28 et curl EMPREINTE-DIFFERENTE vs Ubuntu (csv:6, csv:12), libgcrypt20 et gnupg2 'amont-inconnu' (csv:8, csv:10), nss et glib-networking IDENTIQUE (csv:7, csv:11). Pour curl, l'orig contient tres probablement des modifications (patches pre-appliques) non auditables.",
+  "Equivalence octet a octet du patch unique gnupg2 avec la serie Debian 2.4.9-x (freepg/ et debian-packaging/) : aucune arborescence Debian/Ubuntu de reference disponible localement ; la comparaison repose sur la connaissance de la serie Debian.",
+  "Arborescences debian/ Debian et Ubuntu de reference (gnutls28 3.8.12-2, nss 3.120-1, libgcrypt20, curl 8.18.0-1, glib-networking 2.80.1-1) : non presentes localement ; les ecarts de rules/control vs Debian sont evalues sans diff mecanique.",
+  "Code amont des chemins de verification TLS/certificats/signatures (lib/x509 GnuTLS, lib/vtls curl, lib/certhigh NSS, g10/sig-check.c GnuPG) : non lisible (orig absent).",
+  "Fichiers livres par l'orig et non par debian/ : service D-Bus de glib-pacrunner, distsigkey.gpg de gpgconf, pages de manuel amont.",
+  "Comparaison des .deb de l'ISO avec ces sources (correspondance binaire) : hors lot."
+ ],
+ "synthese": "Lot P2-crypto-libs : gnutls28, nss, libgcrypt20, gnupg2, glib-networking, curl. Empreintes conformes (6/6) ; chaque arbre est identique a son .debian.tar.xz, lui-meme reference par le .dsc. [CONSTATÉ] Patches : 7 au total, tous lus integralement : 5 [LÉGITIME] (gnutls28 14_version_gettextcat ; nss 38_hurd, 80_security_tools, CVE-2026-2781, c23-const), 2 [À EXAMINER] (gnutls28 0003 au titre inexact, tests seulement ; gnupg2 2.4.9-ok1.1, consolidation de 3 695 lignes de la serie Debian/FreePG), 0 [SUSPECT]. libgcrypt20, glib-networking et curl n'ont aucun patch quilt. [CONSTATÉ] Aucune reactivation d'algorithme ou de protocole faible, aucun abaissement de priorite TLS ou de niveau de securite, aucune modification de la verification de certificats dans debian/ : gnutls28, curl et glib-networking utilisent /etc/ssl/certs/ca-certificates.crt ; NSS ses racines integrees (orig identique a Ubuntu). [CONSTATÉ] Aucun algorithme SM2/SM3/SM4 (国密) ajoute dans debian/ ; libgcrypt amont contient nativement SM2/SM3/SM4 (code amont, hors suites TLS). [CONSTATÉ / PROBABLE pour l'amont] Generateur d'alea : aucune option ni patch, hors un #define PATH_MAX dans nss unix_rand.c (Hurd). [CONSTATÉ] gnupg2 : patch lu ligne a ligne ; contenu conforme aux choix Debian (compliance openpgp, SHA-512, serveur keys.openpgp.org, swdb automatique supprime, PR_SET_DUMPABLE, correctifs gpg.fail) ; ni trousseau ni serveur de cles Kylin ; seul ajout propre : tests sautes sur riscv64. [CONSTATÉ] Principal constat (moyenne, PROBABLE) : pour curl, le delta n'est pas dans debian/ : l'empaquetage exige des modifications de l'amont (libcurl-gnutls.so.4, symboles CURL_GNUTLS_3) absentes de tout patch, et l'orig differe de celui d'Ubuntu ; ces modifications sont donc fondues dans un orig non audite. Faibles : orig gnutls28 different d'Ubuntu (non auditable) ; trousseau amont de libgcrypt20 reduit a deux cles expirees (2019, 2020), qui ne peut pas verifier l'orig 1.12.1 'amont-inconnu'. Lien V1-L10 : le repertoire /opt/system/resource/ca-certificates, integre par update-ca-certificates au bundle systeme, est herite sans modification par GnuTLS, glib-networking et curl ; NSS n'est pas concerne. Hygiene : en-tetes nss reecrits 'openKylin Developers', liens symboliques curl vers un poste de developpeur, changelogs sans contenu. Couverture : 7/7 patches lus integralement (100 %) ; 220 fichiers debian/ dont 203 lus integralement (92,3 %) et 17 partiellement (copyright, trousseaux amont, gros fichiers de symboles, quelques tests et pages de manuel). Non couvert : orig des six paquets, references Debian/Ubuntu locales."
+}

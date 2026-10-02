@@ -1,0 +1,382 @@
+{
+ "lot": "V1-L2-kysdk-base",
+ "composants": [
+  "libkysdk-base"
+ ],
+ "empreintes": {
+  "archive/libkysdk-base": "905a7a4412598b7253d103d488eeacefcb45249bd0184b054eb1d067b0aa9355",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/conf2-system.py",
+   "ligne": "70-77,88-95,118-125,136-143",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "def set(self, user, id, version, key, value, sender = None): ... if user == 'root': ... '/root/.config/kylin-config/user.db' else: f'/home/{user}/.config/kylin-config/user.db'",
+   "explication": "Service D-Bus systeme root com.kylin.kysdk.conf2 (kysdk-conf2.service sans User=). Les 5 methodes (set, reset, reload, save, extends_id) recoivent le nom d'utilisateur cible en parametre ; 'sender' est capture (sender_keyword) mais jamais utilise : aucune verification de l'identite de l'appelant (ni GetConnectionUnixUser, ni polkit). La politique D-Bus (src/conf2/service/kysdk-conf2.conf:15-16, <policy context=\"default\"><allow send_destination=\"com.kylin.kysdk.conf2\"/>) autorise tout utilisateur local, sans restriction d'interface. Le nom transmis par la bibliotheque cliente provient de getuid() cote client (src/conf2/api/libkysettings.c:308-327) : le controle n'existe que cote client. La valeur 'user' n'est pas validee (ni '/', ni '..') avant d'etre interpolee dans un chemin ouvert par sqlite3 en root (conf2Utils.py:113,157). Portee CONSTATEE : tout utilisateur local peut modifier/reinitialiser la configuration conf2 de n'importe quel autre utilisateur et celle de root (/root/.config/kylin-config/user.db), base lue par les processus root utilisant libkyconf2 (src/conf2/api/ksettingsschema.c:271-272, 441-442).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un compte local non privilegie appelle directement la methode set du service systeme en indiquant un autre utilisateur ou 'root' : la valeur est ecrite par root dans la base de configuration cible. Les consequences sur les demons root qui lisent cette base (le changelog 2.4.1.0 cite la configuration de veille/hibernation/arret, et la liste blanche mentionne systemd-logind, lightdm, kylin-system-updater) dependent des cles effectivement consommees : PROBABLE, non demontre dans cet arbre.",
+   "contre_lecture": "Le service vise un usage de bureau mono-utilisateur ou le parametre 'user' sert seulement a localiser la base ; la bibliotheque officielle transmet toujours l'identite reelle du processus. Il s'agit d'une faiblesse de conception (confiance accordee au client) plutot que d'un mecanisme cache ; le changelog documente la suppression du controle (voir constat suivant)."
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "debian/changelog",
+   "ligne": "103",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "2. 屏蔽conf2服务的方法级管控  (libkysdk-base 2.5.1.0-0k0.1, 28 Jun 2024)",
+   "explication": "Le changelog documente la desactivation du controle d'acces 'par methode' du service conf2. La version precedente (.pc/0001-.patch/src/conf2/service/conf2-server.py:58-82, fichier supprime par debian/patches/0001-.patch) verifiait l'executable appelant (GetConnectionUnixProcessID -> /proc/<pid>/exe) contre une liste blanche (com.kylin.kysdk.conf2.limit) et une liste noire de variables d'environnement. La liste blanche subsiste comme donnee morte dans src/conf2/configs/com.kylin.kysdk.conf2.yaml:6-8 (cles 'audit' et 'whitelist'), consommee par aucun code de l'arbre (grep). Regression de securite assumee, contexte du constat precedent.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/conf2Utils.py",
+   "ligne": "108-137,152-182",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "cursor.execute(\"UPDATE configures SET custom_value = ? WHERE version_id = ? AND parent = ? AND node_name = ? AND node_type = 'key'\", (value, version_id, parent_id, key))",
+   "explication": "Cote serveur, set/reset ecrivent la valeur sans verifier l'attribut _permission (public/stable/final), le type ni la plage. Ces controles n'existent que dans la bibliotheque cliente (src/conf2/api/libkysettings.c:578-596 : kdk_conf2_is_writable, _type_check, kdk_conf2_range_check). Un appel D-Bus direct contourne donc le verrouillage 'final'/'stable' prevu par les integrateurs. Requetes SQL parametrees : pas d'injection SQL.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur local modifie, par appel D-Bus direct, une cle declaree non modifiable (permission 'final' posee par un integrateur/administrateur) dans sa base ou celle d'un autre compte ; l'application consommatrice lit une valeur hors type ou hors plage.",
+   "contre_lecture": "Les permissions conf2 peuvent etre concues comme des garde-fous d'ergonomie (empecher l'interface d'ecrire) et non comme une frontiere de securite ; sur sa propre base, l'utilisateur peut de toute facon modifier le fichier SQLite qui lui appartient."
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/conf2Utils.py",
+   "ligne": "197-221",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "if dest_path.startswith('/etc'): if dest_path != '/etc/kylin-config/basic': return False ... else: if not dest_path.startswith('/home'): return False ... with open(f'{dest_path}/{key}.yaml', 'w') as yaml_file:",
+   "explication": "Methode D-Bus 'save' (conf2-system.py:118-133), executee en root et ouverte a tout utilisateur : (1) elle autorise explicitement l'ecriture dans /etc/kylin-config/basic, repertoire source de la configuration systeme commune ; (2) la verification de 'dest_path' est un simple prefixe '/home' sans canonicalisation ; (3) le nom de chaque fichier ecrit ('{key}.yaml') et son contenu proviennent d'une base SQLite situee dans le repertoire personnel de l'appelant (chemin construit a partir du parametre 'user', conf2-system.py:125), donc sous son controle, sans filtrage de '/' ni '..' ; (4) open(...,'w') suit les liens symboliques. L'ecriture dans /etc/kylin-config/basic declenche ensuite le rechargement automatique (FileWatche.on_modified, conf2Utils.py:351-359 -> conf2-compile en root) et la regeneration de /etc/kylin-config/user.db. Portee CONSTATEE : un utilisateur non privilegie peut injecter des valeurs par defaut dans la configuration systeme de tous les utilisateurs, et faire ecrire par root des fichiers *.yaml dont le nom et le contenu sont influences par lui. L'obtention de root via ce primitif depend des consommateurs de fichiers YAML vises : PROBABLE, non demontree ici.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un compte local appelle save en designant /etc/kylin-config/basic : root y exporte des fichiers YAML derives de la base personnelle de l'appelant, qui deviennent la configuration par defaut de tous les comptes (y compris des demons root) apres le rechargement automatique. Un chemin non canonique commencant par /home etend la portee de l'ecriture hors de /home.",
+   "contre_lecture": "La fonction est concue pour l'outil d'administration kconf2-editor / export de configuration ; le developpeur a voulu restreindre les destinations par prefixe et n'a pas anticipe les noms d'application contenant des separateurs. Aucune intention cachee n'est visible : c'est une validation d'entree insuffisante."
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/conf2Utils.py",
+   "ligne": "361-399",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "home_directories = [os.path.expanduser('~' + username) for username in os.listdir('/home')] ... with open(file_path, 'w') as file: file.write(yaml.safe_dump(mmap)) ... os.chmod(file_path, 0o666)",
+   "explication": "Dans le service root, a la creation d'un fichier .yaml dans /etc/kylin-config/basic dont le nom correspond a un schema gsettings, le gestionnaire watchdog lit, supprime puis recree ~/.config/kylin-config/map.yaml dans chaque /home/* (et /root) puis applique chmod 0666. Ces repertoires appartiennent aux utilisateurs ; open('w') et os.chmod suivent les liens symboliques, sans O_NOFOLLOW ni verification de proprietaire. Il s'agit d'un motif classique d'operation root dans un repertoire controle par un utilisateur. Declencheurs : installation d'un paquet deposant un .yaml ; creation de /etc/kylin-config/basic/<id>.yaml par conf2-sync-system au demarrage (sync-dbus-server.c:283-290, PROBABLE au moins a la premiere creation) ; methode save (constat precedent). Par ailleurs strip('.yaml') (l.369) retire des caracteres et non un suffixe (defaut fonctionnel).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur local prepare son propre repertoire ~/.config/kylin-config de sorte que l'ecriture et le changement de droits effectues par root portent sur une autre cible ; lors du prochain evenement declencheur (installation de paquet), root modifie les droits d'un fichier hors du repertoire de l'utilisateur. Faisabilite exacte non testee (pas d'execution autorisee) : registre CONSTATE pour le motif, impact final PROBABLE.",
+   "contre_lecture": "Le code vise a transmettre aux sessions utilisateur la correspondance gsettings->conf2 (map.yaml lu ensuite par conf2-session.py) ; le chmod 0666 sert a ce que l'utilisateur puisse supprimer le fichier cree par root. Il s'agit d'une erreur de programmation courante, sans indice d'intention."
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/conf2-system.py",
+   "ligne": "51-57,106-115",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "result = subprocess.run(['/usr/bin/conf2-compile'], capture_output=True, text=True)",
+   "explication": "La methode 'reload', ouverte a tout utilisateur, relance conf2-compile en root (reconstruction complete de /etc/kylin-config/user.db) puis met a jour la base root. Arguments fixes : pas d'injection. Risque de charge/deni de service par appels repetes. Le service journalise en DEBUG dans /etc/kylin-config/systembus.log (l.153-157) sans rotation.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/sync-config/sync-dbus-server.c",
+   "ligne": "36-55,112-114",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "static gboolean on_handle_register_schema(...) { klog_info(\"%s: Regester call %s\\n\", __func__, arg_Conf2Id); sync_config__complete_register_schema(skeleton, invocation, TRUE); return TRUE; }",
+   "explication": "Service root com.kylin.kysdk.SyncConfig (com.kylin.kysdk.SyncConfig.service, sans User=) ouvert a tous (SyncConfig.conf:15-16). Ses deux methodes D-Bus RegisterSchema/UnregisterSchema n'ont aucun effet (journalisation puis retour TRUE). Le 'Sync' designe une synchronisation LOCALE bidirectionnelle gsettings <-> conf2 (l.143-249, signaux 'changed'), pour les identifiants listes sous 'sync-applications' de /etc/kylin-config/conf2.yaml (org.ukui.style). Aucune communication avec un serveur distant (aucun appel reseau dans l'arbre).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/sync-config/sync-dbus-server.c",
+   "ligne": "283-290",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "snprintf(target_file, ..., \"/etc/kylin-config/basec/%s.yaml\", id_map[0]); ... gboolean is_root = g_strcmp0(g_get_user_name(), \"root\"); if (!exists && !is_root) { snprintf(cmd, ..., \"/usr/bin/gschema_xml2yaml --id %s --version 1.0.0.0 --path /etc/kylin-config/basic\", id_map[0]); system(cmd);",
+   "explication": "Au demarrage, conf2-sync-system (root) construit une commande shell a partir de /etc/kylin-config/conf2.yaml et l'execute via system(). Deux erreurs logiques : 'basec' (au lieu de 'basic') rend le test d'existence toujours faux, et is_root est inverse (vrai si l'utilisateur N'EST PAS root) : la commande s'execute donc a chaque demarrage du service systeme, en root. La donnee interpolee vient d'un fichier root (non modifiable par un utilisateur) : pas d'injection exploitable par un non-privilegie constatee. Defaut de durcissement (system() avec chaine construite).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/diagnostics/buriedpoint.cpp",
+   "ligne": "49-52,80-94,337-370",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "constexpr char dbusServerName[] = \"com.kylin.daq\"; ... dbusInterfaceName[] = \"com.kylin.daq.interface\"; dbusMehtodName[] = \"UploadMessage\"; ... callDbus(pkgInfo , uploadData , enEncoded)",
+   "explication": "Le '埋点' de libkydiagnostics (API kdk_buried_point, libkydiagnostics.cpp:24-39) n'effectue lui-meme AUCUNE collecte systeme : il serialise en JSON les paires cle/valeur fournies par l'application appelante, ajoute createTimeStamp (heure locale, l.133,138-154), packageName, messageType et un 'tid', puis appelle par D-Bus SYSTEME la methode UploadMessage de com.kylin.daq. Les donnees transitent en clair sur le bus ; le 3e argument est le SHA-256 des donnees chiffre RSA-OAEP avec une cle publique embarquee (l.54-61, RSA 2048 bits, empreinte DER sha256 2194f0f9...9657) : jeton d'integrite, pas de confidentialite ni d'authentification (calculable par quiconque). La transmission reseau eventuelle se fait dans le demon com.kylin.daq (paquet kylin-daq, archive/kylin-daq, hors lot). Aucun appelant dans cet arbre hors tests ; le contenu effectif depend des applications appelantes (non couvert).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/diagnostics/buriedpoint.cpp",
+   "ligne": "63,422-427,443-481",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "const std::string configPath = getenv(\"HOME\") + std::string(\"/\") + \".config/buriedpoint/uploadmessage.conf\"; ... case returnState::InvalidTid: if (nowTid != NULL) { if (!writeTid(nowTid))",
+   "explication": "Identifiant persistant 'tid' : attribue par le demon com.kylin.daq (retour InvalidTid), stocke en clair dans ~/.config/buriedpoint/uploadmessage.conf ('tid=<valeur>') et joint a chaque envoi : identifiant pseudonyme permettant de correler les evenements d'un meme utilisateur. Sa generation (et son eventuel lien avec des identifiants materiels) se fait dans kylin-daq, hors lot.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/diagnostics/buriedpoint.cpp",
+   "ligne": "63",
+   "type": "telemetrie",
+   "severite": "faible",
+   "extrait": "const std::string configPath = getenv(\"HOME\") + std::string(\"/\") + ...",
+   "explication": "Initialiseur statique execute au chargement de libkydiagnostics.so : si HOME est absent (demon systeme), getenv renvoie NULL et la concatenation provoque un comportement indefini (plantage au chargement). Defaut de robustesse ; checkDir (l.105) presente le meme defaut.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/log/core.c",
+   "ligne": "55-139,81-84",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "msg = dbus_message_new_method_call(\"com.kysdk.base\", \"/com/kysdk/base/logrotate\", \"com.kysdk.base.logrotate\", \"setConfig\");",
+   "explication": "libkylog envoie, a l'initialisation en mode fichier, le chemin du journal au service D-Bus systeme com.kysdk.base (methode setConfig) pour la rotation. Le recepteur n'est pas dans cet arbre (probablement libkysdk-system ; a verifier dans le lot correspondant). Seules donnees : chemin du fichier journal. Le nom du processus est lu via readlink(/proc/self/exe) (l.284) pour l'entete des lignes : usage local.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "debian/libkysdk-conf2.postinst",
+   "ligne": "1-6",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "if [ ! `systemctl is-enable --quiet conf2-update-db.service` ]; then rm /etc/systemd/system/multi-user.target.wants/conf2-update-db.service; fi; systemctl enable conf2-compile.service; systemctl enable kysdk-conf2.service",
+   "explication": "Script sans shebang, sans 'set -e' et sans #DEBHELPER# (les fragments debhelper ne sont pas inseres ; com.kylin.kysdk.SyncConfig.service n'est donc pas active par ce script). 'is-enable' est une faute de frappe (is-enabled) : la substitution est vide, la condition toujours vraie, le rm toujours tente. Active au boot conf2-compile (oneshot root avant dbus.service) et kysdk-conf2 (root, Restart=always). debian/libkysdk-conf2-tools.postinst:1 cree /usr/bin/kconf2-editor par 'ln -s' sans -f (echec silencieux a la reinstallation). Aucune action reseau ni telechargement.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/kysdk-conf2.service",
+   "ligne": "1-10",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "Before=systemd-logind.service com.kylin.kysdk.SyncConfig.service ... Type=dbus Restart=always ExecStart=/usr/share/kysdk/kysdk-base/conf2-system.py",
+   "explication": "Services root sans User=, sans aucune directive de confinement systemd (ProtectSystem, NoNewPrivileges, etc.) ; idem com.kylin.kysdk.SyncConfig.service:4-9 et conf2-compile.service. Defaut de durcissement aggravant les constats d'IPC ci-dessus.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/conf2Utils.py",
+   "ligne": "663,703",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "opt_path = path.replace('/etc/kylin-config', '/opt/system/conf/kylin/kylin-config')",
+   "explication": "Seconde source de configuration systeme : /opt/system/conf/kylin/kylin-config/<dir> est fusionnee avec /etc/kylin-config/<dir> (aussi conf2-compile/yamlhelper.cpp:132,156). Inventaire : les droits de ce repertoire sur un systeme installe ne sont pas observables ici.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": ".pc/0001-.patch/src/conf2/service/verify/amd64/calc_verify",
+   "ligne": "n.d. (binaire, strings)",
+   "type": "obfuscation",
+   "severite": "informationnelle",
+   "extrait": "ELF 64-bit x86-64 non strippe ; HMAC_Init_ex / EVP_sha1 ; cle HMAC en dur : <masqué>",
+   "explication": "Blobs ELF calc_verify (amd64 sha256 d824f084...fa76, arm64 sha256 be5f1028...74af) presents uniquement dans .pc (etat avant patch) et supprimes par debian/patches/0001-.patch : non construits ni installes. Ils calculaient un HMAC-SHA1 de la liste blanche (com.kylin.kysdk.conf2.limit.verify). Une chaine courte en dur sert de cle HMAC (valeur masquee). Inventaire uniquement.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/api/ksettingsschema.c",
+   "ligne": "316-317,329,343",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "snprintf(sql, sizeof(sql), \"SELECT * FROM app WHERE app_name = '%s'\", id_list[0]);",
+   "explication": "Requetes SQL construites par concatenation de l'identifiant de schema fourni par l'application. Execution dans le processus appelant, sur sa propre base ou la base en lecture /etc/kylin-config/user.db : pas de franchissement de privilege constate. Defaut de robustesse (sqlite3_bind_* recommande).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/CMakeLists.txt",
+   "ligne": "8-13",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "# add_subdirectory(communication) ... # add_subdirectory(process) # add_subdirectory(thread)",
+   "explication": "Ecart description/realite : la description du paquet annonce messagerie, demon de processus et gestion de threads, mais ces modules ne sont pas construits (repertoires communication/thread/debbuger absents ; src/process non compile, son mkfifo /tmp/pipe_procdaemon_<pid> en 0770 n'est donc pas livre). Les bibliotheques effectivement livrees : kyconf, kylog, kytimer, kyutils/kydatastruct, kydiagnostics, kygsetting, kyconf2 + services conf2.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-base",
+   "fichier": "src/conf2/service/conf2-session.py",
+   "ligne": "256-258",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "os.makedirs(os.path.dirname(destination_file), mode=0o777, exist_ok=True)",
+   "explication": "Service de session (utilisateur) : creation de ~/.config/kylin-config avec mode demande 0777, attenue par l'umask du processus (typiquement 0755 effectif). Journal DEBUG ~/.config/kylin-config/sessionbus.log sans rotation.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "libkydiagnostics (paquet libkysdk-diagnostics)",
+   "destination": "com.kylin.daq /com/kylin/daq com.kylin.daq.interface.UploadMessage (bus systeme ; demon dans archive/kylin-daq, hors lot)",
+   "protocole": "D-Bus systeme (IPC local) ; reseau eventuel cote kylin-daq non observe",
+   "fichier_ligne": "src/diagnostics/buriedpoint.cpp:49-52,337-370",
+   "declencheur": "appel de kdk_buried_point() par une application (aucun appelant dans l'arbre hors tests)",
+   "donnees": "JSON {cle/valeur fournies par l'application, createTimeStamp} + {packageName, messageType, tid} + RSA-OAEP(SHA-256(donnees)) base64",
+   "tls_verifie": "n.d.",
+   "classification": "indetermine"
+  },
+  {
+   "composant": "libkylog",
+   "destination": "com.kysdk.base /com/kysdk/base/logrotate setConfig (bus systeme, recepteur hors arbre)",
+   "protocole": "D-Bus systeme (IPC local)",
+   "fichier_ligne": "src/log/core.c:81-84,394,417",
+   "declencheur": "initialisation du journal en mode fichier",
+   "donnees": "chemin du fichier journal",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "libkyconf2 (client)",
+   "destination": "com.kylin.kysdk.conf2 /com/kylin/kysdk/conf2 (bus systeme, service root local)",
+   "protocole": "D-Bus systeme (IPC local)",
+   "fichier_ligne": "src/conf2/api/libkysettings.c:277-353,1342-1378,1426-1466",
+   "declencheur": "kdk_conf2_set_value / reset / reload / save / new_extends_id",
+   "donnees": "nom d'utilisateur (getuid cote client), id, version, cle, valeur, chemin d'export",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "conf2 (ensemble)",
+   "destination": "aucune destination reseau",
+   "protocole": "aucun",
+   "fichier_ligne": "grep motifs A sur tout l'arbre (hors nlohmann/cpp_stub) : 0 occurrence reseau ; seuls '.bind(' Tk dans src/conf2/tools/kconf2-editor",
+   "declencheur": "n.d.",
+   "donnees": "aucune",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "libkydiagnostics",
+   "donnee": "paires cle/valeur arbitraires fournies par l'application appelante + horodatage local + nom de paquet + type de message",
+   "fichier_ligne": "src/diagnostics/buriedpoint.cpp:80-91,124-154",
+   "stockage": "aucun stockage local des donnees",
+   "envoi": "D-Bus systeme vers com.kylin.daq (UploadMessage) ; suite (reseau ?) dans kylin-daq, hors lot"
+  },
+  {
+   "composant": "libkydiagnostics",
+   "donnee": "identifiant persistant 'tid' attribue par com.kylin.daq",
+   "fichier_ligne": "src/diagnostics/buriedpoint.cpp:63,422-427,443-481",
+   "stockage": "~/.config/buriedpoint/uploadmessage.conf (clair, sans limite de duree)",
+   "envoi": "joint a chaque UploadMessage"
+  },
+  {
+   "composant": "conf2 (service root)",
+   "donnee": "valeurs gsettings des utilisateurs pour les schemas mappes",
+   "fichier_ligne": "src/conf2/service/conf2Utils.py:316-340",
+   "stockage": "bases SQLite ~/.config/kylin-config/user.db, /root/.config/kylin-config/user.db",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "conf2 (services)",
+   "donnee": "journaux DEBUG des appels (noms de methode, traces d'erreur)",
+   "fichier_ligne": "src/conf2/service/conf2-system.py:153-157 ; conf2-session.py:260-263",
+   "stockage": "/etc/kylin-config/systembus.log ; ~/.config/kylin-config/sessionbus.log (sans rotation)",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "libkylog",
+   "donnee": "nom de l'executable courant (/proc/self/exe), PID",
+   "fichier_ligne": "src/log/core.c:281-296",
+   "stockage": "fichiers journaux de l'application (~/.log ou /var/log)",
+   "envoi": "aucun (seul le chemin du journal part vers com.kysdk.base)"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/libkysdk-base",
+   "fichiers_code_propres": 131,
+   "lignes_code_propres": 20427,
+   "lus_integralement": 43,
+   "lus_partiellement": 10,
+   "pct_fichiers": 32.8,
+   "pct_lignes": 26.5,
+   "definition": "Fichiers .c/.h/.cpp/.py/.sh, scripts Python sans extension (src/conf2/tools), CMakeLists.txt, .pro, unites systemd, .desktop, politiques D-Bus, XML d'interface, YAML et .conf de configuration ; hors .pc/, debian/, src/diagnostics/nlohmann (code tiers, 48 fichiers avec cpp_stub, 29 234 lignes), src/tests/cpp_stub, man/, doxygen/, kyutils.dot (gabarit Doxygen). Le chiffre de ~47 k lignes de la Phase 0 inclut le code tiers et la documentation. Avec les lectures partielles : 53/131 fichiers (40,5 %), 12 673/20 427 lignes touchees (62 %), dont ~1 100 lignes reellement lues dans les fichiers partiels. Zones L3 : diagnostics 100 %, services conf2/SyncConfig/conf2-compile/politiques/unites 100 % (sauf libsyncconfig.c genere par gdbus-codegen : grep), postinst 100 %, recherche reseau : grep integral. Les 78 fichiers restants (7 754 lignes : en-tetes, tests gtest, utils, timer, gsettings, reste de log) ne sont couverts que par les recherches de motifs A-E.",
+   "fichiers_lus": [
+    "CMakeLists.txt",
+    "src/CMakeLists.txt",
+    "src/conf2/CMakeLists.txt",
+    "src/conf2/service/conf2-system.py",
+    "src/conf2/service/conf2-session.py",
+    "src/conf2/service/conf2Utils.py",
+    "src/conf2/service/kysdk-conf2.conf",
+    "src/conf2/service/kysdk-conf2.service",
+    "src/conf2/service/kysdk-conf2.desktop",
+    "src/conf2/sync-config/com.kylin.kysdk.SyncConfig.conf",
+    "src/conf2/sync-config/com.kylin.kysdk.SyncConfig.service",
+    "src/conf2/sync-config/com.kylin.kysdk.SyncConfig.desktop",
+    "src/conf2/sync-config/conf2-sync-system.c",
+    "src/conf2/sync-config/conf2-sync-session.c",
+    "src/conf2/sync-config/sync-dbus-server.c",
+    "src/conf2/sync-config/sync-dbus-server.h",
+    "src/conf2/sync-config/gdbus/com.kylin.kysdk.SyncConfig.xml",
+    "src/conf2/configs/com.kylin.kysdk.conf2.yaml",
+    "src/conf2/configs/conf2.yaml",
+    "src/conf2/configs/conf2-compile.service",
+    "src/conf2/conf2-compile/main.cpp",
+    "src/conf2/conf2-compile/utils.cpp",
+    "src/conf2/conf2-compile/yamlhelper.cpp",
+    "src/conf2/conf2-compile/yamlhelper.h",
+    "src/conf2/conf2-compile/sqlitehelper.h",
+    "src/conf2/conf2-compile/sqlitehelper.cpp",
+    "src/conf2/tools/gschema_xml2yaml",
+    "src/conf2/tools/health-check",
+    "src/conf2/tools/ini2yaml",
+    "src/conf2/tools/json2yaml",
+    "src/conf2/tools/kconf2-completion.sh",
+    "src/conf2/tools/kconf2-editor",
+    "src/diagnostics/buriedpoint.cpp",
+    "src/diagnostics/buriedpoint.h",
+    "src/diagnostics/libkydiagnostics.cpp",
+    "src/diagnostics/libkydiagnostics.h",
+    "src/diagnostics/CMakeLists.txt",
+    "src/diagnostics/test/testburiedpoint/main.c",
+    "src/process/processdaemon.cpp",
+    "src/log/klog_dump.c",
+    "src/log/logrotate.cron",
+    "src/log/kylog-default.conf",
+    "development-files/kysdk-base.conf"
+   ],
+   "fichiers_lus_partiellement": [
+    "src/conf2/api/libkysettings.c (l.270-430, 560-640, 1190-1260, 1330-1480 + grep)",
+    "src/conf2/api/ksettingsschema.c (l.245-300, 385-450 + grep)",
+    "src/log/core.c (l.20-330 + grep)",
+    "src/conf2/tools/kconf2-tool.c (grep des points d'entree)",
+    "src/conf2/sync-config/gdbus/libsyncconfig.c (genere gdbus-codegen, grep)",
+    "src/config/libkyconf.c",
+    "src/config/structparse.c",
+    "src/gsettings/libkygsetting.c",
+    "src/timer/libkytimer.c",
+    "src/utils/kyutils.c (liste des fonctions + grep)"
+   ],
+   "hors_comptage_lus": [
+    "debian/libkysdk-conf2.postinst",
+    "debian/libkysdk-conf2-tools.postinst",
+    "debian/control",
+    "debian/rules",
+    "debian/*.install",
+    "debian/changelog (extraits)",
+    ".pc/0001-.patch/src/conf2/service/conf2-server.py (l.40-100)",
+    ".pc/0001-.patch/src/conf2/service/com.kylin.kysdk.conf2.limit",
+    "strings des blobs .pc/.../calc_verify"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "Demon com.kylin.daq (archive/kylin-daq) : destination reelle des donnees '埋点', eventuel envoi reseau, generation du 'tid' — a traiter dans le lot kylin-daq.",
+  "Applications appelant kdk_buried_point() : contenu effectif des donnees de telemetrie (aucun appelant dans cet arbre).",
+  "Recepteur D-Bus com.kysdk.base (logrotate setConfig) appele par libkylog : hors arbre (probablement libkysdk-system).",
+  "Liste des cles conf2 consommees par des demons root (systemd-logind patche, lightdm, kylin-system-updater, kylin-software-properties-service, ukui-settings-daemon) : necessaire pour qualifier l'impact final des constats d'IPC conf2 ; hors arbre.",
+  "Faisabilite pratique des scenarios sur map.yaml / save : non testee (execution interdite) ; impact root final en registre PROBABLE.",
+  "Comportement exact de watchdog (on_created vs on_modified) lors de la reecriture d'un fichier existant par gschema_xml2yaml : non verifie.",
+  "Droits et proprietaire de /opt/system/conf/kylin/kylin-config sur un systeme installe ; presence effective de la politique D-Bus installee et activation de com.kylin.kysdk.SyncConfig.service (le postinst ne l'active pas ; activation par preset ou autre paquet non verifiee).",
+  "Lecture integrale de libkysettings.c, ksettingsschema.c, kconf2-tool.c, du reste de src/log, src/config, src/timer, src/utils, src/gsettings et des tests : couverts seulement par grep de motifs (pas d'indice reseau/collecte/execution).",
+  "Code tiers nlohmann/json et cpp_stub : non audite (version non verifiee).",
+  "Binaires installes par l'ISO : correspondance source/binaire non verifiee (pas de compilation)."
+ ],
+ "synthese": "[CONSTATÉ] Empreinte de l'arbre conforme (905a7a44...9355). Aucun code reseau dans libkysdk-base : aucune socket, URL ou client HTTP (grep integral) ; aucune synchronisation de configuration avec un serveur distant. [CONSTATÉ] 'SyncConfig' est une synchronisation LOCALE gsettings<->conf2 ; ses methodes D-Bus RegisterSchema/UnregisterSchema sont sans effet. Au demarrage, conf2-sync-system (root) execute via system() une commande construite depuis /etc/kylin-config/conf2.yaml (fichier root, faible). [CONSTATÉ] Le '埋点' (libkydiagnostics) ne collecte rien par lui-meme : il relaie les cles/valeurs fournies par l'application, un horodatage, le nom de paquet, le type de message et un identifiant persistant 'tid' (~/.config/buriedpoint/uploadmessage.conf) vers com.kylin.daq.UploadMessage sur le bus systeme, en clair, avec un SHA-256 chiffre par une cle publique RSA-2048 embarquee (jeton d'integrite). La destination finale releve de kylin-daq (hors lot). [CONSTATÉ, elevee] Le service root com.kylin.kysdk.conf2 (conf2-system.py) est ouvert a tout utilisateur local et ne verifie pas l'appelant : le parametre 'user' est cru tel quel (non valide), si bien qu'un utilisateur peut modifier la configuration conf2 d'autres comptes et de root, lue par les demons root utilisant libkyconf2. Les permissions final/stable, le type et la plage ne sont controles que cote client (moyenne). Le changelog documente la desactivation du controle par methode (2.5.1.0-0k0.1) ; la liste blanche subsiste en donnee morte. [CONSTATÉ, elevee] La methode 'save' fait ecrire par root des fichiers YAML, dont le nom et le contenu derivent d'une base controlee par l'appelant, dans /etc/kylin-config/basic (configuration systeme commune) avec une validation de chemin par simple prefixe. [CONSTATÉ, elevee] Le gestionnaire watchdog du service root ecrit map.yaml et applique chmod 0666 dans les repertoires personnels sans protection contre les liens symboliques. L'obtention effective de root par ces primitifs n'est pas demontree [PROBABLE]. [CONSTATÉ, faible] Les postinst n'ont ni shebang, ni set -e, ni #DEBHELPER# (faute de frappe 'is-enable') ; les unites root n'ont aucun confinement systemd. Les modules annonces messagerie, demon de processus et threads ne sont pas construits. Couverture : 43/131 fichiers lus integralement (26,5 % des lignes), zones L3 (diagnostics, services conf2/SyncConfig, politiques, postinst) lues a 100 %, hors code genere gdbus-codegen."
+}

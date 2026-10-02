@@ -1,0 +1,198 @@
+{
+  "lot": "P2-binaires-sans-source",
+  "composants": ["ostree-extra-utils", "dpkg-wrapper"],
+  "empreintes": {
+    "archive/ostree-extra-utils": "9693b34a7db0776e7333c68244b17999d0627fdeb197ab1b326b5f3d507271a5",
+    "archive/dpkg-wrapper": "168ba25e8eb6178d0c60192a81248eb94dfe29072d618f839abe7b717f06060a",
+    "archive/kylin-ostree-extra-utils": "6786400456faf86f2ce233599c0890202b7c5cec41aac60369a2f0745c59b1fd",
+    "deb_ostree-extra-utils_sha256": "4e3215adc48d692eb6f0eead62417fc04baebc260fea5f6d84ee01f4eaf2cc32",
+    "deb_dpkg-wrapper_sha256": "058bb16b2880143c0c3524d484dead9a3ffce496c61948ba3729043f633ccd07",
+    "conforme": true,
+    "note": "Les deux empreintes d'arbre openKylin (debian/ coquilles dh_make) correspondent à empreintes-arbres-sources.tsv. Les md5sums internes des deux .deb (control + data) ont été vérifiés : arbres extraits identiques au .deb. Les sha256 des .deb correspondent à l'index Packages signé (huanghe/main, InRelease gpgv OK) et à durcissement-binaires-provenance.tsv."
+  },
+  "findings": [
+    {
+      "depot": "ostree-extra-utils",
+      "fichier": "pool/main/o/ostree-extra-utils/ostree-extra-utils_2.0.0.0-0k1.20update1.tar.xz (source publiée) vs ostree-extra-utils_2.0.0.0-0k1.20update1_amd64.deb (binaire)",
+      "ligne": "tar.xz:tous / deb:/usr/sbin/unified-conf,/usr/bin/ostree-pkgs-guard,...",
+      "type": "confiance",
+      "severite": "elevee",
+      "extrait": "source publiée = 19 fichiers, tous sous debian/, squelette dh_make (rules: '%: dh $@', aucun .install, scripts seulement en .ex) ; binaire = ELF /usr/sbin/unified-conf + ostree-pkgs-guard + kylin-ostree-restore.py + unified-conf + 9 conffiles. Aucune source du contenu réel.",
+      "explication": "Paquet signé INSTALLÉ PAR DÉFAUT (manifeste ISO l.1560, provenance-paquets-installes.csv l.1561) dont la source homologue (sha256 a4eb018f…, conforme au .dsc et à Sources signé) ne contient aucun code : c'est une coquille dh_make (sources-coquilles-vides.csv:ostree-extra-utils, 10 fichiers .ex). Le contenu réellement livré — un ELF exécuté en initramfs et un hook root exécuté avant chaque dpkg — n'est auditable qu'au binaire. Un paquet plus ancien et DISTINCT, kylin-ostree-extra-utils 1.0.0-ok4, publie 3 scripts voisins mais à contenu divergent (kylin-ostree-restore.py et ostree-update-initramfs.sh diffèrent, diff -u : en-tête de copyright et 6 lignes mount --bind ajoutées) et n'a jamais produit ce nom de paquet binaire.",
+      "scenario": "Le code réellement exécuté en root (hook dpkg, générateur d'environnement systemd, ELF initramfs, restauration d'usine) peut diverger de tout source publié sans qu'aucun tiers ne puisse le détecter par revue ; une modification malveillante y serait invisible.",
+      "contre_lecture": "Omission d'empaquetage plausible : l'équipe a conservé un gabarit dh_make comme source nominale et n'a pas versionné les fichiers réels dans ce dépôt (le dépôt kylin-ostree-extra-utils contient une partie du code). Non-conformité DFSG/traçabilité, pas nécessairement dissimulation. Vérifiable en Phase 5 en exigeant le dépôt source gitlab2.kylin.com/kylinos-src/ostree-extra-utils (copyright:4).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "ostree-extra-utils",
+      "fichier": "usr/bin/ostree-pkgs-guard (deb) ; etc/dpkg/dpkg.cfg.d/ostree-guard (deb)",
+      "ligne": "ostree-guard:1 ; ostree-pkgs-guard:11,17-23,34,128-158,165-177",
+      "type": "confiance",
+      "severite": "moyenne",
+      "extrait": "ostree-guard:1 'pre-invoke \"/usr/bin/ostree-pkgs-guard\"' ; guard: detect_operation() lit $DPKG_HOOK_ACTION ; is_unshare_mount_ns() -> return 1 (ne bloque pas) ; should_execute : ! live_build && ! chroot && ! livecd && is_normal_mode -> bloque install/remove/... (exit 1)",
+      "explication": "Hook dpkg s'exécutant en root AVANT chaque invocation de dpkg (dpkg can_invoke_hooks exige root sauf --force-not-root ; orig/src/main/main.c:353-367,399-416). Rôle : INTERDIRE install/remove/purge/unpack/configure en « mode normal » (système immuable), pour forcer le passage par les wrappers/kare. Lectures : /proc/cmdline, variables d'env LIVE_BUILD/LB_BUILD_IMAGE, et le mode via gdbus com.kylin.MaintainMode.GetBootMode. Il journalise dans /var/log/ostree.log l'horodatage, le hostname, l'opération et TOUS les arguments ($*), localement (aucun envoi réseau, aucun exec de contenu non fixe). Contournable par conception : dans un espace de noms de montage (unshare -m) is_unshare_mount_ns renvoie 0 et should_execute_operation retourne 1 => l'opération N'EST PAS bloquée ; de même si le service D-Bus MaintainMode est injoignable (boot_mode != normal). Le hook ne durcit donc pas : il peut être neutralisé par tout utilisateur pouvant créer un espace de noms, cohérent avec le BUG #550789 du changelog («用户模式通过unshare能直接deb包 »).",
+      "scenario": "Un utilisateur convaincu que le système immuable empêche les modifications de paquets contourne le garde-fou via unshare -m (ou en rendant le bus MaintainMode indisponible) et exécute dpkg ; la garantie d'immuabilité est illusoire. Inversement, le hook lui-même n'ouvre pas de privilège (chemins /usr/bin fixes, root:root).",
+      "contre_lecture": "Comportement voulu : le modèle immuable repose sur des couches overlay par espace de noms ; autoriser unshare est délibéré (les wrappers s'y appuient). Le hook est une commodité de politique, pas une frontière de sécurité ; le vrai contrôle est ailleurs (overlay en lecture seule). À confirmer en Phase 5 : tester si un utilisateur non privilégié peut, via unshare, modifier durablement le déploiement actif.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "ostree-extra-utils",
+      "fichier": "etc/ld.so.conf.d/zzz-ostree.conf ; usr/lib/python3/dist-packages/opt_path.pth ; etc/ostree/ostree.conf.d/99-ostree.conf ; etc/systemd/system-environment-generators/99-ostree ; etc/X11/Xsession.d/70opt-path ; etc/ostree/compat-paths.conf",
+      "ligne": "zzz-ostree:1 ; opt_path.pth:1 ; 99-ostree.conf:2-8 ; 99-ostree:3 ; 70opt-path:1-2",
+      "type": "confiance",
+      "severite": "elevee",
+      "extrait": "zzz-ostree.conf:1 '/opt/system/lib/shared-libs' ; opt_path.pth:1 '/opt/system/lib/python3/dist-packages' ; 99-ostree.conf: PATH=$PATH:/opt/system/bin, QML2_IMPORT_PATH, PKG_CONFIG_PATH, SYSTEMD_UNIT_PATH=/opt/system/lib/systemd/system:...user ; 99-ostree: XDG_DATA_DIRS+=/opt/system/resource",
+      "explication": "Ce paquet fait de /opt/system une RACINE DE CONFIANCE à l'échelle du système : (1) ldconfig ajoute /opt/system/lib/shared-libs au chemin des bibliothèques partagées (toute *.so y est chargée par tout processus, root compris) ; (2) opt_path.pth ajoute /opt/system/lib/python3/dist-packages au sys.path de CHAQUE python3 ; (3) PATH gagne /opt/system/bin, SYSTEMD_UNIT_PATH /opt/system/lib/systemd/{system,user} (unités propagées au gestionnaire systemd via unified-conf, cf. finding dédié), XDG_DATA_DIRS /opt/system/resource, XDG_CONFIG_DIRS /opt/system/conf/xdg. Le risque dépend ENTIÈREMENT du propriétaire et du mode de /opt/system et de ses sous-dossiers. postinst:128-130 crée /opt/system/bin en root:root 0755, mais /opt/system lui-même est créé/bind-monté ailleurs (ostree fork ostree-sysroot-deploy.c:3648 'chroot … mkdir -p … /opt/system' puis bind_mount:3276) et alimenté par kaiming/kare. Or V1-L0 (critique) et V1-L14 (critique/moyenne) montrent que kaiming — installé par défaut, action polkit allow_any=yes SANS authentification — copie des fichiers arbitraires (*.so via kare-distribution.json, *.policy, unités) dans /opt/system/lib, /opt/system/resource, /opt/system/lib/systemd. Si un composant de ces chemins est inscriptible par un non-root (directement ou via le flux kaiming non authentifié), un attaquant place une .so, un module python, une unité systemd ou un binaire PATH chargés en root.",
+      "scenario": "Un utilisateur local sans privilège dépose (directement si /opt/system/lib/shared-libs est inscriptible, ou via l'action pkexec kaiming sans mot de passe) une bibliothèque ou un module python ; au prochain démarrage/login/exécution d'un processus ou script root, le code est chargé en root — élévation locale persistante.",
+      "contre_lecture": "Si /opt/system et tous ses sous-dossiers sont strictement root:root 0755 sur un système installé et ne peuvent être peuplés que par des flux root authentifiés, l'extension est une simple adaptation de recherche de chemins pour le système immuable, sans élévation. L'inscriptibilité réelle n'est pas observable sur les seuls manifestes ISO : à établir en Phase 5.",
+      "registre": "PROBABLE"
+    },
+    {
+      "depot": "ostree-extra-utils",
+      "fichier": "usr/sbin/unified-conf (ELF, deb) ; usr/share/initramfs-tools/hooks/unified-conf ; usr/share/initramfs-tools/scripts/init-bottom/unified-conf",
+      "ligne": "init-bottom:16 ; chaînes ELF .rodata 0x2000-0x22c8",
+      "type": "confiance",
+      "severite": "informationnelle",
+      "extrait": "ELF x86-64 EXEC non-PIE, stripped, NEEDED libglib-2.0, libc ; aucun symbole réseau/exec/fork/setuid ; chaînes: '/root/etc/ostree/ostree.conf.d/', '[env]/[service]', écrit '/run/environment.d/ostree.conf', '/run/systemd/user.conf.d/ostree.conf', '/run/systemd/system.conf.d/ostree.conf'",
+      "explication": "Caractérisation statique de l'unique ELF (readelf/objdump/strings, sans exécution). unified-conf est un outil GLib KeyFile : il LIT /root/etc/ostree/ostree.conf.d/*.conf (section [env] -> clés type PATH/SYSTEMD_UNIT_PATH, section [service]) et ÉCRIT les fichiers de configuration d'environnement du gestionnaire systemd (/run/systemd/{system,user}.conf.d/ostree.conf, clés Manager/ManagerEnvironment) et /run/environment.d/ostree.conf, en fusionnant sans doublon (strtok_r sur ':', strstr anti-doublon). Lancé en init-bottom de l'initramfs (où /root est la future racine) et copié dans l'initrd (hook copy_exec). Imports visibles : g_key_file_*, fopen/fgets/mkdir/opendir/readdir/snprintf/strncat/strtok_r/syslog/perror — AUCUN appel réseau, AUCUN system/exec/fork/popen, AUCUN setuid/capability, pas d'obfuscation. C'est le mécanisme qui propage PATH=/opt/system/bin et SYSTEMD_UNIT_PATH=/opt/system/lib/systemd/* dans l'environnement du gestionnaire systemd global très tôt au démarrage (corrobore le finding /opt/system). Durcissement du binaire (durcissement-binaires.json): non-PIE, RELRO partiel, pas de BIND_NOW, pas de SSP ni FORTIFY ; CET absent — mais il ne traite pas d'entrée réseau.",
+      "scenario": "",
+      "contre_lecture": "",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "ostree-extra-utils",
+      "fichier": "lib/systemd/system/ostree-extra-restore.service ; usr/sbin/kylin-ostree-restore-plymouth.sh ; usr/sbin/kylin-ostree-restore.py",
+      "ligne": "service:8 ; plymouth.sh:8-16,18-31 ; restore.py:13-20,34-42",
+      "type": "persistance",
+      "severite": "faible",
+      "extrait": "service ExecStart=/usr/sbin/kylin-ostree-restore-plymouth.sh User=root Before=lightdm ; plymouth.sh: for x in $(cat /proc/cmdline) case ostree-factory-restore ; plymouth watch-keystroke y/n ; python3 restore.py ; restore.py: ostree admin undeploy des déploiements non-pin",
+      "explication": "Service oneshot root activé par défaut (postinst:68 'systemctl enable'). Il n'agit QUE si la ligne de commande noyau contient le jeton 'ostree-factory-restore', ajouté par une entrée GRUB dédiée du fork ostree (ostree-bootloader-grub2.c:1181 g_string_append ' factory-restore'). Le déclenchement exige donc de choisir cette entrée d'amorçage (ou d'éditer le cmdline GRUB) — accès à l'amorçage / présence physique, non un utilisateur non privilégié en session. Une confirmation plymouth y/n est demandée. restore.py supprime (ostree admin undeploy) tous les déploiements non épinglés puis redéploie l'épinglé ; plymouth.sh fait ensuite update-grub. Action destructrice (remise à zéro) mais encadrée par le cmdline d'amorçage + confirmation.",
+      "scenario": "Un attaquant disposant d'un accès au menu GRUB (physique ou via une entrée non protégée par mot de passe) déclenche une restauration d'usine : perte des déploiements non épinglés (déni de service / effacement de données système). Pas d'élévation.",
+      "contre_lecture": "Fonctionnalité légitime de récupération. Le risque se réduit à la protection de l'amorçage. Observable Phase 5 : l'entrée GRUB factory-restore est-elle protégée par mot de passe GRUB.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "ostree-extra-utils",
+      "fichier": "usr/sbin/ostree-update-initramfs.sh (deb) vs archive/kylin-ostree-extra-utils/update-initramfs/ostree-update-initramfs.sh (source plus ancienne)",
+      "ligne": "deb:12-17,31 ; diff vs source 1.0.0-ok4",
+      "type": "privileges",
+      "severite": "informationnelle",
+      "extrait": "mount --bind /dev $deploy_path/dev ; /run ; /sys ; /proc ; /boot ; /boot (ligne dupliquée) ; chroot $deploy_path mkinitramfs -o /etc/initramfs-${subdir_name}.img ; variables $1..$4 non quotées dans deploy_path",
+      "explication": "Script root appelé lors du (re)déploiement ostree. Par rapport au code publié dans le dépôt kylin-ostree-extra-utils 1.0.0-ok4 (diff -u), la version livrée ajoute 6 lignes mount --bind (dont /boot en double, bug bénin) absentes de la source. osname/csum/deployserial/bootcsum ($1..$4) sont insérés sans guillemets dans les chemins et dans un chroot ; l'appelant est toutefois le code ostree root (non une entrée utilisateur). Confirme l'écart binaire/source : le contenu réel n'est pas celui du seul dépôt source voisin existant.",
+      "scenario": "",
+      "contre_lecture": "",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "dpkg-wrapper",
+      "fichier": "pool/main/d/dpkg-wrapper/dpkg-wrapper_1.0.0.0-0k2.1ok1.tar.xz (source publiée) vs dpkg-wrapper_1.0.0.0-0k2.1ok1_all.deb (binaire)",
+      "ligne": "tar.xz:tous / deb:/usr/bin/{dpkg_wrapper,apt_wrapper,wrapper_common}",
+      "type": "confiance",
+      "severite": "moyenne",
+      "extrait": "source publiée (sha256 30dbea54…, conforme .dsc:17 et Sources signé) = 19 fichiers, tous sous debian/, aucune ligne de code (rules 'dh $@', scripts .ex uniquement) ; binaire = 3 scripts bash (dpkg_wrapper 17127o, apt_wrapper 14655o, wrapper_common 16249o).",
+      "explication": "Paquet signé, PRÉSENT dans l'archive par défaut (huanghe/main, Packages.gz: Filename pool/main/d/dpkg-wrapper/…, Depends 'dpkg, libkysdk-conf2-tools' tous deux présents dans l'index) donc INSTALLABLE via apt, mais ABSENT de l'ISO 3.0 (hors manifeste). Sa source homologue est une coquille dh_make sans code (sources-coquilles-vides.csv:dpkg-wrapper). Le code réellement exécuté — qui détourne /usr/bin/dpkg, apt, apt-get vers des scripts — n'a aucune source publiée. Exposition : l'installation remplace les gestionnaires de paquets du système par des wrappers non auditables au source ; corrobore le constat moyen déjà porté par P2-dpkg.json.",
+      "scenario": "Un administrateur installe dpkg-wrapper depuis le dépôt par défaut : dpkg/apt/apt-get sont remplacés par des scripts dont le source n'est pas publié ; une modification de leur logique (filtrage, contournement de vérifications) ne serait pas détectable par revue de source.",
+      "contre_lecture": "Omission de publication : le code vit probablement sur une forge interne. Non-conformité traçabilité. Exposition réduite car hors ISO (installation explicite requise).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "dpkg-wrapper",
+      "fichier": "DEBIAN/postinst (deb) ; DEBIAN/postrm (deb)",
+      "ligne": "postinst:93,97-99,105-123 ; postrm:43-44",
+      "type": "persistance",
+      "severite": "faible",
+      "extrait": "dpkg-divert --package dpkg_wrapper --no-rename --divert /usr/bin/dpkg.orig --add /usr/bin/dpkg ; ensure_wrapper_link -> ln -sf dpkg_wrapper /usr/bin/dpkg ; idem apt->apt_wrapper, apt-get->apt_wrapper ; kyexectl -s /usr/bin/dpkg.orig …",
+      "explication": "postinst détourne /usr/bin/dpkg, /usr/bin/apt, /usr/bin/apt-get vers *.orig (dpkg-divert --no-rename) et pose des liens symboliques vers dpkg_wrapper/apt_wrapper : toute invocation de dpkg/apt/apt-get passe désormais par les wrappers. Il applique aussi kyexectl -s (contexte de sécurité kysec) aux wrappers et aux .orig. postrm (remove|purge) inverse le détournement et restaure les binaires. Le nom de paquet divert utilisé est 'dpkg_wrapper' (souligné) alors que le paquet s'appelle 'dpkg-wrapper' (tiret) — incohérence sans conséquence fonctionnelle. Mécanisme de persistance du détournement, correctement défait à la désinstallation.",
+      "scenario": "",
+      "contre_lecture": "",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "dpkg-wrapper",
+      "fichier": "usr/bin/apt_wrapper (deb) ; usr/bin/dpkg_wrapper (deb) ; usr/bin/wrapper_common (deb)",
+      "ligne": "apt_wrapper:382-410 ; dpkg_wrapper:226-279,407-487 ; wrapper_common:449-540,513",
+      "type": "confiance",
+      "severite": "faible",
+      "extrait": "apt_wrapper: upgrade|full-upgrade|dist-upgrade -> 'printf 禁止该操作; exit 1' (bloqué) ; autoremove -> kypackage_general apt.orig -y --allow-downgrades ; deb_install_check: 'kylinsigntool -v $pkg || échec' PUIS whitelist/privilege check ; dpkg_wrapper parse_arguments: options inconnues -> exec /usr/bin/dpkg.orig",
+      "explication": "Caractérisation des options « hookées ». dpkg_wrapper intercepte -i/--install, -r/-P/--remove/--purge, --unpack, --configure, -l/--list ; toute autre option (ou conflit d'options) est passée telle quelle à dpkg.orig (exec). apt_wrapper intercepte install/reinstall, remove/purge, autoremove ; BLOQUE upgrade/full-upgrade/dist-upgrade en mode normal ; le reste -> apt.orig. Point favorable à la sécurité : les wrappers N'AJOUTENT PAS --allow-unauthenticated ni --force-* et ne désactivent aucune vérification ; au contraire deb_install_check impose d'abord 'kylinsigntool -v' (vérification de signature麒麟) puis des contrôles runtime. autoremove force '-y --allow-downgrades' (permet une rétrogradation lors du nettoyage — faible). Le détournement s'appuie sur kypackage_general (libkysdk-package, sur l'ISO) qui n'accepte qu'un parent de confiance (/usr/bin/{dpkg,apt,apt-get}_wrapper ou .orig, libkypackage_general.c:222-253).",
+      "scenario": "autoremove avec --allow-downgrades pourrait rétrograder un paquet vers une version antérieure vulnérable lors d'un nettoyage automatique ; impact limité et nécessite root.",
+      "contre_lecture": "Les wrappers RENFORCENT globalement la posture (ajout d'une vérification de signature kylinsigntool obligatoire, blocage de l'upgrade en mode immuable, non-suppression des paquets du cœur système). Le --allow-downgrades est circonscrit à autoremove.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "dpkg-wrapper",
+      "fichier": "usr/bin/wrapper_common (deb) ; configuration libkysdk-package (libkysdk-conf2-tools:kconf2)",
+      "ligne": "wrapper_common:185-193,195-204,282-313,415-507 ; libkysdk-package.yaml:7-15,102-105",
+      "type": "confiance",
+      "severite": "moyenne",
+      "extrait": "get_whitelist_runtime_check: kconf2 get libkysdk-package.installation whitelist_runtime_check ; get_privilege_runtime_check: … privilege_runtime_check ; is_in_white_list: kconf2 list-keys libkysdk-package.direct_install_whitelist ; is_in_privilege_list: kconf2 get libkysdk-package.bare_metal pkg-list",
+      "explication": "Les wrappers lisent leur politique dans la configuration kconf2 (paquet libkysdk-conf2-tools, dépendance déclarée) : commutateurs libkysdk-package.installation.{whitelist_runtime_check(défaut false), privilege_runtime_check(défaut true), pkg_sign_check(défaut true)}, listes direct_install_whitelist et bare_metal.pkg-list. Si privilege_runtime_check/whitelist_runtime_check sont mis à false, les contrôles runtime (correspondance de tag runtime_version, vérification gpg du tag bare_metal) sont sautés — seul kylinsigntool -v reste. Or V1-L2 (élevée) établit que la méthode D-Bus root 'save' de conf2 est ouverte à tout utilisateur et que /home/<user>/.config/kylin-config/user.db est fusionnée et parfois chmod 0666 : la politique d'installation privilégiée des wrappers repose donc sur une configuration potentiellement modifiable par un utilisateur non privilégié. De plus privilege_deb_check extrait le .deb dans /tmp/sdk/ar-deb (rm -rf + mkdir, chemin prévisible, pas de mkdtemp) et apt_cache_dir=/tmp/kysdk-package/apt-cache, alors que le wrapper tourne en root (run_by_root).",
+      "scenario": "Un utilisateur capable de modifier les clés kconf2 libkysdk-package (via la faille conf2 V1-L2) met privilege_runtime_check=false, affaiblissant la vérification de tag des paquets privilégiés ; ou exploite le chemin /tmp/sdk prévisible (lien symbolique pré-créé) pour détourner une écriture/lecture root pendant l'extraction. Nécessite que la vérification kylinsigntool soit elle-même contournable pour un gain réel.",
+      "contre_lecture": "kylinsigntool -v reste exigé inconditionnellement avant tout contrôle runtime, donc la signature麒麟 demeure la vraie barrière ; les commutateurs ne font qu'ajuster des vérifications supplémentaires. Les chemins /tmp sont nettoyés (rm -rf) avant usage. À vérifier en Phase 5 : droits réels des clés kconf2 et comportement de /tmp/sdk sous course.",
+      "registre": "PROBABLE"
+    }
+  ],
+  "patches": [],
+  "flux_reseau": [],
+  "collectes": [
+    {
+      "depot": "ostree-extra-utils",
+      "fichier": "usr/bin/ostree-pkgs-guard",
+      "ligne": "7-12,162",
+      "donnees": "horodatage ISO8601, hostname, type d'opération dpkg et ligne de commande complète ($*)",
+      "destination": "/var/log/ostree.log (fichier local)",
+      "reseau": false,
+      "note": "Journalisation locale uniquement, aucun envoi réseau. Observable Phase 5 : droits de /var/log/ostree.log (il consigne toutes les lignes de commande dpkg, possiblement avec arguments sensibles)."
+    }
+  ],
+  "reference": {
+    "ostree-extra-utils": {
+      "plus_proche": "aucune (paquet natif openKylin ; source publiée = squelette dh_make sans code ; dépôt voisin kylin-ostree-extra-utils 1.0.0-ok4 à contenu partiel et divergent)",
+      "orig": "sans objet (format 3.0 native)",
+      "patches_herites_identiques": 0,
+      "patches_propres_openkylin": 0,
+      "patches_modifies": 0,
+      "patches_retires": 0,
+      "fichiers_debian_hors_patches_modifies_ou_ajoutes": 0
+    },
+    "dpkg-wrapper": {
+      "plus_proche": "aucune (paquet natif openKylin ; source publiée = squelette dh_make sans code)",
+      "orig": "sans objet (format 3.0 native)",
+      "patches_herites_identiques": 0,
+      "patches_propres_openkylin": 0,
+      "patches_modifies": 0,
+      "patches_retires": 0,
+      "fichiers_debian_hors_patches_modifies_ou_ajoutes": 0
+    }
+  },
+  "couverture": [
+    {
+      "arbre": "deb ostree-extra-utils_2.0.0.0-0k1.20update1_amd64",
+      "fichiers_texte_total": 20,
+      "fichiers_texte_lus": 20,
+      "elf_total": 1,
+      "elf_caracterises": 1,
+      "scripts_mainteneur_lus": ["preinst", "postinst", "prerm", "postrm", "triggers", "conffiles", "control", "md5sums"],
+      "pct": 100,
+      "liste_lus_integralement": ["etc/dpkg/dpkg.cfg.d/ostree-guard", "usr/bin/ostree-pkgs-guard", "etc/ld.so.conf.d/zzz-ostree.conf", "usr/lib/python3/dist-packages/opt_path.pth", "etc/ostree/ostree.conf.d/99-ostree.conf", "etc/systemd/system-environment-generators/99-ostree", "etc/X11/Xsession.d/70opt-path", "etc/ostree/compat-paths.conf", "etc/kare/kare-distribution.json", "lib/systemd/system/ostree-extra-restore.service", "usr/sbin/kylin-ostree-restore-plymouth.sh", "usr/sbin/kylin-ostree-restore.py", "usr/sbin/ostree-update-initramfs.sh", "usr/sbin/ostree-livecd-rescue", "etc/ostree/scripts/post-deploy/creat-osdeploy", "etc/ostree/scripts/post-deploy/create-difflist", "opt/system/resource/update-manifests/opt-subdir-manifests.json", "usr/share/initramfs-tools/hooks/unified-conf", "usr/share/initramfs-tools/scripts/init-bottom/unified-conf", "usr/sbin/unified-conf(ELF: readelf/objdump/strings)"]
+    },
+    {
+      "arbre": "deb dpkg-wrapper_1.0.0.0-0k2.1ok1_all",
+      "fichiers_texte_total": 5,
+      "fichiers_texte_lus": 5,
+      "elf_total": 0,
+      "elf_caracterises": 0,
+      "scripts_mainteneur_lus": ["postinst", "postrm", "control", "md5sums"],
+      "pct": 100,
+      "liste_lus_integralement": ["usr/bin/dpkg_wrapper", "usr/bin/apt_wrapper", "usr/bin/wrapper_common", "DEBIAN/postinst", "DEBIAN/postrm"]
+    }
+  ],
+  "non_couvert": [
+    "Décompilation complète de l'ELF /usr/sbin/unified-conf (analyse limitée à readelf/objdump/strings, sans exécution) — le flux de contrôle fin n'est pas reconstruit mais aucun appel réseau/exec/setuid n'apparaît dans la table des symboles importés.",
+    "Propriétaire et mode réels de /opt/system et de ses sous-dossiers sur un système installé (non observables sur les seuls manifestes ISO) — déterminant pour la sévérité du finding racine de confiance /opt/system.",
+    "Comportement d'exécution des wrappers et de ostree-pkgs-guard (interdit par la consigne : aucune exécution).",
+    "Dépôts source internes (gitlab2.kylin.com) non fournis : impossible de comparer le binaire au source réel.",
+    "Binaires appelés par les wrappers (kypackage_*, kylinsigntool, kyexectl, kare) analysés ailleurs / hors de ces deux .deb."
+  ],
+  "synthese": "[CONSTATÉ] Les deux paquets sont signés et conformes aux index (InRelease gpgv OK) mais leur source publiée est une COQUILLE dh_make sans code (19 fichiers debian/ chacun) : tout le contenu réel est inauditable au source (ostree-extra-utils elevee, car installé par défaut ; dpkg-wrapper moyenne, installable depuis le dépôt mais absent de l'ISO). [CONSTATÉ] ostree-extra-utils installe un hook dpkg root (ostree-pkgs-guard) qui BLOQUE la gestion de paquets en mode immuable mais est contournable par unshare -m (moyenne) et journalise chaque ligne de commande dpkg dans /var/log/ostree.log (local, pas de réseau). [PROBABLE, elevee] Il fait de /opt/system une racine de confiance système (ld.so.conf.d, opt_path.pth python, SYSTEMD_UNIT_PATH, PATH, XDG) ; l'ELF unified-conf (caractérisé : GLib KeyFile, aucun réseau/exec/setuid) propage ces chemins dans l'environnement du gestionnaire systemd dès l'initramfs. L'exploitabilité dépend des droits de /opt/system, où kaiming (V1-L0/V1-L14, pkexec sans authentification) écrit des fichiers arbitraires — chaîne d'élévation locale à confirmer en Phase 5. [CONSTATÉ, faible] La restauration d'usine (service root) n'est déclenchable que par le cmdline noyau 'ostree-factory-restore' (entrée GRUB) avec confirmation plymouth — pas par un utilisateur non privilégié en session. [CONSTATÉ] dpkg-wrapper détourne dpkg/apt/apt-get vers des scripts bash qui, loin d'affaiblir, AJOUTENT une vérification de signature (kylinsigntool -v) et bloquent l'upgrade en mode normal ; mais [PROBABLE, moyenne] leur politique repose sur des clés kconf2 libkysdk-package potentiellement modifiables par un non-root (V1-L2) et sur des chemins /tmp prévisibles en root. Aucun code d'exploitation produit ; aucune porte dérobée, clé/compte en dur, ni flux réseau détectés dans les deux paquets. Couverture : 100% des fichiers texte des deux .deb lus intégralement, l'unique ELF caractérisé statiquement."
+}

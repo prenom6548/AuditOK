@@ -1,0 +1,134 @@
+{
+  "lot": "P2-policykit",
+  "composants": ["policykit-1"],
+  "empreintes": {
+    "archive/policykit-1": "bba2651434e5bb3885515950d4a6d7745517a96b5c9d4f917026ee5e950f6b15",
+    "conforme": true
+  },
+  "findings": [
+    {
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "3, 10-14",
+      "type": "obfuscation",
+      "severite": "elevee",
+      "extrait": "Subject: !12 update changelog ... src/polkitagent/polkitagenthelper-pam.c |2 +-; polkitbackendactionpool.c |61 ++; polkitbackendduktapeauthority.c |79 ++; pkexec.c |5 ++  (145 insertions, 2 deletions)",
+      "explication": "Le patch porte un titre/Subject << update changelog >> mais ne touche AUCUN fichier changelog : il injecte 145 lignes de C dans 4 fichiers du coeur de polkit (agent PAM, pool d'actions, moteur de regles duktape, pkexec). Titre deliberement trompeur masquant des modifications de mecanismes d'authentification et d'autorisation. L'entree changelog 127-ok3 dit seulement << 同步v11实现代码 >> (sync code v11).",
+      "scenario": "Un relecteur survolant la serie quilt ou le changelog classe ce patch comme cosmetique et n'inspecte pas son contenu, laissant passer en revue un affaiblissement d'auth/autorisation.",
+      "contre_lecture": "Pratique git courante ou le titre d'une PR mergee (!12) ecrase le sujet du commit ; le contenu reel serait un simple oubli de renommage de PR plutot qu'une dissimulation intentionnelle.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "20-25",
+      "type": "privileges",
+      "severite": "elevee",
+      "extrait": "- if (rc != PAM_SUCCESS)\n+ if (rc != PAM_SUCCESS && rc != PAM_NEW_AUTHTOK_REQD)  (apres pam_acct_mgmt dans polkitagenthelper-pam.c)",
+      "explication": "polkit-agent-helper-1 (binaire exec en root : SUID 4755 sur non-systemd, socket-active sinon) valide le mot de passe via pam_authenticate puis la validite du compte via pam_acct_mgmt. L'amont rejette (goto error) tout code != PAM_SUCCESS. Le patch accepte en plus PAM_NEW_AUTHTOK_REQD (mot de passe expire / devant etre change) SANS declencher pam_chauthtok : un compte au mot de passe expire est traite comme pleinement authentifie pour autoriser des actions polkit privilegiees.",
+      "scenario": "Un administrateur force l'expiration du mot de passe d'un compte (chage -d 0 / passwd -e) pour bloquer l'acces en attendant un reset ; l'utilisateur, connaissant encore l'ancien mot de passe, s'authentifie malgre tout aupres de polkit (pkexec, operations privilegiees) sans jamais changer son mot de passe, contournant la politique d'expiration.",
+      "contre_lecture": "Amelioration d'ergonomie : eviter qu'un dialogue polkit echoue cryptiquement quand le mot de passe est expire ; l'utilisateur doit toujours connaitre le mot de passe courant, donc ce n'est pas un bypass d'authentification complet mais un assouplissement de la gestion de compte.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "123-206 (notamment 160-166, 188, 215)",
+      "type": "confiance",
+      "severite": "elevee",
+      "extrait": "append_rules_dirs_from_xdg_data_dirs(): prefix /usr/ || /opt/ || /lib/ || /var/ ; rules_path = g_build_filename(trimmed, \"polkit-1\", \"rules.d\") ; appele dans polkit_backend_common_js_authority_constructed()",
+      "explication": "L'amont charge les regles JS d'autorisation (executees par duktape pour decider YES/NO) depuis une liste FIXE root-controlee (/etc, /run, /usr/local/share, /usr/share .../rules.d). Le patch ajoute tout composant de $XDG_DATA_DIRS prefixe par /usr/,/opt/,/lib/,/var/ + /polkit-1/rules.d, SANS verification de proprietaire ni de permissions du repertoire. Le prefixe /var/ autorise p.ex. /var/tmp (monde-inscriptible, sticky) => /var/tmp/polkit-1/rules.d. Filtre rules.d plus large que celui des actions.",
+      "scenario": "Si $XDG_DATA_DIRS de polkitd peut etre influence (demarrage hors unit systemd durcie, drop-in/EnvironmentFile mal configure, superviseur non standard heritant l'environnement), un utilisateur local depose /var/tmp/polkit-1/rules.d/00.rules contenant polkit.addRule(()=>polkit.Result.YES) et obtient l'autorisation de toute action => root. En deploiement systemd par defaut, XDG_DATA_DIRS n'est pas herite (repli /usr/local/share:/usr/share) donc non directement exploitable : le code est CONSTATÉ, la voie d'exploitation reste conditionnelle (PROBABLE).",
+      "contre_lecture": "Intention de permettre a des paquets installes sous /opt ou des prefixes alternatifs de livrer leurs regles ; en pratique polkitd systemd tourne avec un environnement nettoye, donc la surface reelle est limitee tant que XDG_DATA_DIRS reste maitrise.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "37-103 (notamment 60-62, 64, 95)",
+      "type": "confiance",
+      "severite": "moyenne",
+      "extrait": "collect_directories_from_xdg_data_dirs(): prefix /usr/ || /opt/ ; actions_path = g_build_filename(trimmed,\"polkit-1\",\"actions\") ; pool_new utilise directories_collected au lieu de la liste fixe",
+      "explication": "Meme mecanisme pour les fichiers .policy (definitions d'actions et autorisations par defaut allow_any/active/inactive). L'amont utilise une liste fixe (/etc, /run, /usr/local/share, PACKAGE_DATA_DIR). Le patch ajoute les repertoires /usr/* et /opt/* issus de $XDG_DATA_DIRS, sans controle de proprietaire/permissions. Filtre plus restreint que rules.d (pas de /var ni /lib) et portee moindre (.policy ne peut pas executer de JS arbitraire, seulement fixer des defauts d'autorisation).",
+      "scenario": "Un .policy depose dans un repertoire /opt accessible en ecriture non-root (ou via XDG_DATA_DIRS influencable) declare <allow_active>yes</allow_active> pour une action sensible, relachant le prompt d'authentification pour cette action.",
+      "contre_lecture": "Extension d'integration pour applications installees hors prefixe standard ; impact limite car les .policy ne font que definir des defauts et restent subordonnes aux regles JS.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "224-232",
+      "type": "privileges",
+      "severite": "moyenne",
+      "extrait": "//pkexec environnement ajoute support fcitx\n+ g_ptr_array_add(saved_env, \"XMODIFIERS\"); + \"@im=fcitx\"; + \"GTK_IM_MODULE\"; + \"xim\";",
+      "explication": "pkexec construit l'environnement du processus privilegie a partir d'une liste curee MINIMALE (modele de securite cle post-CVE-2021-4034). Le patch y ajoute XMODIFIERS=@im=fcitx et GTK_IM_MODULE=xim a valeurs CONSTANTES (non fournies par l'appelant). Un programme GTK execute via pkexec chargera donc un module de methode d'entree et se couplera a la pile IM/XIM.",
+      "scenario": "Une application GTK privilegiee lancee par pkexec avec allow_gui charge le module IM et dialogue avec le daemon fcitx de l'utilisateur non privilegie ; une methode d'entree pouvant lire/injecter des frappes devient une surface d'attaque sur le processus privilegie.",
+      "contre_lecture": "Besoin legitime de saisie CJK (fcitx) dans les boites de dialogue pkexec ; valeurs codees en dur donc non detournables vers un module arbitraire, et DISPLAY/XAUTHORITY ne sont transmis que si allow_gui, bornant le risque aux actions GUI explicitement autorisees.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "104-119",
+      "type": "confiance",
+      "severite": "informationnelle",
+      "extrait": "_localize(): g_setenv(\"LANGUAGE\", lang, TRUE) puis restauration de l'ancienne valeur, autour de dgettext()",
+      "explication": "Dans polkitbackendactionpool.c, _localize positionne temporairement LANGUAGE selon la locale demandee par l'appelant pour obtenir la traduction d'une description d'action, puis restaure. g_setenv n'est pas thread-safe et modifie l'environnement global de polkitd ; impact securite negligeable, note d'inventaire (robustesse/i18n).",
+      "registre": "CONSTATÉ"
+    }
+  ],
+  "patches": [
+    {
+      "nom": "11-riscv64.patch",
+      "titre_declare": "!11 解决riscv64编译失败问题 (resoudre l'echec de compilation riscv64)",
+      "contenu_reel": "Ajoute un except OSError (EINVAL/ENOSYS) dans test/wrapper.py::setup_test_namespace pour sauter (exit 77) le test quand le noyau ne supporte pas les namespaces requis.",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["test/wrapper.py"],
+      "resume": "Correctif d'infrastructure de test pour riscv64 (skip propre si namespaces non supportes). Aucun fichier de production touche. Benin."
+    },
+    {
+      "nom": "12-update-changelog.patch",
+      "titre_declare": "!12 update changelog",
+      "contenu_reel": "Ne modifie aucun changelog. Injecte 145 lignes de C dans 4 fichiers du coeur : (1) polkitagenthelper-pam.c accepte PAM_NEW_AUTHTOK_REQD apres pam_acct_mgmt ; (2) polkitbackendactionpool.c ajoute collect_directories_from_xdg_data_dirs (repertoires actions via XDG_DATA_DIRS, prefixes /usr,/opt) + modif LANGUAGE dans _localize ; (3) polkitbackendduktapeauthority.c ajoute append_rules_dirs_from_xdg_data_dirs (repertoires rules.d via XDG_DATA_DIRS, prefixes /usr,/opt,/lib,/var) sans verif proprietaire/permissions ; (4) pkexec.c ajoute XMODIFIERS/GTK_IM_MODULE a l'environnement privilegie.",
+      "titre_fidele": false,
+      "classement": "[SUSPECT]",
+      "fichiers_amont": [
+        "src/polkitagent/polkitagenthelper-pam.c",
+        "src/polkitbackend/polkitbackendactionpool.c",
+        "src/polkitbackend/polkitbackendduktapeauthority.c",
+        "src/programs/pkexec.c"
+      ],
+      "resume": "Titre trompeur (<< update changelog >>) masquant un affaiblissement coordonne de l'authentification PAM et de l'origine des politiques d'autorisation (elargissement des repertoires actions/rules.d via XDG_DATA_DIRS sans controle de confiance), plus une modification de l'environnement de pkexec. Coeur du lot."
+    }
+  ],
+  "flux_reseau": [],
+  "collectes": [],
+  "diff_moteur": {
+    "base_comparaison": "p2full/policykit-1 = amont 127.orig avec les 2 patches appliques ; versions pristine amont lues dans .pc/12-update-changelog.patch/src/*",
+    "debian_delta": "diff -rq archive/policykit-1/debian vs p2full/policykit-1/debian = AUCUNE difference. Tout debian/ (control, rules, *.postinst, *.install, dirs, links, watch) est identique a l'amont Debian ; le seul delta openKylin est la serie de 2 patches + les entrees changelog 127-ok1..ok3.",
+    "moteur_autorisation": {
+      "polkitbackendactionpool.c": "AMONT: liste FIXE root-controlee passee a polkit_backend_action_pool_new par polkitbackendinteractiveauthority.c (PACKAGE_SYSCONF_DIR/polkit-1/actions, /run/polkit-1/actions, /usr/local/share/polkit-1/actions, PACKAGE_DATA_DIR/polkit-1/actions). PATCH: insere collect_directories_from_xdg_data_dirs qui AJOUTE tous les prefixes /usr/,/opt/ de $XDG_DATA_DIRS. Frontiere deplacee : la source des .policy devient dependante d'un env var, sans verif proprietaire/permissions.",
+      "polkitbackendduktapeauthority.c": "AMONT: rules_dirs par defaut FIXE (PACKAGE_SYSCONF_DIR/polkit-1/rules.d, /run/..., /usr/local/share/..., PACKAGE_DATA_DIR/...). PATCH: append_rules_dirs_from_xdg_data_dirs appele dans ...js_authority_constructed AJOUTE les prefixes /usr/,/opt/,/lib/,/var/ de $XDG_DATA_DIRS. Les .rules sont du JS executant la decision d'autorisation => c'est la frontiere la plus sensible. Verifications MANQUANTES: proprietaire root, permissions (non monde-inscriptible), canonicalisation de chemin ; le prefixe /var/ admet /var/tmp (monde-inscriptible)."
+    },
+    "agent_pam": "polkitagenthelper-pam.c : apres pam_acct_mgmt, acceptation ajoutee de PAM_NEW_AUTHTOK_REQD. Portee reelle : ne concerne QUE l'etat mot-de-passe-expire/a-changer (les autres echecs de gestion de compte -- PAM_ACCT_EXPIRED, PAM_PERM_DENIED, PAM_AUTH_ERR, verrouillage -- restent rejetes). pam_chauthtok n'est PAS appele ; l'utilisateur doit toujours fournir le mot de passe courant valide (pam_authenticate inchange). Donc assouplissement de la gestion de compte, pas bypass complet d'authentification.",
+    "pkexec": "pkexec.c : 2 paires cle/valeur CONSTANTES ajoutees a saved_env (XMODIFIERS=@im=fcitx, GTK_IM_MODULE=xim). N'affaiblit pas directement la validation d'autorisation mais elargit l'environnement minimal transmis au processus privilegie (couplage IM).",
+    "moteur_js": "duktape (confirme par debian/control: Build-Depends duktape-dev ; patch sur polkitbackendduktapeauthority.c), PAS mozjs. Choix herite de l'amont Debian, non modifie par openKylin.",
+    "version": "127-ok3 (amont 127, fork openKylin huanghe). Standards-Version 4.7.3. rules: DEB_BUILD_MAINT_OPTIONS=hardening=+bindnow conserve, -Dtests=true conserve, -Dprivileged_group=sudo. Aucun durcissement build retire."
+  },
+  "couverture": [
+    {
+      "arbre": "archive/policykit-1",
+      "patches_total": 2,
+      "patches_lus": 2,
+      "fichiers_debian": 43,
+      "pct_patches": 100,
+      "patches_lus_liste": ["11-riscv64.patch", "12-update-changelog.patch"]
+    }
+  ],
+  "non_couvert": [
+    "Verification dynamique de l'environnement reel de polkitd a l'execution (valeur effective de XDG_DATA_DIRS sous l'unit systemd du produit installe) : non realisable en lecture seule sur les sources ; l'exploitabilite de l'elargissement rules.d/actions reste conditionnelle a cet element.",
+    "Absence de controle proprietaire/permissions dans load_scripts amont (hors perimetre du patch) : non auditee en detail, mais c'est precisement cette hypothese de repertoires fixes root-controles que le patch invalide."
+  ],
+  "synthese": "Empreinte archive/policykit-1 CONFORME (bba2651...). L'integralite de debian/ est identique a l'amont Debian (diff -rq sans ecart) ; le SEUL delta openKylin = 2 patches quilt + entrees changelog 127-ok1..ok3. Patch 11-riscv64 : [LÉGITIME] (skip test harness riscv64, test/wrapper.py). Patch 12-update-changelog : [SUSPECT], titre TROMPEUR (CONSTATÉ) -- << update changelog >> alors qu'il injecte 145 lignes de C dans 4 fichiers coeur. Constats : (1) elevee/CONSTATÉ -- polkitagenthelper-pam.c accepte PAM_NEW_AUTHTOK_REQD, un compte a mot de passe expire autorise des actions privilegiees sans changement de mot de passe (assouplissement gestion de compte, pas bypass complet) ; (2) elevee/CONSTATÉ (exploit PROBABLE conditionnel) -- polkitbackendduktapeauthority.c elargit les repertoires de regles JD d'autorisation via XDG_DATA_DIRS (prefixes /usr,/opt,/lib,/var) sans verif proprietaire/permissions, /var admet /var/tmp monde-inscriptible ; non directement exploitable en deploiement systemd par defaut (env nettoye) mais frontiere de confiance supprimee ; (3) moyenne/CONSTATÉ -- meme mecanisme pour les .policy d'actions (prefixes /usr,/opt) ; (4) moyenne/CONSTATÉ -- pkexec.c injecte XMODIFIERS/GTK_IM_MODULE (valeurs constantes) dans l'environnement privilegie (couplage IM, surface frappes GUI) ; (5) elevee/CONSTATÉ -- la dissimulation via titre de patch ; (6) info -- g_setenv LANGUAGE non thread-safe dans _localize. Moteur JS = duktape (control: duktape-dev), pas mozjs, choix amont. rules/control : hardening=+bindnow et tests conserves, aucun durcissement retire, pas de Provides/Replaces anormaux, scripts mainteneur pristine. Couverture : 2/2 patches lus integralement (100%), 43 fichiers debian/, fichiers pertinents (control, rules, postinst, install) lus. La vague 1 (V1-L0-kaiming) est CONFIRMEE et PRECISEE : elargissement actions ET rules.d + PAM_NEW_AUTHTOK_REQD, et complete par le constat pkexec/fcitx et la modif _localize."
+}

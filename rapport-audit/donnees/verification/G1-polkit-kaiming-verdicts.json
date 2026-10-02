@@ -1,0 +1,127 @@
+{
+  "groupe": "G1-polkit-kaiming",
+  "verdicts": [
+    {
+      "id": "V1-L0-kaiming#0",
+      "depot": "kaiming",
+      "fichier": "data/org.kylin.kaiming.policy",
+      "ligne": "39-51",
+      "severite_initiale": "critique",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "critique",
+      "justification": "Action org.kylin.kaiming.mount: allow_any/allow_inactive/allow_active=yes, exec.path=/usr/bin/mount, AUCUNE annotation exec.argv1 (grep argv1 sur tout l'arbre: seules des variables de test). Politique installee par defaut: debian/kaiming.postinst:108-109 execute install_files.sh qui pose un lien de la .policy dans /usr/share/polkit-1/actions (install_files.sh:75-81). Mecanisme pkexec confirme dans le fork: find_action_for_path (pkexec.c:303-370) matche exec.path et ne verifie argv1 que si exec.argv1!=NULL; check_authorization_sync (pkexec.c:904) renvoie is_authorized=TRUE sans invite avec allow_any=yes. Aucune .rules compensatoire dans kaiming. Donc tout utilisateur local execute mount en root avec arguments libres = primitive d'elevation locale classique. CONFIRME critique.",
+      "preuve": "data/org.kylin.kaiming.policy:39-51 ; debian/kaiming.postinst:108-109 ; shells/install_files.sh:75-81 ; p2full/policykit-1/src/programs/pkexec.c:335-370,904-920"
+    },
+    {
+      "id": "V1-L0-kaiming#1",
+      "depot": "kaiming",
+      "fichier": "data/org.kylin.kaiming.policy",
+      "ligne": "25-37",
+      "severite_initiale": "critique",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "critique",
+      "justification": "Action org.kylin.kaiming.unsetkysec: allow_any/inactive/active=yes, exec.path=/usr/bin/setfattr, pas d'exec.argv1. Meme chaine d'installation par defaut et meme mecanisme pkexec que #0. setfattr en root avec cible/valeur libres permet de poser/retirer des attributs de securite (kysec) et notamment security.capability (ajout de capabilities a un binaire) => elevation. Aucun helper ni liste blanche. CONFIRME critique.",
+      "preuve": "data/org.kylin.kaiming.policy:25-37 ; shells/install_files.sh:75-81 ; p2full/policykit-1/src/programs/pkexec.c:335-370"
+    },
+    {
+      "id": "V1-L0-kaiming#2",
+      "depot": "kaiming",
+      "fichier": "data/org.kylin.kaiming.policy",
+      "ligne": "11-23",
+      "severite_initiale": "elevee",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "elevee",
+      "justification": "Action org.kylin.kaiming.install: allow_any/inactive/active=yes, exec.path=/opt/kaiming-tools/bin/kaiming (le wrapper shells/kaiming), pas d'exec.argv1. Installee par defaut. Via pkexec, tout utilisateur execute le CLI kaiming en root avec une ligne de commande entierement controlee (cf. V1-L14#0). Portee reelle = ecritures systeme et execution de scripts root (cf. V1-L14#1/#3): borde la criticite, mais severite elevee respectee. CONFIRME.",
+      "preuve": "data/org.kylin.kaiming.policy:11-23 ; shells/kaiming:10-16 ; shells/install_files.sh:75-81"
+    },
+    {
+      "id": "V1-L0-kaiming#3",
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "37-100 (actionpool) ; 131-215 (duktape)",
+      "severite_initiale": "elevee",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "elevee",
+      "justification": "Code confirme: collect_directories_from_xdg_data_dirs (prefixes /usr/,/opt/) ajoute <dir>/polkit-1/actions, et append_rules_dirs_from_xdg_data_dirs (prefixes /usr/,/opt/,/lib/,/var/) ajoute <dir>/polkit-1/rules.d, SANS verification de proprietaire/permissions, en plus de la liste fixe root (/etc,/run,/usr/local/share,/usr/share). polkitd tourne en root. REACHABILITE PAR DEFAUT confirmee contre la contre-lecture 'env systemd nettoye': kaiming installe data/60-kaiming comme system-environment-generator (CMakeLists:402-406 -> /etc/systemd/system-environment-generators/) qui injecte /opt/kaiming/share dans XDG_DATA_DIRS de TOUS les services systeme dont polkitd; donc polkitd lit par defaut /opt/kaiming/share/polkit-1/rules.d. Nuances adverses: (1) 60-kaimingenv.conf (/var/opt/kaiming/share) est installe dans /etc/ostree/ostree.conf.d (CMakeLists:465), PAS dans l'environnement systemd -> il ne feed pas polkitd (erreur partielle de la fiche). (2) L'exploit final (deposer une regle JS YES) exige que /opt/kaiming/share/polkit-1/rules.d soit inscriptible par un non-root: le postinst cree /opt/kaiming en root:755, donc la permission reelle reste a confirmer en Phase 5. Le fait (deplacement de la frontiere de confiance polkit vers /opt sans controle) tient. CONFIRME elevee.",
+      "preuve": "p2full/policykit-1/debian/patches/12-update-changelog.patch:37-100,131-215 ; archive/kaiming/data/60-kaiming:1-11 ; archive/kaiming/CMakeLists.txt:402-406,465 ; p2full/.../polkitbackendduktapeauthority.c:331-344"
+    },
+    {
+      "id": "V1-L14-approfondissement-kaiming#0",
+      "depot": "kaiming",
+      "fichier": "shells/kaiming + app/KMApplication.cpp + app/install/KMInstall.cpp",
+      "ligne": "kaiming:10-16 ; KMApplication.cpp:181,191 ; KMInstall.cpp:95,104",
+      "severite_initiale": "elevee",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "elevee",
+      "justification": "Le wrapper shells/kaiming:10-16 exec km-run/km-cli avec tout \"$@\". KMApplication parse la sous-commande et dispatche (KMApplication.cpp:181,191) sans aucune validation d'appelant. KMInstall expose --skip-signature-verification (KMInstall.cpp:95) et REFS positionnels illimites, dont des .ok locaux (KMInstall.cpp:104, max -1). Confirme par grep: aucune lecture de PKEXEC_UID/SUDO_UID/SO_PEERCRED/GetConnectionUnixUser dans l'arbre hors tests; les getuid()/geteuid() presents sont tous l'uid du processus courant (construction de /run/user, tests 'suis-je root'), jamais l'uid de l'appelant. Combine a l'action install allow_any=yes (#2), 'install' = executer kaiming en root avec ligne de commande totalement controlee. CONFIRME.",
+      "preuve": "shells/kaiming:10-16 ; app/KMApplication.cpp:174-213 ; app/install/KMInstall.cpp:95,104 ; grep getuid/PKEXEC_UID (0 controle d'appelant)"
+    },
+    {
+      "id": "V1-L14-approfondissement-kaiming#1",
+      "depot": "kaiming",
+      "fichier": "common/KMHostAppDeploy.cpp",
+      "ligne": "1318-1397 ; appels 218,296,737,812",
+      "severite_initiale": "critique",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "critique",
+      "justification": "executeHostScript construit basePath dans le repertoire hostscript de l'image deployee (installed-dir m_versionDataPath/files/opt/kaiming/exports/share/hostscript/<ref> ou export-dir /opt/kaiming/exports/share/hostscript/<ref>) puis executeScript fait chmod +x + fork + execl(scriptPath, scriptPath, arg) (1359-1383). Appele pour preinst/postinst/prerm/postrm (218,296,737,812). Deploiement atteignable en root via le service systeme org.kylin.kaiming (User non defini=root, conf context=default ouverte) ou via pkexec install (#2). Authenticite non garantie confirmee: remote par defaut gpg-verify=false (shells/kaiming_version.sh:22-24) et verifySignature n'est appele que si !skipSignatureVerification && isOnlineInstall && !isUpgradeType (KMPackageManager.cpp:6738,11131) -> l'installation d'un .ok LOCAL (isOnlineInstall=false) ne verifie JAMAIS la signature. Donc execution de code root depuis contenu applicatif non authentifie. CONFIRME critique. Nuance: l'URL par defaut est en HTTPS (TLS), donc le vecteur MITM reseau est plus etroit que decrit; le vecteur local (.ok non signe) est pleinement operant.",
+      "preuve": "common/KMHostAppDeploy.cpp:1318-1397,218,296 ; common/KMPackageManager.cpp:6738,6790,11131 ; shells/kaiming_version.sh:22-24 ; app/install/KMInstall.cpp:95"
+    },
+    {
+      "id": "V1-L14-approfondissement-kaiming#2",
+      "depot": "kaiming",
+      "fichier": "dbus/gdbus/KMSystemProxy.cpp + data/org.kaiming.proxy.system.conf",
+      "ligne": "KMSystemProxy.cpp:128-313 ; conf:14-16",
+      "severite_initiale": "elevee",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "elevee",
+      "justification": "org.kaiming.proxy.system.conf autorise context=default a appeler l'interface org.kaiming.proxy.system (lignes 14-16; la fiche cite conf:50-57 mais le fichier n'a que 22 lignes - numero de ligne faux, contenu exact present, ce n'est pas une refutation). Service active par bus, User=root. onHandleRun/onHandleEnter -> asyncTask -> makeArgv recopie SANS liste blanche les options/soptions crun fournies par l'appelant (KMCommonUtils.cpp:504-547) -> onCommandAsync fait fork+execv(KAIMING_BOX=crun) en root, AUCUN controle d'appelant. onHandleKill/onHandlePs: aucun controle. onHandleStartBinaryAsUser verifie checkKaimingNamespace(pid) mais le pid provient de l'argument D-Bus (StartBinaryTask{conn,pid,command,pwd} construit avec l'arg 'uid'), pas des credentials du sender. Donc crun lancable en root avec bundle/rootfs arbitraire par tout utilisateur local. CONFIRME. SOUS-EVALUATION probable: crun avec --bundle controle = execution root arbitraire, proche de critique.",
+      "preuve": "data/org.kaiming.proxy.system.conf:14-16 ; dbus/gdbus/KMSystemProxy.cpp:128-152,209-240,273-278 ; common/KMCommonUtils.cpp:504-547 ; data/org.kaiming.proxy.system.service:1-4"
+    },
+    {
+      "id": "V1-L14-approfondissement-kaiming#3",
+      "depot": "kaiming",
+      "fichier": "common/KMPackageManager.cpp",
+      "ligne": "7959-7984 ; 8087-8196 ; 10030-10062",
+      "severite_initiale": "elevee",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "elevee",
+      "justification": "initializeFixedModifications (7959-7984) force NoNewPrivileges=false, PrivateUsers=false, ProtectControlGroups=false, ProtectHostname=false, ProtectKernelLogs=false, RestrictAddressFamilies=\"\", RestrictNamespaces=false, SystemCallFilter=\"\", NoExecPaths=\"\". modifyFixedField commente (prefixe #) CapabilityBoundingSet, ProtectKernelTunables, ProtectSystem, User, Group, ExecStop, ProtectHome, ExecPaths (8089-8099) puis modifyAppServiceFile insere User=root/Group=root dans [Service] (8191-8193). startTargetWantsServices execute systemctl daemon-reload puis systemctl enable --now <service> (10040-10045) pour chaque .service de l'image. Les services UTILISATEUR (systemd/user) sont exclus (8137-8150) - nuance mineure, la fiche vise bien les services systeme. Une unite d'app (non authentifiee, cf. #1) devient donc un service root sans durcissement, active automatiquement. CONFIRME elevee.",
+      "preuve": "common/KMPackageManager.cpp:7959-7984,8089-8099,8191-8193,10030-10062"
+    },
+    {
+      "id": "P2-policykit#0",
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "3,10-14",
+      "severite_initiale": "elevee",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "elevee",
+      "justification": "Fait non refutable: Subject 'update changelog' (ligne 3) alors que le diff touche polkitagenthelper-pam.c, polkitbackendactionpool.c, polkitbackendduktapeauthority.c et pkexec.c (lignes 10-14: 145 insertions, 2 deletions) et AUCUN fichier changelog. Le patch dissimule effectivement un affaiblissement d'authentification (P2#1) et un elargissement du chargement de regles (P2#2/V1#3) sous un titre cosmetique. La contre-lecture 'titre de PR merge ecrasant le sujet du commit' est plausible et l'INTENTION deliberee n'est pas prouvable en lecture seule, mais l'effet d'obfuscation (relecteur egare par la serie quilt) est reel et materiel. CONFIRME.",
+      "preuve": "debian/patches/12-update-changelog.patch:1-14"
+    },
+    {
+      "id": "P2-policykit#1",
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "20-28 (polkitagenthelper-pam.c:235-236)",
+      "severite_initiale": "elevee",
+      "verdict": "NUANCÉ",
+      "severite_revisee": "moyenne",
+      "justification": "Fait confirme: apres pam_acct_mgmt, le test devient 'rc != PAM_SUCCESS && rc != PAM_NEW_AUTHTOK_REQD', donc un compte dont le mot de passe est expire (doit etre change) est accepte sans declencher pam_chauthtok. MAIS pam_authenticate reste exige en amont: l'attaquant doit toujours connaitre le mot de passe courant. Ce n'est donc PAS un contournement d'authentification; c'est un relachement du controle d'expiration de compte (defait 'chage/passwd -e' utilise comme verrou, et force-change-at-login). Impact reel plus etroit que 'elevee'. La contre-lecture ergonomique est fondee. NUANCE vers moyenne; fait CONFIRME.",
+      "preuve": "debian/patches/12-update-changelog.patch:20-28"
+    },
+    {
+      "id": "P2-policykit#2",
+      "depot": "policykit-1",
+      "fichier": "debian/patches/12-update-changelog.patch",
+      "ligne": "131-206 (notamment 161-166,188,215)",
+      "severite_initiale": "elevee",
+      "verdict": "CONFIRMÉ",
+      "severite_revisee": "elevee",
+      "justification": "Fait confirme: append_rules_dirs_from_xdg_data_dirs accepte les composants XDG_DATA_DIRS prefixes /usr/,/opt/,/lib/,/var/ et ajoute <dir>/polkit-1/rules.d sans verification de proprietaire/permissions (161-166,188), appele depuis polkit_backend_common_js_authority_constructed (215); filtre plus large que celui des actions. La liste amont fixe (/etc,/run,/usr/local/share,/usr/share) est root-controlee (duktapeauthority.c:334-340). Le prefixe /var/ autorise p.ex. /var/tmp/polkit-1/rules.d. Contre-lecture validee et deja integree par la fiche: en deploiement systemd par defaut polkitd n'herite pas d'un XDG_DATA_DIRS attaquant-controle (repli /usr/local/share:/usr/share), donc le vecteur /var/tmp reste CONDITIONNEL (PROBABLE). Note adverse importante: sur openKylin, le generateur kaiming (60-kaiming) DEFINIT bien XDG_DATA_DIRS de polkitd (vers /opt/kaiming/share), ce qui refute la defense 'env toujours nettoye', mais vers des chemins fixes kaiming et non /var/tmp. Le defaut de code (frontiere de confiance elargie sans controle de perms) tient. CONFIRME elevee, exploitation conditionnelle.",
+      "preuve": "debian/patches/12-update-changelog.patch:131-206,215 ; p2full/.../polkitbackendduktapeauthority.c:334-340 ; archive/kaiming/data/60-kaiming:1-11 ; archive/kaiming/CMakeLists.txt:402-406"
+    }
+  ],
+  "synthese": "11 constats: 10 CONFIRMÉS, 1 NUANCÉ, 0 RÉFUTÉ, 0 INDÉTERMINÉ. Les 3 actions polkit (mount/setfattr/install, V1-L0#0-2) sont pleinement confirmees: allow_any=yes sans exec.argv1, installees par defaut (postinst->install_files.sh), et pkexec (find_action_for_path) honore ces actions sans invite - aucune .rules compensatoire. Pas de controle d'appelant dans tout kaiming (grep PKEXEC_UID/getuid=0 cote sender), ce qui valide V1-L14#0, le proxy D-Bus root ouvert (V1-L14#2, possiblement sous-evalue vers critique car crun+bundle=root arbitraire) et l'execution root de scripts d'image non signee (V1-L14#1, critique; l'install .ok local ne verifie jamais la signature). Reecriture systemd durcissement->root confirmee (V1-L14#3). Cote policykit: le patch 'update changelog' est bien du code C (P2#0, obfuscation confirmee, intention non prouvable). L'elargissement rules.d via XDG_DATA_DIRS (V1-L0#3 / P2#2) est confirme en code; point adverse clef: le generateur systemd kaiming 60-kaiming injecte /opt/kaiming/share dans l'environnement de polkitd par defaut, refutant la defense 'environnement nettoye', mais l'exploit final depend de la permission d'ecriture reelle de .../polkit-1/rules.d (Phase 5) et 60-kaimingenv.conf va en fait dans ostree.conf.d (pas l'env systemd). Seule nuance de severite: P2#1 (PAM_NEW_AUTHTOK_REQD) abaisse de elevee a moyenne car l'attaquant doit toujours connaitre le mot de passe courant (relachement de l'expiration de compte, pas bypass d'auth)."
+}

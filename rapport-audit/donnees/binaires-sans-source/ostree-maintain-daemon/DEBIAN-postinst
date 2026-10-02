@@ -1,0 +1,40 @@
+#!/bin/bash
+CONF_FILE="/ostree/pkgs/system-ovl.conf"
+TMP_FILE="/tmp/MaintainMode.txt"
+
+if [ -f "$TMP_FILE" ]; then
+    # 辅助函数：如果值存在且非空则更新配置
+    update_config_if_set() {
+        local key="$1"
+        local value
+        value=$(grep "^$key=" "$TMP_FILE" | cut -d= -f2-)
+        # 检查值是否非空
+        if [ -n "$value" ]; then
+            sed -i "s|^$key=.*|$key=$value|" "$CONF_FILE"
+        fi
+    }
+
+    # 更新每个配置项（仅当临时文件中的值非空时）
+    update_config_if_set "Mode"
+    update_config_if_set "NextMode"
+    update_config_if_set "RealtimeMaintain"
+    update_config_if_set "MaxCommitNumberInRepo"
+    update_config_if_set "fontSize"
+    update_config_if_set "fontColor"
+    update_config_if_set "fontPos"
+    update_config_if_set "save_maintain_data"
+    update_config_if_set "ShutdownMaxBlockSecond"
+fi
+
+update-initramfs -u
+systemctl enable ostree-maintain-daemon.service
+systemctl start  ostree-maintain-daemon.service
+systemctl enable ostree-logfile-prepare.service
+
+##设置安全标记，使其在更新升级时可操作安全自保护文件
+setfattr -n  security.ksaf -v "0sRyQxxsHONJXEyxpGkc5uIUckMcbBzjSVAAAAAAAAAAAHAAAAhA==" /etc/ostree/scripts/post-deploy/mm-upgrade 
+
+# 更新动态库缓存（libostreemode 库由 CMake install 安装）
+if [ -f /usr/lib/ostreemode/libostreemode.so.1 ]; then
+    ldconfig /usr/lib/ostreemode
+fi

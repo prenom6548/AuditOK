@@ -1,0 +1,704 @@
+{
+ "lot": "V3-L4-ukui-sans-surface",
+ "composants": [
+  "libkylin-nm-base",
+  "qt5-ukui-platformtheme",
+  "ukui-app-widget",
+  "ukui-clock",
+  "ukui-file-metadata",
+  "ukui-globaltheme",
+  "ukui-interface",
+  "ukui-menu-extensions",
+  "ukui-quick",
+  "ukui-system-monitor",
+  "ukui-touch-settings-plugin",
+  "peony-print-pictures"
+ ],
+ "empreintes": {
+  "archive/libkylin-nm-base": "1740e542e525fb107fba130089664bb17d9f2962f297f1b0475a7d2d9619b8e2",
+  "archive/qt5-ukui-platformtheme": "54ade8c0bec57e9558db69f359405a05ca1b749c7f78492d90c8cac6102a5796",
+  "archive/ukui-app-widget": "775fa38fba5a20d7f075d8302ab812249b0d8cbd4154d0a2e8ffc06a897bfd90",
+  "archive/ukui-clock": "0c5a70abc10729ad4188b39b98e2283933d098dcb5ec2cd985b85cf9a303aeed",
+  "archive/ukui-file-metadata": "175e4b93fd6a1880d86cbbcfaed79a53e68e3b548b70904f037a3498ecb2a02e",
+  "archive/ukui-globaltheme": "9b02920a6fd788cba364323923db4277fdfe4839d59b1ba28ee8b51737780fb6",
+  "archive/ukui-interface": "e235eaabf40e022d9996cfee434ec92c4da442430b3acaa31fd0ffe78b71790d",
+  "archive/ukui-menu-extensions": "444907568802f522ff5ae7c29c06cb093278855de4c4a533d140e76d8ccbd8b4",
+  "archive/ukui-quick": "33d3bb03cdee9c233a97d9f67c2931c002ca077ee601b04bdd2f7bb7015db5a2",
+  "archive/ukui-system-monitor": "8c164a23fff3f01f1c6c41cf0690b8acb11085ab89c24bb470ee48c06356c30d",
+  "archive/ukui-touch-settings-plugin": "c2fa3cfcf827fc143acaea3c1e85abbcf47294176a4032440229353776c7800c",
+  "archive/peony-print-pictures": "eb2f33695d138660cd9fe21d0e57e7441730fca4339581fd18402b919b7e2ff3",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "ukui-system-monitor",
+   "fichier": "src/main.cpp",
+   "ligne": "105-119 (+ debian/ukui-system-monitor.postinst:8)",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "qputenv(\"QT_QPA_PLATFORMTHEME\",QByteArray(\"ukui\")); ... registerSignals(); initUkuiLog4qt(\"ukui-system-monitor\"); ... QtSingleApplication app(id,argc,argv);",
+   "explication": "Vecteur d'exploitation de la surface privilégiée du point suivant. Le binaire (cap_net_raw,cap_dac_read_search+ep posées par le postinst) ne nettoie aucune variable d'environnement avant d'instancier QApplication et ne réduit jamais ses capacités : il force seulement le nom du thème « ukui », qui est lui-même recherché dans les chemins de greffons Qt. Pour un binaire à capacités fichier, le noyau positionne AT_SECURE et glibc ignore LD_PRELOAD/LD_LIBRARY_PATH, mais Qt 5 lit QT_PLUGIN_PATH, QT_QPA_PLATFORM_PLUGIN_PATH, QML2_IMPORT_PATH, QT_STYLE_OVERRIDE, QT_IM_MODULE sans contrôle de ce type (comportement amont connu, NON vérifiable dans le corpus : qtbase-opensource-src n'y figure que par debian/, et aucun de ses 57 correctifs ne touche ces variables). Ce qui manque pour CONSTATÉ : confirmation du comportement de la build Qt 5.15.10+dfsg-3ok2.18 et présence effective de l'attribut security.capability sur /usr/bin/ukui-system-monitor dans l'image installée.",
+   "registre": "PROBABLE",
+   "scenario": "Un utilisateur local sans privilège place un greffon Qt (clé « ukui » de type platformthemes, ou style/imageformats/platforminputcontexts) dans un répertoire qu'il désigne par QT_PLUGIN_PATH puis lance /usr/bin/ukui-system-monitor (installé par défaut, exécutable par tous). Le constructeur du greffon s'exécute avec cap_dac_read_search effective : lecture de /etc/shadow, des clés et documents des autres comptes (y compris via open_by_handle_at) et capture brute du trafic de l'hôte (cap_net_raw). Élévation locale en lecture arbitraire.",
+   "contre_lecture": "Si la build Qt de la distribution ignore ces variables lorsque AT_SECURE est positionné, ou si l'image livrée ne conserve pas les xattr (casper/squashfs, installateur), le vecteur tombe ; le modèle « moniteur réseau par processus doté de cap_net_raw » est courant (nethogs) et les capacités n'accordent ni écriture ni root complet. À confirmer en Phase 3 (getcap sur l'ISO installée, essai dynamique en VM)."
+  },
+  {
+   "depot": "ukui-system-monitor",
+   "fichier": "debian/ukui-system-monitor.postinst",
+   "ligne": "5-18",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "if setcap cap_net_raw,cap_dac_read_search+ep /usr/bin/ukui-system-monitor;then chmod u-s /usr/bin/ukui-system-monitor else echo \"Setcap failed, falling back to setuid\" >&2 chmod u+s /usr/bin/ukui-system-monitor fi",
+   "explication": "SURFACE PRIVILÉGIÉE CONSTATÉE, contraire à l'hypothèse du lot (« sans surface privilégiée ») : le postinst (exécuté en root) dote un binaire GUI complet (Qt5/KF5, libpcap, 13 bibliothèques kysdk, ukui-log4qt, thème ukui) des capacités fichier cap_net_raw et cap_dac_read_search en effectif+permis, ou à défaut le rend setuid root (l.11-16), set -e n'étant placé qu'après ce bloc (l.19). libcap2-bin est en Depends (debian/control:47) : la voie normale est celle des capacités. Aucun code de réduction de privilèges dans src/ (recherche cap_set_proc, capng, prctl(PR_*), setSetuidAllowed : aucune occurrence) : les capacités restent effectives dans tous les threads et pour tout le code chargé pendant toute la vie du processus. Usage fonctionnel : capture libpcap (copie de nethogs, src/procnet-monitor) et lecture de /proc/<pid>/fd des processus d'autres utilisateurs. Le binaire est aussi lancé depuis l'écran verrouillé en mode outils de session (cf. V2-L1) et figure dans la liste blanche d'appelants de com.kylin.ProcessManagerDaemon (fiche Phase 0 B07).",
+   "registre": "CONSTATÉ",
+   "scenario": "Toute exécution de code dans ce processus (greffon chargé, cf. point précédent ; ou corruption mémoire via le décodage des trames capturées ou des fichiers .desktop/configuration lus) hérite d'un droit de lecture sur tous les fichiers du système et de la capture réseau brute.",
+   "contre_lecture": "Choix de conception courant pour un moniteur affichant le débit par processus ; cap_dac_read_search est moins qu'un setuid root ; le noyau rend le processus non « dumpable » (pas de ptrace par l'utilisateur) et glibc neutralise LD_PRELOAD."
+  },
+  {
+   "depot": "ukui-system-monitor",
+   "fichier": "src/main.cpp",
+   "ligne": "35-69, 113, 119 (+ debian/ukui-system-monitor.postinst:11-16)",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "snprintf(path, BUFF_SIZE, \"/ukui_sysmon_crash.log\"); FILE *fp = fopen(path,\"a+\"); ... initUkuiLog4qt(\"ukui-system-monitor\"); ... QtSingleApplication app(id,argc,argv);",
+   "explication": "Cas du repli setuid root (setcap absent ou en échec, p.ex. système de fichiers sans xattr) : le code exécuté AVANT QApplication tourne avec euid 0. initUkuiLog4qt (bibliothèque ukui-interface, même lot) construit le chemin du journal depuis $HOME (ukui-logconfigurator.cpp:162-173), crée le répertoire parent et ouvre ~/.log/ukui-system-monitor.log en ajout en suivant les liens symboliques (Log4Qt fileappender.cpp:233-256, pas d'O_NOFOLLOW) ; le motif de mise en forme des lignes vient de GSettings org.ukui.ukui-log4qt (ukui-logconfigurator.cpp:318-321), donc de la configuration de l'utilisateur. Qt 5 doit ensuite avorter (aucun appel à setSetuidAllowed), le message FATAL étant écrit par Log4Qt, puis le gestionnaire SIGABRT écrit /ukui_sysmon_crash.log (racine du système) en root avec des enregistrements de 1024 octets (l.44-61, fonctions non async-signal-safe ; SIGCHLD ignoré globalement l.73). Registre PROBABLE : comportement setuid de Qt/glib/dconf non vérifiable dans le corpus.",
+   "registre": "PROBABLE",
+   "scenario": "Sur un système où le repli setuid s'est appliqué, l'utilisateur exporte HOME vers un répertoire qu'il contrôle, y crée .log/ukui-system-monitor.log en lien symbolique vers un fichier système, fixe un motif de conversion GSettings contenant le texte voulu, puis lance le binaire : root ajoute ce texte au fichier ciblé (écriture arbitraire en ajout → élévation de privilèges).",
+   "contre_lecture": "libcap2-bin est une dépendance déclarée, donc setcap est normalement présent et réussit ; le repli ne concerne que des cas marginaux (FS sans xattr). L'écriture effective avant l'abandon de Qt et la lecture de la configuration dconf de l'utilisateur dans un processus setuid restent à démontrer."
+  },
+  {
+   "depot": "libkylin-nm-base",
+   "fichier": "kylin-keyring/kylin-agent/kylinsecretagent.cpp",
+   "ligne": "232, 325, 387, 497, 558, 646, 774-779",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "qDebug() << LOG_FLAG << \"password:\" << password; ... qDebug() << LOG_FLAG << \"vpn password:\" << newPassword ; ... << \"psk key\" << secretKey << \"psk secret\" << secretValue;",
+   "explication": "L'agent de secrets NetworkManager de la bibliothèque installée libkylin-keyring.so émet en clair sur le canal de débogage Qt, sans condition (g_testModFlag=0, l.43, ne protège que la ligne précédente), les secrets saisis ou enregistrés : PSK/WEP/LEAP Wi-Fi, mot de passe 802.1X, mot de passe de clé privée TLS, mot de passe VPN, et chaque secret écrit dans le trousseau (saveOneSecret). kylin-keyring.pro ne définit pas QT_NO_DEBUG_OUTPUT. Persistance : dépend du processus hôte. Les hôtes UKUI utilisant ukui-log4qt filtrent DEBUG par défaut (schéma org.ukui.log4qt : log4j-rootlogger = \"INFO,daily\") ; les secrets ne sont donc écrits dans ~/.log/<app>.log que si le niveau DEBUG est activé (diagnostic) ou si l'hôte laisse stderr persister. Seul consommateur trouvé : kylin-nm-plugin (wlanconnect.pro:27 -lkylin-keyring) qui compile aussi sa propre copie de l'agent (où « vpn password » et « psk secret » restent actifs, hors lot).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un administrateur active le niveau DEBUG pour diagnostiquer le réseau ; le mot de passe Wi-Fi/VPN suivant est écrit en clair dans ~/.log/ukui-control-center.log (mode 0644 par défaut) et peut être collecté par un outil de recueil de journaux.",
+   "contre_lecture": "Journalisation de mise au point restée en production, sans transmission ; filtrée par défaut ; la copie exécutée en pratique est probablement celle de kylin-nm-plugin."
+  },
+  {
+   "depot": "ukui-system-monitor",
+   "fichier": "src/procnet-monitor/libnethogs.cpp",
+   "ligne": "109-131 (+ src/process/process_list.cpp:700-701 ; src/procnet-monitor/decpcap.c:165-247)",
+   "type": "reseau",
+   "severite": "faible",
+   "extrait": "bool promiscuous = false; ... dp_handle *newhandle = dp_open_live(current_dev->name, BUFSIZ, promiscuous, to_ms, filter, errbuf);",
+   "explication": "Dès la construction de ProcessList (process_list.cpp:700-701, au démarrage de l'interface), un thread ouvre une capture libpcap sur toutes les interfaces (non promiscuous, sans filtre BPF, snaplen BUFSIZ=8192) pour attribuer le débit aux processus. Les en-têtes Ethernet/PPP/SLL/IPv4/IPv6/TCP/UDP sont décodés sans vérifier header->caplen ni l'IHL (decpcap.c:165-247, nethogs.cpp:112-235) : lectures au-delà des octets capturés possibles sur trames courtes, dans un processus à capacités, sur des données émises par des tiers du réseau. Lectures seules (adresses, ports, longueurs) ; aucune charge utile conservée, rien n'est émis. Défauts annexes du code tiers : boucle infinie si getLocal échoue (l.117-122, continue sans avancer) ; indexation erronée stats[i]-> dans nethogs_packet_stats (l.367-376, fonction non appelée).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-file-metadata",
+   "fichier": "src/zip-reader.cpp",
+   "ligne": "376-399 (+ src/extractors/office2007-extractor.cpp:117)",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "if (entrySize > 0 && entrySize <= static_cast<qint64>(std::numeric_limits<int>::max())) { data->reserve(static_cast<int>(entrySize)); } while (true) { const QByteArray chunk = device->read(kReadBufferSize); ... data->append(chunk);",
+   "explication": "readEntry réserve la taille décompressée DÉCLARÉE par l'archive (jusqu'à 2 Gio) puis accumule sans plafond le contenu de l'entrée (docProps/*.xml, miniature OOXML, OFD.xml, _meta/meta.xml). Aucune limite de taille ni de taux de compression dans la bibliothèque (à la différence du parseur Lottie d'ukui-quick qui en impose). Un fichier OOXML/OFD/UOF piégé (bombe de décompression ou taille annoncée fausse) épuise la mémoire ou fait avorter (qBadAlloc) le processus hôte (indexeur de recherche, gestionnaire de fichiers) lors d'une extraction automatique : déni de service de session. Le reste du lecteur (minizip système, champ extra 0x7075 borné l.163-200) est correct ; les sections lues du parseur OLE binary-parser.cpp (dérivé d'antiword) portent des contrôles de bornes explicites (l.4606-4645, 4727-4737, 4851-4885).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-quick",
+   "fichier": "platform/ukui/heartbeat/keep-alive-client.cpp",
+   "ligne": "89-120, 180-216",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "return QStringLiteral(\"/tmp/@%1_%2.sock\").arg(clientName, QString::number(getpid())); ... const QString serverPath = QStringLiteral(\"@ukui-session-%1.sock\").arg(getuid());",
+   "explication": "Client de battement de cœur (libukui-quick-platform, chargé par les composants de session) : adresse serveur dans l'espace de noms abstrait AF_UNIX (aucune permission de fichier : tout compte local peut s'y lier avant ukui-session ou y écrire) ; socket client à nom prévisible dans /tmp partagé, précédé d'un unlink() (l.187) ; datagrammes reçus sans contrôle de l'émetteur (recvfrom l.98, adresse source ignorée, pas de SO_PEERCRED). Un autre compte peut usurper le serveur (et recevoir uid/pid/nom de processus envoyés à l'enregistrement, l.309-311), injecter RegisterResponse/StatusQuery, ou empêcher le bind en pré-créant /tmp/@<nom>_<pid>.sock. Impact limité à la supervision de session (faux état, déni de service).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony-print-pictures",
+   "fichier": "3rdparty/kylinimagecodec/image_save/savemovie.cpp",
+   "ligne": "21, 35-43, 72-111",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "const QString filePath = \"/tmp/.kylin-image-codec/\"; ... QString cmd = \"apngasm \"; cmd += ster + tmpFilePath + ster; ... QString deleteTmpImages = \"rm -rf \" + ster + tmpDir + ster;",
+   "explication": "Bibliothèque statique liée à kylin-photo-printer : un initialiseur statique crée un répertoire au nom fixe /tmp/.kylin-image-codec/ (sans vérifier propriétaire ni type) ; SaveMovie y écrit des images puis lance apngasm, apng2gif, mv et rm -rf via des chaînes de commande concaténées avec guillemets (QProcess::start(QString)), le nom du fichier de destination pouvant casser le découpage des arguments. Squattage du répertoire possible par un autre compte. SaveMovie n'est appelé par aucun code de kylin-photo-printer (seuls loadImageToMat/converFormat) ; l'exécution de l'initialiseur dépend de l'édition de liens de l'objet savemovie.o (non vérifiée).",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "peony-print-pictures",
+   "fichier": "kylin-photo-printer.desktop.in",
+   "ligne": "7",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "X-KDE-Wayland-Interfaces=org_kde_plasma_window_management,org_kde_plasma_activation_feedback,org_kde_kwin_keystate,org_kde_kwin_fake_input,zkde_screencast_unstable_v1",
+   "explication": "L'application d'impression déclare des interfaces Wayland restreintes (injection d'entrées fake_input, capture d'écran screencast, gestion des fenêtres) qu'aucun code de l'arbre n'utilise (recherche négative). Sous un compositeur qui honore cette clé (KWin), une compromission de kylin-photo-printer (décodage d'images choisies par l'utilisateur via FreeImage, stb_image, giflib, OpenCV : image_load.cpp:31-137) donnerait capture d'écran et injection d'entrées. Moindre privilège non respecté. Effet réel sous le compositeur UKUI non vérifié.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony-print-pictures",
+   "fichier": "3rdparty/kylinimagecodec/image_load/image_load.cpp",
+   "ligne": "31-55, 81-96, 110-137, 201, 263-288",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "FIMULTIBITMAP *pTIF = FreeImage_OpenMultiBitmap(fif, path.toLocal8Bit().data(), false, true, true, 0); ... unsigned char *data = stbi_load(path.toLocal8Bit().data(), &w, &h, &a, 0); ... mat = imread(path.toLocal8Bit().data(), modes);",
+   "explication": "Les images sélectionnées dans peony (fichiers non fiables, p.ex. téléchargés) sont décodées par FreeImage (TIFF et formats « m_freeimageSupportFormats »), stb_image (TGA), giflib et OpenCV, choisis d'après la seule extension. FreeImage n'est plus maintenu en amont et cumule des vulnérabilités publiques de décodage ; l'exposition dépend des versions et correctifs des paquets de la distribution (non vérifiés). Déclenchement : action « imprimer » de l'utilisateur.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "ukui-interface",
+   "fichier": "src/log4qt/ukui-logrolling.cpp",
+   "ligne": "204 (+ src/log4qt/ukui-logconfigurator.cpp:162-173)",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "process.start(\"sh\", QStringList() << \"-c\" << QString(\"> %1\").arg(filePath));",
+   "explication": "Vidage du journal courant par un shell avec chemin non protégé (aucune mise entre guillemets), le chemin étant $HOME + \"/.log/\" + nom d'application. Déclenché quand maxfilesize (défaut 512 Mio) est dépassé. Injection de commande si HOME contient des métacaractères : sans effet en usage normal (HOME de l'utilisateur), mais aggravant dans un processus privilégié dont l'appelant contrôle l'environnement (cas du repli setuid d'ukui-system-monitor). La bibliothèque est liée par des services root (fiche Phase 0), où HOME n'est pas contrôlé par un tiers.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-interface",
+   "fichier": "src/common/kylin-com4c.c",
+   "ligne": "222-242 (+ src/common/kylin-com4cxx.cpp:229-245)",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "char *cmdStr = \"systemd-detect-virt\"; FILE *pipeLine = popen(cmdStr,\"r\");",
+   "explication": "API publique de libukui-com4c/com4cxx (installée) : kdk_get_virtenv/KDKGetVirtEnv lancent systemd-detect-virt via /bin/sh et résolution PATH. Sans conséquence pour un appelant ordinaire ; un appelant privilégié héritant d'un PATH contrôlé exécuterait un binaire tiers. Les autres fonctions lisent /etc/lsb-release, /etc/os-release, /etc/.kyinfo (iniparser) et /proc/cpuinfo avec des tampons bornés (snprintf, s_strcount).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-system-monitor",
+   "fichier": "src/QtSingleApplication/qtlocalpeer.cpp",
+   "ligne": "93-128",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "socketName += QLatin1Char('-') + QString::number(::getuid(), 16); ... QString lockName = QDir(QDir::tempPath()).absolutePath() + QLatin1Char('/') + socketName + QLatin1String(\"-lockfile\"); lockFile.open(QIODevice::ReadWrite);",
+   "explication": "Copie tierce de QtSingleApplication : verrou et socket locale à nom prévisible dans /tmp partagé ($TMPDIR). Un autre compte peut pré-créer le verrou ou la socket au nom de la victime et empêcher le lancement du moniteur (déni de service) ou recevoir le message d'activation (argument ou chemin de l'application). Même code dans ukui-app-widget (démon non installé).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-touch-settings-plugin",
+   "fichier": "debian/ukui-touch-settings-plugin.preinst",
+   "ligne": "1-6",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "path=\"/usr/lib/`/usr/bin/dpkg-architecture -qDEB_TARGET_MULTIARCH`/ukui-control-center/libtouchpad.so\" dpkg-divert --package ukui-touch-settings-plugin --rename --divert \"$path\"\".old\" --add $path",
+   "explication": "Script root de pré-installation : détourne le greffon libtouchpad.so d'ukui-control-center au profit de celui du paquet. Aucun postrm ne retire le détournement (debian/ ne contient que ce preinst) : après désinstallation, le greffon d'origine reste renommé en .old. Dépend de dpkg-architecture (paquet dpkg-dev) à l'exécution ; $path non protégé. Seule action root de l'arbre ; aucun service, polkit ni unité systemd.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-app-widget",
+   "fichier": "ukui-appwidget-test/appwidgetprovider-clock-demo/appwidgetprovider-clock-demo/mainwindow.cpp",
+   "ligne": "143-147",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "QString qstrDateTime = QString(\"/bin/sh -c \\\"echo \\\"%1\\\" | sudo -S date %2\\\"\").arg(\"<masqué>\"/*电脑密码*/).arg(m_qstrDateTime); ... QProcess::execute(qstrDateTime);",
+   "explication": "Mot de passe sudo en dur (valeur masquée) transmis par /bin/sh à sudo -S pour régler l'heure. Code de démonstration du paquet ukui-appwidget-test, absent de l'ISO ; mauvaise pratique publiée dans le source.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-menu-extensions",
+   "fichier": "recent-file/event-track.cpp",
+   "ligne": "36-55 (+ recent-file/recent-file-extension.cpp:492, 500, 532)",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "KTrackData* data = kdk_dia_data_init(KEVENTSOURCE_DESKTOP, KEVENT_CUSTOM); kdk_dia_upload_default(data, event.toUtf8().data(), page.toUtf8().data());",
+   "explication": "Seule télémétrie du lot installée : le greffon ukui-menu-recent-file envoie à libkysdk-datacollect (→ kylin-daq → datareporting.openkylin.top, cf. V1-L1) les événements fixes « remove_recent_file » et « clear_recent_files » (page « RightClickMenu ») lors de ces actions utilisateur ; aucun nom ni chemin de fichier. Le SDK y ajoute machine-id, IP, MAC et identifiants d'activation (V1-L1, sévérité portée par ce lot). sendClickEvent/sendSearchEvent ne sont appelés que par les tests.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-clock",
+   "fichier": "kabase/buriedpoint.hpp",
+   "ligne": "243-315",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "static bool functionBuriedPoint(AppName packageName, PT point) { ... KBuriedPoint pt; ... if (kdk_buried_point(appName, messageType, &pt, 1)) {",
+   "explication": "En-tête de « points d'enfouissement » (kysdk-diagnostics) présent dans l'arbre mais inclus par aucun fichier et non lié (ukui-clock.pro ne référence ni kysdk-diagnostics ni kysdk-datacollect) : aucune télémétrie active dans ukui-clock. L'application expose en revanche sur le bus de SESSION des méthodes CRUD d'alarmes (org.kylin.dbus.ukuiclock, clock.cpp:754-756, 4931-4978) et installe un fichier d'activation D-Bus pointant vers /opt/kaiming-tools/bin/kaiming (cf. Phase 0).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkylin-nm-base",
+   "fichier": "kylin-keyring/kylin-keyring",
+   "ligne": "n.a. (binaire, sha256 06050e866fee7ef39ab77cd47e1cd6859a82d908e6dff04426d80b5a67bd960a)",
+   "type": "obfuscation",
+   "severite": "informationnelle",
+   "extrait": "ELF 64-bit LSB pie executable, x86-64, with debug_info, not stripped ; GCC: (Ubuntu 9.3.0-10kylin2) 9.3.0 ; kylin-agent/kylinagentobject.cpp ; /usr/share/kylin-keyring/",
+   "explication": "Exécutable versionné (3,2 Mo) à côté de kylin-keyring.pro. Ce n'est pas la cible construite (TEMPLATE=lib → libkylin-keyring.so) et il ne figure dans aucune règle INSTALLS : non installé. Il s'agit d'un ancien artefact de compilation de l'agent (chaîne GCC 9.3, fichier source kylinagentobject.cpp absent de l'arbre) : non reproductible depuis ces sources. Aucune chaîne réseau (URL, socket) relevée par strings.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-interface",
+   "fichier": "tests/auto_test.sh",
+   "ligne": "26-43",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "curl --insecure -X POST -F \"file=@/$(pwd)/result.zip\" -F \"package=ukui-control-center\" -F \"username=hesisheng\" $URL",
+   "explication": "Script d'intégration continue (non installé) : téléverse un rapport de couverture vers une URL passée en argument, vérification TLS désactivée. Aucun flux à l'exécution sur l'ISO.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-menu-extensions",
+   "fichier": "ernie-bot/src/chat.cpp",
+   "ligne": "31-33, 152-154, 187-192 (+ ernie-bot/src/session-manager.cpp:36-60)",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "static const QString GET_TOKEN_URL(\"https://aip.baidubce.com/oauth/2.0/token?grant_type=client_credentials\"); ... QNetworkRequest request(QUrl(GET_TOKEN_URL + \"&client_id=\" + clientId + \"&client_secret=\" + clientSecret));",
+   "explication": "Extension « ernie-bot » (paquet ukui-menu-ernie-bot, NON installé sur l'ISO) : client HTTPS vers aip.baidubce.com (Baidu Wenxin) avec la vérification TLS par défaut de Qt (aucun ignoreSslErrors). Clé et secret API fournis par l'utilisateur, stockés en clair dans ~/.config/ukui-menu/ai-assistant/ai-assistant.conf et transmis en paramètres d'URL ; messages de conversation envoyés au service. Aucune clé en dur.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "qt5-ukui-platformtheme",
+   "fichier": "qt5-ukui-filedialog/kyfiledialog.cpp",
+   "ligne": "3403-3407, 3499-3510",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "QDBusInterface iface (\"com.kylin.file.system.fuse\",\"/com/kylin/file/system/fuse\",\"com.kylin.file.system.fuse\",QDBusConnection::systemBus()); ... iface.call(\"SetSetings\", \"true\", dir.path().append(\"/扩展\"));",
+   "explication": "Le dialogue de fichiers Qt (chargé dans toutes les applications Qt5) appelle sur le bus SYSTÈME le service com.kylin.file.system.fuse (gestion des noms longs) avec un chemin choisi côté utilisateur. Interface root hors lot, à couvrir par le lot du service FUSE. Côté client : aucun privilège.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "qt5-ukui-platformtheme",
+   "fichier": "ukui-qml-style-helper/controls/kyquickDialog.cpp",
+   "ligne": "64-90, 121-131",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "QString directoryPath = \"/usr/lib/kylin-os-manager/bin/service-support-mini\"; ... arguments << \"-mode=1\" << \"-exe=\" + processName; ... feedbackProcess.startDetached(directoryPath, arguments);",
+   "explication": "Bouton « retour/assistance » des dialogues QML : sur clic, lance l'outil d'assistance de kylin-os-manager avec le nom du processus courant (lu dans /proc/self/cmdline) ; « support » ouvre mailto:support@kylinos.cn. Action explicite de l'utilisateur ; le devenir des données dans service-support-mini est hors lot.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-quick",
+   "fichier": "platform/ukui/function-control.cpp",
+   "ligne": "177-190",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "d->m_interface = new QDBusInterface(QStringLiteral(\"com.kylin.ukui.SettingsDaemon\"), QStringLiteral(\"/securityConfig\"), ... QDBusConnection::systemBus(), d); ... connect(d->m_interface, SIGNAL(SecurityExit()), d, SLOT(onSecurityExit()));",
+   "explication": "Les composants UKUI bâtis sur ukui-quick lisent une configuration de contrôle des fonctions publiée par un démon système (com.kylin.ukui.SettingsDaemon /securityConfig) et réagissent à un signal SecurityExit : mécanisme de restriction administrable, source hors lot. Le lanceur (app-launcher.cpp) délègue l'exécution à com.kylin.ProcessManager sur le bus de session ; l'URL https://www.kylinos.cn (app-launcher.cpp:43) n'est qu'un exemple de documentation.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-quick",
+   "fichier": "platform/ukui/lottie/dot-lottie-parser.cpp",
+   "ligne": "300-330, 410-420, 698-707",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "QProcessEnvironment environment = QProcessEnvironment::systemEnvironment(); environment.remove(QStringLiteral(\"UNZIP\")); ... process.setProgram(executable); process.setArguments(arguments);",
+   "explication": "Bonne pratique relevée : décompression des animations .lottie par /usr/bin/unzip (chemin fixe, findExecutable limité à /usr/bin et /bin), environnement assaini, arguments sans shell, délai maximal, validation préalable des chemins (../, absolus), du nombre, de la taille et du taux de compression avant extraction (l.420-540), publication atomique. Contraste avec zip-reader.cpp d'ukui-file-metadata.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-system-monitor",
+   "fichier": "src/process/processtableview.cpp",
+   "ligne": "660-735, 895-915 (+ src/service/servicemanager.cpp:357-385 ; src/service/systemd1managerinterface.cpp:115-183)",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "ret = process.execute(QString(\"pkexec --disable-internal-agent %1 -%2 %3\").arg(\"kill\").arg(SIGTERM).arg(selectPid));",
+   "explication": "Les actions privilégiées sur d'autres comptes passent par pkexec (kill, renice : arguments entiers ; systemctl enable/disable : liste d'arguments sans shell) ou par l'API D-Bus de systemd avec autorisation interactive polkit (StartUnit/StopUnit/RestartUnit) : pas d'injection relevée. Défauts mineurs : variable ret non initialisée si aucun outil n'est trouvé (l.676, 716), repli vers gksu/gksudo, « kill »/« renice » résolus via le PATH de l'appelant (affichés dans la demande polkit).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-file-metadata",
+   "fichier": "debian/rules",
+   "ligne": "8 (idem ukui-quick/debian/rules:4, ukui-clock/debian/rules:4, ukui-menu-extensions/debian/rules:8, ukui-touch-settings-plugin/debian/rules:8)",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "#export DEB_BUILD_MAINT_OPTIONS = hardening=+all",
+   "explication": "Cinq paquets compilés du lot (dont ukui-file-metadata, qui analyse des fichiers non fiables) n'activent pas hardening=+all : seuls les drapeaux par défaut de dpkg-buildflags s'appliquent (pas de -z now/bindnow). Les autres (ukui-system-monitor, qt5-ukui-platformtheme, libkylin-nm-base, ukui-interface, ukui-app-widget, peony-print-pictures) l'activent. Les options --coverage d'ukui-quick, ukui-menu-extensions et qt5-ukui-platformtheme ne sont actives qu'en mode test (BUILD_TEST / PLATFORMTHEME_SKIP_TEST) et sont désactivées pour l'empaquetage.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-globaltheme",
+   "fichier": "debian/postinst",
+   "ligne": "1-14",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "TOKEN_DIR=\"/usr/share/config/globaltheme/token\" if [ -d \"$TOKEN_DIR\" ]; then rm -rf \"$TOKEN_DIR\"",
+   "explication": "Seule action root de l'arbre : suppression d'un ancien répertoire de jetons de thème à chemin fixe (migration vers /usr/share/config/themeconfig/token). Pas de set -e ni de #DEBHELPER#. Les QML installés sont générés au build par dtConvert.sh à partir des CSS de l'arbre (le script modifie l'arbre source pendant la configuration, chmod +x compris). Aucun service, polkit ni unité systemd.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-touch-settings-plugin",
+   "fichier": "src/touchscreen-settings/calibration/devicemanager.cpp",
+   "ligne": "81-87",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "QDBusMessage msg = QDBusMessage::createSignal(\"/com/control/center/calibrator\", \"com.control.center.calibrator.interface\", \"calibratorEvent\"); ... QDBusConnection::systemBus().send(msg);",
+   "explication": "Le greffon de calibrage émet un SIGNAL de diffusion sur le bus système ; n'importe quel compte local peut émettre le même signal. Aucun récepteur trouvé dans le corpus (recherche « calibratorEvent ») : à vérifier si un service système l'écoute sans contrôler l'émetteur. Le mappage écran/périphérique passe par xinput avec arguments séparés (devicehelper.cpp:95-101).",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "ukui-menu-recent-file (greffon ukui-menu)",
+   "destination": "D-Bus système com.kylin.daq (via libkysdk-datacollect) -> kylin-daq -> https://datareporting.openkylin.top:30005 (cf. V1-L1)",
+   "protocole": "IPC D-Bus puis HTTPS POST JSON (démon root)",
+   "fichier_ligne": "recent-file/event-track.cpp:36-55 ; recent-file/recent-file-extension.cpp:492, 500, 532",
+   "declencheur": "action utilisateur : « retirer » ou « tout effacer » dans la liste des fichiers récents",
+   "donnees": "nom d'événement fixe (remove_recent_file / clear_recent_files) et page (RightClickMenu) ; aucun nom de fichier ; le SDK ajoute machine-id, IP, MAC, identifiants d'activation (V1-L1)",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "ukui-system-monitor",
+   "destination": "aucune (écoute passive libpcap sur toutes les interfaces, aucune émission)",
+   "protocole": "capture brute (cap_net_raw), non promiscuous, sans filtre",
+   "fichier_ligne": "src/process/process_list.cpp:700-701 ; src/procnet-monitor/libnethogs.cpp:109-131 ; src/procnet-monitor/decpcap.c:338-374",
+   "declencheur": "démarrage de l'interface (construction de ProcessList), jusqu'à la fermeture",
+   "donnees": "en-têtes IP/TCP/UDP (adresses, ports, longueurs) agrégés en débit par processus, en mémoire",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-menu-ernie-bot (NON installé sur l'ISO)",
+   "destination": "https://aip.baidubce.com/oauth/2.0/token ; https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions et .../chat/eb-instant",
+   "protocole": "HTTPS POST (QNetworkAccessManager)",
+   "fichier_ligne": "ernie-bot/src/chat.cpp:31-33, 152-154, 187-192",
+   "declencheur": "saisie par l'utilisateur de ses clés API Baidu puis conversation",
+   "donnees": "client_id/client_secret en paramètres d'URL, jeton d'accès, contenu des messages",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "ukui-system-monitor",
+   "donnee": "liste des processus de tous les utilisateurs (cmdline, uid, état, E/S /proc/<pid>/io, descripteurs /proc/<pid>/fd), débit réseau par processus (pcap), adresses MAC/IP et statistiques des interfaces (kdk_nc_*), informations disques (kdk_get_diskinfo), unités systemd",
+   "fichier_ligne": "src/process/process_list.cpp:869-1140 ; src/procnet-monitor/inode2prog.cpp:185-220 ; src/sysresource/commoninfo.cpp:520 (kdk_nc_get_phymac) ; src/filesystem/filesystemworker.cpp:149-150",
+   "stockage": "mémoire du processus ; réglages d'affichage dans QSettings utilisateur",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "ukui-menu-recent-file",
+   "donnee": "événements d'usage (suppression/effacement des fichiers récents) + identifiants machine ajoutés par le SDK",
+   "fichier_ligne": "recent-file/event-track.cpp:36-55",
+   "stockage": "base kylin-daq /var/cache/kylin-daq/data.db (cf. V1-L1)",
+   "envoi": "datareporting.openkylin.top:30005 via kylin-daq (cf. V1-L1)"
+  },
+  {
+   "composant": "libkylin-nm-base (libkylin-keyring)",
+   "donnee": "secrets réseau en clair (PSK/WEP/LEAP, 802.1X, mot de passe de clé privée, VPN) sur le canal qDebug",
+   "fichier_ligne": "kylin-keyring/kylin-agent/kylinsecretagent.cpp:232, 325, 387, 497, 558, 646, 774-779",
+   "stockage": "selon l'hôte : ~/.log/<app>.log si ukui-log4qt en niveau DEBUG (INFO par défaut, donc filtré) ; stderr sinon",
+   "envoi": "aucun observé"
+  },
+  {
+   "composant": "ukui-interface (ukui-log4qt)",
+   "donnee": "tous les messages Qt (qInfo et plus par défaut) des applications hôtes",
+   "fichier_ligne": "src/log4qt/ukui-logconfigurator.cpp:103-209 ; org.ukui.log4qt.gschema.xml (rootlogger INFO,daily ; maxfilecount 3 ; maxfilesize 512 Mio ; vérification toutes les 3600 s)",
+   "stockage": "~/.log/<application>.log + rotation quotidienne .yyyy-MM-dd, 3 fichiers / 512 Mio par défaut",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "ukui-interface (libukui-com4c/com4cxx)",
+   "donnee": "clés de /etc/.kyinfo, PROJECT_CODENAME, modèle de CPU, environnement de virtualisation (API publique)",
+   "fichier_ligne": "src/common/kylin-com4c.c:143-242 ; src/common/kylin-com4cxx.cpp",
+   "stockage": "aucun (valeur rendue à l'appelant)",
+   "envoi": "aucun par la bibliothèque"
+  },
+  {
+   "composant": "ukui-file-metadata",
+   "donnee": "texte des documents et texte OCR des images (tesseract chi_sim), métadonnées, miniatures",
+   "fichier_ligne": "src/ocr-utils.cpp:49-101 ; src/thumbnail-utils.cpp:66-129",
+   "stockage": "rendu au processus hôte (indexeur) ; miniatures ~/.cache/thumbnails/{normal,large,...}/<md5(uri)>.png ; marqueurs d'échec ~/.cache/OcrCache-0.0/fail/<md5>.txt et ~/.cache/thumbnails/fail/",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "ukui-quick (heartbeat)",
+   "donnee": "uid, pid, nom du processus",
+   "fichier_ligne": "platform/ukui/heartbeat/keep-alive-client.cpp:300-312",
+   "stockage": "aucun",
+   "envoi": "local : socket AF_UNIX abstraite @ukui-session-<uid>.sock"
+  },
+  {
+   "composant": "qt5-ukui-platformtheme (KyQuickDialog)",
+   "donnee": "nom du processus courant",
+   "fichier_ligne": "ukui-qml-style-helper/controls/kyquickDialog.cpp:64-90",
+   "stockage": "aucun",
+   "envoi": "argument de /usr/lib/kylin-os-manager/bin/service-support-mini sur clic « retour » (suite hors lot)"
+  },
+  {
+   "composant": "ukui-clock",
+   "donnee": "alarmes, minuteries, sonneries personnalisées",
+   "fichier_ligne": "connection.h:31-60",
+   "stockage": "SQLite ~/.config/app-ukui-clock/Clock_database_sp2.db",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "ukui-menu-ernie-bot (non installé)",
+   "donnee": "clé et secret API Baidu de l'utilisateur, conversations",
+   "fichier_ligne": "ernie-bot/src/session-manager.cpp:36-60, 101-113",
+   "stockage": "en clair dans ~/.config/ukui-menu/ai-assistant/ai-assistant.conf",
+   "envoi": "aip.baidubce.com (HTTPS)"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/libkylin-nm-base",
+   "fichiers_code_propres": 164,
+   "lignes_code_propres": 20922,
+   "lus_integralement": 3,
+   "lus_partiellement": 2,
+   "pct_fichiers": 1.83,
+   "pct_lignes": 1.84,
+   "pct_fichiers_touches": 3.05,
+   "fichiers_lus": [
+    "kylin-nm.pro",
+    "kylin-keyring/kylin-keyring.pro",
+    "kylin-keyring/kylin-agent/kylinagent.cpp"
+   ],
+   "fichiers_lus_partiellement": [
+    "kylin-keyring/kylin-agent/kylinsecretagent.cpp",
+    "libnm-kylin/libnm-base-kylin/depend/kywirelessconnectoperation.cpp"
+   ],
+   "note": "Tiers exclu : tests/kt-test-utils (cpp-stub). Hors comptage mais examinés : debian/rules, debian/control ; blob ELF kylin-keyring/kylin-keyring caractérisé par file/strings/sha256 (pas d'exécution)."
+  },
+  {
+   "arbre": "archive/qt5-ukui-platformtheme",
+   "fichiers_code_propres": 469,
+   "lignes_code_propres": 112574,
+   "lus_integralement": 2,
+   "lus_partiellement": 5,
+   "pct_fichiers": 0.43,
+   "pct_lignes": 0.68,
+   "pct_fichiers_touches": 1.49,
+   "fichiers_lus": [
+    "qt5-ukui-platformtheme/qt5-ukui-platform-theme.cpp",
+    "CMakeLists.txt"
+   ],
+   "fichiers_lus_partiellement": [
+    "qt5-ukui-filedialog/kyfiledialog.cpp",
+    "qt5-ukui-filedialog/uikyfiledialog.cpp",
+    "qt5-ukui-platformtheme/CMakeLists.txt",
+    "ukui-qml-style-helper/controls/kyquickDialog.cpp",
+    "ukui-styles/qt5-config-style-ukui/ukui-config-style.cpp"
+   ],
+   "note": "Exclu : doxygen/. Comptés bien que dérivés probables de KDE qqc2-desktop-style : ukui-qqc2-style/org.ukui.style/private, ukui-qml-style-helper/private. Hors comptage lu : debian/rules."
+  },
+  {
+   "arbre": "archive/ukui-app-widget",
+   "fichiers_code_propres": 60,
+   "lignes_code_propres": 4671,
+   "lus_integralement": 1,
+   "lus_partiellement": 3,
+   "pct_fichiers": 1.67,
+   "pct_lignes": 8.01,
+   "pct_fichiers_touches": 6.67,
+   "fichiers_lus": [
+    "libukui-app-widget/libukui-appwidget-provider/kappwidgetprovider.cpp"
+   ],
+   "fichiers_lus_partiellement": [
+    "libukui-app-widget/libukui-appwidget-manager/kappwidgetmanager.cpp",
+    "libukui-appwidget-common/kappwidgetcommon.cpp",
+    "ukui-appwidget-test/appwidgetprovider-clock-demo/appwidgetprovider-clock-demo/mainwindow.cpp"
+   ],
+   "note": "Tiers exclu : ukui-appwidget-manager/QtSingleApplication. Seules libukui-appwidget-manager0 et libukui-appwidget-provider0 sont sur l'ISO. Hors comptage lus : debian/*.install, fichiers .service D-Bus de session."
+  },
+  {
+   "arbre": "archive/ukui-clock",
+   "fichiers_code_propres": 102,
+   "lignes_code_propres": 20572,
+   "lus_integralement": 0,
+   "lus_partiellement": 6,
+   "pct_fichiers": 0.0,
+   "pct_lignes": 1.17,
+   "pct_fichiers_touches": 5.88,
+   "fichiers_lus": [],
+   "fichiers_lus_partiellement": [
+    "ClockInterface.h",
+    "clock.cpp",
+    "connection.h",
+    "ukui-clock.pro",
+    "utils.cpp",
+    "verticalscrollapm.cpp"
+   ],
+   "note": "Exclus : cJSON.c/.h et CJsonObject.cpp/.hpp (tiers), ui_*.h (générés). Hors comptage lus : debian/rules, debian/ukui-clock/usr/share/dbus-1/services/org.kylin.dbus.ukuiclock.service. kabase/buriedpoint.hpp examiné par recherche (inclus par aucun fichier)."
+  },
+  {
+   "arbre": "archive/ukui-file-metadata",
+   "fichiers_code_propres": 97,
+   "lignes_code_propres": 19999,
+   "lus_integralement": 4,
+   "lus_partiellement": 4,
+   "pct_fichiers": 4.12,
+   "pct_lignes": 5.89,
+   "pct_fichiers_touches": 8.25,
+   "fichiers_lus": [
+    "src/ocr-utils.cpp",
+    "src/thumbnail.cpp",
+    "src/thumbnail-utils.cpp",
+    "src/extractors/png-extractor.cpp"
+   ],
+   "fichiers_lus_partiellement": [
+    "src/extractors/binary-parser.cpp",
+    "src/extractors/office2007-extractor.cpp",
+    "src/extractors/text-extractor.cpp",
+    "src/zip-reader.cpp"
+   ],
+   "note": "Cœur dérivé de KDE KFileMetaData compté comme propre (fork). Échantillons autotests/samplefiles non comptés (données ; test.AppImage = ELF de test, non installé)."
+  },
+  {
+   "arbre": "archive/ukui-globaltheme",
+   "fichiers_code_propres": 3,
+   "lignes_code_propres": 205,
+   "lus_integralement": 2,
+   "lus_partiellement": 1,
+   "pct_fichiers": 66.67,
+   "pct_lignes": 82.93,
+   "pct_fichiers_touches": 100.0,
+   "fichiers_lus": [
+    "CMakeLists.txt",
+    "globaltheme/CMakeLists.txt"
+   ],
+   "fichiers_lus_partiellement": [
+    "globaltheme/dtConvert.sh"
+   ],
+   "note": "Hors comptage lu : debian/postinst. Données de thème (CSS/YAML) non comptées."
+  },
+  {
+   "arbre": "archive/ukui-interface",
+   "fichiers_code_propres": 31,
+   "lignes_code_propres": 4504,
+   "lus_integralement": 6,
+   "lus_partiellement": 1,
+   "pct_fichiers": 19.35,
+   "pct_lignes": 32.84,
+   "pct_fichiers_touches": 22.58,
+   "fichiers_lus": [
+    "src/log4qt/ukui-log4qt.cpp",
+    "src/log4qt/ukui-logconfigurator.cpp",
+    "src/log4qt/ukui-logrolling.cpp",
+    "src/common/kylin-com4c.c",
+    "src/common/kylin-com4cxx.cpp",
+    "src/common/kylin-ini.c"
+   ],
+   "fichiers_lus_partiellement": [
+    "tests/auto_test.sh"
+   ],
+   "note": "Tiers exclu : src/log4qt/log4qt (Log4Qt 0.3.0, 91 fichiers) dont fileappender.cpp lu partiellement (l.233-280). Hors comptage lus : debian/libukui-log4qt1.postinst, src/log4qt/org.ukui.log4qt.gschema.xml."
+  },
+  {
+   "arbre": "archive/ukui-menu-extensions",
+   "fichiers_code_propres": 48,
+   "lignes_code_propres": 6756,
+   "lus_integralement": 2,
+   "lus_partiellement": 2,
+   "pct_fichiers": 4.17,
+   "pct_lignes": 3.95,
+   "pct_fichiers_touches": 8.33,
+   "fichiers_lus": [
+    "recent-file/event-track.cpp",
+    "CMakeLists.txt"
+   ],
+   "fichiers_lus_partiellement": [
+    "ernie-bot/src/session-manager.cpp",
+    "recent-file/recent-file-extension.cpp"
+   ],
+   "note": "ernie-bot (non installé sur l'ISO) examiné par recherche (chat.cpp)."
+  },
+  {
+   "arbre": "archive/ukui-quick",
+   "fichiers_code_propres": 415,
+   "lignes_code_propres": 102460,
+   "lus_integralement": 0,
+   "lus_partiellement": 5,
+   "pct_fichiers": 0.0,
+   "pct_lignes": 0.51,
+   "pct_fichiers_touches": 1.2,
+   "fichiers_lus": [],
+   "fichiers_lus_partiellement": [
+    "CMakeLists.txt",
+    "platform/ukui/app-launcher.cpp",
+    "platform/ukui/function-control.cpp",
+    "platform/ukui/heartbeat/keep-alive-client.cpp",
+    "platform/ukui/lottie/dot-lottie-parser.cpp"
+   ],
+   "note": "Arbre volumineux (autotests compris) : triage par recherche sur l'ensemble, lecture ciblée de l'IPC, du lanceur et du décompresseur Lottie."
+  },
+  {
+   "arbre": "archive/ukui-system-monitor",
+   "fichiers_code_propres": 164,
+   "lignes_code_propres": 26534,
+   "lus_integralement": 4,
+   "lus_partiellement": 9,
+   "pct_fichiers": 2.44,
+   "pct_lignes": 8.55,
+   "pct_fichiers_touches": 7.93,
+   "fichiers_lus": [
+    "src/main.cpp",
+    "src/process/process_network.cpp",
+    "src/src.pro",
+    "ukui-system-monitor.pro"
+   ],
+   "fichiers_lus_partiellement": [
+    "src/filesystem/datacdrom.cpp",
+    "src/filesystem/filesystemwidget.cpp",
+    "src/kleftwidget.cpp",
+    "src/mainwindow.cpp",
+    "src/process/process_list.cpp",
+    "src/process/processtableview.cpp",
+    "src/service/servicedataworker.cpp",
+    "src/service/servicemanager.cpp",
+    "src/util.cpp"
+   ],
+   "note": "Tiers exclus du comptage mais LUS car exécutés avec capacités : src/procnet-monitor (nethogs, A. Engelen) dont decpcap.c et libnethogs.cpp intégralement, nethogs.cpp l.60-246, procnet-monitor.pri ; src/QtSingleApplication/qtlocalpeer.cpp l.60-213. Hors comptage lus : debian/ukui-system-monitor.postinst, debian/control, debian/rules. Le reste de src/ a été trié par recherche (appels kdk_*, /proc, QFile, QProcess, D-Bus)."
+  },
+  {
+   "arbre": "archive/ukui-touch-settings-plugin",
+   "fichiers_code_propres": 98,
+   "lignes_code_propres": 10014,
+   "lus_integralement": 1,
+   "lus_partiellement": 2,
+   "pct_fichiers": 1.02,
+   "pct_lignes": 0.78,
+   "pct_fichiers_touches": 3.06,
+   "fichiers_lus": [
+    "ukui-touch-settings-plugin.pro"
+   ],
+   "fichiers_lus_partiellement": [
+    "src/touchscreen-settings/calibration/devicehelper.cpp",
+    "src/touchscreen-settings/calibration/devicemanager.cpp"
+   ],
+   "note": "Hors comptage lus : debian/ukui-touch-settings-plugin.preinst, debian/rules. Les 67 correctifs quilt n'ont pas été relus un à un (arbre patché examiné par recherche)."
+  },
+  {
+   "arbre": "archive/peony-print-pictures",
+   "fichiers_code_propres": 36,
+   "lignes_code_propres": 3119,
+   "lus_integralement": 1,
+   "lus_partiellement": 2,
+   "pct_fichiers": 2.78,
+   "pct_lignes": 6.99,
+   "pct_fichiers_touches": 8.33,
+   "fichiers_lus": [
+    "3rdparty/kylinimagecodec/image_save/savemovie.cpp"
+   ],
+   "fichiers_lus_partiellement": [
+    "3rdparty/kylinimagecodec/CMakeLists.txt",
+    "peony-print-pictures/print-pictures-plugin.cpp"
+   ],
+   "note": "Tiers exclu : tests/kt-test-utils. Hors comptage lus : kylin-photo-printer.desktop.in, debian/postinst, debian/rules."
+  },
+  {
+   "arbre": "TOTAL lot (12 arbres)",
+   "fichiers_code_propres": 1687,
+   "lignes_code_propres": 332330,
+   "lus_integralement": 26,
+   "lus_partiellement": 42,
+   "pct_fichiers": 1.54,
+   "pct_lignes": 2.39,
+   "pct_fichiers_touches": 4.03,
+   "fichiers_lus": [],
+   "note": "pct_fichiers = fichiers lus intégralement / fichiers propres ; pct_lignes = (lignes des fichiers lus intégralement + lignes effectivement lues dans les fichiers partiels, estimées par plages) / lignes propres. Fichiers propres = .c/.cpp/.h/.hpp/.qml/.js/.py/.sh/.pro/.pri/.cmake/CMakeLists.txt hors debian/, .pc/, traductions .ts, code tiers et code généré ; les tests/autotests (non construits par défaut) sont comptés. Le reste du code a été trié par recherches ciblées (motifs A-E de la consigne) sur 100 % des fichiers des 12 arbres, ce qui n'équivaut pas à une lecture."
+  }
+ ],
+ "non_couvert": [
+  "Comportement de Qt 5.15.10 (qtbase-opensource-src 5.15.10+dfsg-3ok2.18) vis-à-vis de QT_PLUGIN_PATH et apparentés dans un processus AT_SECURE : source amont absente du corpus (seulement debian/) ; détermine le registre du constat principal (PROBABLE).",
+  "Présence effective de security.capability (ou du bit setuid) sur /usr/bin/ukui-system-monitor dans l'image installée (squashfs casper, installateur) : à vérifier en Phase 3 par getcap/stat sur une installation de l'ISO.",
+  "Lecture de la configuration dconf/GSettings de l'utilisateur et comportement de Log4Qt avant l'abandon de Qt dans un processus setuid (scénario du repli setuid) : non démontrés.",
+  "Bibliothèques kysdk (sysinfo, hardware, net, disk, package, proc, realtime, diagnostics, waylandhelper...), KF5WindowSystem et libpcap exécutées avec capacités dans ukui-system-monitor : hors lot, non relues ici.",
+  "Contrôle d'identité des appelants par com.kylin.ProcessManagerDaemon (liste blanche incluant ukui-system-monitor, fiche Phase 0 B07) : si l'identification repose sur le chemin de l'exécutable, un greffon injecté hériterait de ce privilège ; non vérifié (hors lot).",
+  "ukui-system-monitor : environ 140 fichiers de src/ triés par recherche seulement (dialogues, modèles, graphiques, services, systemd1*interface.cpp, desktopfileinfo.cpp, commoninfo.cpp) ; inode2prog.cpp/conninode.cpp/packet.cpp/process.cpp de nethogs non relus.",
+  "qt5-ukui-platformtheme : ~112 k lignes ; seuls le point d'entrée du thème et des extraits du dialogue de fichiers (kyfiledialog.cpp, 4 422 lignes), du style et du helper QML sont lus ; readconfig.cpp (2 262 lignes, lecture de configuration via XDG_DATA_DIRS) non lu ; usvg-iconengine non construit.",
+  "ukui-quick : ~102 k lignes ; window-thumbnail (PipeWire/screencast, MPRIS), lottie-cache-manager.cpp (1 980 lignes), chargement des widgets du framework (métadonnées/QML depuis des répertoires éventuellement inscriptibles par l'utilisateur) non lus.",
+  "ukui-file-metadata : binary-parser.cpp (6 156 lignes, parseur OLE dérivé d'antiword) lu à ~2 % ; extracteurs uof, ofd, office, taglib, ffmpeg, bookmarks-manager non relus ; dépendances Poppler/FFmpeg/TagLib/tesseract hors lot.",
+  "libkylin-nm-base : libnm-base-kylin (~8 300 lignes) majoritairement non lu ; vérification de l'émetteur des appels GetSecrets par NetworkManagerQt::SecretAgent non examinée ; blob ELF non confronté aux sources (non installé).",
+  "Résolution effective des symboles KylinSecretAgent entre libkylin-keyring.so et la copie compilée dans kylin-nm-plugin (wlanconnect) : non déterminée sans exécution.",
+  "ukui-clock (~20 k lignes) : seuls la base SQLite, les appels de processus, le D-Bus de session et l'en-tête de télémétrie sont examinés ; lecteur mpv (dlopen libmpv.so.1) non relu.",
+  "ukui-touch-settings-plugin : 67 correctifs quilt non relus individuellement ; native-filter/gesture-widget/config-monitor (hors SUBDIRS) non lus.",
+  "Versions et correctifs de FreeImage, stb, giflib, OpenCV utilisés par kylin-photo-printer : non vérifiés.",
+  "Tests, autotests et harnais AFL (non construits par défaut) : non relus, hormis les scripts auto_test.sh repérés par recherche."
+ ],
+ "synthese": "[CONSTATÉ] Empreintes des 12 arbres conformes (deux emplacements). L'hypothèse « sans surface privilégiée » est FAUSSE pour ukui-system-monitor : son postinst root pose cap_net_raw+cap_dac_read_search (repli setuid root si setcap échoue) sur un binaire GUI Qt complet, sans aucune réduction de capacités dans le code (moyenne). [PROBABLE] Faute de nettoyage de l'environnement (QT_PLUGIN_PATH etc.), tout utilisateur local pourrait faire charger un greffon Qt dans ce processus et lire n'importe quel fichier (/etc/shadow) ou capturer le trafic (elevee ; dépend du comportement de Qt et de la présence des xattr sur l'ISO, à vérifier en Phase 3). [PROBABLE] En repli setuid, initUkuiLog4qt (ukui-interface) ouvre en root un journal dérivé de $HOME en suivant les liens (moyenne). [CONSTATÉ] Les 11 autres composants n'installent ni service système, ni action polkit, ni unité systemd, ni règle udev ; scripts root limités à glib-compile-schemas, un rm -rf à chemin fixe (ukui-globaltheme) et un dpkg-divert sans postrm (ukui-touch-settings-plugin). [CONSTATÉ] Réseau : aucun client réseau dans le code installé ; seule télémétrie : ukui-menu-recent-file envoie deux événements fixes via libkysdk-datacollect/kylin-daq (informationnelle, chaîne évaluée en V1-L1) ; ukui-system-monitor écoute passivement toutes les interfaces dès son démarrage ; ernie-bot (HTTPS Baidu, TLS vérifié) n'est pas installé. [CONSTATÉ] Hygiène : secrets Wi-Fi/VPN émis en clair sur qDebug par libkylin-keyring (filtrés par défaut par ukui-log4qt, faible) ; zip-reader sans plafond de décompression (DoS d'indexeur) ; heartbeat ukui-quick sur socket abstraite sans contrôle d'émetteur ; /tmp à nom fixe et commandes concaténées dans kylinimagecodec ; interfaces Wayland fake_input/screencast déclarées sans usage ; mot de passe sudo en dur dans une démo non installée ; blob ELF non installé dans libkylin-nm-base ; durcissement +all absent de 5 paquets. Aucune obfuscation ni clé embarquée dans le code installé. Couverture : 1 687 fichiers / ~332 k lignes de code propre ; 26 fichiers lus intégralement et 42 partiellement (≈2,4 % des lignes, 4 % des fichiers), triage par recherche sur 100 % des fichiers ; la conclusion d'absence de flux réseau repose sur ce triage, pas sur une lecture exhaustive."
+}

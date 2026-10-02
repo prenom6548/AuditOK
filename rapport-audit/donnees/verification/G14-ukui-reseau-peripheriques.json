@@ -1,0 +1,86 @@
+[
+ {
+  "id": "V3-L6-ukui-reseau-peripheriques#0",
+  "lot": "V3-L6-ukui-reseau-peripheriques",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L6-ukui-reseau-peripheriques.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-nm",
+   "/home/user/openkylin-src/archive/ukui-bluetooth",
+   "/home/user/openkylin-src/archive/ukui-media",
+   "/home/user/openkylin-src/archive/ukui-i18n-management"
+  ],
+  "depot": "kylin-nm",
+  "fichier": "sys-dbus-register/conf/com.kylin.network.qt.systemdbus.conf",
+  "ligne": "14-26",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "<policy context=\"default\"><allow send_destination=\"com.kylin.network.qt.systemdbus\" send_interface=\"com.kylin.network.interface\"/>...send_interface=\"com.kylin.network.proxy\"/> ; .yaml audit:_default:false",
+  "explication": "OBJECTIF 1+2 (cadre). Les 3 services systeme root de kylin-nm exposent context=default : com.kylin.network.qt.systemdbus (.conf:14-26, interfaces com.kylin.network.interface + com.kylin.network.proxy), com.kylin.networkCtrol (sys-dbus-netctrl/conf/com.kylin.networkCtrol.conf:14-21), com.kylin.network.enhancement.optimization (kylin-network-manager-enhance-daemon/conf/*.conf:10-15). Les 3 services tournent en root (.service User=root / sans User ; kylin-nm-sysdbus.service:13, com.kylin.networkCtrol.service:4, nm-enhance-optimization.service:8), actives au boot par kylin-nm.postinst:19-23. La liste blanche .limit (/etc/dbus-1/conf, /usr/share/dbus-1/conf) et .yaml (audit:_default:false) ne sont pas appliquees par le dbus livre (identique au cadre G2/G5/G12). Toute la surface est donc atteignable par tout utilisateur local.",
+  "scenario": "Un utilisateur local non privilegie emet des appels D-Bus vers n'importe laquelle des trois interfaces root sans aucune authentification (polkit/uid absents dans le code et dans la politique).",
+  "contre_lecture": "L'intention affichee est de reserver l'acces aux programmes de la liste blanche (.limit/.yaml) ; mais le composant qui l'appliquerait (dbus/kysdk patche) est absent du corpus et le dbus livre ne lit pas ces chemins, donc la restriction est inoperante (verifie G12)."
+ },
+ {
+  "id": "V3-L6-ukui-reseau-peripheriques#1",
+  "lot": "V3-L6-ukui-reseau-peripheriques",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L6-ukui-reseau-peripheriques.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-nm",
+   "/home/user/openkylin-src/archive/ukui-bluetooth",
+   "/home/user/openkylin-src/archive/ukui-media",
+   "/home/user/openkylin-src/archive/ukui-i18n-management"
+  ],
+  "depot": "kylin-nm",
+  "fichier": "sys-dbus-register/kynmsystemdbus.cpp",
+  "ligne": "107,158,173,182,197 (+ main.cpp:36)",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "#if 0\\n    //这里会让Dbus异常退出，先注释\\n    PEEK_LIMIT();\\n#endif  (repete sur setWiredMainSwitch/getWiredMainSwitch/setWiredDeviceSwitch/getWiredDeviceSwitch/checkIpv4IsConflict)",
+  "explication": "OBJECTIF 2. Le demon root kylin-nm-sysdbus enregistre KynmSystemDbus en ExportAllSlots (main.cpp:36). TOUTES les gardes PEEK_LIMIT sont desactivees (#if 0) : aucun controle d'appelant (ni polkit, ni uid, ni liste blanche) sur les slots exportes setWiredMainSwitch(l.151), setWiredDeviceSwitch(l.177), setDeviceSwitch(l.316), setOptionsEnhance(l.209), writeNmConfig(l.260), checkIpv4IsConflict(l.103), checkIpv6IsConflict(l.134). Avec la politique context=default (constat precedent), tout utilisateur local peut : couper/activer les cartes reseau filaires (setWiredMainSwitch false -> disconnectWiredDevices l.67 deconnecte toutes les interfaces Ethernet en root), declencher des sondes ARP/ND, et ecrire des fichiers de conf reseau. writeNmConfig est borne a /etc/kylin-nm/netSwitch.conf (canonicalPath l.262) et setOptionsEnhance filtre '/','\\\\','..' dans name (l.215) -> ecriture bornee a /etc/nm_enhance/.",
+  "scenario": "Un utilisateur local appelle setWiredMainSwitch(false) : le demon root deconnecte et desactive l'autoconnexion de toutes les cartes Ethernet (deni de service reseau). Ou appelle de maniere repetee checkIpv4IsConflict pour faire emettre des paquets ARP par le demon root.",
+  "contre_lecture": "Les commentaires chinois indiquent que PEEK_LIMIT faisait planter le service (\"会让Dbus异常退出\") ; la desactivation serait un contournement de bug, non une porte deliberee. L'impact reste un DoS reseau et des ecritures bornees, pas une RCE directe."
+ },
+ {
+  "id": "V3-L6-ukui-reseau-peripheriques#8",
+  "lot": "V3-L6-ukui-reseau-peripheriques",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L6-ukui-reseau-peripheriques.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-bluetooth",
+   "/home/user/openkylin-src/archive/kylin-nm",
+   "/home/user/openkylin-src/archive/ukui-media",
+   "/home/user/openkylin-src/archive/ukui-i18n-management"
+  ],
+  "depot": "ukui-bluetooth",
+  "fichier": "service/filesess.cpp",
+  "ligne": "360-379",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "QString src=\"/root/.cache/obexd/\"+filename; dest=getProperFilePath(...,filename); ... cmd=\"chgrp \"+m_user+\" \\'\"+dest+\"\\'\"; system(cmd...); cmd=\"chown \"+m_user+\" \\'\"+dest+\"\\'\"; system(cmd...);",
+  "explication": "OBJECTIF 4. Injection de commande en root dans le service systeme bluetoothService. A la fin d'une reception de fichier OBEX, movefile() construit dest = /home/<user>/<nom_fichier> (getProperFilePath l.343-345) ou <nom_fichier> est le nom du transfert OBEX fourni par le peripherique Bluetooth DISTANT (m_filePtr->name(), statusChanged l.266). dest est ensuite insere dans system() en etant seulement entoure d'apostrophes simples : un nom de fichier contenant une apostrophe suivie de $(...) ou de ; casse le quoting et fait executer une commande arbitraire en root. m_user (chgrp/chown) n'est meme pas protege par des guillemets.",
+  "scenario": "Un attaquant a portee Bluetooth envoie un fichier nomme par ex. x'$(commande)'.txt ; l'utilisateur accepte la reception (action normale, ou via replyFileReceiving appele par tout utilisateur local) ; a la fin du transfert le service root execute chgrp/chown avec le nom non echappe -> execution de commande arbitraire en root.",
+  "contre_lecture": "L'exploitation exige la proximite Bluetooth, l'appairage/visibilite et l'acceptation du fichier (interaction utilisateur) ; un nom de fichier normal ne contient pas d'apostrophe. Ce n'est donc pas une RCE inconditionnelle mais une execution root conditionnee a un transfert accepte."
+ },
+ {
+  "id": "V3-L6-ukui-reseau-peripheriques#9",
+  "lot": "V3-L6-ukui-reseau-peripheriques",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L6-ukui-reseau-peripheriques.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-bluetooth",
+   "/home/user/openkylin-src/archive/kylin-nm",
+   "/home/user/openkylin-src/archive/ukui-media",
+   "/home/user/openkylin-src/archive/ukui-i18n-management"
+  ],
+  "depot": "ukui-bluetooth",
+  "fichier": "service/systemadapter.cpp",
+  "ligne": "40-456 (getCallerDebus 434-451) ; data/com.ukui.bluetooth.conf:13-20",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "QString SystemAdapter::getCallerDebus(){ ... int uid=conn.interface()->serviceUid(...); int64_t pid=...; KyDebug()<<\"unknown dbusid\"...; return dbusid; } // uid/pid seulement journalises, jamais verifies",
+  "explication": "OBJECTIF 2. L'objet SystemAdapter (interface com.ukui.bluetooth, main.cpp:136 ExportAllSlots) est expose en context=default (com.ukui.bluetooth.conf:13-20) et tourne en root (ukui-bluetooth.service, sans User). Aucun slot ne verifie l'appelant : getCallerDebus() ne fait que journaliser uid/pid. Tout utilisateur local peut donc, sans authentification, appeler en root : setDefaultAdapterAttr (power/discoverable/name, l.133 -> rend l'adaptateur visible et appairable), devConnect/devDisconnect/devRemove (l.215/234/249), pairFuncReply et activeConnectionReply (l.264/276 -> approuver un appairage/une connexion sans consentement du proprietaire), sendFiles (l.295 -> lit des fichiers EN ROOT et les envoie via OBEX), replyFileReceiving (l.344), setLeaveLock (l.453).",
+  "scenario": "Un utilisateur local appelle setDefaultAdapterAttr(discoverable=true) puis pairFuncReply(addr,true) pour accepter l'appairage d'un peripherique attaquant (ex. clavier HID malveillant) sans invite au proprietaire ; ou appelle sendFiles avec un chemin lisible seulement par root pour exfiltrer ce fichier vers un peripherique Bluetooth (deputy confus).",
+  "contre_lecture": "La plupart des actions supposent un peripherique Bluetooth a portee et/ou une interaction radio ; le modele UKUI considere l'applet de session comme le seul client legitime. Mais rien dans le code ni la politique ne restreint effectivement l'appelant."
+ }
+]

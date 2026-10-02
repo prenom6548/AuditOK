@@ -1,0 +1,803 @@
+{
+ "lot": "P2-reseau",
+ "composants": [
+  "network-manager",
+  "wpa"
+ ],
+ "empreintes": {
+  "archive/network-manager": "58e6400b228cc20f99e3c97a6320b5e4faa52096917413dc315660a11bf5698f",
+  "archive/wpa": "c7e049ce92e99f5757985639016a31ed788aadef9070706a2bba52f2bacad1ec",
+  "conforme": true,
+  "note": "Calculées sur /home/user/openkylin-src et /home/user/AuditOK/sources-openkylin (identiques), conformes à empreintes-arbres-sources.tsv (55 et 80 fichiers). Instantanés de référence ref-snapshot/{network-manager,wpa}.json identiques à donnees/phase2/references/."
+ },
+ "findings": [
+  {
+   "depot": "network-manager",
+   "fichier": "ref-p2/openkylin/network-manager_1.54.3-ok5/orig/src/core/supplicant/nm-supplicant-config.c",
+   "ligne": "1586-1600",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "/* CA path */ path = nm_setting_802_1x_get_ca_path(setting); path = ca_path_override ?: path; if (path) { if (!add_string_val(self, path, \"ca_path\", FALSE, NULL, error)) ... /* Phase2 CA path */ ... \"ca_path2\"",
+   "explication": "Correctif de sécurité CVE-2026-19685 ABSENT. La référence Ubuntu resolute-updates 1.54.3-2ubuntu3.1 (deb/patches/CVE-2026-19685.patch, changelog 21/09/2026 « SECURITY UPDATE: Improper certificate validation ») refuse ca-path et phase2-ca-path pour les connexions 802.1X privées. Le fichier openKylin est identique octet pour octet à l'orig Ubuntu SANS correctif (cmp), et aucun patch de la série openKylin ne le touche. Pour une connexion privée, NM transmet les fichiers 802.1X au supplicant sous forme de blobs (lus avec les droits de l'utilisateur) ; un répertoire ne pouvant être un blob, ca-path est passé en chemin brut à wpa_supplicant (root) qui, sans ca-cert, fait confiance à ce seul répertoire et déclare le serveur vérifié. Portée : contournement du confinement des fichiers des profils privés (lecture par root d'un répertoire choisi par l'utilisateur) et ancre de confiance EAP choisie par le propriétaire du profil.",
+   "scenario": "Sur un poste multi-utilisateur, un utilisateur local sans privilège (settings.modify.own : allow_active=yes sans authentification) crée un profil 802.1X privé PEAP/TTLS dont ca-path désigne un répertoire qu'il ne peut pas lire lui-même ou qu'il contrôle ; wpa_supplicant (root) charge les certificats de ce répertoire et signale le serveur comme vérifié, ce qui contourne la règle « blobs uniquement » des connexions privées.",
+   "contre_lecture": "Le correctif amont/Ubuntu (21/09/2026) est postérieur à la dernière version openKylin 1.54.3-ok5 (16/09/2026) : simple retard de rétroportage, non un retrait délibéré. Impact limité aux profils privés de l'utilisateur lui-même ; pas d'exploitation à distance.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/patches/series",
+   "ligne": "1-4",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "series = 41-fix-build-err.patch + 3 Translated-using-Weblate-*.patch ; orig: org.freedesktop.NetworkManager.conf:40 <policy user=\"whoopsie\"> ; NetworkManager.service.in:26 ReadWritePaths=/usr/lib/netplan ; meson_options.txt:43 option('netplan' ... value: true)",
+   "explication": "L'archive amont openKylin (network-manager_1.54.3.orig.tar.gz, sha256 4a493932…0b55) n'est pas pristine : les 23 fichiers « modifiés » par rapport à l'orig Ubuntu sont exactement l'orig Ubuntu + les 12 correctifs Ubuntu de la série resolute appliqués dans l'ordre (reconstitution en mémoire : 23/23 identiques). Les 12 correctifs « retirés » de debian/patches sont donc présents dans le code, mais non déclarés (ni série quilt, ni changelog). Zones touchées : politique D-Bus (accès de l'utilisateur whoopsie), unité systemd (ReadWritePaths=/usr/lib/netplan qui assouplit ProtectSystem), invites de secrets Wi-Fi (PskMismatch/SaePasswordMismatch), DNS dnsmasq, backend netplan (écriture YAML des profils, secrets compris, sous /etc/netplan), DHCP. Aucun écart de code propre à openKylin dans ces 23 fichiers.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "ref-p2/openkylin/network-manager_1.54.3-ok5/orig/src/libnm-core-public/nm-version-macros.h",
+   "ligne": "25",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "#define NM_MINOR_VERSION (44)  [aussi configure.ac:9-11 nm_minor_version 44 / micro 2 ; src/nm-daemon-helper/nm-daemon-helper.c ; src/nm-priv-helper/nm-priv-helper.c ; src/core/nm-sleep-monitor.c ; src/core/dhcp/nm-dhcp-dhcpcanon.c]",
+   "explication": "L'orig openKylin contient 522 fichiers absents de l'orig Ubuntu : résidus d'une version antérieure (1.44.2 d'après configure.ac:9-11 et nm-version-macros.h:25) jamais supprimés lors de l'import de 1.54.3 (tarball recompressé, horodatage uniforme 2026-04-27 02:14, root/root). Familles : docs/api 202 et docs/libnm 144 (HTML/PNG/XML gtk-doc générés), po 76 (.gmo, Makefile.in.in…), m4 24, man 19, build-aux 10, racine 13 (configure, Makefile.in, autogen.sh…), src 33, data 1. Les 47 fichiers sous src/ et data/ ont été vérifiés : aucun n'est référencé par la construction meson (src/meson.build:80-116 inchangé, compile src/nm-helpers et non src/nm-daemon-helper ni src/nm-priv-helper) ; contenu = anciens fichiers amont (identiques à 1.46.0 ou plus anciens, en-têtes Red Hat/Intel), aucun code nouveau. Deux en-têtes générés périmés masquaient les en-têtes générés par meson (inclusion \"...\" résolue d'abord dans le répertoire source) et cassaient la construction : 41-fix-build-err.patch les supprime. Les autres résidus restent un risque d'hygiène (masquage d'en-tête, détection autotools : d'où --buildsystem=meson dans rules:19). 21 fichiers de l'orig Ubuntu absents : uniquement .gitlab-ci*, .gitlab/*, .clang-format, .gitignore, .mailmap… (CI/développement).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/control",
+   "ligne": "65-66",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "Depends: ... adduser,\n+         dnsmasq,\n+         dnsmasq-base,\n Recommends: ppp,\n-            dnsmasq-base,",
+   "explication": "Écart openKylin (changelog:3 « 把 dnsmasq 加入 Depends » pour réparer le point d'accès mobile IK8IEU) : dnsmasq-base passe de Recommends à Depends ET le paquet complet « dnsmasq » (démon système, et non le seul binaire utilisé par NM pour les connexions partagées) devient une dépendance stricte. L'ISO 3.0 installe dnsmasq 2.92-ok1 (casper--filesystem.manifest). Sous Debian/Ubuntu, le paquet dnsmasq installe et active un service dnsmasq.service écoutant le port 53 (DNS, DHCP désactivé par défaut). NM n'a besoin que de /usr/sbin/dnsmasq (rules:31 -Ddnsmasq=/usr/sbin/dnsmasq), fourni par dnsmasq-base.",
+   "scenario": "Sur chaque poste, un résolveur DNS supplémentaire démarre au boot ; s'il se lie aux interfaces réseau (comportement par défaut de dnsmasq sans bind-interfaces, restreint aux sous-réseaux locaux par --local-service dans l'empaquetage Debian), il devient un point d'entrée réseau exposé au LAN (requêtes, sondage de cache, exposition aux vulnérabilités de dnsmasq), et peut entrer en conflit avec l'instance dnsmasq lancée par NM pour le point d'accès.",
+   "contre_lecture": "Si le paquet dnsmasq d'openKylin ne démarre pas le service par défaut, ou si celui-ci échoue faute de port 53 libre (systemd-resolved installé sur l'ISO), aucune exposition supplémentaire. Ce qui manque pour conclure : l'empaquetage dnsmasq 2.92-ok1 (service, /etc/default/dnsmasq, script d'aide) n'est pas dans le corpus.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/rules",
+   "ligne": "19, 22-23",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "-\tdh $@ --with ppp $(BUILD_PACKAGES)\n+\tdh $@ --with ppp --buildsystem=meson  $(BUILD_PACKAGES)\n \tdh_auto_configure -- \\\n-\t\t-Druntime_dir=/run \\",
+   "explication": "Seuls écarts de rules avec Ubuntu. --buildsystem=meson est nécessaire car l'orig contient un configure autotools résiduel. Le retrait de -Druntime_dir=/run est sans effet : meson.build:48-55 de l'orig retombe sur /run quand prefix=/usr. DEB_BUILD_MAINT_OPTIONS = hardening=+all (rules:12), tests activés (-Dtests=yes, dh_auto_test), selinux/libaudit activés : durcissement identique à Ubuntu.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/org.freedesktop.NetworkManager.rules",
+   "ligne": "1-7",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "if (action.id == \"org.freedesktop.NetworkManager.settings.modify.system\" && subject.local && subject.active && (subject.isInGroup (\"sudo\") || subject.isInGroup (\"netdev\"))) { return polkit.Result.YES; }",
+   "explication": "Identique à Ubuntu/Debian. Les membres locaux actifs des groupes sudo ou netdev modifient les profils système sans authentification (sinon auth_admin_keep, -Dmodify_system=false). Inventaire des actions polkit amont (orig data/org.freedesktop.NetworkManager.policy.in.in, identique à Ubuntu) accordées SANS authentification à une session locale active : enable-disable-network (l.12), enable-disable-wifi/wwan/wimax (l.40-58), network-control (l.67, aussi allow_inactive=yes), wifi.scan (l.77), wifi.share.protected/open (l.87-96), settings.modify.own (l.105), enable-disable-statistics (l.155), enable-disable-connectivity-check (l.164). Le groupe netdev est créé par network-manager.postinst:25 et wpasupplicant.postinst:23-25.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "ref-p2/openkylin/network-manager_1.54.3-ok5/orig/src/core/org.freedesktop.NetworkManager.conf",
+   "ligne": "40-52",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "<policy user=\"whoopsie\"> <allow send_destination=\"org.freedesktop.NetworkManager\"/> ... send_interface=\"org.freedesktop.NetworkManager.Device\"/> </policy>",
+   "explication": "Correctif Ubuntu « Provide access to some of NM's interfaces to whoopsie » intégré dans l'orig (non déclaré). L'utilisateur whoopsie reçoit un accès D-Bus sans restriction d'interface à NM (l.41), alors que le contexte par défaut refuse puis n'autorise que des interfaces en lecture (l.53-…). Les méthodes restent soumises à polkit. whoopsie n'est pas installé sur l'ISO 3.0 (absent du manifeste) : règle dormante.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/NetworkManager.conf",
+   "ligne": "7-8",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "[device]\nwifi.scan-rand-mac-address=no",
+   "explication": "Identique à Ubuntu (« d/NetworkManager.conf: disable MAC randomization feature »). La randomisation de l'adresse MAC pendant les balayages Wi-Fi est désactivée : les requêtes de sonde portent l'adresse matérielle réelle (traçabilité de l'appareil). Par ailleurs debian/10-globally-managed-devices.conf:2 (installé dans /usr/lib/NetworkManager/conf.d) laisse non gérés tous les périphériques sauf wifi/gsm/cdma (Ethernet dépend de la configuration netplan).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/changelog",
+   "ligne": "1-5, 13-18, 44-48",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "network-manager (1.54.3-2ok3) resolute; urgency=medium\n  * openykylin init\n -- dengtuo <dengtuo@kylinos.cn>  Thu, 16 Apr 2026 22:33:50 +0200",
+   "explication": "Historique Debian/Ubuntu supprimé (6 078 lignes chez Ubuntu → 49). L'entrée initiale reprend l'horodatage exact de l'entrée Ubuntu 1.54.3-2ubuntu3 (même seconde, +0200), ce qui confirme la base Ubuntu mais n'est pas déclaré. Le changelog ne mentionne ni l'intégration des 12 correctifs Ubuntu dans l'orig, ni les 3 correctifs de traduction ajoutés (datés 14-15/09/2026, absents de l'entrée ok5). control:3 et 52-53 conservent Maintainer « Ubuntu Developers » et Vcs-Git Launchpad pour un paquet modifié par openKylin. Le .dsc et le debian.tar.xz publiés (sha256 5663a920…c5e6) sont identiques à l'arbre audité (55/55 fichiers).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/patches/Translated-using-Weblate-Arabic.patch",
+   "ligne": "3, 11-15",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "Subject: Translated using Weblate (Arabic) ... po/ar.po | 14574 +++ ; po/ko_KP.po | 13176 +++ ; create mode 100644 po/ko_KP.po",
+   "explication": "Le correctif « Arabic » crée aussi po/ko_KP.po (gabarit non traduit : 2 254 msgstr vides, en-tête copié de zh_CN). Écart de titre bénin. Les 3 correctifs de traduction sont inopérants : ar et ko_KP ne figurent pas dans po/LINGUAS de l'orig, que lit i18n.gettext (po/meson.build:3) ; aucun .mo n'est produit. Contrôle des chaînes de format : 0 incohérence de spécificateurs (pas de %n) sur 672 chaînes c-format traduites (ar) et 664 (ko_KP final reconstitué) ; seules URL : gitlab.freedesktop.org et weblate.openkylin.top (en-têtes).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "network-manager",
+   "fichier": "debian/network-manager.preinst",
+   "ligne": "7-19",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "DIR=\"/etc/NetworkManager/system-connections\" BACKUP_DIR=\"/var/lib/NetworkManager/backups\" ... cp -r \"$DIR\" \"$BAK\"",
+   "explication": "Identique à Ubuntu. À chaque installation/mise à jour, les profils (secrets Wi-Fi/VPN inclus) sont copiés dans /var/lib/NetworkManager/backups/system-connections_<version> ; seule la sauvegarde de même version est remplacée, les autres s'accumulent (rémanence d'anciens secrets). Modes préservés par cp (fichiers 0600) ; /var/lib/NetworkManager passé en 0700 par postinst:28. postinst:57-94 migre ensuite les profils vers /etc/netplan/90-NM-*.yaml (nmcli, nm-online) ; postrm:28-31 remplace le lien /etc/resolv.conf à la suppression. Aucune commande dangereuse, pas d'écriture hors périmètre réseau.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "wpa",
+   "fichier": "debian/patches/Bump-DEFAULT_BSS_MAX_COUNT-to-1000.patch",
+   "ligne": "1-3",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "From: Mitchell Augustin <mitchell.augustin@canonical.com>\nDate: Wed, 3 Jun 2026 13:39:58 +0800\nSubject: Bump DEFAULT_BSS_MAX_COUNT to 1000",
+   "explication": "Les 10 correctifs « de même nom mais modifiés » ne diffèrent d'Ubuntu 2:2.11-0ubuntu5 que par leurs métadonnées : régénération type gbp pq (en-têtes DEP-3 convertis au format git, lignes index, numéros de ligne des hunks recalés sur 2.11, diffstat corrigé pour 0019, ajout d'en-têtes MIME, Subject replié). Application en mémoire des deux séries sur l'orig (identique octet pour octet à Ubuntu, sha256 9f1109e2…5a45) : 20/20 fichiers résultants identiques, 0 hunk en échec. Seul effet notable : pour Bump-DEFAULT_BSS_MAX_COUNT et CVE-2024-5290-lib_engine_trusted_path.patch (l.1-2), la date d'origine est remplacée par la date d'import openKylin (03/06/2026 +0800) sous le nom des auteurs Canonical, et Last-Update/Description disparaissent.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "wpa",
+   "fichier": "debian/changelog",
+   "ligne": "1-5",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "wpa (2:2.11-ok1) huanghe; urgency=medium\n  * Build for openKylin.\n -- openKylinBot <openKylinBot@openkylin.top>  Wed, 03 Jun 2026 13:39:35 +0800",
+   "explication": "Historique Debian/Ubuntu (3 285 lignes) supprimé : le suivi des CVE corrigées par la distribution amont (p. ex. CVE-2024-5290, CVE-2023-52160, CVE-2022-37660) n'est plus traçable par le changelog. Seul autre écart debian/ : control:2 Maintainer « openKylin Developers ». debian.tar.xz publié (sha256 397a1547…6625) identique à l'arbre audité (80/80).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "wpa",
+   "fichier": "debian/patches/allow-tlsv1.patch",
+   "ligne": "20-24",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "+#ifndef EAP_SERVER_TLS\n+\tSSL_CTX_set_min_proto_version(ssl, TLS1_VERSION);\n+#endif  [+ allow-legacy-renegotiation.patch:26 SSL_CTX_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT); + config/wpasupplicant/linux:340 CONFIG_TLS_DEFAULT_CIPHERS=\"DEFAULT@SECLEVEL=1\" ; :620 CONFIG_WEP=y]",
+   "explication": "Posture TLS/EAP héritée de Debian/Ubuntu, sans modification openKylin (contenu identique) : TLS 1.0 accepté côté client EAP, renégociation non sécurisée (RFC 5746) autorisée globalement, niveau de sécurité OpenSSL 1 par défaut, WEP compilé. Ces choix abaissent le plancher cryptographique des tunnels PEAP/TTLS/EAP-TLS par rapport aux valeurs par défaut d'OpenSSL 3, au profit de la compatibilité avec des serveurs RADIUS anciens. La validation du certificat serveur EAP n'est pas modifiée (aucun correctif ne touche la vérification de chaîne ou ca_cert).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "wpa",
+   "fichier": "debian/patches/wpa_service_netdev.patch",
+   "ligne": "20-24",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "+ExecStart=@BINDIR@/wpa_supplicant -u -s -O \"DIR=/run/wpa_supplicant GROUP=netdev\"\n+Group=netdev\n+RuntimeDirectory=wpa_supplicant\n+RuntimeDirectoryMode=0750",
+   "explication": "Contrôle d'accès de l'interface de commande, identique à Debian/Ubuntu : socket ctrl_interface dans /run/wpa_supplicant (0750, groupe netdev) et, via 02_dbus_group_policy.patch:22-26, accès D-Bus complet à fi.w1.wpa_supplicant1 pour le groupe netdev (en plus de root). Les membres de netdev pilotent donc le supplicant (ajout de réseaux, connexions) sans polkit. 07_dbus_service_syslog.patch:21 : l'activation D-Bus lance wpa_supplicant en root avec -u -s -O /run/wpa_supplicant (SystemdService= renvoie à l'unité ci-dessus).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "wpa",
+   "fichier": "debian/config/hostapd/linux",
+   "ligne": "330",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "CONFIG_TESTING_OPTIONS=y",
+   "explication": "Hérité de Debian (identique dans wpa 2.10-25 et Ubuntu 2.11-0ubuntu5) : hostapd est compilé avec les options de test (commandes de contrôle permettant de manipuler/supprimer des trames). hostapd n'est pas installé sur l'ISO 3.0 (paquet binaire disponible dans l'archive seulement) et son service est masqué par hostapd.postinst:9-17 tant qu'aucune configuration n'existe.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "patches": [
+  {
+   "nom": "network-manager:41-fix-build-err.patch",
+   "titre_declare": "!41 fix build err (Merge pull request !41 from ljk/openkylin/huanghe)",
+   "contenu_reel": "Supprime 2 en-têtes générés périmés présents dans l'orig : src/libnm-core-public/nm-version-macros.h (97 l., version 1.44.2) et src/libnmc-setting/settings-docs.h (455 l.). Les lignes supprimées sont identiques octet pour octet aux fichiers de l'orig ; aucune ligne ajoutée.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/libnm-core-public/nm-version-macros.h",
+    "src/libnmc-setting/settings-docs.h"
+   ],
+   "resume": "Correctif de construction justifié (masquage des en-têtes générés par meson) ; cohérent avec changelog ok3k0.4.",
+   "serie": "openkylin"
+  },
+  {
+   "nom": "network-manager:Translated-using-Weblate-Arabic.patch",
+   "titre_declare": "Translated using Weblate (Arabic)",
+   "contenu_reel": "Crée po/ar.po (14 574 l., 90,9 %) ET po/ko_KP.po (13 176 l., gabarit entièrement non traduit, en-tête zh_CN).",
+   "titre_fidele": false,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "po/ar.po",
+    "po/ko_KP.po"
+   ],
+   "resume": "Écart de titre bénin (fichier ko_KP vide en plus). Traductions inopérantes : ar et ko_KP absents de po/LINGUAS. Chaînes de format cohérentes.",
+   "serie": "openkylin"
+  },
+  {
+   "nom": "network-manager:Translated-using-Weblate-ko_KP.patch",
+   "titre_declare": "Translated using Weblate (朝鲜语 (ko_KP))",
+   "contenu_reel": "Modifie po/ko_KP.po (+3 162/−1 685), 85,9 % traduit.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "po/ko_KP.po"
+   ],
+   "resume": "Traduction ; inopérante (ko_KP hors LINGUAS) ; 0 incohérence de format.",
+   "serie": "openkylin"
+  },
+  {
+   "nom": "network-manager:Translated-using-Weblate-ko_KP-1.patch",
+   "titre_declare": "Translated using Weblate (朝鲜语 (ko_KP))",
+   "contenu_reel": "Modifie po/ko_KP.po (+240/−181), 92,7 % traduit.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "po/ko_KP.po"
+   ],
+   "resume": "Traduction ; inopérante (ko_KP hors LINGUAS).",
+   "serie": "openkylin"
+  },
+  {
+   "nom": "network-manager:Force-online-state-with-unmanaged-devices.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "Force online state with unmanaged devices",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Correctif Debian : surveille /run/network/ifstate et force l'état CONNECTED si ifupdown gère des interfaces (≠ lo).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/nm-manager.c"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:Provide-access-to-some-of-NM-s-interfaces-to-whoopsie.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "Provide access to some of NM's interfaces to whoopsie.",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Politique D-Bus pour l'utilisateur whoopsie (voir constat).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/org.freedesktop.NetworkManager.conf"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:Update-dnsmasq-parameters.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "Update dnsmasq parameters",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Plugin DNS dnsmasq : écoute 127.0.1.1, cache désactivé (--cache-size=0) contre l'empoisonnement de cache local.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/dns/nm-dns-dnsmasq.c",
+    "src/core/dns/nm-dns-manager.c"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:netplan/0001-netplan-Adopt-buildsystems-for-Netplan-integration.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "[PATCH 1/2] netplan: Adopt buildsystems for Netplan integration",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Option meson netplan (défaut true), dépendance libnetplan.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "config.h.meson",
+    "meson.build",
+    "meson_options.txt",
+    "src/core/meson.build"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:netplan/0002-netplan-make-use-of-libnetplan-for-YAML-backend.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "[PATCH 2/2] netplan: make use of libnetplan for YAML backend",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Écrit les profils en YAML netplan (/etc/netplan/90-NM-*.yaml) via libnetplan puis lance « netplan generate » (g_spawn_sync).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/settings/plugins/keyfile/nms-keyfile-plugin.c",
+    "src/core/settings/plugins/keyfile/nms-keyfile-utils.c",
+    "src/core/settings/plugins/keyfile/nms-keyfile-utils.h",
+    "src/core/settings/plugins/keyfile/nms-keyfile-writer.c",
+    "src/core/settings/plugins/keyfile/tests/test-keyfile-settings.c"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:netplan/0003-Allow-the-NetworkManager-daemon-to-write-to-lib-netp.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "Allow the NetworkManager daemon to write to /lib/netplan",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. ReadWritePaths=/usr/lib/netplan (exception à ProtectSystem=true).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "data/NetworkManager.service.in"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:netplan/keyfile-update-test-for-expected-netplan-output.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "keyfile: update test for expected netplan output",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Test uniquement.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/settings/plugins/keyfile/tests/keyfiles/Test_Write_Wireless",
+    "src/core/settings/plugins/keyfile/tests/test-keyfile-settings.c"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:lp2116940-wifi-fix-6ghz-channels.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "[PATCH] wifi: fix 6 GHz channels enumeration",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Table des canaux 6 GHz (MR amont 2110).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/libnm-core-impl/nm-utils.c"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:lp2127925-fix-autoreconnect-blocker.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "[PATCH] Fix: unblock autoreconnect when a previously failed connection is now successful",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Réinitialise les bloqueurs d'autoreconnexion après succès.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/nm-policy.c"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:core-add-handlers-for-PskMismatch-signal.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "core: add handlers for PskMismatch signal",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Rétroportage amont 6dd07a80 : sur signal PskMismatch en état CONFIG, efface les secrets et redemande la clé à l'agent (REQUEST_NEW).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/devices/wifi/nm-device-wifi.c",
+    "src/core/supplicant/nm-supplicant-interface.c",
+    "src/core/supplicant/nm-supplicant-interface.h"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:core-add-handlers-for-SaePasswordMismatch-signal.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "core: add handlers for SaePasswordMismatch signal",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Rétroportage amont bcb96a1b : idem pour SAE/WPA3.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/core/devices/wifi/nm-device-wifi.c",
+    "src/core/supplicant/nm-supplicant-interface.c",
+    "src/core/supplicant/nm-supplicant-interface.h"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:lp2126573-n-dhcp4-do-not-set-ciaddr-in-discover-state.patch (Ubuntu, retiré de la série)",
+   "titre_declare": "n-dhcp4: Do not set ciaddr in DISCOVER state",
+   "contenu_reel": "Retiré de debian/patches mais PRÉ-APPLIQUÉ dans l'orig openKylin : reconstitution (orig Ubuntu + série Ubuntu) identique aux fichiers openKylin. Rétroportage n-dhcp4 0d4dcc9b (conformité RFC 2131).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/n-dhcp4/src/n-dhcp4-c-connection.c",
+    "src/n-dhcp4/src/n-dhcp4-c-probe.c",
+    "src/n-dhcp4/src/n-dhcp4-private.h"
+   ],
+   "resume": "Retrait de façade justifié par l'intégration dans l'orig ; non déclaré (voir constat traçabilité).",
+   "serie": "ubuntu-retire-integre-orig"
+  },
+  {
+   "nom": "network-manager:CVE-2026-19685.patch (Ubuntu resolute-updates 1.54.3-2ubuntu3.1)",
+   "titre_declare": "core: 802.1x: reject ca-path for private connections",
+   "contenu_reel": "ABSENT d'openKylin (ni série, ni orig) : nm-supplicant-config.c identique à l'orig Ubuntu non corrigé.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "src/core/supplicant/nm-supplicant-config.c",
+    "src/core/supplicant/tests/test-supplicant-config.c"
+   ],
+   "resume": "Correctif de sécurité manquant (publié le 21/09/2026, après ok5 du 16/09/2026) : voir constat moyenne.",
+   "serie": "reference-resolute-updates-absent"
+  },
+  {
+   "nom": "wpa:02_dbus_group_policy.patch",
+   "titre_declare": "Add D-Bus group policy",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu resolute 2:2.11-0ubuntu5",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/dbus/dbus-wpa_supplicant.conf"
+   ],
+   "resume": "Accès D-Bus fi.w1.wpa_supplicant1 au groupe netdev (Debian).",
+   "verification": "empreinte"
+  },
+  {
+   "nom": "wpa:07_dbus_service_syslog.patch",
+   "titre_declare": "Tweak D-Bus/systemd service activation configuration files",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu resolute 2:2.11-0ubuntu5",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/dbus/fi.w1.wpa_supplicant1.service.in",
+    "wpa_supplicant/systemd/wpa_supplicant.service.in"
+   ],
+   "resume": "Journalisation syslog et socket de contrôle /run/wpa_supplicant pour le démon activé par D-Bus.",
+   "verification": "empreinte"
+  },
+  {
+   "nom": "wpa:allow-tlsv1.patch",
+   "titre_declare": "Enable TLSv1.0 by default",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). TLS 1.0 minimum côté client EAP (#ifndef EAP_SERVER_TLS) — affaiblissement hérité, voir constat.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/crypto/tls_openssl.c"
+   ],
+   "resume": "Hérité Debian/Ubuntu ; affaiblit la posture TLS (constat faible).",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:disable-eapol-werror.patch",
+   "titre_declare": "Disable -Werror for eapol_test",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). Retire -Werror pour eapol_test (outil de test).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/Makefile"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:wpa_service_ignore-on-isolate.patch",
+   "titre_declare": "Add IgnoreOnIsolate=yes to keep wpa-supplicant running while systemctl isolate",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu resolute 2:2.11-0ubuntu5",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/systemd/wpa_supplicant.service.in"
+   ],
+   "resume": "IgnoreOnIsolate=yes dans l'unité systemd.",
+   "verification": "empreinte"
+  },
+  {
+   "nom": "wpa:systemd-add-reload-support.patch",
+   "titre_declare": "Add reload support to the systemd unit files",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). ExecReload=/bin/kill -HUP $MAINPID dans 4 unités.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/systemd/wpa_supplicant-nl80211.service.arg.in",
+    "wpa_supplicant/systemd/wpa_supplicant-wired.service.arg.in",
+    "wpa_supplicant/systemd/wpa_supplicant.service.arg.in",
+    "wpa_supplicant/systemd/wpa_supplicant.service.in"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:manpage-replace-wheel-with-netdev.patch",
+   "titre_declare": "Replace the wheel group with netdev",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu resolute 2:2.11-0ubuntu5",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/doc/docbook/wpa_supplicant.conf.sgml"
+   ],
+   "resume": "Documentation uniquement.",
+   "verification": "empreinte"
+  },
+  {
+   "nom": "wpa:upstream-fixes/0001-nl80211-add-extra-ies-only-if-allowed-by-driver.patch",
+   "titre_declare": "nl80211: add extra-ies only if allowed by driver",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). Compatibilité broadcom-wl (taille max des IE de scan).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/drivers/driver.h",
+    "src/drivers/driver_nl80211_capa.c",
+    "src/drivers/driver_nl80211_scan.c"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:upstream-fixes/0002-AP-guard-FT-SAE-code-with-CONFIG_IEEE80211R_AP.patch",
+   "titre_declare": "AP: guard FT-SAE code with CONFIG_IEEE80211R_AP",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). N'annonce FT-SAE en mode AP que si CONFIG_IEEE80211R_AP.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/ap/wpa_auth_ie.c"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:allow-legacy-renegotiation.patch",
+   "titre_declare": "Allow legacy renegotiation to fix PEAP issues with some servers",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). SSL_OP_LEGACY_SERVER_CONNECT global — affaiblissement hérité, voir constat.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/crypto/tls_openssl.c"
+   ],
+   "resume": "Hérité Debian/Ubuntu ; affaiblit la posture TLS (constat faible).",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:wpa_service_netdev.patch",
+   "titre_declare": "Configure wpa_supplicant.service to create control sockets owned by group netdev",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). Socket de contrôle groupe netdev, RuntimeDirectoryMode=0750.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/systemd/wpa_supplicant.service.in"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:CVE-2024-5290-lib_engine_trusted_path.patch",
+   "titre_declare": "only load libraries from trusted path",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). Correctif de sécurité : n'autorise le chargement des moteurs PKCS#11/OpenSC que sous /usr/lib/ après realpath().",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "src/crypto/tls_openssl.c"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:0019-Send-CTRL-EVENT-SIGNAL-CHANGE-message-to-control-int.patch",
+   "titre_declare": "Send CTRL-EVENT-SIGNAL-CHANGE message to control interfaces only",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). wpa_msg → wpa_msg_ctrl pour CTRL-EVENT-SIGNAL-CHANGE (réduit le bruit syslog) ; seul le diffstat d'en-tête diffère (Ubuntu affichait 12 lignes à tort).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/events.c"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:Bump-DEFAULT_BSS_MAX_COUNT-to-1000.patch",
+   "titre_declare": "Bump DEFAULT_BSS_MAX_COUNT to 1000",
+   "contenu_reel": "Même contenu fonctionnel qu'Ubuntu 2:2.11-0ubuntu5 (diff -u : métadonnées uniquement ; application en mémoire des deux séries → fichiers résultants identiques). DEFAULT_BSS_MAX_COUNT 200 → 1000.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/config.h"
+   ],
+   "resume": "Hérité, régénéré par openKylin sans changement de code.",
+   "verification": "lecture diff -u integrale + reconstitution"
+  },
+  {
+   "nom": "wpa:0015-Revert-Mark-authorization-completed-on-driver-indica.patch",
+   "titre_declare": "Revert \"Mark authorization completed on driver indication during 4-way HS offload\"",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu resolute 2:2.11-0ubuntu5",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/events.c"
+   ],
+   "resume": "Revert Ubuntu (LP #2124258, brcmfmac) d'un commit amont sur le 4-way handshake délégué au pilote.",
+   "verification": "empreinte"
+  },
+  {
+   "nom": "wpa:0016-dbus-Add-SaePasswordMismatch-signal-on-AP-indication.patch",
+   "titre_declare": "dbus: Add SaePasswordMismatch signal on AP indication of failed SAE auth",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu resolute 2:2.11-0ubuntu5",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "wpa_supplicant/dbus/dbus_new.c",
+    "wpa_supplicant/dbus/dbus_new.h",
+    "wpa_supplicant/notify.c",
+    "wpa_supplicant/notify.h",
+    "wpa_supplicant/sme.c"
+   ],
+   "resume": "Rétroportage amont 446a274b : signal D-Bus SaePasswordMismatch (statut 15).",
+   "verification": "empreinte"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "network-manager-config-connectivity-ubuntu (optionnel)",
+   "nature": "Vérification de connectivité / portail captif : requête HTTP en clair vers http://connectivity-check.ubuntu.com/ (révèle un système dérivé d'Ubuntu avec NetworkManager)",
+   "fichier": "debian/20-connectivity-ubuntu.conf",
+   "ligne": "1-2",
+   "condition": "Uniquement si ce paquet binaire est installé (installé dans /usr/lib/NetworkManager/conf.d par network-manager-config-connectivity-ubuntu.install:1). NON installé sur l'ISO 3.0 (absent du manifeste). Sans uri, NM ne fait aucun contrôle (orig src/core/nm-config-data.c:2335-2339, défaut NULL ; NetworkManager.conf livré sans section [connectivity]).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "network-manager-config-connectivity-debian (optionnel)",
+   "nature": "Idem vers http://network-test.debian.org/nm",
+   "fichier": "debian/20-connectivity-debian.conf",
+   "ligne": "1-2",
+   "condition": "Uniquement si ce paquet est installé ; NON installé sur l'ISO 3.0.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "NetworkManager (amont, inchangé)",
+   "nature": "Flux intrinsèques : DHCPv4 (n-dhcp4)/DHCPv6, RA IPv6, résolution inverse du nom d'hôte via nm-daemon-helper, dnsmasq lancé par NM pour les connexions partagées/point d'accès (DHCP/DNS sur l'interface partagée)",
+   "fichier": "debian/rules",
+   "ligne": "27, 31",
+   "condition": "Selon les profils actifs ; -Ddhcpcd=no, -Ddnsmasq=/usr/sbin/dnsmasq.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "dnsmasq.service (paquet dnsmasq tiré par Depends)",
+   "nature": "Serveur DNS système potentiellement à l'écoute sur le port 53",
+   "fichier": "debian/control",
+   "ligne": "65",
+   "condition": "Dépend de l'empaquetage dnsmasq 2.92-ok1 (hors corpus) ; paquet présent sur l'ISO 3.0.",
+   "registre": "PROBABLE"
+  },
+  {
+   "composant": "wpa_supplicant / hostapd",
+   "nature": "Aucun flux Internet : 802.11/EAPOL/EAP vers les points d'accès et serveurs RADIUS configurés ; hostapd (point d'accès) non installé sur l'ISO.",
+   "fichier": "debian/config/wpasupplicant/linux",
+   "ligne": "219, 340",
+   "condition": "Selon configuration.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "Crochet apport source_network-manager.py",
+   "donnees": "Sortie attach_network/attach_wifi, NetworkManager.conf, NetworkManager.state, udevadm info et adresse MAC de chaque interface, nmcli gen/dev/con (noms des profils)",
+   "fichier": "debian/source_network-manager.py",
+   "ligne": "42-86",
+   "condition": "Exécuté seulement lors de la création d'un rapport apport ; transmission seulement si l'utilisateur l'envoie (whoopsie non installé sur l'ISO). Identique à Ubuntu.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "Sauvegarde preinst",
+   "donnees": "Copie locale des profils /etc/NetworkManager/system-connections (secrets compris) dans /var/lib/NetworkManager/backups",
+   "fichier": "debian/network-manager.preinst",
+   "ligne": "7-19",
+   "condition": "Chaque installation/mise à jour ; local, aucune transmission.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/network-manager",
+   "patches_total": 4,
+   "patches_lus": 4,
+   "fichiers_debian": 55,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "41-fix-build-err.patch",
+    "Translated-using-Weblate-Arabic.patch (lecture outillée intégrale : en-têtes, fichiers, chaînes de format, URL)",
+    "Translated-using-Weblate-ko_KP.patch (idem)",
+    "Translated-using-Weblate-ko_KP-1.patch (idem)"
+   ],
+   "patches_ubuntu_retires_examines": 12,
+   "patches_ubuntu_retires_lus_integralement": [
+    "Force-online-state-with-unmanaged-devices.patch",
+    "Provide-access-to-some-of-NM-s-interfaces-to-whoopsie.patch",
+    "Update-dnsmasq-parameters.patch",
+    "netplan/0003-Allow-the-NetworkManager-daemon-to-write-to-lib-netp.patch",
+    "core-add-handlers-for-PskMismatch-signal.patch",
+    "core-add-handlers-for-SaePasswordMismatch-signal.patch",
+    "lp2127925-fix-autoreconnect-blocker.patch",
+    "lp2126573-n-dhcp4-do-not-set-ciaddr-in-discover-state.patch",
+    "CVE-2026-19685.patch (resolute-updates)"
+   ],
+   "patches_ubuntu_retires_lus_partiellement": [
+    "netplan/0002 (en-tête + lignes ajoutées sensibles par grep, 522 l.)",
+    "netplan/0001 (en-tête + diff -u orig)",
+    "netplan/keyfile-update-test (en-tête)",
+    "lp2116940-wifi-fix-6ghz-channels (en-tête)"
+   ],
+   "verification_integration_orig": "12/12 correctifs Ubuntu reconstitués en mémoire sur l'orig Ubuntu : 23/23 fichiers identiques à l'orig openKylin",
+   "fichiers_debian_modifies_ou_ajoutes_vs_ubuntu": 8,
+   "fichiers_debian_modifies_ou_ajoutes_lus": 8,
+   "fichiers_debian_identiques_lus_integralement": [
+    "NetworkManager.conf",
+    "10-default-firewall-use-iptables.conf",
+    "10-globally-managed-devices.conf",
+    "20-connectivity-debian.conf",
+    "20-connectivity-ubuntu.conf",
+    "default-wifi-powersave-on.conf",
+    "org.freedesktop.NetworkManager.rules",
+    "network-manager.install",
+    "network-manager-config-connectivity-*.install/postinst (4)",
+    "network-manager.preinst",
+    "network-manager.postinst",
+    "network-manager.postrm",
+    "network-manager.maintscript",
+    "network-manager.links",
+    "network-manager.dirs",
+    "source_network-manager.py",
+    "network-manager.bug-control",
+    "gbp.conf",
+    "watch"
+   ],
+   "fichiers_debian_non_lus": "debian/tests/* (11), copyright, libnm0.symbols, NEWS, README.Debian, lintian-overrides, salsa-ci.yml, *.install de libnm/gir/dev/l10n (identiques à Ubuntu par empreinte)",
+   "orig": "23/23 modifiés comparés (diff -u lu pour 6, reconstitution pour 23) ; 21 absents listés ; 522 ajoutés inventoriés par famille, 47 fichiers src/data examinés (références meson vérifiées, en-têtes lus), docs/po/m4/man/build-aux non lus"
+  },
+  {
+   "arbre": "archive/wpa",
+   "patches_total": 16,
+   "patches_lus": 10,
+   "patches_verifies_par_empreinte": 6,
+   "fichiers_debian": 80,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "allow-tlsv1.patch",
+    "allow-legacy-renegotiation.patch",
+    "0019-Send-CTRL-EVENT-SIGNAL-CHANGE-message-to-control-int.patch",
+    "CVE-2024-5290-lib_engine_trusted_path.patch",
+    "Bump-DEFAULT_BSS_MAX_COUNT-to-1000.patch",
+    "disable-eapol-werror.patch",
+    "systemd-add-reload-support.patch",
+    "upstream-fixes/0001-nl80211-add-extra-ies-only-if-allowed-by-driver.patch",
+    "upstream-fixes/0002-AP-guard-FT-SAE-code-with-CONFIG_IEEE80211R_AP.patch",
+    "wpa_service_netdev.patch"
+   ],
+   "patches_verifies_par_empreinte_liste": [
+    "0015-Revert-Mark-authorization-completed-on-driver-indica.patch",
+    "0016-dbus-Add-SaePasswordMismatch-signal-on-AP-indication.patch",
+    "02_dbus_group_policy.patch (lu)",
+    "07_dbus_service_syslog.patch (lu)",
+    "manpage-replace-wheel-with-netdev.patch",
+    "wpa_service_ignore-on-isolate.patch"
+   ],
+   "verification_reconstitution": "série openKylin et série Ubuntu appliquées en mémoire sur l'orig : 20/20 fichiers identiques, 0 échec",
+   "fichiers_debian_modifies_vs_ubuntu": 12,
+   "fichiers_debian_modifies_lus": 12,
+   "fichiers_debian_identiques_lus": [
+    "rules",
+    "config/wpasupplicant/linux (options actives)",
+    "config/hostapd/linux (options actives)",
+    "wpasupplicant.postinst",
+    "hostapd.postinst",
+    "hostapd.postrm",
+    "hostapd.default",
+    "wpasupplicant.install",
+    "NetworkManager/no-mac-addr-change.conf"
+   ],
+   "orig": "identique octet pour octet à Ubuntu (sha256 9f1109e2…5a45) : non relu"
+  }
+ ],
+ "non_couvert": [
+  "Convention de chemins : « debian/… » relatif à archive/<paquet>/ (sources-openkylin) ; « ref-p2/… » relatif à /home/user/openkylin-src/.",
+  "Empaquetage dnsmasq 2.92-ok1 (service, /etc/default/dnsmasq, comportement d'écoute) absent du corpus : constat dnsmasq resté PROBABLE.",
+  "Autres paquets openKylin susceptibles de fixer une URI de connectivité NM, des règles polkit (p. ex. policykit-desktop-privileges présent sur l'ISO) ou d'ajouter des utilisateurs au groupe netdev : hors lot.",
+  "Configuration netplan livrée sur l'ISO (renderer, gestion Ethernet) et contenu de /etc/netplan : hors lot.",
+  "Correspondance binaires ISO ↔ sources (reproductibilité) non vérifiée : aucune compilation autorisée.",
+  "2 429 fichiers amont NM et l'orig wpa identiques à Ubuntu : non relus (hors delta).",
+  "Contenu sémantique des traductions ar/ko_KP non relu (seuls format, URL et prise en compte par LINGUAS vérifiés).",
+  "CVE amont postérieures à wpa 2.11 / NM 1.54.3 non corrigées aussi chez Ubuntu : non recherchées (hors comparaison de référence).",
+  "docs/api, docs/libnm, po (.gmo), m4, man, build-aux résiduels de l'orig NM : inventoriés par famille et type de fichier, non lus."
+ ],
+ "reference": {
+  "network-manager": {
+   "plus_proche": "ubuntu resolute 1.54.3-2ubuntu3 (et resolute-updates 1.54.3-2ubuntu3.1, qui ajoute CVE-2026-19685.patch)",
+   "orig": "écarts : 23 modifiés = orig Ubuntu + 12 correctifs Ubuntu pré-appliqués (reconstitution identique 23/23, aucun code propre à openKylin) ; 522 ajoutés = résidus d'une version antérieure (1.44.2 : autotools, docs générées, .gmo, man, 47 fichiers src/data non compilés) ; 21 absents = fichiers CI/développement ; archive recompressée (.tar.gz, horodatage uniforme 2026-04-27)",
+   "patches_herites_identiques": 0,
+   "patches_propres_openkylin": 4,
+   "patches_modifies": 0,
+   "patches_retires": 12,
+   "patches_retires_note": "13 face à resolute-updates : CVE-2026-19685.patch réellement absent ; les 12 autres sont intégrés à l'orig",
+   "fichiers_debian_hors_patches_modifies_ou_ajoutes": 3,
+   "fichiers_debian_hors_patches_note": "changelog, control, rules (+ patches/series)"
+  },
+  "wpa": {
+   "plus_proche": "ubuntu resolute 2:2.11-0ubuntu5",
+   "orig": "identique octet pour octet (sha256 9f1109e2aef8e591004bec8e9d8dd363be61c2edaf99f4cc14e35b74316d5a45)",
+   "patches_herites_identiques": 6,
+   "patches_propres_openkylin": 0,
+   "patches_modifies": 10,
+   "patches_modifies_note": "métadonnées uniquement, résultat appliqué identique",
+   "patches_retires": 0,
+   "fichiers_debian_hors_patches_modifies_ou_ajoutes": 2,
+   "fichiers_debian_hors_patches_note": "changelog, control (Maintainer)"
+  }
+ },
+ "synthese": "network-manager 1.54.3-ok5 et wpa 2:2.11-ok1 : empreintes d'arbres conformes (55 et 80 fichiers) ; .dsc/debian.tar.xz publiés identiques aux arbres audités. Aucun code fonctionnel propre à openKylin n'a été trouvé dans ces deux paquets, ni dans debian/ ni dans l'orig (CONSTATÉ). network-manager : l'orig n'est pas pristine. Ses 23 fichiers modifiés reproduisent exactement les 12 correctifs Ubuntu (whoopsie D-Bus, dnsmasq, netplan, PSK/SAE mismatch, 6 GHz, autoreconnect, n-dhcp4, Force-online), retirés de la série mais intégrés à l'archive sans déclaration (faible, confiance, CONSTATÉ). Ses 522 fichiers ajoutés sont des résidus d'une 1.44.2 (autotools, docs générées, .gmo, anciens sources non compilés). Deux en-têtes générés périmés ont cassé la construction et sont retirés par 41-fix-build-err.patch (LÉGITIME). Les 3 correctifs de traduction sont bénins et inopérants (langues absentes de LINGUAS) ; celui intitulé Arabic ajoute aussi un ko_KP.po vide. Le correctif de sécurité CVE-2026-19685 (ca-path des connexions 802.1X privées, Ubuntu 1.54.3-2ubuntu3.1 du 21/09/2026) est absent (moyenne, CONSTATÉ) : c'est un retard, la dernière version openKylin date du 16/09/2026. control ajoute « dnsmasq » (démon complet) aux Depends, ce qui ajoute probablement un service DNS système au boot (moyenne, PROBABLE ; le paquet dnsmasq est hors corpus). rules : --buildsystem=meson et retrait de -Druntime_dir sont sans effet de sécurité ; durcissement hardening=+all conservé. Polkit (règle sudo/netdev), NetworkManager.conf (randomisation MAC des scans désactivée), scripts de mainteneur et crochet apport sont identiques à Ubuntu (informationnel). Aucun contrôle de connectivité n'est actif par défaut : les URI Ubuntu et Debian ne sont livrées que par des paquets optionnels, non installés sur l'ISO. wpa : orig identique à Ubuntu. Les 10 correctifs « modifiés » ne diffèrent que par leurs métadonnées (régénération gbp) : la reconstitution donne 20/20 fichiers identiques. 6 correctifs sont identiques à l'octet. Aucun correctif touchant la validation des certificats EAP, ctrl_interface ou la politique D-Bus n'est modifié par openKylin. Posture héritée de Debian/Ubuntu : TLS 1.0, renégociation non sécurisée, SECLEVEL=1, WEP (faible) ; accès netdev au supplicant ; hostapd CONFIG_TESTING_OPTIONS (non installé). Le changelog wpa est tronqué (traçabilité des CVE perdue)."
+}

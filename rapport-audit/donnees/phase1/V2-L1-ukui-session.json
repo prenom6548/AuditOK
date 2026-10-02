@@ -1,0 +1,592 @@
+{
+ "lot": "V2-L1-ukui-session",
+ "statut": "complet",
+ "composants": [
+  "ukui-greeter",
+  "ukui-screensaver",
+  "ukui-session-manager",
+  "ukui-settings-daemon"
+ ],
+ "empreintes": {
+  "archive/ukui-greeter": "6d40025e5089eed444ecf71d01d5b79e4004661a40f27fc529a22fd02bba8933",
+  "archive/ukui-screensaver": "4d46938ef64736caecff5b5e1757118051a60c8496d00b832492bff001a7d321",
+  "archive/ukui-session-manager": "c7eb8e1c64183322738a716c18b6a13057128820e446b4661f646700e3a21e40",
+  "archive/ukui-settings-daemon": "7f4cd96396b9f7358b19b1f1b5200bde6899fb4101a6baa0f0d22ac4e4ba49a8",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "plugins/authority/conf/com.kylin.ukui.SettingsDaemon.conf",
+   "ligne": "14-20",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "<policy context=\"default\"><allow send_destination=\"com.kylin.ukui.SettingsDaemon\" send_interface=\"com.kylin.ukui.SettingsDaemon.interface\"/> ...",
+   "explication": "Le service systeme root authoritydbus (User=root, conf/com.kylin.ukui.SettingsDaemon.service) expose son interface a tout utilisateur local (politique D-Bus context=default, pas de fichier .limit applique par dbus-daemon). Plusieurs objets exposes n'appliquent aucun controle d'appelant applicatif (voir constats suivants).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un compte local non privilegie emet des appels D-Bus vers com.kylin.ukui.SettingsDaemon et atteint des methodes root des objets /securityConfig, /globalconfig, /camera, /inputEventMonitor qui ne verifient pas l'appelant.",
+   "contre_lecture": "Service de parametrage legitime pense pour etre pilote par ukui-settings-daemon et le centre de controle ; la politique ouverte vise la commodite inter-composants, et certaines methodes sensibles passent par la macro PEEK_LIMIT (liste blanche d'executables)."
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "plugins/authority/globalconfig.cpp",
+   "ligne": "32-53,56-77",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "bool GlobalConfig::writeGlobalConfig(QString path,QString fileName,QByteArray info){ ... filePath=GLOBAL_CONFIG_PATH/path/fileName; if(filePath.contains(\"../\"))return false; ... globalFile.open(WriteOnly); globalFile.setPermissions(0x6444); globalFile.write(info);} QByteArray readGlobalConfig(QString path){...open(ReadOnly);return readAll();}",
+   "explication": "writeGlobalConfig/readGlobalConfig/setGlobalConf de l'objet root /globalconfig (main.cpp:51) n'ont AUCUN controle d'appelant (grep PEEK_LIMIT negatif dans globalconfig.cpp). Ecriture/lecture de fichiers sous /etc/ukui/usd/config/ en root ; le seul filtre de chemin est un rejet de la sous-chaine \"../\" (pas de canonicalisation, chemins absolus et liens symboliques non traites). Les fichiers crees sont mis en 0x6444 (lecture pour tous).",
+   "registre": "CONSTATÉ",
+   "scenario": "Tout utilisateur local ecrit par root un contenu qu'il fournit dans un fichier sous /etc/ukui/usd/config (nom et contenu controles par l'appelant), ou lit des fichiers de ce repertoire root. Le contenu ecrit est ensuite relu par les greffons xrandr de la session (xrandr-config.cpp).",
+   "contre_lecture": "Stockage de configuration d'affichage partage entre comptes ; le filtre \"../\" vise a limiter la portee au repertoire prevu, et les donnees ecrites sont des descriptions d'ecran JSON."
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "plugins/authority/save-security-config.cpp",
+   "ligne": "34-41,101-110,147-210",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "bool SaveSecurityConfig::exitSecurity(){ setSecurityStat(false); deleteDconf(); deleteAllAppConfig(); } bool ClearConfig(QString userName){return deleteSecurityConfig(userName);} deleteAllAppConfig(): QDir(APP_SECURITYFILE_PATH).removeRecursively();",
+   "explication": "L'objet root /securityConfig (main.cpp:55) expose ExitSecurity/ClearConfig/UpdateConfig sans aucun controle d'appelant (pas de PEEK_LIMIT). ExitSecurity desactive le mode securise (dconf locks) et supprime recursivement /opt/system/conf/ukui-security-config ; deleteDconf retire /etc/dconf/db/local.d/01-security-config et le verrou, puis lance dconf update. Portee : neutralisation, par tout utilisateur local, du verrouillage de configuration a l'echelle systeme (hedron/kim).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un compte non privilegie appelle ExitSecurity sur le service root et desactive le durcissement dconf impose par la gestion de domaine, supprimant les verrous de configuration de tous les comptes.",
+   "contre_lecture": "Interface destinee au client de domaine hedron-client (SecurityConf.ini:client) ; une liste blanche par methode existe dans le .yaml (methodwhitelist) mais ne couvre pas ces methodes et n'est appliquee que par un dbus-daemon patche kysdk hors de cet arbre, non present au corpus."
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "plugins/authority/inputeventmonitor.cpp",
+   "ligne": "300-330,360-384",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "while((rc=libevdev_next_event(...))==0){ if(ev.type==EV_REL){...} else if(ctx.isTouch && ev.type==EV_ABS){...} else if(SYN_REPORT){ if(acc_dx||acc_dy) Q_EMIT mouseMoved(acc_dx,acc_dy);}} ... connect(m_monitor,&InputMonitor::mouseMoved,this,&InputEventMonitor::MouseMoved);",
+   "explication": "Le demon root ouvre tous les /dev/input/event* (scanInitialDevices + inotify) et diffuse les deltas de deplacement pointeur/tactile sous forme du signal systeme MouseMoved (objet /inputEventMonitor, interface com.kylin.ukui.SettingsDaemon.interface, context=default). Un signal D-Bus systeme est recevable par tout utilisateur autorise a s'y abonner. Seuls des deltas de mouvement (EV_REL/EV_ABS) sont emis, pas de codes de touches.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur local s'abonne au signal MouseMoved et observe en continu l'activite pointeur/tactile de la machine (y compris pendant la session d'un autre utilisateur ou l'ecran verrouille), ce qui constitue une fuite de metadonnees d'activite inter-session.",
+   "contre_lecture": "Fonction de detection d'activite/presence (reveil ecran, mode tablette) ; seules des differences de coordonnees agregees par SYN_REPORT sont transmises, sans contenu de frappe ni position absolue systematique."
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "common/dbus-security.h",
+   "ligne": "30-33,58-95",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "static const QStringList programWhiteList={\"/usr/bin/ukui-settings-daemon\",\"/usr/lib/qt5/bin/qdbusviewer\",\"/usr/bin/save-param\"}; #define isAllowedCaller(a) ... execPath=/proc/<pid>/exe ... Q_FOREACH(whitePath,programWhiteList) if(execPath==whitePath) a=true;",
+   "explication": "La macro PEEK_LIMIT (utilisee seulement par authorityservice.cpp) autorise l'appelant par comparaison de /proc/<pid>/exe a une liste blanche d'executables qui inclut /usr/lib/qt5/bin/qdbusviewer (outil generique d'appel D-Bus) et verifie l'absence de LD_PRELOAD/LD_LIBRARY_PATH/LD_AUDIT. La verification repose sur le PID resolu par le bus (pas sur l'uid) ; qdbusviewer, s'il est installe, permet a n'importe quel utilisateur d'emettre les appels couverts.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur lance qdbusviewer (present dans la liste blanche) et invoque les methodes protegees par PEEK_LIMIT (startColorService/stopColorService -> systemctl start/stop geoclue/colord en root ; setDynamicBrightness -> gpioset).",
+   "contre_lecture": "La liste blanche vise a restreindre les appelants aux composants UKUI ; qdbusviewer n'y figure probablement qu'a des fins de debogage et n'est pas installe par defaut sur une image de production."
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "plugins/authority/authorityservice.cpp",
+   "ligne": "138-163",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "int startColorService(){ PEEK_LIMIT_RET(isAllowed) system(\"systemctl start geoclue\"); system(\"systemctl start colord\"); } stopColorService(): system(\"systemctl stop geoclue/colord\");",
+   "explication": "Methodes root qui lancent system(\"systemctl start/stop ...\") avec des commandes constantes (pas d'injection : arguments non controles par l'appelant), protegees par PEEK_LIMIT. Inventaire : execution systemctl en root declenchable par les composants listes.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "plugins/gamma-manager/gamma-manager-define.h",
+   "ligne": "75-77,89",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "#define IP_API_ADDRESS_BACKUP \"http://ip-api.com/json/\"  #define IP_API_ADDRESS \"https://location.services.mozilla.com/v1/geolocate?key=geoclue\"  #define IP_WEATHER_ADDRESS \"http://weather.ubuntukylin.com:8001/weather/api/3.0/heweather_simple_s6/?cityids=\"",
+   "explication": "Le greffon gamma-manager (mode nuit) construit une geolocalisation reseau : au demarrage de session et sur changement d'etat NetworkManager (gamma-manager-location.cpp:115-176), QNetworkAccessManager::get() interroge en clair (http) weather.ubuntukylin.com:8001 (code ville issu de gsettings weather) et, selon configuration, ip-api.com (http) / location.services.mozilla.com. TLS non verifie cote applicatif ; destinations en dur. Deduction de latitude/longitude pour le reglage automatique.",
+   "registre": "CONSTATÉ",
+   "scenario": "Au demarrage de chaque session avec reseau, la machine emet une requete HTTP en clair vers des services tiers ; un observateur reseau apprend l'adresse, le code ville et peut, en http, alterer la reponse de geolocalisation.",
+   "contre_lecture": "Fonctionnalite de mode nuit automatique necessitant la position ; les requetes derivent d'un code ville deja present dans les reglages meteo et ne transmettent pas d'identifiant materiel."
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "plugins/sharing/sharing-manager.cpp",
+   "ligne": "54-88,215-223",
+   "type": "persistance",
+   "severite": "moyenne",
+   "extrait": "void SharingManager::startKrd(){ QString confFile=~/.config/kylin-remote-desktop/krd.ini; isOpen=krdCfg.value(\"mIsOpen\"); passwd=krdCfg.value(\"passwd\"); krdIfc.call(\"Start\",output); krdIfc.setProperty(\"AuthMethod\",isNeedPwd); if(isNeedPwd) krdIfc.call(\"SetPassword\",passwd);} bool start(){ startKrd(); serviceList=settings->get(KEY_SERVICE_NAME); for(s:serviceList) sharingManagerStartService(s);} ",
+   "explication": "Le greffon sharing (demon de session) demarre automatiquement le bureau a distance (com.kylin.RemoteDesktop Start/StartRDP) au lancement de session si ~/.config/kylin-remote-desktop/krd.ini a mIsOpen=1, et transmet le mot de passe VNC/RDP lu depuis ce .ini (en clair dans le fichier). Il lance aussi les services systemd listes dans la cle gsettings service-name (StartUnit via le bus systeme). Mot de passe conserve en clair dans un fichier du HOME.",
+   "registre": "CONSTATÉ",
+   "scenario": "Si l'acces distant a deja ete active, il est reactive silencieusement a chaque ouverture de session ; le mot de passe de connexion distante reside en clair dans krd.ini (lisible par le compte).",
+   "contre_lecture": "Comportement attendu d'un service d'acces distant qui restaure l'etat choisi par l'utilisateur ; krd.ini est dans le HOME de l'utilisateur et protege par les permissions de fichier standard."
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "debian/ukui-settings-daemon.postinst",
+   "ligne": "18-20",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "touchpad_udev=\"/etc/udev/hwdb.d/61-keyboard.hwdb\"; if [ -f\"$touchpad_udev\" ];then rm -rf $touchpad_udev; fi",
+   "explication": "Le test [ -f\"$touchpad_udev\" ] est colle (pas d'espace apres -f) : il est donc toujours vrai (chaine non vide), si bien que rm -rf /etc/udev/hwdb.d/61-keyboard.hwdb s'execute a chaque configuration du paquet, que le fichier existe ou non. Defaut de script mainteneur (root), portee limitee a ce chemin fixe.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-settings-daemon",
+   "fichier": "debian/ukui-settings-daemon.postinst",
+   "ligne": "3-16",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "if [ ! -f power-ignore.conf ]; then echo \"[Login]\"; echo \"HandlePowerKey=ignore\" >> /etc/systemd/logind.conf.d/power-ignore.conf; fi",
+   "explication": "Le postinst neutralise au niveau systeme la gestion du bouton d'alimentation par logind (HandlePowerKey=ignore) ; la gestion est deleguee a ukui ; fait d'inventaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-greeter",
+   "fichier": "ukui-greeter-daemon/org.ukui.GreeterDaemon.conf",
+   "ligne": "14-20",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "<policy context=\"default\"><allow send_destination=\"org.ukui.GreeterDaemon\" send_interface=\"org.ukui.GreeterDaemon\"/> ...",
+   "explication": "Le demon systeme root ukui-greeter-daemon (org.ukui.GreeterDaemon.service, User=root) expose toute son interface a tout utilisateur local (context=default). L'objet est enregistre avec ExportAllSlots|ExportAllSignals|ExportAllProperties (serviceinterface.cpp:248-253) et ne verifie pas l'appelant. Un fichier .limit (liste blanche d'executables) est livre mais absent des INSTALLS et de toute facon seulement applicable par un dbus-daemon patche kysdk hors corpus.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur local appelle setPromptText/setPromptTitle/setShowLoginPrompt/setPromptTextFilePath (serviceinterface.cpp:365-388) : le demon root ecrit dans /usr/share/ukui-greeter/ukui-greeter.conf et fixe ainsi le texte/titre de l'avis affiche a tous sur l'ecran de connexion ; setPromptTextFilePath designe un chemin de fichier dont le contenu est ensuite lu et affiche par le greeter/verrou (agreementwindow.cpp:117-154, lockdialogmodel.cpp:395-398).",
+   "contre_lecture": "Interface destinee au centre de controle pour configurer l'avis de connexion d'entreprise ; impact limite a l'affichage d'un texte (pas d'ecriture arbitraire de contenu : le fichier designe est lu, non ecrit) et le demon n'ecrit que dans son propre .conf."
+  },
+  {
+   "depot": "ukui-greeter",
+   "fichier": "ukui-greeter/common/xeventmonitor.cpp",
+   "ligne": "100-124,135-165",
+   "type": "telemetrie",
+   "severite": "faible",
+   "extrait": "range->device_events.first = KeyPress; ... XRecordContext context = XRecordCreateContext(display,0,&clients(XRecordAllClients),1,&range,1); ... emitKeySignal invokeMethod(q_ptr,member,Q_ARG(int,keyCode)); Q_ARG(QString,keyStrSplice)",
+   "explication": "Le greeter installe un moniteur XRecord global (XRecordAllClients, KeyPress/KeyRelease/Button/Motion) ; emitKeySignal reconstruit la combinaison de touches (keycode + modificateurs) et l'emet en signal interne. Usage trace : raccourcis/reset d'inactivite du greeter (greeterwindow.cpp:112-114, powerwindow, usersview). S'execute sous l'utilisateur lightdm dans le contexte du greeter, pas inter-session.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un code additionnel connecte aux signaux keyPress/keyRelease pourrait journaliser les frappes pendant la saisie au greeter ; dans le code present, seuls des keycodes sont propages a la logique d'interface, aucune journalisation du contenu.",
+   "contre_lecture": "Mecanisme standard UKUI pour gerer les raccourcis et l'inactivite a l'ecran de connexion ; XRecord est necessaire car le greeter n'a pas toujours le focus clavier."
+  },
+  {
+   "depot": "ukui-greeter",
+   "fichier": "ukui-greeter/common/machinemodel.cpp",
+   "ligne": "71-103",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "options << \"cat /sys/class/dmi/id/sys_vendor\"; ... product_name ; ... product_family",
+   "explication": "Le greeter lit des identifiants DMI (sys_vendor, product_name, product_family) via popen(cat ...) pour determiner le type de machine (tablette/PC, conf.ini). Lecture locale, pas d'envoi reseau constate dans cet arbre. Fait d'inventaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/lock-backend/authpamthread.cpp",
+   "ligne": "186-233,270-312",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "ret = pam_start(\"ukui-screensaver-qt\", userName, &conv, &pamh); authRet = pam_authenticate(pamh,0); if(authRet==PAM_SUCCESS){ ret=pam_acct_mgmt(pamh,0); if(ret!=PAM_NEW_AUTHTOK_REQD) authRet=ret; ...}",
+   "explication": "Le deverrouillage s'appuie sur PAM direct (service ukui-screensaver-qt) dans un thread du backend de session (utilisateur, non root) : pam_authenticate puis pam_acct_mgmt ; echec d'acct_mgmt => authRet different de SUCCESS. Chaine d'authentification correcte dans son principe (resultat = PAM_SUCCESS requis). Biometrie et multi-facteur passent par PAM binary prompt et par le backend Uniauth (D-Bus).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "data/ukui-screensaver-qt",
+   "ligne": "2",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "auth requisite pam_nologin.so / auth sufficient pam_succeed_if.so user ingroup nopasswdlogin / @include common-auth",
+   "explication": "Le fichier PAM du verrou/greeter (installe dans /etc/pam.d par data/CMakeLists.txt:5) contient 'auth sufficient pam_succeed_if.so user ingroup nopasswdlogin' AVANT @include common-auth. Tout utilisateur membre du groupe 'nopasswdlogin' est authentifie (deverrouille) sans mot de passe. Constat deja releve en vague B09 ; confirme ici sur l'arbre.",
+   "registre": "CONSTATÉ",
+   "scenario": "Si un compte est (volontairement ou par erreur) place dans le groupe nopasswdlogin, son ecran se deverrouille sans mot de passe ; l'appartenance au groupe est le seul prerequis.",
+   "contre_lecture": "Mecanisme standard (identique a GDM/LightDM) pour l'autologin sans mot de passe ; le groupe nopasswdlogin n'est normalement peuple que pour des comptes explicitement configures ainsi."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/QtSingleApplication/qtlocalpeer.cpp",
+   "ligne": "100-131",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "lockName = QDir(QDir::tempPath()).absolutePath()+'/'+socketName+\"-lockfile\"; lockFile.open(ReadWrite); bool isClient(){ if(lockFile.isLocked())return false; if(!lockFile.lock(WriteLock,false))return true; ... server->listen(socketName);}",
+   "explication": "Le verrou d'instance unique de ukui-screensaver-dialog et -backend repose sur un fichier verrou dans QDir::tempPath() (socketName = qtsingleapp-<prefixe>-<hash>-<uid>). GetLockState()/checkScreenDialogRunning() (dbusupperinterface.cpp:894) deduisent l'etat 'verrouille' de la presence de ce pair local. Le nom integre l'uid mais reste previsible ; aucun constat d'exploitation directe etabli (lecture).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un processus du meme utilisateur qui prend le verrou/nom local avant le dialogue pourrait perturber la detection d'instance (checkScreenDialogRunning renvoie alors 'deja lance') ; impact a confirmer dynamiquement, pas de contournement du verrou demontre par lecture.",
+   "contre_lecture": "Motif QtSingleApplication standard pour empecher les instances multiples du verrou ; le fichier est isole par uid dans le repertoire temporaire du compte."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/lock-backend/dbusupperinterface.cpp",
+   "ligne": "2748-2792,244-251",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "void onLockDialogProcExit(...){ if(!m_isCrashedTootimes){ ... m_crashedTimer->start(m_remainingTime); if(status==LOCK||status==SAVER_LOCK) Lock(); ...} else { status=getScreenLockStatus(); if(!(status==UNLOCK)){ showEmergencyWindow(); } } } crashedTimer timeout=8000 -> m_isCrashedTootimes=true",
+   "explication": "Gestion du crash du dialogue de verrouillage : a la sortie du processus ukui-screensaver-dialog, le backend relance Lock() tant que les crashs restent dans la fenetre de 8 s ; au-dela (m_isCrashedTootimes), il n'affiche plus le verrou mais demande a ukui-session d'afficher une fenetre d'urgence (abnormalwindow) couvrant l'ecran, si l'etat n'est pas UNLOCK. Le crash du verrou ne conduit donc pas a un bureau deverrouille : repli vers relance ou fenetre d'urgence modale (sessionmanagercontext.cpp:737-742,768-773).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un crash provoque de maniere repetee du dialogue pourrait viser un etat ou ni le verrou ni la fenetre d'urgence ne couvre l'ecran ; la lecture montre un repli (relance puis abnormalwindow bloquant les raccourcis), sans fenetre de deverrouillage demontree.",
+   "contre_lecture": "Logique anti-plantage defensive destinee a toujours re-presenter un verrou ou une fenetre d'urgence apres un plantage graphique."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/widgets/lockwidget.cpp",
+   "ligne": "459-479,2465-2473,2576-2613",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "case Qt::Key_PowerOff: if(m_strPowerButtonKey==\"shutdown\"){ ... } ; onSureShutDown()/onShowInhibitWarning: if(!m_isManualPower) setIsSessionTools(true); onConfirmBtnClicked/onCancelBtnClicked: if(isSessionTools()) Q_EMIT sessionToolsExit();",
+   "explication": "A l'ecran verrouille, une action materielle (touche d'alimentation) ou un blocage d'extinction (applications/inhibiteurs) fait passer le drapeau 'session-tools' a vrai hors authentification ; la sortie de ce mode (sessionToolsExit) est reliee a FullBackgroundWidget::onCloseScreensaver (fullbackgroundwidget.cpp:123,1207) qui masque la fenetre et emet lockStateChanged(false). Les chemins examines reintroduisent systematiquement le verrou (setLockState / exitSubWidget vers l'auth) ou executent l'action d'alimentation ; aucun chemin de retour direct au bureau sans authentification n'a ete identifie par lecture.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur devant un ecran verrouille declenche le menu d'extinction/avertissement puis annule, en esperant que la fermeture du mode 'session-tools' laisse le bureau visible ; la lecture montre que l'annulation revient a l'ecran d'authentification, mais la logique est complexe et merite une validation dynamique (Phase 3).",
+   "contre_lecture": "Comportement normal : l'ecran verrouille doit tout de meme permettre d'eteindre/redemarrer et d'avertir des sessions ouvertes ; le drapeau session-tools distingue ce mode du simple verrou et y revient apres coup."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/widgets/lockwidget.cpp",
+   "ligne": "2361-2365,1408-1425,2298-2304",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "void doSystemMonitor(){ QProcess::startDetached(\"ukui-system-monitor\", QStringList()); } ... m_systemMonitorBtn->show() (uniquement si isSessionTools())",
+   "explication": "Le bouton 'moniteur systeme' de l'ecran verrouille lance ukui-system-monitor sans authentification. Il n'est affiche que dans le mode session-tools (extinction/avertissement), non dans le verrou simple. Lancement d'une application graphique depuis l'ecran verrouille.",
+   "registre": "CONSTATÉ",
+   "scenario": "Depuis l'ecran verrouille (mode outils d'extinction), lancer le moniteur systeme donne acces a une application affichant les processus et permettant d'en terminer, sans saisir de mot de passe.",
+   "contre_lecture": "Fonction volontaire pour permettre de diagnostiquer/tuer une application qui bloque l'extinction ; limitee au mode session-tools et a une application de supervision, pas a un shell."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/widgets/resetpwdwidget.cpp",
+   "ligne": "368-417,436-460",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "QDBusInterface interface(\"org.kylinID.service\",...); interface.call(\"checkKyidAccounts\",m_uid,...); asyncCall(\"getCodeByKyidAccounts\",...); publickeyByteQrray=\"-----BEGIN PUBLIC KEY-----...\"; rsac.encryptData(pwd,...); VerifyAccountsInfo(...)",
+   "explication": "L'ecran verrouille/greeter propose la reinitialisation de mot de passe par 'ID Kylin' : via D-Bus (org.kylinID.service, org.kylin.KprBackend) il declenche l'envoi d'un code SMS et verifie un compte Kylin ID en ligne, puis permet de changer le mot de passe du compte (ChangePassword/ChangePassword2) apres verification d'un jeton. Fonctionnalite de recuperation de compte accessible sans session ouverte ; le reseau effectif est porte par les services kylinID (hors cet arbre). Cle publique RSA embarquee pour chiffrer le mot de passe Kylin ID saisi.",
+   "registre": "CONSTATÉ",
+   "scenario": "Un attaquant disposant des reponses aux questions de securite ou d'un acces au compte Kylin ID (code SMS) peut, depuis l'ecran verrouille, changer le mot de passe local sans connaitre l'ancien ; la surface de reinitialisation est exposee avant authentification.",
+   "contre_lecture": "Fonction de recuperation de mot de passe voulue (equivalent 'mot de passe oublie') ; elle exige la possession d'un second facteur (reponses secretes bindees ou code SMS du compte Kylin ID lie), et le changement passe par un backend qui valide un jeton."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/ukccplugins/sessiondbus/screenlockinterface.cpp",
+   "ligne": "149-159",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "QString copyLoginFile(QString fileName){ name=getenv(\"USER\"); loginFilename=\"/var/lib/lightdm-data/\"+name+\"/loginBackground\"; loginCmd=QString(\"cp '%1' %2\").arg(fileName).arg(loginFilename); system(loginCmd.toUtf8().data()); }",
+   "explication": "Greffon de session (non root) : construit une commande shell cp avec system() ou le chemin source (fileName) provient de la cle gsettings de fond d'ecran. La source est entre guillemets simples mais non echappee (une apostrophe ou substitution dans le nom casserait la citation). Execute avec les privileges de l'utilisateur de session, pas root.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/screensaver/screensaver.cpp",
+   "ligne": "1676-1707",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "m_pWebView=new QWebView(...); settings->setAttribute(QWebSettings::JavascriptEnabled,true); settings->setAttribute(QWebSettings::PluginsEnabled,false); m_pWebView->load(QUrl(backgroundPath));",
+   "explication": "L'economiseur d'ecran personnalise peut afficher une URL (mode 'url saver') dans un QWebView WebKit avec JavaScript active ; backgroundPath (http/https valide par getIsValidUrl) provient de la configuration d'ecran de veille de l'utilisateur. Rendu web avec JS pendant l'economiseur/verrou. Interaction souris desactivee (setEnabled(false)).",
+   "registre": "CONSTATÉ",
+   "scenario": "Si l'URL d'economiseur est pointee vers une page hostile (configuration utilisateur ou valeur par defaut alteree), un moteur WebKit avec JavaScript s'execute sur l'ecran de veille/verrou, exposant la surface d'attaque du moteur web.",
+   "contre_lecture": "Fonction d'economiseur d'ecran de type page web voulue ; la page est choisie par l'utilisateur dans ses reglages et l'interaction clavier/souris y est desactivee."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/screensaver/weathermanager.cpp",
+   "ligne": "38-41,139-141",
+   "type": "reseau",
+   "severite": "faible",
+   "extrait": "const QString httpPrefix=\"http\"; const QString weatherServerAddr=\"://weather.ubuntukylin.com:8001/weather/api/3.0/heweather_data_s6/\"; QNetworkRequest request(QUrl(httpPrefix+weatherServerAddr+cityId+\"/\")); m_net_manager->get(request);",
+   "explication": "Le widget meteo de l'economiseur interroge en HTTP (non chiffre) weather.ubuntukylin.com:8001, toutes les heures et sur changement d'etat reseau, avec le code ville issu de la configuration locale. Pas d'identifiant materiel transmis ; TLS absent (http en dur).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un attaquant reseau en position d'intermediaire lit le code ville et peut injecter une reponse meteo falsifiee (faible impact : affichage) sur un canal non chiffre.",
+   "contre_lecture": "Appel meteo fonctionnel aligne sur l'application meteo Kylin ; donnee peu sensible (ville) et affichage uniquement."
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "src/lock-backend/dbusupperinterface.cpp",
+   "ligne": "142-147,3262-3277",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "QDBusConnection::systemBus().registerService(\"org.ukui.screensaver\"); registerObject(\"/\",...,&m_sysDbus,ExportAllSlots); bool sendPassword(username,password){ rsac.decryptData(password,decryptText,priKey); if(GetLockState()){ m_pamAuth->respond(decryptText);} }",
+   "explication": "Le backend enregistre sur le bus SYSTEME le nom org.ukui.screensaver avec un objet exposant sendPassword/getPublicEncrypt (MSysDbus). La politique systeme data/org.ukui.screensaver.conf n'autorise l'envoi vers ce nom qu'a root (policy user=root) ; la section context=default n'autorise que own. Le mot de passe transite chiffre RSA-OAEP (cle publique fournie par getPublicEncrypt, paire generee en memoire). Le mot de passe n'est ni journalise ni ecrit sur disque (les respond PAM ne sont pas tracés en clair).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-screensaver",
+   "fichier": "debian/ukui-screensaver.preinst",
+   "ligne": "7-24",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "dpkg-divert --package ukui-screensaver --rename --divert .../95-ukui-greeter.conf.old --add /usr/share/lightdm/lightdm.conf.d/95-ukui-greeter.conf ; ... lightdm-session-setup.sh ; ... /usr/share/xgreeters/ukui-greeter.desktop",
+   "explication": "ukui-screensaver detourne (dpkg-divert) les fichiers LightDM/xgreeters de ukui-greeter : le greeter effectif devient 'ukui-session simpleDesk' (data/ukui-greeter/ukui-greeter.desktop:Exec) + ukui-screensaver-backend --lock-startup, et non le binaire ukui-greeter. Fait d'inventaire majeur pour comprendre le chemin de connexion reel.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-session-manager",
+   "fichier": "ukui-session/sessionmanagercontext.cpp",
+   "ligne": "98-140",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "bool checkAuthorization(actionId){ pid=iface->servicePid(msg.service()); UnixProcessSubject subject(pid); result=Authority::checkAuthorizationSync(actionId,subject,AllowUserInteraction); }",
+   "explication": "Les actions d'alimentation/session (logout/reboot/poweroff/suspend/hibernate/start-module/...) du contexte D-Bus de session sont protegees par polkit (checkAuthorization sur org.gnome.SessionManager.*). La politique org.gnome.SessionManager.policy accorde allow_active=yes et exige auth_admin_keep pour inactive/any. Controle d'appelant present (contrairement a d'autres demons Kylin). Fait d'inventaire positif.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-session-manager",
+   "fichier": "data/com.kylin.enable-hibernate.rules",
+   "ligne": "2-9",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "polkit.addRule(function(action,subject){ if(action.id==\"org.freedesktop.login1.hibernate\"||...handle-hibernate-key||...hibernate-multiple-sessions) return polkit.Result.YES; });",
+   "explication": "Regle polkit JS (installee /usr/share/polkit-1/rules.d) et pkla associee (com.ubuntu.enable-hibernate.pkla, Identity=unix-user:*, ResultActive=yes) qui accordent l'hibernation a tout utilisateur, sans condition sur le sujet. Reactivation de l'hibernation par defaut ; affaiblissement mineur (hibernation = action d'alimentation).",
+   "registre": "CONSTATÉ",
+   "scenario": "Tout utilisateur local peut declencher l'hibernation de la machine (deni de service leger / interruption), y compris en presence de plusieurs sessions (hibernate-multiple-sessions).",
+   "contre_lecture": "Choix de conception assume (commentaire 'Re-enable hibernate by default') pour restaurer une fonctionnalite desactivee en amont ; l'hibernation n'expose pas de donnees et est une action utilisateur courante."
+  },
+  {
+   "depot": "ukui-session-manager",
+   "fichier": "debian/ukui-session-manager.postinst",
+   "ligne": "7-13",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "file=/home/$SUDO_USER/.profile; if [ -f \"$file\" ]; then sed -i '/export GDK_SCALE=/d' $file; ...",
+   "explication": "Le postinst (root) modifie /home/$SUDO_USER/.profile via sed. SUDO_USER est controle par l'environnement de l'appelant du gestionnaire de paquets et vide hors sudo ; le chemin /home/<valeur> est construit sans validation. Defaut de robustesse de script mainteneur (chemin derive d'une variable d'environnement, suivi de liens non maitrise).",
+   "registre": "CONSTATÉ",
+   "scenario": "Lors d'une (re)configuration du paquet declenchee avec SUDO_USER pointant un nom choisi, root applique un sed -i sur /home/<nom>/.profile ; l'ecriture suit les liens symboliques eventuels de ce chemin.",
+   "contre_lecture": "Code de compatibilite d'echelle d'affichage destine au compte ayant lance l'installation ; sur une installation normale SUDO_USER est l'administrateur reel et le fichier est le sien."
+  },
+  {
+   "depot": "ukui-session-manager",
+   "fichier": "data/clean_all_jobs.py",
+   "ligne": "20-52",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "jobStrList=os.popen('lpstat -W all -u %s | awk ...' % os.environ.get('USER')); c=cups.Connection(); for job in jobs: c.cancelJob(job,...)",
+   "explication": "Script Python installe executable dans /etc/ukui/ukui-session/logout (execute par execPro au logout, sessionmanagercontext.cpp:1237-1246). Il annule les travaux d'impression CUPS de l'utilisateur ($USER). Execute avec les privileges de la session a la deconnexion ; USER provient de l'environnement de session. Fait d'inventaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-session-manager",
+   "fichier": "ukui-session/idlewatcher.cpp",
+   "ligne": "150-162",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "command = \"lsof -i -P -n | grep wemeetapp|grep 'UDP\\\\s\\\\*:'\"; fp = popen(command,\"r\");",
+   "explication": "L'IdleWatcher (session utilisateur) execute periodiquement un pipeline shell via popen (lsof|grep) pour detecter une reunion Tencent Meeting en cours et suspendre la mise en veille. Commande constante (pas d'injection) ; cout de robustesse/perf, pas de prise de privilege. Fait d'inventaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-session-manager",
+   "fichier": "ukui-session/abnormalwindow.cpp",
+   "ligne": "131-168",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "void showEmergencyWindow(){ m_isEmergency=true; blockSomeShortCut(true); show(); } blockSomeShortCut: kglobalaccel blockGlobalShortcuts + USDBlockShortCut",
+   "explication": "Fenetre d'urgence affichee par ukui-session quand le backend de verrou a plante de maniere repetee : plein ecran, bloque les raccourcis globaux (kglobalaccel + usd) et invite a redemarrer. Confirme que 'crash du verrou' aboutit a un ecran bloquant, pas a un bureau accessible. Fait d'inventaire (reponse a la question 1).",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "ukui-settings-daemon/gamma-manager",
+   "destination": "http://weather.ubuntukylin.com:8001/weather/api/3.0/heweather_simple_s6/?cityids=",
+   "protocole": "HTTP",
+   "fichier_ligne": "plugins/gamma-manager/gamma-manager-location.cpp:158-176; define gamma-manager-define.h:89",
+   "declencheur": "demarrage de session + changement d'etat NetworkManager (timer 1s)",
+   "donnees": "code ville (gsettings meteo)",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-settings-daemon/gamma-manager",
+   "destination": "http://ip-api.com/json/ ; https://location.services.mozilla.com/v1/geolocate?key=geoclue",
+   "protocole": "HTTP/HTTPS",
+   "fichier_ligne": "plugins/gamma-manager/gamma-manager-define.h:75-76; gamma-manager-helper.cpp:80-82",
+   "declencheur": "geolocalisation pour mode nuit automatique",
+   "donnees": "requete de geolocalisation par IP",
+   "tls_verifie": "non (http pour ip-api; pas de verification applicative)",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-screensaver/weathermanager",
+   "destination": "http://weather.ubuntukylin.com:8001/weather/api/3.0/heweather_data_s6/",
+   "protocole": "HTTP",
+   "fichier_ligne": "src/screensaver/weathermanager.cpp:139-141",
+   "declencheur": "affichage economiseur + timer horaire + etat reseau",
+   "donnees": "code ville",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-screensaver/networkwatcher",
+   "destination": "www.baidu.com:80 (resolution + TCP)",
+   "protocole": "DNS+TCP",
+   "fichier_ligne": "src/screensaver/networkwatcher.cpp:52-126",
+   "declencheur": "verification de connectivite reseau",
+   "donnees": "aucune (test d'atteignabilite)",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-screensaver/urlsaver",
+   "destination": "URL configuree par l'utilisateur (QWebView, JS actif)",
+   "protocole": "HTTP/HTTPS",
+   "fichier_ligne": "src/screensaver/screensaver.cpp:1676-1707",
+   "declencheur": "economiseur de type URL",
+   "donnees": "requete web de la page configuree",
+   "tls_verifie": "n.d. (moteur WebKit)",
+   "classification": "indetermine"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "ukui-settings-daemon/authority(root)",
+   "donnee": "deplacements pointeur/tactile de tous les /dev/input",
+   "fichier_ligne": "plugins/authority/inputeventmonitor.cpp:300-330,360-384",
+   "stockage": "aucun (signal D-Bus systeme MouseMoved, context=default)",
+   "envoi": "diffusion sur le bus systeme a tout abonne"
+  },
+  {
+   "composant": "ukui-greeter",
+   "donnee": "identifiants DMI (sys_vendor/product_name/product_family)",
+   "fichier_ligne": "ukui-greeter/common/machinemodel.cpp:71-103",
+   "stockage": "memoire (type de machine)",
+   "envoi": "aucun envoi reseau dans cet arbre"
+  },
+  {
+   "composant": "ukui-screensaver",
+   "donnee": "DMI product_name/chassis_type, chassis-manufacturer (dmidecode si root)",
+   "fichier_ligne": "src/common/global_utils.cpp:158-172; src/common/configuration.cpp:265; src/dbusifs/machinemodel.cpp:84-104",
+   "stockage": "memoire",
+   "envoi": "aucun envoi reseau dans cet arbre"
+  },
+  {
+   "composant": "ukui-greeter / ukui-settings-daemon / ukui-session-manager",
+   "donnee": "evenements clavier/souris via XRecord (keycodes, combinaisons)",
+   "fichier_ligne": "ukui-greeter/common/xeventmonitor.cpp:100-124; ukui-settings-daemon/common/xeventmonitor.cpp:143; ukui-session-manager/tools/xeventmonitor.cpp:119",
+   "stockage": "aucun",
+   "envoi": "signaux internes (raccourcis/inactivite), pas de journalisation du contenu"
+  },
+  {
+   "composant": "ukui-screensaver (verrou)",
+   "donnee": "evenement de connexion (utilisateur, outil, methode, resultat, horodatage)",
+   "fichier_ligne": "src/lock-dialog/lockdialogmodel.cpp:730-787",
+   "stockage": "service D-Bus com.kylin.kim.backend (hors lot)",
+   "envoi": "UserLoginEvent via bus systeme"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "ukui-greeter",
+   "fichiers_code_propres": 185,
+   "lignes_code_propres": 29278,
+   "lus_integralement": 4,
+   "lus_partiellement": 5,
+   "pct_fichiers": 2.2,
+   "pct_lignes": 1.3,
+   "fichiers_lus": [
+    "ukui-greeter-daemon/main.cpp",
+    "ukui-greeter-daemon/serviceinterface.h",
+    "ukui-greeter-daemon/serviceinterface.cpp",
+    "ukui-greeter/display-switch/lightdm-session-setup.sh"
+   ],
+   "fichiers_lus_partiellement": [
+    "ukui-greeter/greeter/loginwindow.cpp",
+    "ukui-greeter/greeter/greeterwindow.cpp",
+    "ukui-greeter/greeter/main.cpp",
+    "ukui-greeter/common/xeventmonitor.cpp",
+    "ukui-greeter/greeter/pam-tally.c"
+   ],
+   "lignes_fichiers_partiels": 6513
+  },
+  {
+   "arbre": "ukui-screensaver",
+   "fichiers_code_propres": 391,
+   "lignes_code_propres": 84461,
+   "lus_integralement": 16,
+   "lus_partiellement": 18,
+   "pct_fichiers": 4.1,
+   "pct_lignes": 3.3,
+   "fichiers_lus": [
+    "src/lock-backend/main.cpp",
+    "src/lock-backend/msysdbus.h",
+    "src/lock-backend/msysdbus.cpp",
+    "src/lock-backend/dbusupperinterface.h",
+    "src/lock-backend/pamauthenticate.cpp",
+    "src/lock-backend/authpamthread.cpp",
+    "src/lock-backend/authpamthread.h",
+    "src/lock-backend/pamauthsessionserver.cpp",
+    "src/QtSingleApplication/qtlocalpeer.cpp",
+    "src/QtSingleApplication/qtlockedfile_unix.cpp",
+    "src/lock-dialog/main.cpp",
+    "src/lock-checkpasswd/main.cpp",
+    "src/dbusifs/usdhelper.cpp",
+    "src/common/kyrsac.h",
+    "src/screensaver/networkwatcher.cpp",
+    "data/ukui-greeter/lightdm-session-setup.sh"
+   ],
+   "fichiers_lus_partiellement": [
+    "src/lock-backend/dbusupperinterface.cpp",
+    "src/widgets/lockwidget.cpp",
+    "src/widgets/fullbackgroundwidget.cpp",
+    "src/widgets/blockwidget.cpp",
+    "src/widgets/authdialog.cpp",
+    "src/widgets/resetpwdwidget.cpp",
+    "src/widgets/screensaverwidget.cpp",
+    "src/widgets/pluginsloader.cpp",
+    "src/lock-dialog/lockdialogmodel.cpp",
+    "src/lock-dialog/lockdialogperformer.cpp",
+    "src/lock-dialog/backenddbushelper.cpp",
+    "src/lock-dialog/pam-tally.c",
+    "src/screensaver/screensaver.cpp",
+    "src/screensaver/weathermanager.cpp",
+    "src/ukccplugins/sessiondbus/screenlockinterface.cpp",
+    "src/ukccplugins/screenlock/screenlock.cpp",
+    "src/lock-command/main.cpp",
+    "src/common/kyrsac.cpp"
+   ],
+   "lignes_fichiers_partiels": 23719
+  },
+  {
+   "arbre": "ukui-session-manager",
+   "fichiers_code_propres": 90,
+   "lignes_code_propres": 18159,
+   "lus_integralement": 3,
+   "lus_partiellement": 4,
+   "pct_fichiers": 3.3,
+   "pct_lignes": 2.3,
+   "fichiers_lus": [
+    "data/clean_all_jobs.py",
+    "ukui-session/abnormalwindow.cpp",
+    "ukui-session/simpledeskapplication.cpp"
+   ],
+   "fichiers_lus_partiellement": [
+    "ukui-session/sessionmanagercontext.cpp",
+    "ukui-session/sessiondbusadaptor.h",
+    "ukui-session/idlewatcher.cpp",
+    "ukuismserver/ukuismserver.cpp"
+   ],
+   "lignes_fichiers_partiels": 3593
+  },
+  {
+   "arbre": "ukui-settings-daemon",
+   "fichiers_code_propres": 370,
+   "lignes_code_propres": 63016,
+   "lus_integralement": 9,
+   "lus_partiellement": 10,
+   "pct_fichiers": 2.4,
+   "pct_lignes": 2.1,
+   "fichiers_lus": [
+    "plugins/authority/authorityservice.cpp",
+    "plugins/authority/authorityservice.h",
+    "plugins/authority/main.cpp",
+    "plugins/authority/globalconfig.cpp",
+    "plugins/authority/inputeventmonitor.cpp",
+    "plugins/authority/inputeventmonitor.h",
+    "plugins/authority/camera-helper.cpp",
+    "plugins/authority/camera-helper.h",
+    "common/dbus-security.h"
+   ],
+   "fichiers_lus_partiellement": [
+    "plugins/authority/save-security-config.cpp",
+    "plugins/authority/save-security-config.h",
+    "plugins/authority/globalconfig.h",
+    "plugins/authority/device-manager.h",
+    "plugins/sharing/sharing-manager.cpp",
+    "plugins/gamma-manager/gamma-manager-location.cpp",
+    "plugins/gamma-manager/gamma-manager-define.h",
+    "plugins/media-keys/media-key-manager.cpp",
+    "plugins/save-param/lightdm-config-helper.cpp",
+    "common/usd_base_class.cpp"
+   ],
+   "lignes_fichiers_partiels": 3806
+  }
+ ],
+ "non_couvert": [
+  "ukui-screensaver : la majorite des widgets UI (src/widgets ~22,6k lignes) et src/screensaver (~13,8k) lus seulement partiellement ; l'economiseur dynamique (mpv/ffmpeg) non detaille.",
+  "ukui-settings-daemon : greffons non lus (media-keys hors externalDoAction, input-device-manager, xrandr, color, housekeeping, kds, mpris, clipboard au-dela du survol, keyboard, mouse) ; globalconfig consommateurs autres que xrandr.",
+  "ukui-session-manager : modulemanager.cpp et ukuismserver.cpp (ICE/XSMP) lus partiellement ; xdgdesktopfile/xdgautostart non detailles.",
+  "Application reelle des listes blanches .limit / .yaml (audit:false) et methodwhitelist : depend d'un dbus-daemon patche kysdk hors de ces arbres (coherent avec vague 1) ; le controle d'acces effectif aux services root reste a confirmer sur image installee (Phase 3).",
+  "Services D-Bus tiers invoques (org.kylinID.service, org.kylin.KprBackend, org.ukui.UniauthBackend, com.kylin.kim.backend, com.kylin.RemoteDesktop) : hors corpus de ce lot.",
+  "Comportement dynamique des chemins de contournement potentiels du verrou (power-key/session-tools, crash repete) : a valider en Phase 3 (lecture seule ici)."
+ ],
+ "synthese": "Quatre arbres, empreintes CONFORMES aux references. Chaine de connexion/verrouillage : authentification par PAM direct (service ukui-screensaver-qt, pam_authenticate+pam_acct_mgmt) dans un processus de session non root (CONSTATÉ, authpamthread.cpp:186-233) ; mots de passe transmis chiffres RSA-OAEP sur le bus et NON journalises/non ecrits sur disque (CONSTATÉ). Le PAM du verrou/greeter contient 'pam_succeed_if nopasswdlogin sufficient' avant common-auth : deverrouillage sans mot de passe pour les membres du groupe nopasswdlogin (elevee, CONSTATÉ, data/ukui-screensaver-qt:2). Crash du verrou => relance puis fenetre d'urgence bloquante (abnormalwindow), pas de bureau deverrouille (CONSTATÉ). Deux chemins a surveiller en mode verrouille (session-tools via touche d'alimentation/inhibiteurs ; bouton moniteur systeme lancant ukui-system-monitor sans auth) : les lectures montrent un retour au verrou, mais la logique est complexe -> moyenne, a valider en Phase 3. Services D-Bus systeme root exposes a tout utilisateur (context=default), coherent avec les constats vague 1 (kylin-process-manager/ukui-service-manager) : (1) ukui-greeter-daemon (root) sans controle d'appelant (moyenne) ; (2) ukui-settings-daemon/authoritydbus (root) dont les objets /globalconfig (lecture/ecriture de fichiers /etc/ukui/usd en root, filtre '../' seulement) et /securityConfig (ExitSecurity/ClearConfig desactivant le durcissement dconf systeme) n'appliquent AUCUN controle d'appelant (elevee, CONSTATÉ) ; les methodes protegees par PEEK_LIMIT s'appuient sur une liste blanche d'executables incluant qdbusviewer (moyenne). ukui-session-manager applique, lui, polkit sur les actions de session (positif). Collecte : le demon root authoritydbus ouvre tous les /dev/input et diffuse les deltas de pointeur/tactile en signal systeme MouseMoved accessible a tout abonne (moyenne, fuite de metadonnees d'activite inter-session) ; pas de keylogging de contenu (les XRecord propagent des keycodes a la logique UI, sans journalisation). Reseau/geolocalisation : gamma-manager et weathermanager emettent des requetes HTTP en clair (weather.ubuntukylin.com:8001, ip-api.com) au demarrage de session/economiseur (TLS non verifie, faible-moyenne). Acces distant : le greffon sharing reactive le bureau a distance au login selon ~/.config/kylin-remote-desktop/krd.ini et y lit un mot de passe en clair (moyenne). Scripts mainteneur : test colle '[ -f\"...\" ]' provoquant un rm -rf inconditionnel d'un chemin fixe (settings-daemon postinst:18) ; sed -i sur /home/$SUDO_USER/.profile en root (session-manager postinst:7) ; hibernation ouverte a tous par regle polkit/pkla (faible). Aucun binaire SUID ni blob executable dans le lot. Couverture ciblee L3 sur les chemins d'auth, services root et reseau ; UI et greffons restants partiellement couverts (voir non_couvert)."
+}

@@ -1,0 +1,91 @@
+{
+ "lot": "P2-durcissement-binaires",
+ "composants": [
+  "bash",
+  "biometric-auth",
+  "coreutils",
+  "curl",
+  "dbus-daemon",
+  "dpkg",
+  "kylin-ai-runtime",
+  "kylin-daq",
+  "kylin-nm",
+  "kylin-os-manager",
+  "kylin-wayland-compositor",
+  "libc-bin",
+  "libkysdk-system",
+  "lightdm",
+  "login",
+  "mount",
+  "network-manager",
+  "openssh-server",
+  "openssl",
+  "passwd",
+  "peony",
+  "pkexec",
+  "polkitd",
+  "sudo",
+  "systemd",
+  "ukui-control-center",
+  "ukui-panel",
+  "ukui-screensaver",
+  "ukui-session-manager",
+  "ukui-settings-daemon",
+  "util-linux",
+  "wpasupplicant",
+  "xserver-xorg-core"
+ ],
+ "empreintes": {
+  "note": "Paquets binaires vérifiés par SHA-256 contre les index Packages signés : voir durcissement-binaires-provenance.tsv"
+ },
+ "findings": [
+  {
+   "depot": "shadow (paquet binaire passwd)",
+   "fichier": "/usr/bin/passwd, chsh, chfn, gpasswd (setuid root) ; chage, expiry (setgid shadow) (passwd_4.17.4-ok1_amd64.deb)",
+   "ligne": "en-tête ELF et section dynamique",
+   "type": "durcissement",
+   "severite": "elevee",
+   "registre": "CONSTATÉ",
+   "extrait": "readelf : « Type: EXEC » (non PIE) ; aucune entrée (FLAGS) BIND_NOW ; aucun symbole __stack_chk_fail ni __*_chk ; aucune propriété x86 IBT/SHSTK — modes -rwsr-xr-x root:root (4 binaires) et -rwxr-sr-x root:shadow (chage, expiry)",
+   "explication": "Les 6 binaires privilégiés du paquet passwd (4 setuid root : passwd, chsh, chfn, gpasswd ; 2 setgid shadow : chage, expiry) d'openKylin (1:4.17.4-ok1) sont compilés sans AUCUNE des protections standard : ni exécutable à adresse aléatoire (PIE), ni RELRO complet (BIND_NOW), ni protecteur de pile, ni FORTIFY, ni CET. Les mêmes binaires Ubuntu (1:4.17.4-2ubuntu3, même source shadow 4.17.4) les ont toutes. Plus largement, 9 des 10 binaires setuid/setgid relevés ne sont pas PIE (seul sudo.ws l'est). Relevé : donnees/phase2/durcissement-binaires.json (outil outils/durcissement_binaires.py, paquets obtenus par chaîne signée, lecture readelf sans exécution). Correction après vérification contradictoire (G9) : chage et expiry sont setgid shadow et non setuid root ; pkexec et polkit-agent-helper-1, rendus setuid par leurs scripts postinst, sont eux aussi non PIE.",
+   "scenario": "Un utilisateur local qui trouverait un défaut de corruption mémoire dans l'un de ces binaires (analyse de /etc/login.defs, d'arguments ou de variables d'environnement) l'exploiterait bien plus facilement qu'ailleurs : adresse du programme fixe, pas de canari de pile, pas de vérification FORTIFY, table GOT inscriptible, pas de contrôle de flux CET. Le gain obtenu serait root (passwd, chsh, chfn, gpasswd) ou l'accès au groupe shadow (chage, expiry).",
+   "contre_lecture": "Aucune faille connue n'est établie dans shadow 4.17.4 : il s'agit de l'absence de défenses en profondeur, pas d'une vulnérabilité exploitable en soi. L'ASLR reste active pour la pile, le tas et les bibliothèques."
+  },
+  {
+   "depot": "chaîne de construction openKylin (18 paquets comparés à Ubuntu)",
+   "fichier": "donnees/phase2/durcissement-binaires.json (clés compares, openkylin_seuls, synthese)",
+   "ligne": "—",
+   "type": "durcissement",
+   "severite": "elevee",
+   "registre": "CONSTATÉ",
+   "extrait": "exécutables PIE : openKylin 16/234, Ubuntu 234/234 ; BIND_NOW : 127/262 contre 251/262 ; FORTIFY : 14/262 contre 226/262 ; CET : 218/262 contre 262/262 ; composants propres openKylin : 0/52 exécutables PIE",
+   "explication": "Régression systémique du durcissement des binaires distribués, mesurée sur 18 paquets fondamentaux comparés aux mêmes paquets Ubuntu (resolute) et sur 14 composants propres à openKylin. Concerne notamment des services root ou exposés : sshd (ni PIE ni CET ; openssh-server n'est toutefois pas installé par défaut), dbus-daemon du bus système (ni PIE, ni protecteur de pile, ni FORTIFY, ni CET), polkitd et pkexec, NetworkManager, wpa_supplicant, systemd, Xorg, curl. Seuls sudo et libc-bin, dont le système de construction amont force ces options, gardent le PIE. Cause : un défaut de dpkg est établi dans le code (P2-dpkg) — la politique de durcissement de dpkg-buildflags n'est jamais chargée sur openKylin (module Dpkg::Vendor::openKylin introuvable par Dpkg::Vendor, orig scripts/Dpkg/Vendor.pm:172-201 ; origins/openkylin sans Parent) ; l'absence générale de PIE indique en outre que le compilateur d'openKylin n'active pas le PIE par défaut, contrairement à celui d'Ubuntu (source gcc-15 hors corpus : PROBABLE). Précisions de la vérification contradictoire (G9) : le défaut de dpkg n'explique pas l'absence de PIE (même chargé, openKylin.pm suppose le PIE intégré au compilateur sur amd64, feat_openKylin.patch:407-428) ; la perte de FORTIFY, BIND_NOW et -O2 est corroborée par les dates de construction (paquets construits avant dpkg 1.22.21-ok2, 2 avril 2026, encore durcis), sans être démontrée ; une signature de code non optimisé (-O0 : 27-34 % d'accès à la pile via %rbp contre 10-15 % chez Ubuntu) apparaît dans 20 paquets sur 32, ce qui neutralise aussi FORTIFY.",
+   "scenario": "Toute vulnérabilité mémoire découverte dans l'un de ces composants (par un attaquant local pour dbus-daemon, polkitd ou pkexec ; à distance pour sshd lorsqu'il est installé) est nettement plus simple à exploiter de manière fiable sur openKylin que sur Ubuntu, les défenses en profondeur standard étant absentes.",
+   "contre_lecture": "Il ne s'agit pas d'une porte dérobée ni d'une faille en soi ; l'échantillon (32 paquets) ne couvre pas toute la distribution, et le protecteur de pile reste majoritairement présent (défaut du compilateur). Aucun indice d'intention : la cause la plus plausible est une erreur de configuration de la chaîne de construction (nom de vendor), non détectée faute de tests."
+  }
+ ],
+ "patches": [],
+ "flux_reseau": [],
+ "collectes": [],
+ "couverture": [
+  {
+   "arbre": "paquets binaires amd64",
+   "paquets_compares": 18,
+   "paquets_openkylin_seuls": 14,
+   "elf_openkylin": 368,
+   "elf_ubuntu": 262,
+   "pct_patches": 0,
+   "patches_total": 0,
+   "patches_lus": 0,
+   "fichiers_debian": 0,
+   "patches_lus_liste": []
+  }
+ ],
+ "non_couvert": [
+  "coreutils : Ubuntu resolute livre l'implémentation Rust (uutils), comparaison sans objet ; exclu des totaux.",
+  "Protection contre le stack clash et options -O : non mesurables de façon fiable par readelf.",
+  "Échantillon de 32 paquets : la proportion exacte sur toute la distribution n'est pas établie.",
+  "Configuration effective du compilateur gcc-15 d'openKylin (source hors corpus) : cause du non-PIE PROBABLE."
+ ],
+ "synthese": "Constat établi par lecture readelf de paquets binaires officiels (chaîne signée, aucune exécution) : les binaires d'openKylin 3.0 sont massivement privés des protections standard présentes chez Ubuntu pour les mêmes sources, y compris des binaires setuid root et des services root. [CONSTATÉ] pour les mesures ; [CONSTATÉ] pour le défaut de dpkg-buildflags (P2-dpkg) ; [PROBABLE] pour la part du compilateur. Aucun indice d'intention malveillante."
+}

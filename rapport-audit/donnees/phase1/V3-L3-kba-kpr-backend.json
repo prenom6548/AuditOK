@@ -1,0 +1,228 @@
+{
+ "lot": "V3-L3-kba-kpr-backend",
+ "composants": [
+  "kba"
+ ],
+ "empreintes": {
+  "archive/kba": "df4d88871351bef68c2143f3b0dcf6595a7b3ae2e4c264cc4d44fd1f0c969e55",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "kba",
+   "fichier": "kpr-backend/src/securityquestionanswer.cpp",
+   "ligne": "92-100,138-148,183-193,194-205",
+   "type": "privileges",
+   "severite": "critique",
+   "extrait": "int BindUserSecurityAnswers(int nUId, QList<AnswerInfo>){...setUserSecurityAnswers(nodeHead);} / int ChangePassword(int nUId,const QString&strPasswd,QString strToken){ struct passwd*pwinfo=getpwuid(nUId); ... changePassword(pwinfo->pw_name, strPasswd.toUtf8().data(), ...token...);}",
+   "explication": "Aucune des méthodes exportées de SecurityQuestionAnswer ne vérifie l'identité de l'appelant D-Bus (pas de QDBusContext::message().service()/connection(), pas de GetConnectionUnixUser/SO_PEERCRED, pas de polkit). Le service tourne root (org.kylin.KprBackend.service:4 User=root) et la politique .conf ouvre l'appel à context=default (tout utilisateur local). nUId (compte cible) est un simple paramètre : rien n'impose que l'appelant possède ce compte. BindUserSecurityAnswers écrit les réponses de sécurité d'un uid arbitraire sans aucune authentification, et ChangePassword change le mot de passe de n'importe quel compte (y compris root/uid 0 présent dans /etc/passwd) sur présentation d'un jeton local.",
+   "scenario": "Un utilisateur local non privilégié appelle sur le bus système, dans l'ordre : BindUserSecurityAnswers(uid_victime, réponses_choisies_par_lui) pour écraser les réponses de la victime (aucun contrôle d'appelant ni de propriété du compte), puis VerifyUserSecurityAnswers(uid_victime, ces mêmes réponses) qui renvoie un jeton valide, puis ChangePassword(uid_victime, nouveau_mdp, jeton). Le mot de passe de la victime (ou de root) est réinitialisé sans connaître l'ancien : prise de contrôle de compte et élévation locale de privilèges.",
+   "contre_lecture": "Service pensé pour n'être appelé que par la liste blanche .limit (installateur, greeter, ukui-screensaver, control-center) ; dans ce modèle l'authentification de l'utilisateur serait assurée en amont par l'IHM appelante. Mais la liste blanche .limit n'est pas appliquée par défaut (dbus-daemon patché kysdk absent du corpus ; .limit:[auth] RootOnly=false) : la restriction n'existe pas sur l'image livrée.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "kpr-backend/org.kylin.KprBackend.conf",
+   "ligne": "14-16",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "<policy context=\"default\"> <allow send_destination=\"org.kylin.KprBackend\" send_interface=\"org.kylin.KprBackend\"/> ...",
+   "explication": "La politique D-Bus système autorise tout utilisateur local (context=default) à envoyer des messages à l'interface org.kylin.KprBackend. Couplée au service root (org.kylin.KprBackend.service:4) et à l'absence totale de contrôle applicatif de l'appelant, cette politique rend l'intégralité de la surface (BindUserSecurityAnswers, VerifyUserSecurityAnswers, ChangePassword, SetUserPasswdHint, GetUserPasswdHint, EncodeSecurityInfo) atteignable par n'importe quel processus local.",
+   "scenario": "Tout processus local, même sous un compte invité/non administrateur, ouvre une connexion au bus système et invoque directement les slots root sans passer par aucune IHM ni authentification.",
+   "contre_lecture": "La commande changelog 1.0.0.1-0k0.12 ('DBUS认证管控', KVE-2024-0621) indique une intention de restreindre l'accès ; le mécanisme retenu (fichiers .limit lus par un dbus-daemon modifié) remplacerait context=default. Mais ce mécanisme n'est pas présent/appliqué par défaut (cf. verdicts G2/G5), donc la politique effective reste ouverte.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "lib/tdes.c",
+   "ligne": "36-37,1143-1146,1160-1161",
+   "type": "crypto",
+   "severite": "elevee",
+   "extrait": "char triple_des_key[16]={<masqué : 16 octets>}; ... TDes(0,&t_plain[8*i],triple_des_key,&t_crypt[8*i]);",
+   "extrait_masque": true,
+   "explication": "Le jeton de réinitialisation est produit par cipher2()/decipher2() (lib/kba.c:648 verify, :823 changePassword). Or cipher2/decipher2 IGNORENT le paramètre 'key' qui leur est passé (g_key généré aléatoirement en kba.c:635) et utilisent TOUJOURS la clé TDES codée en dur triple_des_key[16] compilée dans libkba.so (installée /usr/lib/libkba.so, lisible par tous). Le jeton = TDES(clé fixe publique, \"uid timestamp hash_réponse\"). Sa confidentialité et son intégrité sont donc nulles vis-à-vis de quiconque lit la bibliothèque : le jeton est forgeable par tout attaquant connaissant le hash de réponse stocké de la cible.",
+   "scenario": "Un attaquant local extrait la clé TDES de libkba.so (triviale, binaire monde-lisible) et, s'il obtient le hash enc2_answer stocké d'un compte (ou le fixe lui-même via BindUserSecurityAnswers non authentifié), fabrique hors-ligne un jeton accepté par ChangePassword sans jamais passer par VerifyUserSecurityAnswers.",
+   "contre_lecture": "Le jeton n'est qu'un porteur d'état court (1h) entre Verify et Change dans le même service root ; l'attaquant doit de toute façon connaître ou fixer le hash de réponse. Mais rien n'empêche de le fixer (Bind non authentifié), donc la clé fixe supprime la seule barrière cryptographique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "lib/kba.c",
+   "ligne": "900-919",
+   "type": "privileges",
+   "severite": "critique",
+   "extrait": "char *cmd=(char*)malloc(strlen(username)+strlen(password)+20); ... sprintf(cmd, \"echo '%s:%s' |chpasswd\", username, password); ret = excute_cmd(cmd); // excute_cmd -> system(strcmd) (kba.c:752)",
+   "explication": "changePassword() construit une commande shell avec le nouveau mot de passe (password) placé entre apostrophes puis l'exécute via system() en root (excute_cmd/system, kba.c:745-752). 'password' provient du paramètre D-Bus strPasswd (securityquestionanswer.cpp:187), entièrement contrôlé par l'appelant. Aucun échappement : une apostrophe dans le mot de passe sort du quoting et injecte des commandes shell arbitraires exécutées en root.",
+   "scenario": "Un utilisateur local obtient un jeton valide pour SON PROPRE compte (Bind + Verify sur son uid, non authentifiés) puis appelle ChangePassword(son_uid, \"x';<commande>;'\", jeton). Le token_match passe (c'est son compte), et <commande> s'exécute en root : exécution de code arbitraire root depuis un compte non privilégié, au-delà du simple changement de mot de passe.",
+   "contre_lecture": "Il faut franchir token_match (jeton valide). Mais obtenir un jeton pour son propre compte est trivial et non authentifié, donc la barrière est inexistante en pratique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "lib/kba.c",
+   "ligne": "795-858",
+   "type": "confiance",
+   "severite": "moyenne",
+   "extrait": "decipher2(g_key, result, token, strlen(token)); ... olduid=atoi(p); oldtime=atoi(p); cipher=p; if(olduid!=get_uid_by_username(username))...; if((curtime-oldtime)>KPR_DEFAULT_PASSWD_TIMEOUT)...; memcmp(currentlocal->answer.enc2_answer, cipher, ...)==0 -> token_match",
+   "explication": "Réponse à la question centrale Q1 : kpr-backend ne revalide le jeton auprès d'AUCUN serveur (aucun code réseau dans kba : grep socket/curl/http/kylinos négatif). La vérification est purement locale : déchiffrement du jeton avec la clé TDES fixe, contrôle que l'uid du jeton = uid du username cible, fraîcheur < 1h (3600 s), et égalité du hash de réponse porté par le jeton avec le hash stocké dans /etc/security/questions. Le chemin kylin-id en ligne (ChangePassword2 / VerifyAccountsInfo appelés par ukui-screensaver) N'EST PAS implémenté dans cette source 1.0.0.1-ok9 (grep ChangePassword2/VerifyAccountsInfo/kyid/RSA/id.kylinos négatif sur tout l'arbre).",
+   "scenario": "Le jeton n'étant lié qu'à l'uid+hash+temps et chiffré sous clé publique fixe, il est rejouable pendant 1h et forgeable (cf. finding tdes). La vérification locale ne protège donc pas contre un appelant malveillant maîtrisant le hash stocké.",
+   "contre_lecture": "La vérification locale (uid+fraîcheur+hash) est cohérente pour une IHM de confiance réputée restreinte par .limit ; elle vaut ce que vaut le secret de la clé TDES et l'authentification de l'appelant — tous deux défaillants ici.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "lib/kba.c",
+   "ligne": "285,723-743",
+   "type": "crypto",
+   "severite": "moyenne",
+   "extrait": "KPR_PKCS5_PBKDF2_HMAC2((unsigned char*)buf, strlen(buf), key, sizeof(key), 2, 32, hmac); // 2 itérations ; EncodeSecurityInfo: memcpy(key,password,plen); transform_string(key); PKCS5_PBKDF2_HMAC2(password,plen,key,strlen(key),2,32,hmac)",
+   "explication": "Le hachage des réponses de sécurité (merge_answer, kba.c:285) utilise PBKDF2-HMAC-SHA256 avec seulement 2 itérations — KDF trivialement brute-forçable. De plus EncodeSecurityInfo (kba.c:735-738) dérive le sel par transformation déterministe de la réponse elle-même (transform_string = ROT13/ROT3, kba.c:28-44), donc un sel non aléatoire et dérivable. Les réponses de sécurité (nom de la mère, ville de naissance, etc.) sont déjà de faible entropie.",
+   "scenario": "Un attaquant disposant du fichier /etc/security/questions (ou du hash par un autre canal) récupère les réponses en clair par force brute hors-ligne, le KDF à 2 itérations n'opposant aucune résistance.",
+   "contre_lecture": "Le fichier /etc/security/questions est écrit en 0600 root (json.c:39-40 umask 0077), donc non lisible par un utilisateur non privilégié ; l'exposition suppose un autre défaut de lecture. Reste un durcissement cryptographique très insuffisant.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "kpr-backend/src/securityquestionanswer.cpp",
+   "ligne": "100,148",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "strcpy(answer.encryptedAnswer, QByteArray::fromBase64(answerInfo.strAnswerText.toUtf8()).data());",
+   "explication": "Copie par strcpy vers encryptedAnswer[65] (kba.h:39) d'une valeur décodée base64 fournie par l'appelant D-Bus, sans contrôle de longueur. Dépassement de tampon possible dans le processus root si l'appelant envoie une réponse base64 décodant à plus de 64 octets. Présent dans BindUserSecurityAnswers et VerifyUserSecurityAnswers.",
+   "scenario": "Un appelant local envoie une AnswerInfo dont le champ base64 décode à une chaîne > 64 octets, provoquant un débordement de pile dans kpr-backend (root).",
+   "contre_lecture": "Exploitabilité en exécution de code non démontrée statiquement (dépend de l'agencement mémoire / protections de compilation) ; impact immédiat = corruption/plantage du service root.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "CMakeLists.txt",
+   "ligne": "18,26-29",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "set(CMAKE_BUILD_TYPE Debug) ... set(CMAKE_C_FLAGS \"$ENV{CFLAGS} -O0 -g -Wall\")",
+   "explication": "Le CMake racine force inconditionnellement le type de build Debug (-O0 -g) : le binaire kpr-backend root et libkba.so sont construits sans optimisation ni durcissement (la branche Release qui ajouterait -O2 est morte car CMAKE_BUILD_TYPE est posé avant le test). Aucune option de durcissement (hardening) activée dans debian/rules (DEB_BUILD_MAINT_OPTIONS commenté). Les printf de débogage de verifyUserSecurityAnswers/changePassword (kba.c:621-622,876-877) impriment questions et hash sur stdout.",
+   "scenario": "n.a. (défaut de durcissement)",
+   "contre_lecture": "n.a.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "conf/org.kylin.KprBackend.limit",
+   "ligne": "1-15",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "[whitelist] key1=/usr/bin/kylin-os-installer ... key3=/usr/bin/ukui-screensaver-dialog ... [auth] RootOnly=false ; (conf/org.kylin.KprBackend.limit.verify : fichier vide, 0 octet)",
+   "explication": "Liste blanche d'appelants autorisés (installateur, greeter, ukui-screensaver-dialog, control-center, agent polkit ukui) destinée à un dbus-daemon patché kysdk. Installée dans /etc/dbus-1/conf/ et /usr/share/dbus-1/conf/ (debian/libkba.install:1-4). RootOnly=false. Le fichier .limit.verify (censé porter une empreinte de contrôle) est VIDE dans la source (0 octet). Le composant appliquant cette liste est absent du corpus et établi comme non appliqué par défaut (verdicts G2/G5, 00-synthese.md). Inventaire pour la chaîne d'autorisation.",
+   "scenario": "n.a.",
+   "contre_lecture": "n.a.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kba",
+   "fichier": "kpr-backend/src/securityquestionanswer.cpp",
+   "ligne": "348-387",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "void updateLanguage(QString languageCode){ ... setenv(\"LANGUAGE\", languageCode.toUtf8().data(), 1); setenv(\"LANG\", languageCode.toUtf8().data(), 1); setlocale(LC_ALL, \"\"); ...}",
+   "explication": "La branche par défaut de updateLanguage pose LANGUAGE/LANG depuis la chaîne 'language' fournie par l'appelant D-Bus (GetPresetSecurityQuestions/GetUserSecurityQuestions) dans le processus root, sans validation, puis setlocale + bindtextdomain. Entrée appelant injectée dans l'environnement du service root ; surface d'abus de locale/gettext (chemins de catalogues) dans un processus privilégié.",
+   "scenario": "Appelant local fournissant une valeur de langue construite pour influencer le chargement de catalogues de traduction dans le processus root.",
+   "contre_lecture": "Impact concret non démontré (bindtextdomain fixe le domaine à /usr/share/locale juste après) ; relevé comme faiblesse de validation d'entrée dans du code root.",
+   "registre": "PROBABLE"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "kba",
+   "destination": "aucune",
+   "protocole": "n.a.",
+   "fichier_ligne": "lib/kba.c (ensemble), kpr-backend/src/* (ensemble)",
+   "declencheur": "n.a.",
+   "donnees": "aucune : kpr-backend/libkba n'ouvrent aucune socket ni client HTTP (grep socket/connect/curl/http/kylinos négatif sur le code propre). La validation du jeton est 100% locale.",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "kba",
+   "donnee": "réponses aux questions de sécurité (hachées PBKDF2-SHA256 2 itérations) + sel/clé par utilisateur en clair",
+   "fichier_ligne": "lib/kba.c:388-422 (setUserSecurityAnswers), lib/json.c:11-56 (save_answer_to_jsonfile)",
+   "stockage": "/etc/security/questions (JSON, mode 0600 root via umask 0077)",
+   "envoi": "aucun (local)"
+  },
+  {
+   "composant": "kba",
+   "donnee": "indice de mot de passe par utilisateur (texte en clair)",
+   "fichier_ligne": "lib/kba.c:925-963 (set_password_hint), lib/json.c:236-259",
+   "stockage": "/etc/security/pwdtip (JSON ; aucun umask forcé, écrit par save_users_to_json)",
+   "envoi": "aucun (local)"
+  },
+  {
+   "composant": "kba",
+   "donnee": "jeton de réinitialisation (uid, horodatage, hash réponse) chiffré TDES clé fixe",
+   "fichier_ligne": "lib/kba.c:632-651 (verifyUserSecurityAnswers)",
+   "stockage": "transitoire (renvoyé à l'appelant D-Bus, base64)",
+   "envoi": "renvoyé à l'appelant D-Bus local uniquement"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/kba",
+   "fichiers_code_propres": 31,
+   "lignes_code_propres": 6827,
+   "lus_integralement": 27,
+   "lus_partiellement": 4,
+   "pct_fichiers": 100,
+   "pct_lignes": 83,
+   "fichiers_lus": [
+    "CMakeLists.txt",
+    "kpr-backend/CMakeLists.txt",
+    "kpr-backend/org.kylin.KprBackend.conf",
+    "kpr-backend/org.kylin.KprBackend.service",
+    "kpr-backend/src/main.cpp",
+    "kpr-backend/src/serviceinterface.h",
+    "kpr-backend/src/serviceinterface.cpp",
+    "kpr-backend/src/securityquestionanswer.h",
+    "kpr-backend/src/securityquestionanswer.cpp",
+    "lib/CMakeLists.txt",
+    "lib/common.h",
+    "lib/kba.c",
+    "lib/json.c",
+    "lib/log.c",
+    "lib/list.c",
+    "lib/pbkdf2_hmac.c",
+    "lib/pbkdf2_hmac.h",
+    "lib/sha.h",
+    "lib/sha256.h",
+    "lib/sha512.h",
+    "lib/tdes.h",
+    "include/kba/kba.h",
+    "conf/org.kylin.KprBackend.limit",
+    "conf/question.json",
+    "example/CMakeLists.txt",
+    "example/password_recovery.py",
+    "example/test.c",
+    "TestSQA/main.cpp",
+    "TestSQA/uniauthservice.cpp",
+    "TestSQA/uniauthservice.h",
+    "TestSQA/TestSQA.pro",
+    "README.md",
+    "debian/control",
+    "debian/rules",
+    "debian/libkba.install",
+    "debian/libkba.postinst",
+    "debian/libkba.prerm",
+    "debian/patches/0002-update-changelog.patch",
+    "debian/patches/0003-bugfix-fix-libjson-c4-depend-err.patch"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "lib/tdes.c : lu intégralement pour la clé codée en dur (l.36-37), les wrappers cipher2/3 et decipher2/3 (l.1121-1222), asc_bcd/tohex ; les tables de permutation DES et les primitives des()/undes() (l.43-1065) lues structurellement, non ligne à ligne.",
+  "lib/sha.c, lib/sha256.c, lib/sha512.c : primitives de hachage tierces (PuTTY/Simon Tatham, NIST SHS) — origine et structure vérifiées, constantes de transformation non relues ligne à ligne ; non critiques pour la chaîne d'autorisation.",
+  "Divergence source/binaire : ukui-screensaver (4.20.0.0-ok5.7) appelle org.kylin.KprBackend ChangePassword2 et VerifyAccountsInfo (chemin kylin-id en ligne), méthodes ABSENTES de cette source kba 1.0.0.1-ok9. Le binaire kpr-backend réellement installé peut différer de l'archive auditée (phase 0 : forge Gitee DIVERGENT, arbre gitee non acquis). Impossible de trancher ici si le binaire livré implémente ChangePassword2 et, le cas échéant, s'il revalide le jeton kylin-id (et sur quel transport).",
+  "Application effective des .limit/.limit.verify : dépend d'un dbus-daemon patché kysdk hors corpus ; considéré non appliqué par défaut (verdicts G2/G5), non revérifié dans ce lot.",
+  "Permissions/umask réels à l'exécution (/etc/security/pwdtip notamment) : analyse statique uniquement, à confirmer en Phase 5."
+ ],
+ "synthese": "CONSTATÉ. kba fournit le service D-Bus système root org.kylin.KprBackend (/usr/bin/kpr-backend, paquet libkba installé par défaut) pour la réinitialisation du mot de passe local. Q1 — Avant de changer un mot de passe, kpr-backend ne contacte AUCUN serveur (aucun code réseau dans l'arbre) : la validation du jeton est purement locale (lib/kba.c:795-891) = déchiffrement TDES, uid du jeton == uid cible, fraîcheur < 1h, et hash de réponse du jeton == hash stocké /etc/security/questions. Le chemin kylin-id en ligne (ChangePassword2/VerifyAccountsInfo) attendu par ukui-screensaver est ABSENT de cette source 1.0.0.1-ok9. Les réponses de sécurité sont hachées en PBKDF2-SHA256 à 2 itérations (kba.c:285) et stockées 0600 root. Q2 — Toutes les méthodes sont appelables par tout utilisateur local : .conf context=default (conf:14-16), service User=root, et AUCUN contrôle d'appelant dans le code (ni QDBusContext, ni GetConnectionUnixUser/SO_PEERCRED, ni polkit ; seul geteuid()==0 self-check). La liste blanche .limit n'est pas appliquée par défaut (G2/G5) et .limit.verify est vide. Q3 — (a) MitM réseau via le TLS non vérifié de kylin-id -> reset local par kpr-backend : NON/INDÉTERMINÉ dans ce lot : la méthode de revalidation du jeton kylin-id n'existe pas dans la source auditée ; le chemin questions de sécurité n'implique aucun réseau. Caveat fort : divergence source/binaire (gitee non acquis) ; si le binaire livré implémente ChangePassword2 faisant confiance à un jeton issu du client kylin-id VerifyNone, la chaîne deviendrait CRITIQUE — à trancher en Phase 5. (b) Un utilisateur local non privilégié réinitialise le mot de passe d'un autre compte sans l'ancien : OUI, CRITIQUE. Enchaînement non authentifié BindUserSecurityAnswers(uid_cible, réponses_choisies) -> VerifyUserSecurityAnswers(uid_cible, mêmes réponses) -> ChangePassword(uid_cible, nouveau_mdp, jeton) ; aucune des étapes ne vérifie que l'appelant possède uid_cible ; root (uid 0) ciblable. S'ajoute une injection shell root via le mot de passe (kba.c:908 sprintf echo '%s:%s'|chpasswd + system()) donnant exécution de code root arbitraire depuis un compte non privilégié (CRITIQUE), et une clé TDES codée en dur dans libkba.so monde-lisible (tdes.c:36) qui annule toute protection cryptographique du jeton (cipher2/decipher2 ignorent la clé aléatoire et emploient la clé fixe). Couverture : 31 fichiers de code propre, 100% des fichiers ouverts, ~83% des lignes lues intégralement (tables DES et primitives SHA tierces lues structurellement). [CONSTATÉ, vérification complémentaire de l'auditeur principal] Correspondance source ↔ binaire livré : le paquet libkba 1.0.0.1-ok9 (installé par défaut ; .deb obtenu par chaîne signée, donnees/phase1/vague3/V3-L3-kba-provenance.tsv) contient dans /usr/bin/kpr-backend les méthodes ChangePassword, BindUserSecurityAnswers, VerifyUserSecurityAnswers et updateLanguage, et dans /usr/lib/libkba.so le format de commande « echo …:…|chpasswd » ; les méthodes ChangePassword2 et VerifyAccountsInfo, appelées par ukui-screensaver pour le parcours de réinitialisation par Kylin ID, sont ABSENTES du binaire livré comme de la source. La chaîne « interception réseau (TLS non vérifié de kylin-id) → réinitialisation du mot de passe local » n'est donc pas réalisable avec le kpr-backend livré ; la chaîne locale repose sur du code présent dans le binaire."
+}

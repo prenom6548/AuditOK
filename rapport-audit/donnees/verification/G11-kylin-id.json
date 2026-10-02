@@ -1,0 +1,38 @@
+[
+ {
+  "id": "V3-L2-kylin-id#0",
+  "lot": "V3-L2-kylin-id",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L2-kylin-id.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-sso-client"
+  ],
+  "depot": "kylin-id",
+  "fichier": "/usr/bin/kylinid-dbus",
+  "ligne": "off=0x3390f-0x4394a (.text), va=0x433909..0x43394a",
+  "type": "crypto",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "QSslConfiguration ctor; mov $0x0,%esi; call setPeerVerifyMode@plt  (0 = QSslSocket::VerifyNone); mov $0x4,%esi; call setProtocol@plt (TlsV1_2); call QNetworkRequest::setSslConfiguration@plt — puis POST https://id.kylinos.cn/v1/api/...",
+  "explication": "Le service système racine kylinid-dbus construit toutes ses requêtes HTTPS vers id.kylinos.cn en fixant setPeerVerifyMode(QSslSocket::VerifyNone) : la validation du certificat serveur est DÉSACTIVÉE alors que isUseSsl=true (kylin-id.conf) et que les URL sont en https://. Même motif dans kylin-id (5 sites, tous esi=0), libnetworkaccount.so (1 site) et kylin-cloud-sync (1 site). Les flux concernés transportent identifiants Kylin ID, mot de passe (chiffré RSA/AES), jeton d'authentification, numéro de téléphone, code SMS et identifiants matériels.",
+  "scenario": "Un attaquant en position d'homme du milieu (Wi-Fi, DNS/ARP, proxy) présente un faux certificat pour id.kylinos.cn : le client l'accepte sans broncher, capte identifiants et jeton, et peut forger les réponses (ex. renvoyer code 200 + jeton valide) — ce qui alimente notamment le flux de réinitialisation de mot de passe depuis l'écran verrouillé (ukui-screensaver appelle checkKyidAccounts/getCodeByKyidAccounts/checkAccountsInfo sur ce service).",
+  "contre_lecture": "VerifyNone pourrait n'avoir été mis que pour tolérer des bascules d'autorité interne/CDN ou un portail captif pendant le dev ('remove the following line for debug' figure déjà dans la conf D-Bus). Mais ici c'est inconditionnel, en production, sur un composant d'identité installé par défaut : la mention https:// donne une fausse impression de sécurité."
+ },
+ {
+  "id": "V3-L2-kylin-id#1",
+  "lot": "V3-L2-kylin-id",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V3-L2-kylin-id.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-sso-client"
+  ],
+  "depot": "kylin-id",
+  "fichier": "/etc/dbus-1/system.d/org.kylinID.service.conf ; /lib/systemd/system/kylinID.service ; /usr/bin/kylinid-dbus",
+  "ligne": "conf:15-17 ; unit:5-10 ; dbus XML embarqué va~0x45f9.. (introspection)",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "unit: [Service] Type=dbus BusName=org.kylinID.service ExecStart=/usr/bin/kylinid-dbus User=root Restart=always. conf: <policy context=\"default\"><allow send_destination=\"org.kylinID.service\"/></policy>. XML: method checkKyidAccounts(i uid,s kyidAccounts); getCodeByKyidAccounts(s)->as; checkAccountsInfo(s,s,s)->as; IsUserBindKyidAccounts(i uid)->b.",
+  "explication": "kylinid-dbus tourne en root sur le bus SYSTÈME et la politique D-Bus autorise context=\"default\" (TOUT utilisateur local) à lui envoyer des messages. Le binaire ne contient AUCUN contrôle d'appelant : pas de libpolkit (absent des NEEDED), pas de PolkitQt1::Authority, pas de QDBusContext, pas de GetConnectionUnixUser, pas de getuid/geteuid. Les méthodes exposées déclenchent l'envoi d'un SMS au téléphone lié à un compte Kylin ID arbitraire (getCodeByKyidAccounts -> GET https://id.kylinos.cn/v1/api/getCodeByName), tentent une connexion en ligne (checkAccountsInfo -> userLoginWithCode) et lisent/écrivent la base root /var/lib/kylin-id/database/bindInfo.db (bind_user/unbind_user via dbhelp). Le contrôle polkit org.ukui.cloudAccount.userBound n'est présent que dans le plugin d'UI libnetworkaccount.so (côté utilisateur), pas dans le service racine.",
+  "scenario": "Tout utilisateur local (ou tout code non privilégié) appelle getCodeByKyidAccounts('compte-cible') en boucle pour spammer des SMS vers le numéro d'une victime et énumérer les comptes valides (checkKyidAccounts), sans authentification, via un service root. Couplé au VerifyNone ci-dessus, un attaquant on-path peut piloter les réponses qui conditionnent la réinitialisation de mot de passe pré-authentification sur l'écran verrouillé.",
+  "contre_lecture": "Beaucoup de ces méthodes sont de simples relais réseau vers le backend Kylin, qui applique ses propres limites (anti-spam, verrouillage). Le root sert surtout à posséder une base commune multi-sessions et à répondre à l'écran verrouillé (pas de session utilisateur active) ; l'impact 'root local' direct est limité, l'abus principal est l'absence d'authentification de l'IPC et l'usage de ressources tierces."
+ }
+]

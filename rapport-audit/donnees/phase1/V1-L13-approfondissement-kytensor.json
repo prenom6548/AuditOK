@@ -1,0 +1,271 @@
+{
+ "lot": "V1-L13-approfondissement-kytensor",
+ "statut": "complet",
+ "composants": [
+  "kytensor",
+  "kytensor-llm"
+ ],
+ "empreintes": {
+  "archive/kytensor": "8e3750a68e7d3e00109a808003b43bee9acbc4f7d13505a568cd1c7974ab73c8",
+  "archive/kytensor-llm": "c0506e2dea8aeb840b2154df18c8ec4b4d7d5a8e4c7da797cb28c75615740447",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "kytensor",
+   "fichier": "server/src/http_server.cc",
+   "ligne": "76-92, 1389-1611, 4578-4677",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "Handle()/HandleRepositoryControl() : RETURN_AND_RESPOND_IF_RESTRICTED(...) puis EVBufferToJson(...) ; aucune lecture d'en-tete Origin/Host ; Content-Type non controle (corps toujours lu en JSON) ; aucun en-tete CORS emis",
+   "explication": "Precision nouvelle vs L8 : les handlers de l'API HTTP root (127.0.0.1:8000) ne verifient ni Origin, ni Host, ni Content-Type (grep Access-Control/Origin/Host = 0 dans server/src ; corps analyse par EVBufferToJson quel que soit le type). Le controle de dependance (RestrictedFeatures) n'est pas configure (unite sans --http-restricted-api). La protection ne repose donc QUE sur l'ecoute loopback, contournable depuis le navigateur de l'utilisateur (classe CSRF/DNS-rebinding vers loopback). Code serveur CONSTATE ; l'exploitabilite effective depend du navigateur d'openKylin (hors lot), d'ou PROBABLE.",
+   "scenario": "Un contenu web consulte par l'utilisateur amene son navigateur a emettre, en tache de fond, une requete d'ecriture vers le service local d'inference, sans compte local ni interaction : combine au chargement de modele a backend Python etabli par L8, cela ferait passer un vecteur purement local a un vecteur potentiellement declenchable a distance via le poste.",
+   "contre_lecture": "Les navigateurs recents restreignent l'acces des pages publiques au loopback (Private/Local Network Access, avec demande d'autorisation) ; si le navigateur par defaut d'openKylin applique ces garde-fous, une action utilisateur est requise. Comportement amont de Triton (non concu pour exposition directe), non un ajout Kylin ; le fait Kylin reste l'activation root sans authentification sur chaque poste.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "kytensor",
+   "fichier": "server/src/shared_memory_manager.cc",
+   "ligne": "113-152, 348-414 ; http_server.cc:2243-2347 ; grpc/grpc_server.cc:1716-1745",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "OpenSharedMemoryRegion : shm_open(shm_key, O_RDWR, S_IRUSR|S_IWUSR) ; RegisterSystemSharedMemory(name, shm_key, offset, byte_size) via HandleSystemSharedMemory action 'register', 'key' fourni par le client",
+   "explication": "L'endpoint systemsharedmemory/register (non restreint) laisse le client choisir la cle POSIX de la region ouverte par le serveur root (shm_open en O_RDWR) ; la region est ensuite utilisee comme tampon d'entree (lecture) et de sortie (ecriture) dans le chemin d'inference (GetMemoryInfo, http_server.cc:2683/2798). Le serveur n'exige pas la propriete de l'objet shm ; seul un controle de bornes offset+byte_size <= taille existe (CheckSharedMemoryRegionSize). Comportement amont Triton, expose sans authentification par la configuration Kylin.",
+   "scenario": "Un processus local fait mapper par le service root une region de memoire partagee qu'il designe, puis la fait lire/ecrire par ce service privilegie lors d'une inference ; le service root agit ainsi comme lecteur/ecrivain d'un segment choisi par un tiers.",
+   "contre_lecture": "Mecanisme legitime de Triton pour eviter les copies de gros tenseurs entre client local et serveur ; l'ouverture echoue si l'objet n'existe pas ou si ses droits POSIX l'interdisent, et le controle de bornes amont est present. Impact direct non demontre dans ce lot.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "kytensor",
+   "fichier": "server/src/http_server.cc",
+   "ligne": "1799-2081 (trace), 2082-2218 (logging) ; grpc/grpc_server.cc:1205-1216",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "HandleTrace/HandleLogging : si request.Find(\"trace_file\"|\"log_file\") -> TRITONSERVER_ERROR_UNSUPPORTED \"... can not be updated through network protocol\" ; TRACING compile OFF",
+   "explication": "Question 3 (trace/logging ecrivent-ils a un chemin fourni ?) : NON. Les deux endpoints refusent explicitement toute mise a jour de trace_file/log_file par le reseau (HTTP et gRPC). TRACING est desactive a la compilation (CMakeLists/rules TRITON_ENABLE_TRACING OFF ; HandleTrace renvoie 'server does not support tracing'). Le logging dynamique ne change que les niveaux/format, pas la destination. Pas d'ecriture de fichier a chemin arbitraire par ces endpoints.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kytensor",
+   "fichier": "server/src/http_server.cc",
+   "ligne": "1389-1455 (index), 1651-1798 (metadata/config/stats) ; src/command_line_parser.cc:1795-1801 (metriques)",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "/v2/repository/index, /v2/models(/<name>)/{config,stats,ready}, /v2/models/stats, /v2 (metadata), metriques Prometheus 127.0.0.1:8002 ; toutes categories RestrictedFeatures non configurees",
+   "explication": "Inventaire de la surface non authentifiee au-dela de load/unload : index du depot, metadonnees serveur/modeles, configuration et statistiques d'inference par modele, et metriques Prometheus (port 8002). Donnees exposees a tout processus local : noms/versions de modeles charges, compteurs et latences d'inference, etat serveur. Pas de donnees personnelles. Comportement amont expose par la configuration Kylin en root sur loopback.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kytensor",
+   "fichier": "core/src/repo_agent.cc",
+   "ligne": "51-58, 374-402 ; core/src/backend_model.cc:293-388",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "TritonRepoAgentLibraryName : \"libtritonrepoagent_\"+agent_name+\".so\" ; CreateAgent cherche dans global_search_path_ (/opt/tritonserver/repoagents) ; backends cherches dans {version_path, model_path, backend_path}",
+   "explication": "Precision sur le vecteur backend natif : outre le backend Python (model.py) deja etabli par L8, le resolveur de bibliotheque de backend inclut le repertoire du modele (model_path et version_path) dans les chemins de recherche de libtriton_<backend>.so (GetBackendLibrarySearchPaths). Un controle anti-evasion (IsChildPathEscapingParentPath) empeche la sortie du repertoire, mais une bibliotheque .so placee DANS le repertoire du modele peut etre chargee (dlopen) par le serveur root. L'ecriture des overrides d'un load reste toutefois cantonnee au repertoire temporaire (garde-fou amont, cf. L8). Comportement amont.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kytensor",
+   "fichier": "server/src ; core/src ; backend/src ; common/src ; framework_backends",
+   "ligne": "n.d.",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "Aucune URL de telemetrie ni appel sortant (curl_easy_init/connect/getaddrinfo) dans server/core/backends ; seules URL = documentation et github triton-inference-server (sources de build en mode SOURCE_DIR local, inutilisees)",
+   "explication": "Question 4 (reseau sortant, telemetrie) : CONSTATE negatif. Le serveur n'ouvre que des sockets d'ecoute (evhtp_bind_socket, gRPC) ; aucun flux sortant, aucune collecte d'identifiants systeme (machine-id/dmi/MAC/cpuinfo absents du code), aucun endpoint de telemetrie. Les GIT_REPOSITORY github dans les CMakeLists sont inutilises (FetchContent SOURCE_DIR locaux). Exemples client avec URL d'images de demo (cocodataset.org) non installes.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kytensor",
+   "fichier": "server/tritonserver.desktop",
+   "ligne": "1-10",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "[Desktop Entry] Exec=bash -c \"source .../python-env/bin/activate && tritonserver --model-repository=/opt/appdata/kylin-ai/model-repository --model-control-mode=explicit --http-address=127.0.0.1 ... --log-file=$HOME/.log/tritonserver.log\" ; X-UKUI-Autostart-Phase=Application",
+   "explication": "Entree d'autostart de session (UKUI) lancant un second serveur d'inference en MODE UTILISATEUR (non root), ecrivant son journal dans $HOME/.log. Non installee par les regles (aucune regle CMake/debian ne la copie), donc inactive sur l'ISO. Doublon du service systpublic root. A noter comme fait d'inventaire : si un jour installee, elle ferait tourner un second serveur avec les memes options loopback cote session.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kytensor-llm",
+   "fichier": "debian/rules ; debian/control ; debian/kytensor-llm.install",
+   "ligne": "1-73 (rules) ; 1-29 (control)",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "cmake .. -DGGML_BACKEND_DL=ON(amd64) -DLLAMA_CURL=OFF -DGGML_CUDA=OFF -DGGML_NATIVE=ON(autres) ; install = libggml*.so, libllama.so, libcommon.so (bibliotheques seulement) ; pas de service/postinst ; Homepage github.com/ggerganov/llama.cpp",
+   "explication": "Nature CONSTATEE : kytensor-llm est un fork de llama.cpp (ggml). Le paquet installe par l'ISO ne contient QUE des bibliotheques (.so) ; aucun demon, aucune unite systemd, aucun postinst. Les binaires (llama-server, rpc-server, convertisseurs) sont dans kytensor-llm-dev, NON installe par l'ISO 3.0. Le delta Kylin est purement packaging/portage : LLAMA_CURL=OFF (desactive tout telechargement de modele), GGML_CUDA=OFF, GGML_BACKEND_DL=ON (amd64), ajout loongarch/riscv64, Qwen3/Qwen3MoE, SSE4.2 (changelog). Aucune mention kylin/kytensor dans le code C/C++ ; les caracteres chinois dans src/llama-vocab.cpp et src/llama-chat.cpp sont des regex de tokenizer et des gabarits de conversation amont (Qwen/Baichuan).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kytensor-llm",
+   "fichier": "src/llama-model-loader.cpp ; ggml/src/gguf.cpp",
+   "ligne": "446-467, 815-823",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "meta.reset(gguf_init_from_file(fname, params)) ; init_mappings -> llama_mmap(file) ; chargement de modele = parsing/mmap d'un fichier GGUF (donnees), pas de pickle/torch.load/eval",
+   "explication": "Question 2 (chargement de modeles = execution de code ?) : NON pour le runtime installe. llama.cpp charge des fichiers GGUF, un format de DONNEES lu par mmap/fread et parse en C++ ; contrairement a pickle/torch.load, il n'y a pas de desserialisation de code. Aucun torch.load/pickle/eval dans les sources C/C++ installees (les convert_hf_to_gguf*.py utilisent torch mais sont des outils de developpement non installes). Aucune verification de signature/integrite du GGUF (attendu pour un format de fichier local ; charge depuis le depot de modeles root).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kytensor-llm",
+   "fichier": "ggml/src/ggml-backend-reg.cpp",
+   "ligne": "498-595",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "ggml_backend_load_best(..., user_search_path=nullptr) : search_paths = {LIB_GGML_BACKEND_PATH, get_executable_path(), fs::current_path()} ; dl_load_library(entry) ; getenv(\"GGML_BACKEND_PATH\") -> ggml_backend_load(path)",
+   "explication": "Avec GGML_BACKEND_DL=ON (choix de build Kylin sur amd64), ggml charge dynamiquement ses backends (libggml-*.so) par dlopen. La liste de recherche inclut le REPERTOIRE COURANT du processus (fs::current_path()) et la variable d'environnement GGML_BACKEND_PATH (chemin arbitraire). Un processus privilegie consommant ces .so avec un CWD inscriptible par un tiers, ou un environnement controlable, pourrait charger une bibliotheque non prevue. Comportement AMONT de llama.cpp. L'integration reelle (llm-backend, binaire SANS source, charge par kytensor root) et le CWD effectif du service sont hors de cet arbre : le vecteur reste conditionnel et non demontre ici.",
+   "scenario": "Si le service root consommant libggml s'execute avec un repertoire de travail inscriptible par un utilisateur ordinaire, ou si GGML_BACKEND_PATH est influencable, une bibliotheque de backend fournie par un tiers serait chargee par le processus privilegie.",
+   "contre_lecture": "L'unite kytensor.service ne definit pas WorkingDirectory (CWD herite = /, non inscriptible) et n'exporte pas GGML_BACKEND_PATH ; en configuration par defaut le repertoire courant n'est donc pas attaquable. C'est le comportement standard de llama.cpp, documente, et non une modification Kylin.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "kytensor-llm",
+   "fichier": "examples/server/server.cpp ; examples/rpc/rpc-server.cpp ; common/common.h",
+   "ligne": "3489-3554 (server) ; 29 (rpc) ; 367 (common.h)",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "llama-server : hostname defaut 127.0.0.1, port 8080, middleware_validate_api_key (params.api_keys vide => validation ignoree) ; rpc-server defaut 127.0.0.1:50052 ; GGML_RPC OFF par defaut",
+   "explication": "Question 1/surface reseau : les seuls listeners sont dans les binaires du paquet -dev (NON installe). llama-server ecoute 127.0.0.1:8080 par defaut, avec authentification par cle d'API OPTIONNELLE desactivee par defaut (api_keys vide => toute requete acceptee) ; rpc-server ecoute 127.0.0.1:50052 mais GGML_RPC est OFF (non compile). LLAMA_CURL=OFF : aucun telechargement de modele dans les bibliotheques installees (tout le code curl est sous #if defined(LLAMA_USE_CURL)). Quand CURL est actif (non le cas ici), le code n'affaiblit pas TLS (CURLOPT_SSL_OPTIONS=CURLSSLOPT_NATIVE_CA, pas de VERIFYPEER 0).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "kytensor",
+   "destination": "127.0.0.1:8000 (HTTP/REST), 127.0.0.1:8001 (gRPC), 127.0.0.1:8002 (metriques Prometheus)",
+   "protocole": "HTTP + gRPC, non chiffres, sans authentification",
+   "fichier_ligne": "server/kytensor.service:5 ; server/src/http_server.cc:4578 ; server/src/grpc/grpc_server.cc:2281 ; command_line_parser.cc:1795-1801",
+   "declencheur": "demarrage systeme (service root) ; requetes de tout processus local, et potentiellement du navigateur de l'utilisateur (pas de controle Origin/Host)",
+   "donnees": "inference, gestion de depot (load/unload avec overrides), metadonnees, statistiques, metriques",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kytensor-llm (bibliotheques installees)",
+   "destination": "aucune",
+   "protocole": "n.d.",
+   "fichier_ligne": "debian/rules:46 (LLAMA_CURL=OFF) ; debian/kytensor-llm.install (libs seulement)",
+   "declencheur": "aucun : pas de listener ni d'appel sortant dans les .so installes",
+   "donnees": "aucune",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kytensor-llm-dev : llama-server (NON installe par l'ISO)",
+   "destination": "127.0.0.1:8080 (defaut)",
+   "protocole": "HTTP, authentification par cle d'API optionnelle (desactivee par defaut)",
+   "fichier_ligne": "examples/server/server.cpp:3489-3517 ; common/common.h:367",
+   "declencheur": "execution manuelle du binaire -dev",
+   "donnees": "requetes de completion/inference",
+   "tls_verifie": "non",
+   "classification": "indetermine"
+  }
+ ],
+ "collectes": [],
+ "couverture": [
+  {
+   "arbre": "archive/kytensor",
+   "fichiers_code_propres": 468,
+   "lignes_code_propres": 178354,
+   "lus_integralement": 22,
+   "lus_partiellement": 14,
+   "pct_fichiers": 8,
+   "pct_lignes": 7,
+   "fichiers_lus": [
+    "CMakeLists.txt (integral)",
+    "README.md (integral)",
+    "server/kytensor.service (integral)",
+    "server/tritonserver.desktop (integral)",
+    "server/docker/entrypoint.d/99-check-run-aip-mode.sh (integral)",
+    "client/TritonClientTargets.cmake (integral)",
+    "client/src/c++/library/cencode.c / cencode.h (integral)",
+    "client/src/c++/library/common.h (section codes d'erreur KYTENSORCLIENT_*)",
+    "core/python/test/test_api_models/test/1/model.py (integral)",
+    "server/src/shared_memory_manager.cc (integral, 704 l.)",
+    "server/src/http_server.cc (handlers : Handle/dispatch, HandleRepositoryIndex, HandleRepositoryControl, HandleTrace, HandleLogging, HandleServerMetadata, HandleSystemSharedMemory, HandleCudaSharedMemory, InferResponseAlloc, Start/Stop, chemins shm entree/sortie, RespondIfRestricted ~2200 l.)",
+    "server/src/grpc/grpc_server.cc (credentials 2264-2281, RegisterSystemSharedMemoryRegister, controles log_file/trace_file)",
+    "core/src/backend_model.cc (resolution de bibliotheque de backend 55-460)",
+    "core/src/repo_agent.cc (resolution d'agent 45-402)",
+    "framework_backends/python_backend/src/stub_launcher.cc (naming shm + Launch 70-440)",
+    "framework_backends/python_backend/src/pb_env.cc (extraction d'archive 100-320)",
+    "framework_backends/python_backend/src/shm_manager.cc (creation region 80-235)",
+    "framework_backends/python_backend/src/python_be.cc (prefixe shm, EXECUTION_ENV_PATH - extraits)",
+    "server/src/CMakeLists.txt + server/src/grpc/CMakeLists.txt + client/.../CMakeLists.txt (fragments distro)",
+    "debian/control, rules, copyright, source/format, changelog, *.install, *.postinst (integral)"
+   ]
+  },
+  {
+   "arbre": "archive/kytensor-llm",
+   "fichiers_code_propres": 442,
+   "lignes_code_propres": 311335,
+   "lus_integralement": 8,
+   "lus_partiellement": 10,
+   "pct_fichiers": 4,
+   "pct_lignes": 3,
+   "fichiers_lus": [
+    "README.md (en-tete)",
+    "debian/control (integral)",
+    "debian/rules (integral)",
+    "debian/kytensor-llm.install / kytensor-llm-dev.install (integral)",
+    "debian/source/format, changelog (integral)",
+    "ggml/src/ggml-backend-reg.cpp (chargement dynamique des backends 411-600)",
+    "ggml/src/CMakeLists.txt + ggml/CMakeLists.txt (options GGML_BACKEND_DL, install - extraits)",
+    "common/arg.cpp (gestion hf_repo/model_url - extraits)",
+    "common/common.cpp (bloc curl sous #if LLAMA_USE_CURL, options SSL - extraits)",
+    "common/common.h (defaut hostname 127.0.0.1)",
+    "common/CMakeLists.txt (gating LLAMA_CURL)",
+    "src/llama-model-loader.cpp (gguf_init_from_file, init_mappings/mmap - extraits)",
+    "src/llama-chat.cpp / src/llama-vocab.cpp (verification des caracteres chinois = amont)",
+    "examples/server/server.cpp (middleware cle d'API 3472-3554 - extraits)",
+    "examples/rpc/rpc-server.cpp (defaut host/port - extraits)"
+   ]
+  }
+ ],
+ "revision_constats_anterieurs": [
+  {
+   "constat_anterieur": "L8 : kytensor.service s'execute en root (aucun User=), active/demarre au boot, expose l'API de gestion de depot sur HTTP 127.0.0.1:8000 et gRPC 127.0.0.1:8001 sans authentification -> execution de code en root par tout utilisateur local via override model.py (backend Python) (critique).",
+   "action": "CONFIRME ET PRECISE",
+   "detail": "Confirme en relisant server/kytensor.service:1-10 (pas de User=, Restart=always), debian/kytensor-server.postinst:4-6 (enable+start inconditionnels), http_server.cc:1458-1544 (HandleRepositoryControl, params 'config' et 'file:' base64 -> TRITONSERVER_ServerLoadModelWithParameters), framework_backends/python_backend/src/stub_launcher.cc:340-420 (lancement bash/execvp du stub). PRECISION : les handlers ne controlent NI Origin NI Host NI Content-Type (aucun en-tete CORS), si bien que la restriction loopback peut etre contournee depuis le navigateur de l'utilisateur (PROBABLE), elargissant le vecteur du local vers le distant."
+  },
+  {
+   "constat_anterieur": "L8 : adresses d'ecoute par defaut 0.0.0.0 dans le code (HTTP/metriques/gRPC), reduites a 127.0.0.1 uniquement par l'unite.",
+   "action": "CONFIRME",
+   "detail": "command_line_parser.h:193 http_address_{\"0.0.0.0\"}, :211-212 metrics, grpc/grpc_server.h:50-51 address_{\"0.0.0.0\"} port_{8001} ; command_line_parser.cc:1798 metrics herite de http_address, :1801 sinon 0.0.0.0. L'unite impose --http-address/--grpc-address=127.0.0.1 ; le port metriques suit l'adresse HTTP. Retirer ces options (edition de l'unite ou lancement via tritonserver.desktop) exposerait le service root sur toutes les interfaces."
+  },
+  {
+   "constat_anterieur": "L8 : gRPC utilise InsecureServerCredentials ; API HTTP sans en-tete d'autorisation (RestrictedFeatures vide).",
+   "action": "CONFIRME",
+   "detail": "grpc/grpc_server.cc:2264-2281 (SslServerCredentials seulement si ssl_options.use_ssl_, sinon InsecureServerCredentials ; SSL non fourni par l'unite). HTTP : RETURN_AND_RESPOND_IF_RESTRICTED actif seulement si une categorie est configuree via --http-restricted-api (absente)."
+  },
+  {
+   "constat_anterieur": "L8 : fork quasi inchange de NVIDIA Triton 2.49/2.50, delta Kylin de nature packaging/config.",
+   "action": "CONFIRME ET PRECISE",
+   "detail": "Isolement du delta par relecture integrale des fichiers SANS en-tete NVIDIA : CMakeLists.txt racine (orchestration de build), server/kytensor.service, server/tritonserver.desktop, README.md, client/TritonClientTargets.cmake, et les fragments CMake a detection de distribution (server/src/grpc/CMakeLists.txt:68, client/.../CMakeLists.txt : 'Kylin V10 SP1|Ubuntu 20.04'). Seul delta de CODE : le client C++ renomme les codes d'erreur Triton en KYTENSORCLIENT_* (client/src/c++/library/common.h:59-69 et usages) et le binaire serveur est renomme 'kytensor' (server/src/CMakeLists.txt:124) ; aucune modification de logique de securite, aucun backdoor, aucun flux reseau ajoute dans l'echantillon lu. Les backends reels onnxruntime/llamacpp ne sont PAS dans framework_backends (seuls python_backend et identity_backend presents)."
+  }
+ ],
+ "non_couvert": [
+  "kytensor : ~90% du code amont NVIDIA Triton reste non diffe ligne-a-ligne faute de l'arbre amont (non fourni) ; coeur hors backend_model/repo_agent, infer_handler gRPC/HTTP, sagemaker/vertex, memory_alloc, multi_server lus en survol seulement. Un backdoor insere hors des zones lues (en particulier dans les .so binaires de l'ISO non reconstructibles) ne serait pas detecte.",
+  "kytensor : backends reels onnxruntime et llamacpp ABSENTS de framework_backends (compiles via paquets separes onnxruntime-backend/llm-backend qui sont des coquilles vides sans source) ; leur comportement reel n'est pas analysable.",
+  "kytensor : llm-backend (le pont entre kytensor et kytensor-llm) est un binaire SANS source (coquille dh_make) ; le CWD et l'environnement effectifs sous lesquels il charge libggml (cf. vecteur GGML_BACKEND_DL) ne sont donc pas verifiables dans ce corpus.",
+  "kytensor : third_party/ (libevent, libevhtp, dlpack) exclu (code tiers embarque).",
+  "kytensor-llm : ~97% du fork llama.cpp non lu (442 fichiers, 311 335 lignes) ; aucun diff ligne-a-ligne avec llama.cpp amont (non fourni). Le parsing GGUF et ggml (historiquement sujet a des CVE memoire) n'a pas ete audite en profondeur ; une vulnerabilite de corruption memoire sur modele malveillant resterait possible mais non confirmee ici.",
+  "kytensor-llm : exploitabilite du chargement dynamique de backend (current_path/GGML_BACKEND_PATH) conditionnee par l'integration llm-backend (sans source) et le CWD du service root : non tranchable en lecture seule.",
+  "Verification dynamique exclue par la consigne (pas d'execution) : le comportement reel du service au demarrage (adresse d'ecoute effective, droits des objets shm crees par Boost.Interprocess) n'est pas observe."
+ ],
+ "synthese": "APPROFONDISSEMENT de kytensor (fork NVIDIA Triton 2.49/2.50) et premiere passe sur kytensor-llm (fork llama.cpp). Empreintes des deux arbres CONFORMES a empreintes-arbres-sources.tsv. DELTA KYLIN isole par relecture integrale des fichiers sans en-tete NVIDIA/MIT : il est de nature packaging/config/portage, PAS de modification de logique de securite ni de backdoor dans l'echantillon lu. Pour kytensor : unite systemd root, double --model-repository, forcage 127.0.0.1, binaire renomme 'kytensor' (CMakeLists:124), codes d'erreur client renommes KYTENSORCLIENT_* (common.h:59-69), detection de distribution 'Kylin V10 SP1' dans des fragments CMake. Pour kytensor-llm : LLAMA_CURL=OFF, GGML_CUDA=OFF, GGML_BACKEND_DL=ON (amd64), ajout d'architectures/modeles (changelog) ; aucune mention kylin dans le code (les caracteres chinois sont des tokenizers/gabarits amont). NOUVEAUX CONSTATS kytensor : (1) elevee/PROBABLE - l'API HTTP root ne controle ni Origin ni Host ni Content-Type (http_server.cc:1458, 4578 ; aucun CORS), donc la restriction loopback est contournable depuis le navigateur de l'utilisateur, elargissant le vecteur RCE-root de L8 du local vers le distant ; (2) moyenne/PROBABLE - systemsharedmemory/register fait mapper par le service root une region designee par le client (shm_open O_RDWR) utilisee en lecture/ecriture d'inference (shared_memory_manager.cc:113-152) ; (3) informationnel - trace/logging REFUSENT l'ecriture d'un fichier a chemin fourni (CONSTATE negatif), TRACING compile OFF ; (4) informationnel - index/metadata/config/stats et metriques Prometheus (8002) exposes sans authentification ; (5) informationnel - aucun flux sortant ni telemetrie dans server/core/backends. kytensor-llm : paquet installe = bibliotheques seulement, AUCUN service/demon/postinst ; binaires reseau (llama-server 8080, rpc-server) dans -dev NON installe ; chargement de modele = GGUF (donnees via mmap), PAS pickle/torch.load, donc pas d'execution de code par le format ; aucune verification de signature (attendu) ; LLAMA_CURL=OFF => aucun telechargement. Point faible/PROBABLE : ggml_backend_load charge des .so depuis le repertoire courant et GGML_BACKEND_PATH (ggml-backend-reg.cpp:498-595), vecteur conditionnel via le consommateur llm-backend (binaire sans source). REVISIONS L8 : les 4 constats majeurs (service root, API locale sans auth, override model.py execute en root, InsecureServerCredentials/0.0.0.0 par defaut) sont tous CONFIRMES et le constat critique est PRECISE par l'absence de controle d'origine. COUVERTURE cumulee : kytensor ~8% fichiers / ~7% lignes (surface securite serveur/API/shm/backends relue) ; kytensor-llm ~4% fichiers / ~3% lignes (packaging + chargement de modele + reseau + backend DL). Pas de diff amont faute des arbres Triton/llama.cpp originaux ; llm-backend/onnxruntime-backend restent des coquilles sans source."
+}

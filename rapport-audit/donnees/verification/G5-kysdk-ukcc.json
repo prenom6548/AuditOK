@@ -1,0 +1,116 @@
+[
+ {
+  "id": "V1-L2-kysdk-base#0",
+  "lot": "V1-L2-kysdk-base",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L2-kysdk-base.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/libkysdk-base"
+  ],
+  "depot": "libkysdk-base",
+  "fichier": "src/conf2/service/conf2-system.py",
+  "ligne": "70-77,88-95,118-125,136-143",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "def set(self, user, id, version, key, value, sender = None): ... if user == 'root': ... '/root/.config/kylin-config/user.db' else: f'/home/{user}/.config/kylin-config/user.db'",
+  "explication": "Service D-Bus systeme root com.kylin.kysdk.conf2 (kysdk-conf2.service sans User=). Les 5 methodes (set, reset, reload, save, extends_id) recoivent le nom d'utilisateur cible en parametre ; 'sender' est capture (sender_keyword) mais jamais utilise : aucune verification de l'identite de l'appelant (ni GetConnectionUnixUser, ni polkit). La politique D-Bus (src/conf2/service/kysdk-conf2.conf:15-16, <policy context=\"default\"><allow send_destination=\"com.kylin.kysdk.conf2\"/>) autorise tout utilisateur local, sans restriction d'interface. Le nom transmis par la bibliotheque cliente provient de getuid() cote client (src/conf2/api/libkysettings.c:308-327) : le controle n'existe que cote client. La valeur 'user' n'est pas validee (ni '/', ni '..') avant d'etre interpolee dans un chemin ouvert par sqlite3 en root (conf2Utils.py:113,157). Portee CONSTATEE : tout utilisateur local peut modifier/reinitialiser la configuration conf2 de n'importe quel autre utilisateur et celle de root (/root/.config/kylin-config/user.db), base lue par les processus root utilisant libkyconf2 (src/conf2/api/ksettingsschema.c:271-272, 441-442).",
+  "scenario": "Un compte local non privilegie appelle directement la methode set du service systeme en indiquant un autre utilisateur ou 'root' : la valeur est ecrite par root dans la base de configuration cible. Les consequences sur les demons root qui lisent cette base (le changelog 2.4.1.0 cite la configuration de veille/hibernation/arret, et la liste blanche mentionne systemd-logind, lightdm, kylin-system-updater) dependent des cles effectivement consommees : PROBABLE, non demontre dans cet arbre.",
+  "contre_lecture": "Le service vise un usage de bureau mono-utilisateur ou le parametre 'user' sert seulement a localiser la base ; la bibliotheque officielle transmet toujours l'identite reelle du processus. Il s'agit d'une faiblesse de conception (confiance accordee au client) plutot que d'un mecanisme cache ; le changelog documente la suppression du controle (voir constat suivant)."
+ },
+ {
+  "id": "V1-L2-kysdk-base#3",
+  "lot": "V1-L2-kysdk-base",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L2-kysdk-base.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/libkysdk-base"
+  ],
+  "depot": "libkysdk-base",
+  "fichier": "src/conf2/service/conf2Utils.py",
+  "ligne": "197-221",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "if dest_path.startswith('/etc'): if dest_path != '/etc/kylin-config/basic': return False ... else: if not dest_path.startswith('/home'): return False ... with open(f'{dest_path}/{key}.yaml', 'w') as yaml_file:",
+  "explication": "Methode D-Bus 'save' (conf2-system.py:118-133), executee en root et ouverte a tout utilisateur : (1) elle autorise explicitement l'ecriture dans /etc/kylin-config/basic, repertoire source de la configuration systeme commune ; (2) la verification de 'dest_path' est un simple prefixe '/home' sans canonicalisation ; (3) le nom de chaque fichier ecrit ('{key}.yaml') et son contenu proviennent d'une base SQLite situee dans le repertoire personnel de l'appelant (chemin construit a partir du parametre 'user', conf2-system.py:125), donc sous son controle, sans filtrage de '/' ni '..' ; (4) open(...,'w') suit les liens symboliques. L'ecriture dans /etc/kylin-config/basic declenche ensuite le rechargement automatique (FileWatche.on_modified, conf2Utils.py:351-359 -> conf2-compile en root) et la regeneration de /etc/kylin-config/user.db. Portee CONSTATEE : un utilisateur non privilegie peut injecter des valeurs par defaut dans la configuration systeme de tous les utilisateurs, et faire ecrire par root des fichiers *.yaml dont le nom et le contenu sont influences par lui. L'obtention de root via ce primitif depend des consommateurs de fichiers YAML vises : PROBABLE, non demontree ici.",
+  "scenario": "Un compte local appelle save en designant /etc/kylin-config/basic : root y exporte des fichiers YAML derives de la base personnelle de l'appelant, qui deviennent la configuration par defaut de tous les comptes (y compris des demons root) apres le rechargement automatique. Un chemin non canonique commencant par /home etend la portee de l'ecriture hors de /home.",
+  "contre_lecture": "La fonction est concue pour l'outil d'administration kconf2-editor / export de configuration ; le developpeur a voulu restreindre les destinations par prefixe et n'a pas anticipe les noms d'application contenant des separateurs. Aucune intention cachee n'est visible : c'est une validation d'entree insuffisante."
+ },
+ {
+  "id": "V1-L2-kysdk-base#4",
+  "lot": "V1-L2-kysdk-base",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L2-kysdk-base.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/libkysdk-base"
+  ],
+  "depot": "libkysdk-base",
+  "fichier": "src/conf2/service/conf2Utils.py",
+  "ligne": "361-399",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "home_directories = [os.path.expanduser('~' + username) for username in os.listdir('/home')] ... with open(file_path, 'w') as file: file.write(yaml.safe_dump(mmap)) ... os.chmod(file_path, 0o666)",
+  "explication": "Dans le service root, a la creation d'un fichier .yaml dans /etc/kylin-config/basic dont le nom correspond a un schema gsettings, le gestionnaire watchdog lit, supprime puis recree ~/.config/kylin-config/map.yaml dans chaque /home/* (et /root) puis applique chmod 0666. Ces repertoires appartiennent aux utilisateurs ; open('w') et os.chmod suivent les liens symboliques, sans O_NOFOLLOW ni verification de proprietaire. Il s'agit d'un motif classique d'operation root dans un repertoire controle par un utilisateur. Declencheurs : installation d'un paquet deposant un .yaml ; creation de /etc/kylin-config/basic/<id>.yaml par conf2-sync-system au demarrage (sync-dbus-server.c:283-290, PROBABLE au moins a la premiere creation) ; methode save (constat precedent). Par ailleurs strip('.yaml') (l.369) retire des caracteres et non un suffixe (defaut fonctionnel).",
+  "scenario": "Un utilisateur local prepare son propre repertoire ~/.config/kylin-config de sorte que l'ecriture et le changement de droits effectues par root portent sur une autre cible ; lors du prochain evenement declencheur (installation de paquet), root modifie les droits d'un fichier hors du repertoire de l'utilisateur. Faisabilite exacte non testee (pas d'execution autorisee) : registre CONSTATE pour le motif, impact final PROBABLE.",
+  "contre_lecture": "Le code vise a transmettre aux sessions utilisateur la correspondance gsettings->conf2 (map.yaml lu ensuite par conf2-session.py) ; le chmod 0666 sert a ce que l'utilisateur puisse supprimer le fichier cree par root. Il s'agit d'une erreur de programmation courante, sans indice d'intention."
+ },
+ {
+  "id": "V1-L3-kysdk-system#0",
+  "lot": "V1-L3-kysdk-system",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L3-kysdk-system.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/libkysdk-system"
+  ],
+  "depot": "libkysdk-location",
+  "fichier": "src/location/location.py",
+  "ligne": "39-76",
+  "type": "telemetrie",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "_IP_SOURCES=[api.ipify.org, ifconfig.me/ip, api.ip.sb/ip, ipinfo.io/ip] ... url='http://api.map.baidu.com/location/ip'; myParams={'ak':'<masqué>','ip':ip,'coor':'bd09ll'}; requests.get(url,params,timeout=5)",
+  "explication": "Service D-Bus système com.kysdk.location exécuté en root (User=root dans com.kysdk.location.service). Sa seule méthode exposée getAddress() interroge 4 services externes pour obtenir l'IP publique de la machine, puis envoie CETTE IP à l'API de géolocalisation de Baidu (api.map.baidu.com) avec une clé AK embarquée, et renvoie la géolocalisation (pays/province/ville, coord. bd09ll). L'appel vers api.map.baidu.com se fait en HTTP clair (pas HTTPS), donc l'IP publique et la position transitent en clair. Aucune mise en cache, aucune anonymisation. Déclenché à la demande via D-Bus (voir kdk_global_get_region_match_language et KySdkGps::getGPSInfo).",
+  "scenario": "Un composant appelant getAddress() (ou tout utilisateur local, cf. politique D-Bus permissive ci-dessous) provoque une requête sortante révélant l'IP publique de l'hôte à api.ip.sb/ipinfo.io/ipify/ifconfig.me puis à Baidu ; un observateur réseau sur le chemin HTTP vers api.map.baidu.com voit l'IP publique et la position géographique retournée. Corrélé à d'autres identifiants (série machine, MAC) exposés par le même SDK, cela permet un traçage géographique de l'hôte.",
+  "contre_lecture": "Fonction de confort régional : kdk_global_get_region_match_language compare la province déduite à la locale pour cohérence d'affichage ; l'en-tête C indique « 自3.0.1.0起不在使用 » (kdk_loaction_get réputé non utilisé depuis 3.0.1.0), ce qui limite le déclenchement réel. La géolocalisation par IP est une fonctionnalité documentée de nombreux OS."
+ },
+ {
+  "id": "V2-L2-ukui-shell#0",
+  "lot": "V2-L2-ukui-shell",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L2-ukui-shell.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-control-center",
+   "/home/user/openkylin-src/archive/ukui-search",
+   "/home/user/openkylin-src/archive/peony",
+   "/home/user/openkylin-src/archive/ukui-sni"
+  ],
+  "depot": "ukui-control-center",
+  "fichier": "registeredQDbus/sysdbusregister.cpp",
+  "ligne": "547-574",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "if (!callerPathCompare(\"/usr/bin/ukui-session-service\")) { if (!authoriyGrub()) return false; } ... QString cmd = QString(\"export LANG=%1 && update-grub\").arg(lang); ... system(cmd.toLatin1().data());",
+  "explication": "Service D-Bus systeme root (com.control.center.qt.systemdbus, liblaunchSysDbus.so). updateGrub() saute la verification polkit lorsque l'executable de l'appelant (lu via /proc/<pid>/exe, callerPathCompare l.1604-1620) est /usr/bin/ukui-session-service, puis insere le parametre D-Bus 'lang', sans aucune validation, dans une ligne de commande interpretee par /bin/sh via system() en root. Le meme motif (lang non valide dans system()) existe dans setGrupBootTime l.1660-1668, setRescueMode l.1781-1787, setFailuresTimes l.1870-1876, setDefaultBootItem l.1933-1941, ceux-la derriere polkit org.control.center.qt.systemdbus.action.grub (auth_admin_keep). La politique D-Bus autorise tout utilisateur a appeler l'interface (conf l.14-16). L'identification de l'appelant par chemin d'executable n'atteste pas le code reellement execute par un processus de meme UID.",
+  "scenario": "Un processus local non privilegie dont la requete est attribuee a l'executable /usr/bin/ukui-session-service (meme UID que la session) obtient l'execution de commandes en root sans authentification, via la valeur 'lang' interpretee par le shell ; autre voie : un appelant ayant obtenu l'autorisation grub (auth_admin_keep, fenetre de memorisation de 5 min) execute des commandes arbitraires au-dela du perimetre prevu. Exploitabilite reelle conditionnee par le filtre externe .limit (non present dans le corpus) : a confirmer en Phase 3.",
+  "contre_lecture": "L'exemption vise a permettre au service de session de regenerer grub sans fenetre d'authentification ; 'lang' est normalement une locale fournie par l'interface ; le filtre .limit (liste blanche d'executables) restreint les appelants ; le motif callerPathCompare est un usage recurrent chez Kylin."
+ },
+ {
+  "id": "V2-L2-ukui-shell#25",
+  "lot": "V2-L2-ukui-shell",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L2-ukui-shell.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/peony",
+   "/home/user/openkylin-src/archive/ukui-control-center",
+   "/home/user/openkylin-src/archive/ukui-search",
+   "/home/user/openkylin-src/archive/ukui-sni"
+  ],
+  "depot": "peony",
+  "fichier": "debian/upgrade-utils/desktop-grid/update-desktop-grid",
+  "ligne": "182-196",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "config_file=\"$home_dir/.peony-desktop-grid.conf\"; rm -f \"$config_file\"; if touch \"$config_file\" ... && chmod +rw \"$config_file\" ...; then if calculate_user_desktop_grid \"$user\" > \"$config_file\" ...; then chmod -w \"$config_file\"; chown \"$user\" \"$config_file\"",
+  "explication": "Script installe dans /usr/bin et execute en root par le postinst de peony-utils (debian/peony-utils.postinst:5) a chaque installation/mise a jour. Pour chaque compte UID>=1000 ayant un shell et un repertoire personnel (l.161-179), root supprime puis recree $HOME/.peony-desktop-grid.conf (l.185-188), y ecrit par redirection pendant un calcul de plusieurs secondes qui lance plusieurs 'sudo -u' (l.190, l.138-144), puis applique chmod -w et chown \"$user\" sur ce chemin (l.191-192). Ces operations portent sur un chemin situe dans un repertoire controle par l'utilisateur ; chown (sans -h), chmod et la redirection suivent les liens symboliques ; la protection noyau protected_symlinks ne couvre pas ce cas (repertoire non 'sticky'). Classe de defaut : course TOCTOU / suivi de lien par un processus root dans un repertoire utilisateur. Le contenu ecrit derive en outre des noms de fichiers du bureau de l'utilisateur (l.53-54).",
+  "scenario": "Un utilisateur local disposant d'un processus actif pendant l'execution du postinst (mise a jour systeme de peony-utils) modifie l'entree de son repertoire personnel entre la creation du fichier et le chown : root attribue alors a cet utilisateur, ou rend non inscriptible, un fichier systeme arbitraire, ce qui peut conduire a une elevation de privileges. Exploitabilite a confirmer en Phase 3 (PROBABLE).",
+  "contre_lecture": "Script de migration de la grille d'icones, execute rarement et sans intention malveillante apparente ; la fenetre temporelle est limitee a l'installation ; l'absence de 'chown -h' / d'ecriture via 'sudo -u' releve d'une erreur de conception courante dans les scripts mainteneur."
+ }
+]

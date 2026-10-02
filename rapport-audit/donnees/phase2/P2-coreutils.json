@@ -1,0 +1,261 @@
+{
+  "lot": "P2-coreutils",
+  "composants": ["coreutils"],
+  "empreintes": {
+    "archive/coreutils": "aa23e198fd8ee879ee0322c05b2969b9874df394d26468b24f0640bf0f435ee6",
+    "conforme": true,
+    "detail": "25 fichiers réguliers (hors .git), identique à rapport-audit/donnees/empreintes-arbres-sources.tsv (col. 3) et à l'empreinte de référence fournie. 2 liens symboliques (debian/tests/upstream-gnu et upstream-rust -> upstream) non comptés par la commande d'empreinte. Contrôle croisé : dl/build/coreutils/coreutils_9.5-1ok3.4.debian.tar.xz a le SHA-256 déclaré par le .dsc (ee4e56c7...) et son contenu est identique, fichier par fichier, à l'arbre audité."
+  },
+  "findings": [
+    {
+      "depot": "coreutils",
+      "fichier": "debian/rules",
+      "ligne": "6-7,35",
+      "type": "confiance",
+      "severite": "informationnelle",
+      "extrait": "PROGRAM_PREFIX := gnu / PACKAGE_PREFIX := gnu- / dh_auto_configure -- --program-prefix=gnu --enable-systemd --enable-install-program=arch --with-openssl=auto-gpl-compat",
+      "explication": "Réponse au point 4 de l'inventaire. Cet arbre ne produit qu'un paquet, gnu-coreutils (debian/control:9), dont tous les programmes portent le préfixe « gnu » (gnuls, gnucp, gnumv, gnuchmod, gnuinstall, /usr/sbin/gnuchroot...). Il ne fournit donc PAS les commandes non préfixées ls/cp/mv/rm/chmod/chown/install. C'est le modèle Ubuntu 25.10 (renommage en 9.5-1ubuntu2, changelog:73-77) : chez Ubuntu, le paquet « coreutils » vient d'une autre source (coreutils-from-uutils, en Rust, ou coreutils-from-gnu ; voir debian/tests/control:2,7). Dans l'ISO openKylin 3.0, aucun paquet rust-coreutils ni coreutils-from-* n'est installé. Les commandes non préfixées viennent du paquet binaire coreutils 9.4-ok4 (rapport-audit/donnees/iso-3.0/casper--filesystem.manifest:56). gnu-coreutils 9.5-1ok3.4 est installé en parallèle (même fichier, l.213). Aucun dpkg-divert, update-alternatives, Provides, Replaces ou Conflicts d'un paquet Kylin ne vise coreutils ou ses binaires dans les 311 arbres de archive/. La recherche a porté sur les scripts de mainteneur, rules, control, *.install et *.links. kylin-time (Provides/Replaces/Conflicts: time) ne touche pas coreutils. Le seul Replaces trouvé est celui de gnu-coreutils lui-même (control:15). Le remplacement partiel est donc structurel (préfixe gnu, plus un binaire coreutils hérité), pas une diversion. Le changelog 9.5-1ok3.4 (l.1-5) abaisse aussi la priorité à « optional ».",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "rapport-audit/donnees/iso-3.0/casper--filesystem.manifest",
+      "ligne": "56",
+      "type": "confiance",
+      "severite": "moyenne",
+      "extrait": "coreutils\t9.4-ok4",
+      "explication": "Les outils réellement exécutés en root par les scripts de mainteneur, les services et les administrateurs (ls, cp, mv, rm, chmod, chown, install, split, sort...) viennent du binaire coreutils 9.4-ok4. Aucune source publiée ne produit ce binaire : l'arbre audité est en 9.5-1ok3.4, et son changelog ne contient AUCUNE entrée 9.4-ok* (lignée Kylin 9.4 absente, changelog:37-43 passe de 9.5-1ubuntu4.1 à 9.5-1ok1). Ce delta ne permet donc ni de vérifier le contenu de ces binaires ni de dire quels correctifs de sécurité ils portent. Exemple concret : CVE-2024-0684 (débordement de tas dans split --line-bytes) touche la 9.4 ; Ubuntu l'a corrigée par un patch dédié (debian/changelog:258-262, 9.4-2ubuntu*). Rien ne permet de savoir si 9.4-ok4 l'inclut. Le binaire installé ne correspond pas à la source auditée : c'est déjà relevé en Phase 0/1 (01-inventaire.md:321, 06-angles-morts.md:120). Ce constat précise la portée pour coreutils.",
+      "scenario": "Un script système ou un utilisateur appelle split --line-bytes sur une entrée contrôlée par un attaquant (fichier journal, données téléchargées, par exemple dans une tâche de traitement exécutée en root). Si 9.4-ok4 ne contient pas le correctif CVE-2024-0684, le débordement de tas peut provoquer un plantage, voire une exécution de code dans le contexte de l'appelant. Plus largement, toute modification non publiée de ces binaires critiques, comme un traitement particulier des attributs étendus ou de kysec par cp, mv ou install, échappe à l'audit.",
+      "contre_lecture": "Lecture bénigne très plausible : incohérence d'empaquetage. openKylin a importé la 9.5 d'Ubuntu, déjà renommée gnu-coreutils, sans importer la source coreutils-from qui fournit le paquet « coreutils » chez Ubuntu. Le dernier binaire « coreutils » du pool, 9.4-ok4, issu de la lignée openKylin précédente, reste alors le fournisseur des commandes de base. 9.4-ok4 dérive probablement de Debian ou Ubuntu 9.4, qui intègrent le correctif CVE-2024-0684. À confirmer en récupérant le .deb et la source 9.4-ok4 : le contenu réel de ce binaire n'est pas établi.",
+      "registre": "PROBABLE"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/patches/series",
+      "ligne": "1-12",
+      "type": "durcissement",
+      "severite": "faible",
+      "extrait": "72_id_checkngroups.patch 80_fedora_sysinfo.patch 99_float_endian_detection.patch treat-devtmpfs-... cp-n.diff suppress-permission-denied-errors-on-nfs.patch lp2137373-... 0008-.patch ... 0012-.patch",
+      "explication": "Aucun des 12 patches ne touche src/sort.c. Selon l'avis amont, CVE-2025-5278 (lecture hors limites d'un octet avant un tampon de tas dans begfield() de sort, avec des décalages de clé proches de SIZE_MAX ; bogue introduit en 7.2 et corrigé en 9.8) touche donc la 9.5 livrée ici (gnusort), et probablement aussi la 9.4-ok4 installée. Le changelog ne mentionne aucun rétroportage (ni côté Ubuntu jusqu'en 9.5-1ubuntu4.1, ni côté Kylin). C'est un correctif hérité absent, pas un ajout Kylin. Statut CVE établi de mémoire, sans accès réseau.",
+      "scenario": "Il faut contrôler les arguments de clé de sort (pas seulement les données) : impact limité à un plantage ou à une fuite négligeable.",
+      "contre_lecture": "CVE de faible portée, que plusieurs distributions ont classée « low » et différée.",
+      "registre": "PROBABLE"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/patches/0008-.patch",
+      "ligne": "3",
+      "type": "confiance",
+      "severite": "faible",
+      "extrait": "Subject: =?utf-8?b?5ZCM5q2l5LiK5ri4?=  (décodé : « 同步上游 » = « synchronisation avec l'amont ») — identique en ligne 3 de 0009, 0010, 0011, 0012 ; auteur 武丹 <wudan@kylinos.cn>",
+      "explication": "Les 5 patches propres à Kylin (0008 à 0012) ont tous le même titre, « synchroniser l'amont », et des noms de fichier vides (« 0008-.patch »...). Or aucun n'importe de code amont : ils désactivent des tests (test-readutmp, test-localtime_r, test-localtime_r-mt, tests/tail/inotify-dir-recreate.sh). Le titre est donc inexact et nuit à la traçabilité. C'est le motif déjà relevé ailleurs chez openKylin (B13-P2B.md:884). Le contenu, lu intégralement, se limite toutefois à l'infrastructure de tests : aucun code installé n'est modifié. Les entrées 9.5-1ok2 à ok3.3 du changelog (l.7-35) décrivent correctement l'intention (« 忽略...测试不过 », ignorer des tests en échec).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/patches/0012-.patch",
+      "ligne": "17-29,41",
+      "type": "durcissement",
+      "severite": "informationnelle",
+      "extrait": "-  test-gmtime_r test-gmtime_r-mt \\ -  test-localtime_r test-localtime_r-mt ... +#   test-localtime_r test-localtime_r-mt ... -  tests/tail/inotify-dir-recreate.sh\t\t\\",
+      "explication": "Tests désactivés par Kylin. 0011-.patch:17-24 commente le module readutmp-tests. 0012-.patch:17-29 retire test-localtime_r et test-localtime_r-mt, et 0012-.patch:41 retire tests/tail/inotify-dir-recreate.sh. debian/rules:46-72 continue d'exécuter la suite de tests (sauf nocheck ou compilation croisée ; sur armhf, tous les échecs sont ignorés, hérité d'Ubuntu, rules:58-67). Conséquence : la régression éventuelle de readutmp, qu'utilisent gnuwho, gnuusers et gnupinky avec --enable-systemd (rules:35), n'est plus détectée à la construction. Aucun effet sur le code installé. Lecture bénigne probable : tests sensibles à l'environnement de construction (pas de systemd-logind ou d'utmp dans le chroot, fuseau horaire ou tzdata absents, inotify).",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/patches/0009-.patch",
+      "ligne": "42-1098",
+      "type": "durcissement",
+      "severite": "informationnelle",
+      "extrait": "@@ -11582,1059 +11578,6 @@ ... -test-readutmp.log: ... -uniwidth/test-uc_width2.sh.log: ... -test-yesno.sh.log: ... -.test.log: ... -distdir: $(BUILT_SOURCES)",
+      "explication": "Le patch 0009 ne retire pas seulement test-readutmp. Il supprime aussi, dans le fichier GÉNÉRÉ gnulib-tests/Makefile.in, 148 règles .log de tests (de test-readutmp à test-yesno.sh, plus uniwidth/test-uc_width2.sh), les règles génériques .test.log et la cible distdir : 2 lignes ajoutées, 1 061 supprimées. Cette édition trop large ressemble à un essai-erreur (0008 à 0012 sont horodatés de 18:40 à 19:39 le même jour). Comme debian/rules:38 utilise dh --with autoreconf, gnulib-tests/Makefile.in est probablement régénéré depuis gnulib.mk : 0009 et 0010 seraient alors sans effet, seuls 0011 et 0012 (gnulib.mk, tests/local.mk) agissant. Aucun code installé n'est concerné.",
+      "registre": "PROBABLE"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/control",
+      "ligne": "9-15",
+      "type": "confiance",
+      "severite": "informationnelle",
+      "extrait": "Package: gnu-coreutils ... Pre-Depends: ${shlibs:Depends}, ${misc:Pre-Depends} / Breaks: usrmerge (<< 39) / Replaces: coreutils (<< 9.5-1ubuntu2~)",
+      "explication": "Ce champ Replaces est hérité d'Ubuntu ; il n'est accompagné ni de Conflicts ni de Breaks. La version 9.4-ok4 du paquet coreutils installé satisfait « << 9.5-1ubuntu2~ ». gnu-coreutils peut donc reprendre à coreutils 9.4-ok4 la propriété des fichiers non préfixés communs aux deux constructions GNU : probablement /usr/libexec/coreutils/libstdbuf.so (préchargé par stdbuf), les catalogues /usr/share/locale/*/LC_MESSAGES/coreutils.mo et l'info coreutils. Le stdbuf 9.4 utiliserait alors la libstdbuf 9.5. Incidence de sécurité non établie : les deux viennent de GNU, et l'interface passe par des variables d'environnement. Le chevauchement est déduit de la disposition d'installation amont ; il n'est pas vérifié, faute du .deb 9.4-ok4. Il n'y a ni Essential: yes, ni Provides, ni dépendance inhabituelle.",
+      "registre": "PROBABLE"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/rules",
+      "ligne": "9-12",
+      "type": "durcissement",
+      "severite": "informationnelle",
+      "extrait": "DPKG_EXPORT_BUILDFLAGS = 1 / include /usr/share/dpkg/default.mk / DEB_CFLAGS_MAINT_APPEND = -DSYSLOG_SUCCESS -DSYSLOG_FAILURE -DSYSLOG_NON_ROOT",
+      "explication": "Aucune option de durcissement explicite (pas de DEB_BUILD_MAINT_OPTIONS ni hardening=+all) : la construction repose sur les drapeaux par défaut de dpkg-buildflags et de la chaîne openKylin, comme chez Debian et Ubuntu. Aucun durcissement n'est retiré par Kylin : le changelog Kylin, l.1-41, ne mentionne aucun changement de rules. Les macros SYSLOG_* sont un reliquat Debian de l'ancien su de coreutils, supprimé en amont depuis longtemps ; elles n'ajoutent probablement aucune journalisation en 9.5. Aucune journalisation, collecte ou télémétrie n'est ajoutée. Les programmes retirés (gnukill, gnuhostname, gnuuptime, rules:89-92) sont fournis par procps et hostname, et chroot est déplacé en /usr/sbin (rules:100-103) : comportement standard Debian. Pas de chmod setuid, pas de capacités.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/patches/80_fedora_sysinfo.patch",
+      "ligne": "35-56,73-80",
+      "type": "durcissement",
+      "severite": "informationnelle",
+      "extrait": "+#else\n+      {\n+\tstruct utsname u;\n+\tuname(&u);\n+\telement = u.machine;\n+#ifdef linux ... FILE *f=fopen(\"/proc/cpuinfo\", \"r\");",
+      "explication": "Patch Fedora et Ubuntu historique (hérité, pas Kylin). uname -p et -i renvoient la machine de uname(2) au lieu de « unknown », et « athlon » sur i686 AMD d'après /proc/cpuinfo : simple lecture de fichier local, sans réseau ni exécution. Défaut de qualité hérité : element pointe vers u.machine, une variable de bloc dont la portée est sortie au moment de print_element (comportement indéfini). Impact négligeable, limité à gnuuname.",
+      "registre": "CONSTATÉ"
+    },
+    {
+      "depot": "coreutils",
+      "fichier": "debian/upstream/signing-key.asc",
+      "ligne": "1-53",
+      "type": "confiance",
+      "severite": "informationnelle",
+      "extrait": "-----BEGIN PGP PUBLIC KEY BLOCK----- ... (empreinte calculée : 6C37DC12121A5006BC1DB804DF6FD971306037D9, UID Pádraig Brady <P@draigBrady.com>, <pixelbeat@gnu.org>)",
+      "explication": "La clé de vérification amont est celle du mainteneur GNU coreutils (une seule clé primaire, sans sous-clé étrangère) ; watch:2 pointe vers https://ftp.gnu.org avec contrôle de la signature .sig. Le .dsc (dl/build/coreutils/coreutils_9.5-1ok3.4.dsc:20) déclare pour coreutils_9.5.orig.tar.xz le SHA-256 cd328ede... (6 007 136 octets) : il correspond, de mémoire, à l'archive GNU coreutils-9.5.tar.xz. L'inventaire Phase 0 indique orig IDENTIQUE. La chaîne de provenance de la source 9.5 ne présente pas d'anomalie.",
+      "registre": "CONSTATÉ"
+    }
+  ],
+  "patches": [
+    {
+      "nom": "72_id_checkngroups.patch",
+      "titre_declare": "_id_checkngroups (From: Ubuntu Developers)",
+      "contenu_reel": "src/id.c : si l'utilisateur appartient à plus de groupes que sysconf(_SC_NGROUPS_MAX), affiche un avertissement sur stderr avant la liste des groupes.",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["src/id.c"],
+      "resume": "Patch Debian/Ubuntu historique, affichage seul ; aucun effet sur l'identité ou les droits."
+    },
+    {
+      "nom": "80_fedora_sysinfo.patch",
+      "titre_declare": "_fedora_sysinfo (From: Ubuntu Developers)",
+      "contenu_reel": "src/uname.c : uname -p et -i renvoient utsname.machine (i386 normalisé pour -i, « athlon » sur i686 AMD d'après /proc/cpuinfo) au lieu de « unknown ».",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["src/uname.c"],
+      "resume": "Patch Fedora repris par Ubuntu ; lecture locale de /proc/cpuinfo, sans réseau ; pointeur vers une variable de bloc hors portée (comportement indéfini bénin, hérité)."
+    },
+    {
+      "nom": "99_float_endian_detection.patch",
+      "titre_declare": "Fix detection of floating point endianness. (Colin Watson)",
+      "contenu_reel": "gnulib-tests/test-isnanl.h et test-signbit.c : définit FLOAT_BIG_ENDIAN à partir de __FLOAT_WORD_ORDER__.",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["gnulib-tests/test-isnanl.h", "gnulib-tests/test-signbit.c"],
+      "resume": "Tests uniquement (bug-gnulib 2013-12)."
+    },
+    {
+      "nom": "treat-devtmpfs-and-squashfs-as-dummy-filesystems.patch",
+      "titre_declare": "[PATCH] Treat devtmpfs and squashfs as dummy filesystems (Bryce Harrington)",
+      "contenu_reel": "lib/mountlist.c ME_DUMMY_0 : ajoute devtmpfs, fuse.portal et squashfs aux systèmes de fichiers « factices » (masqués par défaut par df, visibles avec -a).",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["lib/mountlist.c"],
+      "resume": "Patch Ubuntu (LP 1219529/1756595, origine amont debbugs 37702) ; affichage df seulement ; fuse.portal annoncé dans l'entête."
+    },
+    {
+      "nom": "cp-n.diff",
+      "titre_declare": "revert cp -n behavior to debian 12 and prior (Michael Stone, Bug-Debian 1058752)",
+      "contenu_reel": "src/cp.c : remplace le texte d'aide de -n et ajoute un avertissement sur stderr (« behavior of -n is non-portable... use --update=none ») à chaque usage de -n. tests/cp/cp-i.sh : test sauté (skip_).",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["src/cp.c", "tests/cp/cp-i.sh"],
+      "resume": "Patch Debian conservé par Ubuntu. Titre hérité : en 9.5 il ne reste que l'aide, l'avertissement et le test sauté, le comportement de -n étant déjà celui de l'amont. Aucune modification de la copie, des liens, des droits ou des attributs étendus. Défaut cosmétique : séquence « \\ » invalide dans la chaîne d'aide."
+    },
+    {
+      "nom": "suppress-permission-denied-errors-on-nfs.patch",
+      "titre_declare": "ls: suppress \"Permission denied\" errors on NFS (Pádraig Brady ; backport amont b58e321)",
+      "contenu_reel": "src/ls.c : nouvel état ACL_T_UNKNOWN. Si file_has_acl_cache échoue avec EACCES ou ENOENT, ls -l affiche « ? » dans la colonne ACL au lieu d'un message d'erreur. L'appel ACL est désormais fait hors de la condition long_format.",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["src/ls.c"],
+      "resume": "Rétroportage amont (LP 2115274), affichage seul ; ne contourne aucun contrôle d'accès (l'erreur venait d'un refus noyau)."
+    },
+    {
+      "nom": "lp2137373-skip-dirent-inode-sorting-for-lustre.patch",
+      "titre_declare": "[PATCH] fts: Improve performance on the Lustre file system. (Collin Funk ; gnulib 578b8d7)",
+      "contenu_reel": "lib/fts.c : ajoute S_MAGIC_LUSTRE et désactive le tri des entrées par inode sur Lustre.",
+      "titre_fidele": true,
+      "classement": "[LÉGITIME]",
+      "fichiers_amont": ["lib/fts.c"],
+      "resume": "Rétroportage gnulib (LP 2137373). Change seulement l'ordre de parcours sur Lustre ; ne touche pas les protections de parcours de fts utilisées par rm -r, chmod -R et chown -R."
+    },
+    {
+      "nom": "0008-.patch",
+      "titre_declare": "同步上游 (« synchronisation avec l'amont ») — 武丹 <wudan@kylinos.cn>, 17/04/2026 18:40",
+      "contenu_reel": "m4/gnulib-comp.m4 : retire tests/test-readutmp.c de gl_FILE_LIST (-1 ligne).",
+      "titre_fidele": false,
+      "classement": "[À EXAMINER]",
+      "fichiers_amont": ["m4/gnulib-comp.m4"],
+      "resume": "Patch Kylin. Désactivation de test, sans effet sur le code installé. Titre inexact (rien n'est synchronisé). Classé À EXAMINER plutôt que SUSPECT : le titre est générique mais ne masque aucun code fonctionnel."
+    },
+    {
+      "nom": "0009-.patch",
+      "titre_declare": "同步上游 — 武丹 <wudan@kylinos.cn>, 17/04/2026 18:56",
+      "contenu_reel": "gnulib-tests/Makefile.in (fichier généré) : retire test-readutmp de TESTS et check_PROGRAMS ainsi que sa règle d'édition de liens. Supprime en outre 148 règles .log de tests, les règles génériques .test.log et la cible distdir (+2/-1061).",
+      "titre_fidele": false,
+      "classement": "[À EXAMINER]",
+      "fichiers_amont": ["gnulib-tests/Makefile.in"],
+      "resume": "Patch Kylin. Suppression trop large dans un fichier régénéré, probablement neutralisée par dh --with autoreconf. Aucune ligne de code C ni de script installé. Titre inexact."
+    },
+    {
+      "nom": "0010-.patch",
+      "titre_declare": "同步上游 — 武丹 <wudan@kylinos.cn>, 17/04/2026 19:15",
+      "contenu_reel": "gnulib-tests/Makefile.in : retire les dernières références à test_readutmp (SOURCES, OBJECTS, DEPENDENCIES, LDADD, .Po, DIST_SOURCES, EXTRA_DIST, distclean).",
+      "titre_fidele": false,
+      "classement": "[À EXAMINER]",
+      "fichiers_amont": ["gnulib-tests/Makefile.in"],
+      "resume": "Patch Kylin, suite de 0009 (index 6deca67 -> e3c66bf). Tests uniquement. Titre inexact."
+    },
+    {
+      "nom": "0011-.patch",
+      "titre_declare": "同步上游 — 武丹 <wudan@kylinos.cn>, 17/04/2026 19:23",
+      "contenu_reel": "gnulib-tests/gnulib.mk : commente le module readutmp-tests (TESTS, check_PROGRAMS, LDADD, EXTRA_DIST).",
+      "titre_fidele": false,
+      "classement": "[À EXAMINER]",
+      "fichiers_amont": ["gnulib-tests/gnulib.mk"],
+      "resume": "Patch Kylin, désactivation effective de test-readutmp (source d'automake). Tests uniquement. Titre inexact."
+    },
+    {
+      "nom": "0012-.patch",
+      "titre_declare": "同步上游 — 武丹 <wudan@kylinos.cn>, 17/04/2026 19:39",
+      "contenu_reel": "gnulib-tests/gnulib.mk : retire test-localtime_r et test-localtime_r-mt de TESTS et check_PROGRAMS. tests/local.mk : retire tests/tail/inotify-dir-recreate.sh.",
+      "titre_fidele": false,
+      "classement": "[À EXAMINER]",
+      "fichiers_amont": ["gnulib-tests/gnulib.mk", "tests/local.mk"],
+      "resume": "Patch Kylin (changelog 9.5-1ok3.3). Tests uniquement. Titre inexact."
+    }
+  ],
+  "flux_reseau": [],
+  "collectes": [],
+  "couverture": [
+    {
+      "arbre": "archive/coreutils",
+      "patches_total": 12,
+      "patches_lus": 12,
+      "fichiers_debian": 25,
+      "pct_patches": 100,
+      "patches_lus_liste": [
+        "72_id_checkngroups.patch",
+        "80_fedora_sysinfo.patch",
+        "99_float_endian_detection.patch",
+        "treat-devtmpfs-and-squashfs-as-dummy-filesystems.patch",
+        "cp-n.diff",
+        "suppress-permission-denied-errors-on-nfs.patch",
+        "lp2137373-skip-dirent-inode-sorting-for-lustre.patch",
+        "0008-.patch",
+        "0009-.patch",
+        "0010-.patch",
+        "0011-.patch",
+        "0012-.patch"
+      ],
+      "detail": "La série compte 12 entrées et debian/patches 12 fichiers .patch/.diff, et non 11 comme annoncé dans la consigne du lot : 7 hérités de Debian/Ubuntu/Fedora/amont et 5 propres à Kylin. 0009-.patch (1101 lignes) est lu intégralement : en-tête et trois premiers hunks à l'œil, puis grand hunk de suppression vérifié par filtrage. Toutes les lignes hors motif automake standard sont affichées et examinées ; 2 lignes seulement sont ajoutées. Fichiers debian/ : 24 sur 25 lus intégralement (control, rules, series, 12 patches, copyright, NEWS, README.Debian, dirs, source/format, watch, tests/control, tests/upstream ; signing-key.asc analysé paquet par paquet, empreinte et UID). debian/changelog lu partiellement : l.1-240 intégralement (les 7 entrées Kylin et les entrées Ubuntu jusqu'à 9.4-3ubuntu1) ; l.241-2082 (historique Debian/Ubuntu) parcourues par recherche (signataires, CVE, URL, mentions Kylin) : aucune entrée Kylin. Aucun script de mainteneur ni fichier *.install, *.links, *.maintscript n'existe dans l'arbre. Fichiers lus intégralement : 96 %."
+    }
+  ],
+  "non_couvert": [
+    "Source amont coreutils 9.5 (.orig, non présent dans l'arbre) : application réelle des patches et régénération de gnulib-tests/Makefile.in par autoreconf non vérifiées (pas de compilation).",
+    "Binaire coreutils 9.4-ok4 installé par l'ISO (fournisseur réel de ls, cp, mv, rm, chmod, chown, install...) : aucune source publiée à cette version, aucun .deb dans le corpus. Contenu, correctifs CVE et traitement des attributs étendus/kysec non auditables.",
+    "Paquets binaires .deb gnu-coreutils non disponibles : drapeaux de durcissement effectifs (PIE, RELRO, BIND_NOW, FORTIFY, protection de pile) non vérifiables par readelf.",
+    "Comparaison octet à octet avec debian/ d'Ubuntu 9.5-1ubuntu4.1 impossible (pas de réseau) : l'identité des 7 patches hérités repose sur leurs entêtes et sur la connaissance des patches publics (PROBABLE).",
+    "Comportement de cp, mv et install vis-à-vis des attributs de sécurité kysec : il dépend du code amont copy.c (inchangé ici), de /etc/xattr.conf (paquet attr) et du module kysec, hors de ce lot.",
+    "Statut des CVE (CVE-2024-0684, CVE-2025-5278) et empreinte de l'archive GNU coreutils-9.5.tar.xz établis de mémoire, sans consultation en ligne.",
+    "Valeurs par défaut de dpkg-buildflags et de gcc de la chaîne openKylin (paquets dpkg et gcc, hors lot)."
+  ],
+  "synthese": "Empreinte conforme (aa23e198...ee6, 25 fichiers). L'arbre est aussi identique au debian.tar.xz du .dsc 9.5-1ok3.4 [CONSTATÉ].\nLa série compte 12 patches (et non 11) : 7 LÉGITIME, hérités de Debian, Ubuntu, Fedora et de l'amont (id, uname, tests flottants, df, cp -n, ls et ACL NFS, fts Lustre), 5 À EXAMINER, 0 SUSPECT [CONSTATÉ].\nLes 5 patches Kylin (0008-0012, wudan@kylinos.cn, titre unique « 同步上游 » = « synchronisation avec l'amont ») ne synchronisent rien : ils désactivent les tests test-readutmp, test-localtime_r(-mt) et tail/inotify-dir-recreate. Titres inexacts (faible, CONSTATÉ). Aucun code installé n'est modifié : leur classement est À EXAMINER et non SUSPECT, ce choix est assumé et justifié.\n0009 supprime de façon trop large 1061 lignes du Makefile.in généré, probablement neutralisées par autoreconf [PROBABLE].\nAucun patch ne touche à la copie, à la préservation des attributs étendus ou de SELinux, à kysec, aux liens symboliques, aux droits, aux setuid ou aux capacités. Aucun appel réseau, aucune exécution de commande externe, aucune journalisation ou collecte n'est ajouté [CONSTATÉ]. Seule la lecture locale de /proc/cpuinfo par uname est héritée.\ndebian/rules : configure --program-prefix=gnu --enable-systemd --with-openssl=auto-gpl-compat ; pas de durcissement explicite, comme chez Debian et Ubuntu, et aucun durcissement retiré par Kylin. Les macros SYSLOG_* sont un reliquat sans effet probable. Pas de script de mainteneur ni de *.install.\nPoint 4 : aucun dpkg-divert, aucune alternative ni aucun Provides/Replaces Kylin ne vise coreutils dans les 311 arbres. En revanche, cet arbre ne produit que gnu-coreutils, aux programmes préfixés gnu*. Sur l'ISO, les commandes de base viennent du binaire coreutils 9.4-ok4, sans source publiée [CONSTATÉ]. Correctifs de sécurité (ex. CVE-2024-0684) et comportement réel non vérifiables : moyenne [PROBABLE], lecture bénigne probable d'un reliquat d'empaquetage.\nLe correctif amont de CVE-2025-5278 (sort) est absent de la 9.5 livrée : faible [PROBABLE, statut CVE de mémoire].\nCouverture : 12/12 patches lus intégralement (100 %), 24/25 fichiers debian/ lus intégralement, changelog partiellement."
+}

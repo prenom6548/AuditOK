@@ -1,0 +1,116 @@
+#!/bin/sh
+
+# -e：当脚本中任何命令返回非零状态码时，立即终止脚本的执行。
+set -eu
+
+MakeInterventionSocketDir()
+{
+    install -d -m 0770 -o root -g kguard /var/lib/kguard/run
+}
+
+check_kylin_v11() {
+    if [ -f /etc/os-release ] && grep -q "Desktop V11" /etc/os-release; then
+        return 0
+    fi
+    return 1
+}
+
+CHECK_V11_RO=false
+if check_kylin_v11; then
+    CHECK_V11_RO=true
+fi
+
+SetDbusConfigfileProtect()
+{
+    if which kysec_set > /dev/null; then
+        kysec_set -n protect -v readonly /etc/dbus-1/conf/com.kylin.kguard.desktop.limit
+        kysec_set -n protect -v readonly /etc/dbus-1/conf/com.kylin.kguard.desktop.limit.verify
+		if [ "$CHECK_V11_RO" = "true" ]; then
+	        kysec_set -n protect -v readonly /opt/kare/usr/share/com.kylin.kguard.desktop.limit
+		else
+	        kysec_set -n protect -v readonly /usr/share/dbus-1/conf/com.kylin.kguard.desktop.limit
+		fi
+        kysec_set -n protect -v readonly /etc/kylin-config/basic/com.kylin.kguard.desktop.yaml
+    fi
+}
+
+CreateInstallTimeFile()
+{
+    file="/etc/kguard/.install_time"
+    filePreKeep="/etc/kguard/.install_time.keep"
+    if [ ! -f "${file}" ]; then
+        touch "${file}"
+    fi
+
+    if [ -f "${filePreKeep}" ]; then
+        mv ${filePreKeep} ${file}
+    else
+        current_time=$(date +"%Y-%m-%d %H:%M:%S")
+        echo "InstallTime=${current_time}" > $file
+    fi
+}
+
+if [ "$1" = "configure" ]; then
+  adduser --system --group --quiet --gecos "kguard daemon" --no-create-home --home /var/lib/kguard kguard
+
+  chown kguard:kguard /var/lib/kguard /var/log/kguard
+
+  chmod o-rwx /etc/kguard/logscan.conf /etc/kguard/intervention.conf
+  
+  MakeInterventionSocketDir
+
+  SetDbusConfigfileProtect || true
+
+  CreateInstallTimeFile || true
+fi
+
+systemctl restart kguard-research.service # Enable the addition of ruleset
+
+# Automatically added by dh_installsystemd/13.15.3-ok1
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	# The following line should be removed in trixie or trixie+1
+	deb-systemd-helper unmask 'kguard-logscan.service' >/dev/null || true
+
+	# was-enabled defaults to true, so new installations run enable.
+	if deb-systemd-helper --quiet was-enabled 'kguard-logscan.service'; then
+		# Enables the unit on first installation, creates new
+		# symlinks on upgrades if the unit file has changed.
+		deb-systemd-helper enable 'kguard-logscan.service' >/dev/null || true
+	else
+		# Update the statefile to add new symlinks (if any), which need to be
+		# cleaned up on purge. Also remove old symlinks.
+		deb-systemd-helper update-state 'kguard-logscan.service' >/dev/null || true
+	fi
+fi
+# End automatically added section
+
+# Automatically added by dh_installsystemd/13.15.3-ok1
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	# The following line should be removed in trixie or trixie+1
+	deb-systemd-helper unmask 'kguard-ebpf.service' >/dev/null || true
+
+	# was-enabled defaults to true, so new installations run enable.
+	if deb-systemd-helper --quiet was-enabled 'kguard-ebpf.service'; then
+		# Enables the unit on first installation, creates new
+		# symlinks on upgrades if the unit file has changed.
+		deb-systemd-helper enable 'kguard-ebpf.service' >/dev/null || true
+	else
+		# Update the statefile to add new symlinks (if any), which need to be
+		# cleaned up on purge. Also remove old symlinks.
+		deb-systemd-helper update-state 'kguard-ebpf.service' >/dev/null || true
+	fi
+fi
+# End automatically added section
+# Automatically added by dh_installsystemd/13.15.3-ok1
+if [ "$1" = "configure" ] || [ "$1" = "abort-upgrade" ] || [ "$1" = "abort-deconfigure" ] || [ "$1" = "abort-remove" ] ; then
+	if [ -d /run/systemd/system ]; then
+		systemctl --system daemon-reload >/dev/null || true
+		if [ -n "$2" ]; then
+			_dh_action=restart
+		else
+			_dh_action=start
+		fi
+		deb-systemd-invoke $_dh_action 'kguard-logscan.service' 'kguard-ebpf.service' >/dev/null || true
+	fi
+fi
+# End automatically added section

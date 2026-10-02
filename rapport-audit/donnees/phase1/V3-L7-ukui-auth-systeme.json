@@ -1,0 +1,377 @@
+{
+ "lot": "V3-L7-ukui-auth-systeme",
+ "composants": [
+  "ukui-biometric-auth",
+  "ukui-biometric-manager",
+  "ukui-power-manager",
+  "peony-extensions",
+  "ukui-notebook"
+ ],
+ "empreintes": {
+  "archive/ukui-biometric-auth": "99fd6510511a65acbf0e3e70f9e5594703d9756beffb1526651794a42ab759f1",
+  "archive/ukui-biometric-manager": "6095c6aadbedd568d535b119bd33bad9b0b1f0d3e9b0184c74c3a36334ed334e",
+  "archive/ukui-power-manager": "ee23d1c43c83c32e06e650d8b14360af249f8264c83931ac3ed47bf5caff0716",
+  "archive/peony-extensions": "26015f14dd4d8ca0d19d2a1e71d536bb31156287d4e1c59226adb201fd79fdea",
+  "archive/ukui-notebook": "a0db6242f4183d530cd8dc8fcff9a0f002b0ac837670be8dacc2187dfd95451c",
+  "conforme": true,
+  "note": "Empreintes recalculees dans /home/user/AuditOK/sources-openkylin et /home/user/openkylin-src : identiques entre elles et a la colonne 3 de empreintes-arbres-sources.tsv (nb fichiers : 456, 352, 350, 1883, 240)."
+ },
+ "findings": [
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "pam-biometric/pam-configs/pam-biometric",
+   "ligne": "1-7",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "Name: Biometric Verification / Default: yes / Priority: 260 / Auth-Type: Primary / Auth: [success=end default=ignore] pam_biometric.so / Conflicts: fprint fprintd",
+   "explication": "OBJECTIF 1. pam-auth-update insere pam_biometric.so dans common-auth en Priority 260 (avant pam_unix=256), controle [success=end default=ignore], Auth-Type Primary. Installe par defaut (libpam-biometric sur l'ISO). Chargement par toute pile PAM filtree : lightdm, ukui-screensaver-qt, polkit-1, sudo, su, login (service_filter, pam_biometric.c:175-215).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "pam-biometric/pam_biometric.c",
+   "ligne": "352-376,429-458,284-312",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "if (bio_result == BIO_SUCCESS) {... return PAM_SUCCESS;} else if (BIO_IGNORE) return PAM_IGNORE; else {ukui_biometric_lock=1; return PAM_SYSTEM_ERR;}  // embeded: resp==BIOMETRIC_SUCCESS -> PAM_SUCCESS",
+   "explication": "OBJECTIF 2. Le module ne reussit (PAM_SUCCESS) que sur BIO_SUCCESS explicite (code de sortie de /usr/bin/bioauth, flux sudo/su/login) ou sur la chaine BIOMETRIC_SUCCESS (flux embarque lightdm/ecran de veille/polkit). Absence de peripherique, echec, erreur fork/execl -> BIO_ERROR/BIO_IGNORE/PAM_SYSTEM_ERR, tous mappes a 'ignore' par le controle -> repli mot de passe (pam_unix). Conception fail-closed : aucun chemin d'erreur ne provoque un succes d'authentification.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "pam-biometric/pam_biometric.c",
+   "ligne": "429-458,607-627,799-816",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "biometric_auth_embeded: call_conversation(... BIOMETRIC_PAM, resp...) ; if(strcmp(resp,BIOMETRIC_SUCCESS)==0) return PAM_SUCCESS;  enable_by_polkit(): SO_PEERCRED/getppid + is_ukui_polkit_agent_pid (readlink /proc/pid/exe, basename==polkit-ukui-authentication-agent-1)",
+   "explication": "OBJECTIF 2. Dans le flux embarque, le verdict de succes est une chaine fournie par le processus de session (greeter ukui-greeter / agent polkit), que le module (execute en root) accepte telle quelle ; le match biometrique reel est delegue au demon root biometric-authentication (audite en V2). Pour polkit-1, l'agent est identifie par SO_PEERCRED/PPID puis par le chemin /proc/pid/exe (identite par chemin, usurpable par LD_PRELOAD d'un binaire non-setuid de meme UID, motif recurrent de l'audit cf. G5). Le flux independant (sudo/su/login) fork /usr/bin/bioauth (lance par le PAM root) et se fie a son code de sortie : non falsifiable par l'appelant.",
+   "scenario": "Dans une session compromise, un agent polkit malveillant (ou l'usurpation par chemin de l'agent UKUI) pourrait renvoyer BIOMETRIC_SUCCESS sans match biometrique reel pour une autorisation polkit, si l'attaquant parvient a etre le partenaire de conversation du helper polkit.",
+   "contre_lecture": "Architecture standard des agents polkit/greeter : un seul agent par session, enregistrement gate par la session ; le match reel est fait par le demon root. Le flux privilegie hors-session (sudo/su/login) n'est pas concerne et reste sain.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "pam-biometric/pam_biometric.c",
+   "ligne": "41,629-659,684-711",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "#define USER_CONFIG_FILE \"/home/%s/.biometric_auth/ukui_biometric.conf\" ; snprintf(conf_file_user,255,USER_CONFIG_FILE,username); fopen(conf_file_user,\"r\") ... sscanf(line,\"EnableAuth=%15s\")",
+   "explication": "OBJECTIF 2/4. enable_biometric_authentication()/enable_qrcode_authentication() ouvrent en lecture, dans le contexte (root) du service PAM appelant, un fichier du HOME de l'utilisateur cible sans O_NOFOLLOW ; seule une valeur booleenne (EnableAuth/EnableQRCode) est extraite. Porte limitee : active/desactive seulement la biometrie (fail-closed vers mot de passe) ; pas d'ecriture ; fuite d'information negligeable (le fichier appartient deja a l'utilisateur).",
+   "scenario": "Un utilisateur place un lien symbolique ~/.biometric_auth/ukui_biometric.conf vers un fichier arbitraire ; le PAM root le suit en lecture, mais n'en tire qu'un booleen -> pas d'exfiltration exploitable.",
+   "contre_lecture": "Lecture d'un simple drapeau de configuration dans le home de l'utilisateur lui-meme ; aucun privilege franchi ni contenu sensible revele.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "pam-biometric/data/org.freedesktop.plicykit.pkexec.bioctl-helper.policy.in",
+   "ligne": "25-30",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "<defaults><allow_any>no</allow_any><allow_inactive>no</allow_inactive><allow_active>yes</allow_active></defaults> annotate exec.path=${SCRIPTS_INSTALL_PATH}/bioctl-helper",
+   "explication": "OBJECTIF 1/2. Seule action polkit du lot avec allow_active=yes : tout utilisateur d'une session active execute /usr/bin/bioctl-helper en root SANS authentification. Le script (utils/bioctl-helper, 201 lignes) n'accepte que $1 in {enable,disable,status} et $2 dans un ensemble fixe de mots-cles ; il bascule /etc/biometric-auth/ukui-biometric.conf (EnableAuth, EnableAuthApp par OU/ET binaires d'entiers). Pas d'injection par argv (mots-cles compares litteralement, valeurs calculees numeriques). biodrvctl et biorestart exigent auth_admin.",
+   "scenario": "Un utilisateur local actif execute 'bioctl disable sudo' (via pkexec bioctl-helper) pour desactiver la biometrie a l'echelle systeme, ou l'active, sans etre administrateur, modifiant une politique d'authentification globale.",
+   "contre_lecture": "L'action ne modifie qu'un fichier de configuration lu par un module PAM fail-closed (desactiver la biometrie ne fait que revenir au mot de passe) ; pas d'elevation de privilege directe ni d'injection de commande.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "uniauth-backend/org.ukui.UniauthBackend.conf",
+   "ligne": "7-21",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "<policy user=\"root\"><allow own=.../></policy> <policy context=\"default\"><allow send_destination=\"org.ukui.UniauthBackend\" send_interface=\"org.ukui.UniauthBackend\"/> ...Introspectable/Properties</policy>",
+   "explication": "OBJECTIF 1. Service D-Bus systeme org.ukui.UniauthBackend (activation .service User=root ; Exec=/usr/bin/uniauth-backend). Politique .conf context=default ouverte a tout utilisateur local sur l'interface principale ; .yaml audit:_default:false (whitelist kysdk non appliquee par defaut, cf. G2/G5/G12). Objet enregistre via ExportAllSlots (serviceinterface.cpp:89-106).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "uniauth-backend/src/dbusaccesscontrol.cpp",
+   "ligne": "96-138,34-85",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "callerExecutablePath(): pid=servicePid(msg.service()); fi(/proc/pid/exe).canonicalFilePath(); isCallerProcessWhitelisted()= fullCallerWhitelist().contains(exePath) ; fixed list + /etc/biometric-auth/org.ukui.UniauthBackend.ini",
+   "explication": "OBJECTIF 2. Contraste positif : contrairement aux autres services Kylin du corpus, uniauth-backend implemente EN CODE un controle d'appelant (ensureTrustedCaller = isCallerRoot OU isCallerProcessWhitelisted ; ensureRootCaller) applique a l'ensemble des slots sensibles de serviceinterface.cpp (33 appels) et de greeterconfiginterface.cpp (ensureGlobalConfigWrite/Read/UserConfigAccess). Faiblesse residuelle : l'identite de l'appelant est etablie par le chemin /proc/pid/exe (canonicalFilePath), usurpable par un binaire non-setuid de la whitelist charge via LD_PRELOAD par un utilisateur de meme UID (motif G5) ; la whitelist supplementaire est lue dans /etc (root), pas dans le HOME (bon point).",
+   "scenario": "Un utilisateur lance /usr/bin/bioauth ou /usr/bin/biometric-manager (binaires whitelistes, non-setuid) avec LD_PRELOAD pour emettre les appels D-Bus privilegies (sendPassword, SwitchToUser) tout en presentant /proc/pid/exe=binaire whiteliste -> controle contourne.",
+   "contre_lecture": "Un controle d'acces reel EST present (root-ou-whitelist) sur toute la surface, ce qui est nettement plus robuste que le reste du corpus ; l'usurpation par chemin reste theorique et exige un UID deja dans la whitelist fonctionnelle.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-auth",
+   "fichier": "uniauth-backend/src/serviceinterface.cpp",
+   "ligne": "1178-1237,1404-1420,1167-1176",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "sendPassword(username,password){ if(!ensureTrustedCaller()) return false; rsac.decrypt(...); ...sendLoginPassword(...)} ; SwitchToUser/SwitchToGreeterUser/getPublicEncrypt tous gates par ensureTrustedCaller()",
+   "explication": "OBJECTIF 2. Les methodes sensibles du flux de connexion (getPublicEncrypt, sendPassword[RSA], registerLoginApp, SwitchToUser/SwitchToGreeterUser, SaveLastLoginUser, etc.) sont toutes gatees par ensureTrustedCaller(). sendPassword relaie un mot de passe chiffre RSA (rsac.cpp) vers lightdm/screensaver. registerLoginApp impose en plus appName in {ukui-greeter,ukui-screensaver} ou root (l.1386). Surface privilegiee effectivement controlee (sous reserve de la faiblesse d'identite par chemin ci-dessus).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-power-manager",
+   "fichier": "registeredQDbus/conf/org.ukui.powermanagement.conf",
+   "ligne": "13-21",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "<policy context=\"default\"><allow send_destination=\"org.ukui.powermanagement\" send_interface=\"org.ukui.powermanagement.interface\"/> ...Introspectable/Properties</policy> ; .yaml audit:_default:false",
+   "explication": "OBJECTIF 1. Service D-Bus systeme org.ukui.powermanagement (activation .service User=root ; Exec=/usr/bin/ukui-powermanagement-service), demarre au boot. Politique .conf context=default ouverte a tout utilisateur local ; whitelist .yaml audit:_default:false (non appliquee par defaut, cf. G2/G5/G12).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-power-manager",
+   "fichier": "registeredQDbus/main.cpp",
+   "ligne": "44-48",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "systemBus.registerObject(\"/\", new SysdbusRegister(), ExportAllSlots|ExportAllSignals|ExportAllProperties)  // aucun appel a checkEnviron/polkit/uid dans les slots",
+   "explication": "OBJECTIF 2. Le service root exporte tous ses slots SANS aucun controle d'appelant : CpuFrequencyModulation, GpuFrequencyModulation, SetDevicePowerCtl, RegulateBrightness, EnableReduceCpuFrequency, SystemIdleReserveCpu0, EnableAutoSwitchCpuCore, etc. La fonction checkEnviron(pid) (sysdbusregister.cpp:177, filtre LD_PRELOAD/LD_AUDIT) est du CODE MORT : jamais appelee (grep = seule definition). Combine a la politique ouverte, tout utilisateur local pilote la frequence/gouverneur CPU, la luminosite, l'alimentation des peripheriques (USB/PCI/SATA/GPU), le Wake-on-LAN. Pas d'ecriture arbitraire ni RCE : les valeurs ecrites en sysfs proviennent de configs root et sont validees ('0'/'1'/'2', 'max'/'medium'/'min'), les chemins sont enumeres depuis /sys ; executeCommand() n'est appele qu'avec des commandes fixes (dmidecode).",
+   "scenario": "Un utilisateur local non privilegie appelle org.ukui.powermanagement pour forcer le gouverneur CPU, desactiver des coeurs, couper l'alimentation de peripheriques ou activer/desactiver le WoL -> deni de service / alteration de l'etat materiel et energetique du poste.",
+   "contre_lecture": "Les methodes ne manipulent que des politiques d'energie a partir de valeurs de configuration validees (pas d'ecriture de contenu/chemin arbitraire) ; impact limite au confort/energie, sans elevation de privilege ni corruption ; une whitelist etait prevue (non activee).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony-extensions",
+   "fichier": "peony-share/service/samba-config.cpp",
+   "ligne": "301-325,340-368,489-502",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "init(QString name,int pid,int uid){ ...mUserPid=pid; mUserUid=uid;} checkAuthorization(){ proj=polkit_unix_process_new_for_owner(mUserPid,0,mUserUid); polkit_authority_check_authorization_sync(mAuth,proj,\"org.ukui.samba.share.config.authorization\"...)}",
+   "explication": "OBJECTIF 2. Le service D-Bus SYSTEME root org.ukui.samba.share.config (Exec=/usr/libexec/peony-samba-service, .conf context=default ouvert ; .limit /usr/bin/peony non applique par defaut cf. G2/G5/G12) expose init/hasPasswd/setPasswd (public Q_SLOTS). La classe SambaConfig N'HERITE PAS de QDBusContext : elle ne peut pas identifier l'appelant reel. L'appelant fournit lui-meme pid et uid a init() (le client legitime passe getpid()/getuid(), advanced-share-page.cpp:103), et checkAuthorization() construit le sujet polkit a partir de ces valeurs FOURNIES PAR L'APPELANT au lieu de l'identite reelle du message D-Bus. Un sujet forge contourne donc la verification polkit. Les methodes gatees s'executent ensuite en root : launchSmbd/launchNmbd (systemctl start/enable smbd+nmbd), addUserToSambaGroup (usermod -aG sambashare), setUserPasswd (smbpasswd -a).",
+   "scenario": "Un utilisateur local appelle init(name=<utilisateur existant>, pid=<pid d'un processus root ou d'un processus deja autorise auth_self_keep>, uid=<assorti>) ; checkAuthorization valide le sujet forge ; puis setPasswd/addUserInGroup/launchSmbd s'executent en root -> definition du mot de passe SMB d'un compte arbitraire, ajout au groupe sambashare, activation des services Samba, sans authentification reelle de l'appelant.",
+   "contre_lecture": "Le client legitime (peony) transmet son propre pid/uid, auquel cas polkit invite bien l'utilisateur (auth_self_keep) ; l'exploitation exacte depend du comportement de polkit face a un sujet forge (sujet root implicitement autorise, ou pid d'un processus a autorisation en cache) et n'a pas ete demontree par execution.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony-extensions",
+   "fichier": "peony-share/service/samba-config.cpp",
+   "ligne": "169-187,195-207,261-299,340-362,460-476",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "QString cmd=QString(\"/usr/bin/smbpasswd -e %1\").arg(mUserName); process.start(\"/usr/bin/bash\",{\"-c\",cmd}); // init(): name.contains(\"|\")->false ; name verifie contre getpwent ; setPasswd: isContainLegitimacyChar rejette ' & espace et non-ASCII",
+   "explication": "OBJECTIF 4. Le service root interpole le nom d'utilisateur dans des commandes bash -c (userInSamba, userInSambaGroup) et le mot de passe via smbpasswd. Mitige : le nom est valide contre la liste des comptes reels et rejette '|' (correctif KVE-2023-1201) ; le mot de passe rejette apostrophe, '&', espace et caracteres non-ASCII (isContainLegitimacyChar). Durcissement perfectible (bash -c plutot qu'argv direct) mais pas d'injection shell demontree via ces filtres.",
+   "scenario": "Si les filtres de nom/mot de passe etaient contournes (ex. metacaractere non couvert), injection de commande en root ; non demontre avec les validations en place.",
+   "contre_lecture": "Les entrees sont filtrees (noms restreints aux comptes existants, mots de passe a jeu de caracteres restreint) ; vecteur d'injection ferme en l'etat.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "peony-extensions",
+   "fichier": "debian/peony-share.postinst",
+   "ligne": "4-19",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "if [ \"`ls -A /var/lib/samba/usershares`\" = \"\" ]; then systemctl stop/disable smbd+nmbd; else systemctl enable+start smbd+nmbd; fi",
+   "explication": "OBJECTIF 1. Le postinst (root) active et demarre smbd/nmbd des qu'il existe un partage utilisateur, sinon les desactive. Exposition reseau SMB conditionnee a la presence de partages ; copie aussi .yaml/.limit vers /etc/kylin-config/basic et /etc/dbus-1/conf. Fait d'inventaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-manager",
+   "fichier": "biometric-plugin/pwdchangethread.cpp",
+   "ligne": "33-47",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "snprintf(command,256,\"/usr/bin/changeuserpwd %s %s\",curpwd.toLatin1().data(),newpwd.toLatin1().data()); popen(command,\"r\"); // idem checkUserPwd (pwdcheckthread.cpp:49), checkTest (changepwddialog.cpp:106-111)",
+   "explication": "OBJECTIF 4. L'application de session (UID utilisateur) passe des mots de passe en CLAIR sur la ligne de commande de helpers via popen : /usr/bin/changeuserpwd (pwdchangethread.cpp:39, sans aucun echappement), /usr/bin/checkUserPwd (pwdcheckthread.cpp:49), /usr/bin/checkTest (changepwddialog.cpp:106-111) avec un echappement faible (bascule guillemets simples/doubles selon la presence de '). Ces arguments sont visibles dans /proc/<pid>/cmdline pour les autres utilisateurs locaux pendant l'appel ; l'echappement par bascule de quotes laisse une injection de commande (contexte meme-utilisateur). Note : changeuserpwd.cpp:461 encode le mot de passe en base64 avant popen (chemin mitige).",
+   "scenario": "Un autre utilisateur local echantillonne /proc/*/cmdline pendant un changement/verification de mot de passe et recupere le mot de passe d'un utilisateur en clair -> divulgation d'identifiant inter-utilisateurs.",
+   "contre_lecture": "Fenetre d'exposition breve, necessite un echantillonnage concurrent ; une partie des chemins encode en base64 ; le changement effectif de mot de passe systeme est delegue a des helpers/services root audites ailleurs. L'injection reste en contexte du propre UID de l'utilisateur.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-biometric-manager",
+   "fichier": "biometric-plugin/biometricswidget.cpp",
+   "ligne": "486-495",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "result = Authority::checkAuthorizationSync(\"org.ukui.biometric.manager.security.questions\", UnixProcessSubject(QCoreApplication::applicationPid()), AllowUserInteraction);",
+   "explication": "OBJECTIF 1/2. Le plugin verifie l'action polkit org.ukui.biometric.manager.security.questions (auth_self/auth_self_keep) en utilisant son PROPRE pid (QCoreApplication::applicationPid()) comme sujet : motif correct (polkit resout l'identite via son canal de confiance), contrairement au service samba. Le plugin agit par ailleurs comme simple client des services root (uniauth-backend, org.kylin.KprBackend audite en V3-L3/G12, org.ukui.Biometric audite en V2).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-notebook",
+   "fichier": "uNoteDbusServer/uNoteDbusServer.cpp",
+   "ligne": "32-37,49-50",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "sql = QStringLiteral(\"SELECT id,md_content,full_title FROM active_notes WHERE md_content LIKE '%%1%'\").arg(keyList.at(0)); for(...) sql.append(\" AND md_content LIKE '%%1%'\".arg(keyList.at(i))); query.exec(sql)",
+   "explication": "OBJECTIF 4. keywordMatch() concatene les chaines de l'appelant directement dans une clause SQL LIKE sans echappement (injection SQL). MAIS le serveur ukui-notebook-server s'enregistre sur le bus de SESSION (main.cpp:31-32) et ouvre la base de notes du propre utilisateur (~/.config/kylin-note/kyNotes.db) : l'appelant est le meme utilisateur, aucune frontiere de confiance franchie et pas de requetes empilees (QSqlQuery::exec mono-instruction).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-notebook",
+   "fichier": "data/org.ukui.note.conf",
+   "ligne": "6-19",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "Installee dans /etc/dbus-1/system.d ; <policy context=\"default\"><allow own=\"org.ukui.note\"/><allow send_destination=\"org.ukui.note\"/>...</policy>  -- or le serveur s'enregistre sur le bus SESSION (main.cpp:31)",
+   "explication": "OBJECTIF 1. Politique D-Bus SYSTEME livree (context=default autorise tout utilisateur a posseder org.ukui.note) alors que le service ne s'enregistre que sur le bus de session : politique morte/mal placee. Permet au plus un squat du nom sur le bus systeme, sans consommateur.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-notebook",
+   "fichier": "debian/postrm",
+   "ligne": "12-21",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "for file in $(ls /home); do db_file_path=/home/${file}/.config/ukui/Clock_database.db ; if [ -f \"$db_file_path\" ]; then rm \"$db_file_path\"; fi ; feedback=/home/${file}/.config/ukui/url.conf ; rm ...; done",
+   "explication": "OBJECTIF 4. Le postrm (root) parcourt `ls /home` et supprime des fichiers dans chaque repertoire personnel sans `--` ni protection anti-symlink, en supposant que chaque entree est un utilisateur. Ne se declenche qu'a la suppression/purge du paquet. Supprime en outre Clock_database.db, base appartenant a ukui-clock (mauvais paquet). rm ne suit pas le lien final, portee limitee.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [],
+ "collectes": [
+  {
+   "composant": "ukui-power-manager",
+   "donnee": "Modele materiel : nom produit systeme et OEM String 4 (dmidecode), modele CPU (/proc/cpuinfo)",
+   "fichier_ligne": "registeredQDbus/hardware-reader/hardwarereader.cpp:55,61 ; power/power.cpp:581",
+   "stockage": "en memoire (detection de modele pour branchements Pangu M900/PGU/PWC30)",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "peony-extensions",
+   "donnee": "Modele materiel (cpuinfo 'hardware', dmidecode 'String 4') pour le plugin bluetooth",
+   "fichier_ligne": "peony-bluetooth-plugin/bluetoothplugin.cpp:50-75",
+   "stockage": "en memoire",
+   "envoi": "aucun"
+  },
+  {
+   "composant": "ukui-biometric-auth",
+   "donnee": "Configuration biometrique par utilisateur (EnableAuth, EnableQRCode, peripherique par defaut) et config greeter ; modele CPU",
+   "fichier_ligne": "pam_biometric.c:41,637 ; uniauth-backend/src/serviceinterface.cpp:1152 ; usersafeconfigpath.cpp",
+   "stockage": "/home/<user>/.biometric_auth/*.conf, /etc/biometric-auth/, config greeter (fichiers INI)",
+   "envoi": "aucun ; gabarits biometriques eux-memes hors lot (biometric-authentication, V2)"
+  },
+  {
+   "composant": "peony-extensions (IDM)",
+   "donnee": "Index/semantique des fichiers de l'utilisateur (peony-intelligent-data-management-service, service systemd --user)",
+   "fichier_ligne": "peony-intelligent-data-management-service/model/*, ai/*",
+   "stockage": "local (service de session), base d'index",
+   "envoi": "aucun flux reseau detecte (traitement on-device)"
+  },
+  {
+   "composant": "ukui-notebook",
+   "donnee": "Verification de l'etat non-vide du presse-papiers (activation d'un item de menu Coller)",
+   "fichier_ligne": "src/editPage.cpp:397",
+   "stockage": "aucun",
+   "envoi": "aucun"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/ukui-biometric-auth",
+   "fichiers_code_propres": 108,
+   "lignes_code_propres": 17826,
+   "lus_integralement": 22,
+   "lus_partiellement": 3,
+   "pct_fichiers": 23,
+   "pct_lignes": 35,
+   "fichiers_lus": [
+    "pam-biometric/pam_biometric.c",
+    "pam-biometric/logger.c",
+    "common/generic.h",
+    "pam-biometric/CMakeLists.txt",
+    "pam-biometric/pam-configs/pam-biometric",
+    "pam-biometric/data/ukui-biometric.conf",
+    "pam-biometric/data/org.freedesktop.plicykit.pkexec.bioctl-helper.policy.in",
+    "pam-biometric/data/org.freedesktop.plicykit.pkexec.biodrvctl.policy.in",
+    "pam-biometric/data/org.freedesktop.plicykit.pkexec.biorestart.policy.in",
+    "pam-biometric/utils/bioctl",
+    "pam-biometric/utils/bioctl-helper",
+    "pam-biometric/utils/biodrvctl",
+    "pam-biometric/utils/biorestart",
+    "bioauth-bin/src/main.cpp",
+    "bioauth-bin/CMakeLists.txt",
+    "uniauth-backend/src/dbusaccesscontrol.cpp",
+    "uniauth-backend/src/main.cpp",
+    "uniauth-backend/src/serviceinterface.h",
+    "uniauth-backend/org.ukui.UniauthBackend.conf",
+    "uniauth-backend/org.ukui.UniauthBackend.yaml",
+    "uniauth-backend/org.ukui.UniauthBackend.service",
+    "CMakeLists.txt",
+    "uniauth-backend/src/serviceinterface.cpp (partiel: init/gates/sendPassword/SwitchToUser)",
+    "uniauth-backend/src/greeterconfiginterface.cpp (partiel: gates/setters)",
+    "debian/libpam-biometric.postinst / prerm / install / control (partiel)"
+   ]
+  },
+  {
+   "arbre": "archive/ukui-biometric-manager",
+   "fichiers_code_propres": 144,
+   "lignes_code_propres": 23316,
+   "lus_integralement": 0,
+   "lus_partiellement": 6,
+   "pct_fichiers": 5,
+   "pct_lignes": 4,
+   "fichiers_lus": [
+    "biometric-plugin/biometricswidget.cpp (partiel: polkit)",
+    "biometric-plugin/pwdchangethread.cpp (partiel)",
+    "biometric-plugin/pwdcheckthread.cpp (partiel)",
+    "biometric-plugin/changepwddialog.cpp (partiel)",
+    "biometric-plugin/changeuserpwd.cpp (partiel)",
+    "biometric-plugin/conf/org.ukui.biometric.manager.security.questions.policy (fiche)"
+   ]
+  },
+  {
+   "arbre": "archive/ukui-power-manager",
+   "fichiers_code_propres": 183,
+   "lignes_code_propres": 22198,
+   "lus_integralement": 5,
+   "lus_partiellement": 4,
+   "pct_fichiers": 5,
+   "pct_lignes": 8,
+   "fichiers_lus": [
+    "registeredQDbus/sysdbusregister.cpp",
+    "registeredQDbus/main.cpp",
+    "registeredQDbus/conf/org.ukui.powermanagement.conf",
+    "registeredQDbus/conf/org.ukui.powermanagement.yaml",
+    "registeredQDbus/conf/org.ukui.powermanagement.service",
+    "registeredQDbus/cpu-control/upmcpucontrol.cpp (partiel)",
+    "registeredQDbus/hardware-reader/hardwarereader.cpp (partiel)",
+    "registeredQDbus/dev-power-control/netwolinfo.cpp (partiel)",
+    "registeredQDbus/dev-power-control/usbrpm.cpp (partiel)"
+   ]
+  },
+  {
+   "arbre": "archive/peony-extensions",
+   "fichiers_code_propres": 225,
+   "lignes_code_propres": 38035,
+   "lus_integralement": 7,
+   "lus_partiellement": 2,
+   "pct_fichiers": 4,
+   "pct_lignes": 3,
+   "fichiers_lus": [
+    "peony-share/service/peony-samba-service.cpp",
+    "peony-share/service/samba-config.cpp",
+    "peony-share/service/samba-config.h",
+    "peony-share/data/org.ukui.samba.share.config.conf",
+    "peony-share/data/org.ukui.samba.share.config.policy",
+    "peony-share/data/org.ukui.samba.share.config.limit",
+    "debian/peony-share.postinst",
+    "debian/postinst (partiel)",
+    "peony-share/app/advanced-share-page.cpp (partiel: init/acl)"
+   ]
+  },
+  {
+   "arbre": "archive/ukui-notebook",
+   "fichiers_code_propres": 111,
+   "lignes_code_propres": 12224,
+   "lus_integralement": 5,
+   "lus_partiellement": 1,
+   "pct_fichiers": 5,
+   "pct_lignes": 4,
+   "fichiers_lus": [
+    "uNoteDbusServer/main.cpp",
+    "data/org.ukui.note.conf",
+    "data/org.ukui.note.service",
+    "data/org.ukui.note.xml",
+    "debian/postrm",
+    "uNoteDbusServer/uNoteDbusServer.cpp (partiel: keywordMatch/loadSqlDB)"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "ukui-biometric-manager : lecture exhaustive de l'IHM volumineuse (biometric-manager/, biometric-plugin/ ~30 k lignes) non effectuee ; couverture ciblee (polkit, popen/mots de passe, reseau, collecte). Application de session (UID utilisateur) agissant comme client des services root.",
+  "ukui-power-manager : lecture exhaustive des sous-arbres dev-power-control/, cpu-control/, PowerManagementDaemon/ (session), tray et plugin ukcc non terminee ; le service systeme root (registeredQDbus/) et sa surface d'acces sont couverts. ukui-power-policy.service / ukui.power.policy.conf / regles udev 99-upower-wake-up presentes dans data/ mais NON references a l'installation (PROBABLEMENT non installes, cf. fiche Phase 0) : non traites.",
+  "peony-extensions : seul peony-share (service root + app) lu en profondeur ; IDM (peony-intelligent-data-management-service, service systemd --user d'indexation + composant ai), peony-bluetooth, peony-send-to-device, parchives et greffons UI couverts par recherche ciblee (reseau, collecte, exec) et non par lecture exhaustive.",
+  "Application de la whitelist .limit/.yaml (uniauth-backend, powermanagement, samba) par un dbus-daemon patche kysdk : hors corpus ; l'audit la considere non appliquee par defaut (coherent G2/G5/G12 verifie sur dbus 1.16.2-ok1). uniauth-backend fait exception : il applique SA PROPRE whitelist en code (dbusaccesscontrol.cpp).",
+  "Comportement exact de polkit face a un sujet forge (pid/uid fournis par l'appelant) dans peony-samba-service : exploitation non demontree par execution (statique uniquement).",
+  "Helpers invoques par ukui-biometric-manager (/usr/bin/changeuserpwd, checkUserPwd, checkTest) : leur source/privilege reels non traces dans ce lot.",
+  "Services/demons deja audites ailleurs et seulement consommes ici : org.ukui.Biometric / biometric-authentication (V2-L3), org.kylin.KprBackend (V3-L3/G12)."
+ ],
+ "synthese": "[CONSTATÉ] Empreintes des 5 arbres conformes a empreintes-arbres-sources.tsv (recalcul identique dans sources-openkylin et openkylin-src ; 456/352/350/1883/240 fichiers). Aucun flux reseau sortant/entrant applicatif dans les 5 composants (flux_reseau vide) ; les lectures dmidecode/cpuinfo servent a la detection locale de modele materiel (pas de serial/uuid/MAC exfiltres), le WoL est un ioctl, les sockets sont ACPI/local. [CONSTATÉ] Module PAM pam_biometric.so (libpam-biometric, installe par defaut) : insere en Priority 260 avant pam_unix, controle [success=end default=ignore] ; conception FAIL-CLOSED : succes uniquement sur BIO_SUCCESS (code de sortie de bioauth, flux sudo/su/login, non falsifiable) ou la chaine BIOMETRIC_SUCCESS (flux embarque lightdm/ecran/polkit, verdict renvoye par le greeter/agent de session, identite d'agent polkit etablie par chemin /proc/pid/exe donc usurpable - faible). Absence de peripherique/erreur -> repli mot de passe. [CONSTATÉ, moyenne] Action polkit pkexec bioctl-helper allow_active=yes : tout utilisateur actif execute le script en root sans authentification, mais il ne bascule qu'un fichier de config (pas d'injection par argv). [CONSTATÉ, faible, point positif] uniauth-backend (service systeme root) implemente EN CODE un controle d'appelant (root-ou-whitelist, ensureTrustedCaller) sur toute sa surface sensible - contraste net avec le reste du corpus ; faiblesse residuelle : identite par chemin /proc/pid/exe (usurpable LD_PRELOAD de meme UID). [CONSTATÉ, moyenne] ukui-power-manager (service systeme root org.ukui.powermanagement) : ExportAllSlots SANS aucun controle d'appelant (checkEnviron est du code mort), .conf context=default, .yaml non applique -> tout utilisateur local pilote CPU/luminosite/alimentation peripheriques/WoL (DoS/alteration, pas de RCE ni ecriture arbitraire : valeurs validees). [CONSTATÉ, elevee] peony-samba-service (service systeme root org.ukui.samba.share.config) : init(name,pid,uid) prend le pid/uid DE L'APPELANT et checkAuthorization() construit le sujet polkit a partir de ces valeurs (classe non QDBusContext) -> contournement d'autorisation polkit, puis execution root de launchSmbd/nmbd, usermod -aG sambashare et smbpasswd ; injection shell mitigee (nom valide contre getpwent + rejet '|', mot de passe a jeu de caracteres restreint). [CONSTATÉ, moyenne] ukui-biometric-manager (session, UID utilisateur) : mots de passe passes en clair sur la ligne de commande via popen (changeuserpwd/checkUserPwd/checkTest) -> visibles dans /proc/<pid>/cmdline par d'autres utilisateurs locaux ; echappement par bascule de quotes faible ; son auto-controle polkit (pid propre) est correct. [CONSTATÉ, faible] ukui-notebook : keywordMatch concatene l'entree dans du SQL (injection), mais bus de SESSION + base de l'utilisateur -> pas de frontiere franchie ; politique D-Bus SYSTEME livree pour un service qui ne s'enregistre que sur le bus de session (morte) ; postrm root parcourt /home et supprime des fichiers sans anti-symlink (a la purge). Couverture : code PAM et code des services systeme privilegies lus integralement ou en profondeur ; IHM de session et greffons couverts par recherche ciblee. Part lue globale estimee ~5-35% en fichiers selon l'arbre (plus elevee sur ukui-biometric-auth), concentree sur la surface systeme."
+}

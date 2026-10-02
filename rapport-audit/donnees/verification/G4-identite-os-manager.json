@@ -1,0 +1,134 @@
+[
+ {
+  "id": "V2-L3-identite-telemetrie#0",
+  "lot": "V2-L3-identite-telemetrie",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L3-identite-telemetrie.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/biometric-authentication",
+   "/home/user/openkylin-src/archive/kylin-os-manager",
+   "/home/user/openkylin-src/archive/kylin-device-daemon",
+   "/home/user/openkylin-src/archive/libkysdk-applications",
+   "/home/user/openkylin-src/archive/ukui-clipboard"
+  ],
+  "depot": "biometric-authentication",
+  "fichier": "src/biometric-authenticationd.c",
+  "ligne": "1945-1963,2317-2318",
+  "type": "privileges",
+  "severite": "critique",
+  "registre": "CONSTATÉ",
+  "extrait": "static gboolean gdbus_set_extra_info(... char* extra_info){ pin_flag = 1; strcpy(pincode, extra_info); ... }  // pincode[100] (biometric_common.c:49)",
+  "explication": "Le demon root org.ukui.Biometric (biometric-authentication.service sans User=, data/biometric-authentication.service:1-15) exporte SetExtraInfo sur le bus systeme. Le handler fait strcpy() d'une chaine fournie par l'appelant dans le buffer global pincode[100] (biometric_common.c:49), la longueur reelle (strnlen 4096) etant ignoree (le safe_strcpy est commente l.1958). La politique D-Bus data/org.ukui.Biometric.conf:12-13 autorise context=default a appeler send_destination=org.ukui.Biometric sans restriction d'interface ; SetExtraInfo ne fait AUCUN controle d'appelant (ni get_dbus_caller_uid, ni polkit). Tout utilisateur local peut donc provoquer un debordement de tas controle dans un processus root.",
+  "scenario": "Un compte local non privilegie appelle SetExtraInfo avec une chaine > 99 octets ; le strcpy ecrase la memoire du demon root, au minimum deni de service du service d'authentification, potentiellement execution de code en root (buffer global, donnees attaquant).",
+  "contre_lecture": "Champ destine a transmettre un code PIN/pincode court (<16) depuis le greeter ; les developpeurs supposent un appelant de confiance (greeter) et une taille bornee. Mais rien dans le code ni la politique ne restreint l'appelant ou la taille : c'est une faiblesse reelle, pas une limite theorique."
+ },
+ {
+  "id": "V2-L3-identite-telemetrie#3",
+  "lot": "V2-L3-identite-telemetrie",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L3-identite-telemetrie.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/biometric-authentication",
+   "/home/user/openkylin-src/archive/kylin-os-manager",
+   "/home/user/openkylin-src/archive/kylin-device-daemon",
+   "/home/user/openkylin-src/archive/libkysdk-applications",
+   "/home/user/openkylin-src/archive/ukui-clipboard"
+  ],
+  "depot": "biometric-authentication",
+  "fichier": "src/drivers/community-multidevice/driver_internal.c;driver_type.h",
+  "ligne": "driver_type.h:51; driver_internal.c:207-275",
+  "type": "crypto",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "#define DEFAULT_AES_KEY \"<masqué>\"  ... si AESKey absente/vide: snprintf(priv->aes_key, 31, \"%s\", DEFAULT_AES_KEY)",
+  "explication": "Les gabarits d'empreinte (pilotes community-multidevice) sont chiffres AES-128-CFB avec une IV constante (iv[i]=i, community_ops.c community_internal_aes_encrypt:287-290). La cle vient de /etc/biometric-auth/key/community-multidevice-aes.key (genere aleatoirement par debian/biometric-driver-community-multidevice.postinst:16, chmod 0600). Mais si le fichier de cle est absent, vide ou illisible, le pilote bascule SILENCIEUSEMENT sur une cle AES codee en dur DEFAULT_AES_KEY (driver_type.h:51) identique sur toutes les installations. IV fixe + repli sur cle constante = chiffrement reversible des gabarits par quiconque connait le binaire.",
+  "scenario": "Sur une machine ou /etc/biometric-auth/key n'a pas ete genere (echec postinst, image personnalisee) les gabarits sont chiffres avec la cle publique du binaire ; un attaquant lisant biometric.db (ex. sauvegarde, autre faille) dechiffre tous les gabarits hors-ligne.",
+  "contre_lecture": "En installation nominale la cle est aleatoire par machine et le fichier 0600 ; le repli est un filet de securite pour eviter un crash. Reste que l'IV constant et la cle de repli embarquee affaiblissent la confidentialite des gabarits."
+ },
+ {
+  "id": "V2-L3-identite-telemetrie#4",
+  "lot": "V2-L3-identite-telemetrie",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L3-identite-telemetrie.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/biometric-authentication",
+   "/home/user/openkylin-src/archive/kylin-os-manager",
+   "/home/user/openkylin-src/archive/kylin-device-daemon",
+   "/home/user/openkylin-src/archive/libkysdk-applications",
+   "/home/user/openkylin-src/archive/ukui-clipboard"
+  ],
+  "depot": "biometric-authentication",
+  "fichier": "src/lib/biometric_stroge.c",
+  "ligne": "910-990",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "snprintf(user_conf_file, MAX_PATH_LEN, \"%s/.biometric_auth/UUID\", pwd->pw_dir); ... fd = fopen(user_conf_file, \"w\"); fprintf(fd, \"%s\\n\", uuid); ... chown(user_conf_file, pwd->pw_uid, pwd->pw_gid);",
+  "explication": "internal_get_uuid_by_uid() s'execute dans le demon root et ecrit ~/.biometric_auth/UUID dans le repertoire personnel de l'utilisateur cible, puis chown vers cet utilisateur, SANS O_NOFOLLOW ni lstat. Le chemin est sous le controle du proprietaire du home. Un utilisateur peut remplacer ~/.biometric_auth ou UUID par un lien symbolique vers un fichier systeme : le fopen(\"w\") root le tronque/ecrase et le chown le donne a l'utilisateur. Declenche a l'enrolement/migration de base (appelable indirectement via Enroll).",
+  "scenario": "L'utilisateur cree ~/.biometric_auth -> lien vers /etc ou un UUID -> lien vers /etc/shadow ; une operation biometrique declenche l'ecriture/chown root et corrompt ou s'approprie la cible : voie d'elevation locale.",
+  "contre_lecture": "Flux concu pour un repertoire personnel de confiance appartenant deja a l'utilisateur ; l'ecriture est anodine en usage normal. Mais l'absence de protection anti-lien symbolique dans un service root est une faiblesse reelle (TOCTOU/symlink)."
+ },
+ {
+  "id": "V2-L3-identite-telemetrie#12",
+  "lot": "V2-L3-identite-telemetrie",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L3-identite-telemetrie.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-os-manager",
+   "/home/user/openkylin-src/archive/kylin-device-daemon",
+   "/home/user/openkylin-src/archive/libkysdk-applications",
+   "/home/user/openkylin-src/archive/ukui-clipboard",
+   "/home/user/openkylin-src/archive/biometric-authentication"
+  ],
+  "depot": "kylin-os-manager",
+  "fichier": "daemons/service/tool_box_interface.cpp",
+  "ligne": "68-130;data/com.kylin-os-manager.conf:20-21",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "void ToolBoxAdaptor::ChangePlace(int place){ ... QFile hosts(\"/etc/hosts\"); ... hosts.open(WriteOnly|Truncate); ... hosts.write(...);} // interface com.KylinOsManager.ToolBox, context=default",
+  "explication": "Le demon root kylin-os-manager-daemon (com.kylin-os-manager.service, User=root) expose l'interface com.KylinOsManager.ToolBox dont la politique data/com.kylin-os-manager.conf:20-21 autorise send_destination au context=default (tout utilisateur local). Les slots ToolBox n'ont AUCUN controle d'appelant (isAllowedCaller des autres interfaces renvoie 'return true;' en tete, dbus.cpp:412 / drivermanagerservicedbus.cpp:412, controle desactive). ChangePlace() reecrit /etc/hosts en root a partir d'un fichier de configuration icbc, et UpdateSource() lance 'apt update' en root. ChangePlace permet a un utilisateur local de modifier la resolution de noms de toute la machine.",
+  "scenario": "Un utilisateur local appelle com.KylinOsManager.ToolBox.ChangePlace : le demon root reecrit /etc/hosts selon icbc-tool.conf, pouvant rediriger des domaines (miroirs apt, telemetrie) ; combine a UpdateSource (apt update root) cela facilite un detournement de la chaine logicielle.",
+  "contre_lecture": "Fonction 'commutation de site' pensee pour un parc ICBC pilote par le centre de controle ; icbc-tool.conf n'est pas livre par defaut (grep negatif) donc l'effet reel est nul sans ce fichier. Reste que l'ecriture de /etc/hosts en root est accessible a tout appelant local sans authentification."
+ },
+ {
+  "id": "V2-L3-identite-telemetrie#13",
+  "lot": "V2-L3-identite-telemetrie",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L3-identite-telemetrie.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-os-manager",
+   "/home/user/openkylin-src/archive/kylin-device-daemon",
+   "/home/user/openkylin-src/archive/libkysdk-applications",
+   "/home/user/openkylin-src/archive/ukui-clipboard",
+   "/home/user/openkylin-src/archive/biometric-authentication"
+  ],
+  "depot": "kylin-os-manager",
+  "fichier": "daemons/service/junk_clean_interface.cpp",
+  "ligne": "98-357;data/com.kylin-os-manager.conf:18-19",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "CleanInstallationPackage/CleanBootPartition/CleanLog(QList<quint64>): QFile::remove(path); QFile::rename(path,backup); ::truncate(path,0); CleanSystemMemory: bash -c \"echo 3 > /proc/sys/vm/drop_caches\"",
+  "explication": "L'interface com.KylinOsManager.JunkClean du meme demon root (politique context=default, data/com.kylin-os-manager.conf:18-19 ; aucun polkit/controle d'appelant) permet a tout utilisateur local de declencher scan et suppression root de fichiers : paquets /var/cache/apt/archives, residus dpkg ('dpkg -P' root, CleanUninstallResidual:170-195), fichiers /boot (vmlinuz/initrd deplaces), et troncature/suppression recursive des journaux sous /var/log (CleanLog + ScanSystemLog). Les 'junk_mark' sont indexes cote serveur mais Scan*/Clean* sont librement appelables. Suppression de noyaux/journaux root pilotee par un utilisateur non privilegie.",
+  "scenario": "Un utilisateur local appelle ScanBootPartition puis CleanBootPartition pour faire deplacer les images noyau par le demon root (systeme non amorcable), ou CleanUninstallResidual pour declencher des 'dpkg -P' root : deni de service, voire manipulation de l'etat des paquets.",
+  "contre_lecture": "Fonctions de nettoyage destinees a etre appelees depuis l'IHM du gestionnaire ; le deplacement /boot va vers un repertoire de sauvegarde (reversible). Mais l'absence totale de controle d'appelant sur des operations destructives root est une faiblesse exploitable par tout compte local."
+ },
+ {
+  "id": "V2-L3-identite-telemetrie#16",
+  "lot": "V2-L3-identite-telemetrie",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L3-identite-telemetrie.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-os-manager",
+   "/home/user/openkylin-src/archive/kylin-device-daemon",
+   "/home/user/openkylin-src/archive/libkysdk-applications",
+   "/home/user/openkylin-src/archive/ukui-clipboard",
+   "/home/user/openkylin-src/archive/biometric-authentication"
+  ],
+  "depot": "kylin-os-manager",
+  "fichier": "plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp",
+  "ligne": "191-216,255-321",
+  "type": "reseau",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "QSslConfiguration tmpSSL = creatReq.sslConfiguration(); tmpSSL.setPeerVerifyMode(QSslSocket::VerifyNone); creatReq.setSslConfiguration(tmpSSL); m_networkReply = m_networkManager->post(creatReq, multiPart);",
+  "explication": "Le retour d'incident (service-support, application de session, EnableUpload=true par defaut data/config/kylin-os-manager-plugin.ini:12) televerse une archive 7z vers https://%domain/creatbug (domaine kom.kylinos.cn par defaut, ini:10) en DESACTIVANT la verification du certificat TLS (QSslSocket::VerifyNone, feedbackmanagerlogic.cpp:212-214). L'archive agrege des donnees systeme etendues (conf/log-collection.csv) : /etc/.kyinfo (info d'activation), numero de serie (dmidecode -s), MAC/lshw network, /etc/hosts, resolv.conf, sudoers.d, journaux hedron (politique terminale), /var/log/* ainsi que les coordonnees saisies (telephone, mail, nom ; saveUserData:159-180). TLS non verifie sur un flux transportant des identifiants materiels et des donnees de configuration sensibles.",
+  "scenario": "Un attaquant en position reseau (MITM) intercepte/modifie le televersement de diagnostic : il obtient en clair le numero de serie, la MAC, l'info d'activation, les journaux de politique et les coordonnees de l'utilisateur, faute de verification du certificat.",
+  "contre_lecture": "Le domaine kom.kylinos.cn est un service officiel Kylin et VerifyNone peut viser des certificats internes auto-signes ; l'envoi est declenche par l'utilisateur (bouton). Mais desactiver la verification sur un canal portant des identifiants materiels/personnels reste une faiblesse elevee (collecte declaree a l'utilisateur mais transport non authentifie)."
+ }
+]

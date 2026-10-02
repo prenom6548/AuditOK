@@ -1,0 +1,166 @@
+[
+ {
+  "id": "V1-L4-processus-entrees-services#0",
+  "lot": "V1-L4-processus-entrees-services",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L4-processus-entrees-services.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-process-manager",
+   "/home/user/openkylin-src/archive/ukui-input-gather",
+   "/home/user/openkylin-src/archive/ukui-service-manager"
+  ],
+  "depot": "kylin-process-manager",
+  "fichier": "daemon/src/processmanager.cpp",
+  "ligne": "236-275",
+  "type": "privileges",
+  "severite": "critique",
+  "registre": "CONSTATÉ",
+  "extrait": "std::string cmd = \"echo '\" + key.toStdString() + \"' | sudo tee -a \" + lock_file ... std::system(cmd.c_str()); ... std::string cmd = \"sudo sed -i '/\" + escapedKey + \"/d' \" + lock_file;",
+  "explication": "LockGSettingsKey(key,lock) est une methode D-Bus du demon root com.kylin.ProcessManagerDaemon. L'argument 'key' controle par l'appelant est concatene dans des commandes shell passees a std::system() en root. L'echappement est nul (branche l.249, key entre simples quotes) ou partiel (branche l.262, seul '/' est echappe) : une apostrophe ou $(...) permet l'injection de commande arbitraire executee en root. La politique D-Bus (daemon/configs/com.kylin.ProcessManagerDaemon.conf l.15-18, context=default allow send_destination) autorise TOUT utilisateur local a appeler la methode.",
+  "scenario": "Un utilisateur non privilegie appelle, via dbus-send sur le bus systeme, com.kylin.ProcessManagerDaemon.LockGSettingsKey avec key=\"x';bash -c 'id>/tmp/p';'\" (lock=true). Le demon root execute la chaine via std::system -> execution de code arbitraire en root -> compromission complete de la machine.",
+  "contre_lecture": "Fonction destinee a verrouiller des cles dconf de maniere administrative ; l'auteur suppose que seuls des services systeme de confiance (liste blanche yaml) appellent le demon. Mais la liste blanche kysdk a audit=false (desactivee) et la politique .conf ouvre l'acces a tous, donc l'hypothese ne tient pas sur l'image par defaut."
+ },
+ {
+  "id": "V1-L4-processus-entrees-services#1",
+  "lot": "V1-L4-processus-entrees-services",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L4-processus-entrees-services.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-service-manager",
+   "/home/user/openkylin-src/archive/kylin-process-manager",
+   "/home/user/openkylin-src/archive/ukui-input-gather"
+  ],
+  "depot": "ukui-service-manager",
+  "fichier": "src/ukui-system-service/systemservicelauncher.cpp",
+  "ligne": "22-33",
+  "type": "privileges",
+  "severite": "critique",
+  "registre": "CONSTATÉ",
+  "extrait": "bool SystemServiceLauncher::launchServices(const QString &pluginPath, ...) { QPluginLoader l; l.setFileName(pluginPath); bool pluginLoaded = l.load(); ... auto instance = l.instance(); }",
+  "explication": "launchServices est un slot D-Bus (expose via ExportAllSlots, src/ukui-system-service/main.cpp l.69) du processus root ukui-system-service qui possede un nom org.ukui.Service.<space>. Il charge via QPluginLoader la bibliotheque dont le chemin 'pluginPath' est fourni par l'appelant, SANS aucun controle (ni uid, ni proprietaire/permissions du .so, ni verification de chemin). Contrairement a registerServiceByPlugin (serviceregister.cpp l.23-27, qui verifie callerUid==getuid()), ce chemin n'a aucune verification. La politique data/org.ukui.serviceManager.conf l.66-68 autorise context=default (tout utilisateur) a 'send_destination_prefix=org.ukui.Service' sans restriction d'interface : n'importe quel utilisateur peut invoquer launchServices.",
+  "scenario": "Un utilisateur declenche l'activation D-Bus d'un consommateur legitime (ex. com.ukui.search.qt.systemdbus ou com.control.center.qt.systemdbus, .conf ouverts) : register-ukui-system-service (User=root) demarre un ukui-system-service root possedant org.ukui.Service.Files/Settings (le space Settings est resident). L'attaquant appelle alors directement org.ukui.Service.Settings -> launchServices(pluginPath=\"/home/attaquant/evil.so\", serviceNames=[...]). QPluginLoader charge evil.so dans le processus root -> execution de code en root (elevation de privilege locale).",
+  "contre_lecture": "Le mecanisme est concu pour que seul le gestionnaire root (apres verification uid dans registerServiceByPlugin) appelle launchServices sur le processus d'espace. Mais launchServices est reexpose directement sur le bus systeme sous un nom org.ukui.Service.* que la politique ouvre a tous, et ne revalide pas l'appelant : l'invariant de confiance n'est pas applique."
+ },
+ {
+  "id": "V1-L4-processus-entrees-services#4",
+  "lot": "V1-L4-processus-entrees-services",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L4-processus-entrees-services.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-process-manager",
+   "/home/user/openkylin-src/archive/ukui-input-gather",
+   "/home/user/openkylin-src/archive/ukui-service-manager"
+  ],
+  "depot": "kylin-process-manager",
+  "fichier": "daemon/src/processmanager.cpp",
+  "ligne": "317-320",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "void ProcessManager::SetSystemdUnitRun(const QString &unitName, bool start){ m_systemdUnitManager.setSystemdUnitRun(unitName, start); } -> systemddbusinterface.cpp l.230: asyncCallSystemdDbus(start?\"StartUnit\":\"StopUnit\", {unitName, \"replace\"}, QDBusConnection::systemBus());",
+  "explication": "La methode root SetSystemdUnitRun relaie StartUnit/StopUnit a org.freedesktop.systemd1 sur le bus systeme (en root). Accessible a tout utilisateur (politique .conf context=default). Un utilisateur non privilegie peut donc demarrer ou arreter n'importe quelle unite systemd systeme.",
+  "scenario": "Un utilisateur appelle SetSystemdUnitRun(\"firewalld.service\", false) ou arrete un service de securite/audit, ou demarre une unite a sa convenance -> deni de service du systeme et contournement potentiel de protections.",
+  "contre_lecture": "Destinee a ce que le gestionnaire de processus demarre/arrete des services lies a l'energie/scenarios ; mais aucune liste d'unites autorisees ni controle d'appelant, et la politique ouvre l'appel a tous."
+ },
+ {
+  "id": "V1-L4-processus-entrees-services#5",
+  "lot": "V1-L4-processus-entrees-services",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L4-processus-entrees-services.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-process-manager",
+   "/home/user/openkylin-src/archive/ukui-input-gather",
+   "/home/user/openkylin-src/archive/ukui-service-manager"
+  ],
+  "depot": "kylin-process-manager",
+  "fichier": "daemon/configs/com.kylin.ProcessManagerDaemon.conf",
+  "ligne": "15-18",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "<policy context=\"default\"> <allow send_destination=\"com.kylin.ProcessManagerDaemon\"/> <allow receive_sender=\"com.kylin.ProcessManagerDaemon\"/> </policy>",
+  "explication": "Le demon root n'applique AUCUN controle d'appelant au niveau applicatif (aucun polkit, aucun GetConnectionUnixProcessID, aucune verification uid dans daemon/src — grep exhaustif negatif). Le seul filtre serait la liste blanche kysdk (/etc/kylin-config/basic/com.kylin.ProcessManagerDaemon.yaml) mais elle a audit:false par defaut et son application depend d'un dbus patche kysdk hors de cet arbre. Resultat : tout utilisateur local peut invoquer l'ensemble des methodes root : FreezeProcess, LimitProcess*/Thread* (cgroups), ReclaimProcesses, SetKernelSched, SetDirty, SetNetParams, SetSystemCpuFreq, SetSamplingRate, CreateGroupPath/SetGroupPath/RemoveCGroupPath, ThawedProcess, etc.",
+  "scenario": "Un utilisateur gele (FreezeProcess) des processus d'autres utilisateurs ou du systeme, ou appelle SetNetParams(true) (positionne arp_ignore, icmp echo_ignore_all, etc. a l'echelle du noyau) ou SetDirty(true) -> deni de service systeme/reseau ; ou RemoveCGroupPath avec '../' pour supprimer des repertoires vides hors de /sys/fs/cgroup.",
+  "contre_lecture": "Modele de confiance Kylin : la liste blanche yaml est censee restreindre a 7 binaires (kylin-process-manager, ukui-search-service, ...). Si un dbus patche kysdk l'appliquait ET audit=true, l'acces serait limite. Mais par defaut audit=false et la .conf autorise tous : surface reellement ouverte sur l'image."
+ },
+ {
+  "id": "V2-L1-ukui-session#0",
+  "lot": "V2-L1-ukui-session",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L1-ukui-session.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-settings-daemon",
+   "/home/user/openkylin-src/archive/ukui-greeter",
+   "/home/user/openkylin-src/archive/ukui-screensaver",
+   "/home/user/openkylin-src/archive/ukui-session-manager"
+  ],
+  "depot": "ukui-settings-daemon",
+  "fichier": "plugins/authority/conf/com.kylin.ukui.SettingsDaemon.conf",
+  "ligne": "14-20",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "<policy context=\"default\"><allow send_destination=\"com.kylin.ukui.SettingsDaemon\" send_interface=\"com.kylin.ukui.SettingsDaemon.interface\"/> ...",
+  "explication": "Le service systeme root authoritydbus (User=root, conf/com.kylin.ukui.SettingsDaemon.service) expose son interface a tout utilisateur local (politique D-Bus context=default, pas de fichier .limit applique par dbus-daemon). Plusieurs objets exposes n'appliquent aucun controle d'appelant applicatif (voir constats suivants).",
+  "scenario": "Un compte local non privilegie emet des appels D-Bus vers com.kylin.ukui.SettingsDaemon et atteint des methodes root des objets /securityConfig, /globalconfig, /camera, /inputEventMonitor qui ne verifient pas l'appelant.",
+  "contre_lecture": "Service de parametrage legitime pense pour etre pilote par ukui-settings-daemon et le centre de controle ; la politique ouverte vise la commodite inter-composants, et certaines methodes sensibles passent par la macro PEEK_LIMIT (liste blanche d'executables)."
+ },
+ {
+  "id": "V2-L1-ukui-session#1",
+  "lot": "V2-L1-ukui-session",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L1-ukui-session.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-settings-daemon",
+   "/home/user/openkylin-src/archive/ukui-greeter",
+   "/home/user/openkylin-src/archive/ukui-screensaver",
+   "/home/user/openkylin-src/archive/ukui-session-manager"
+  ],
+  "depot": "ukui-settings-daemon",
+  "fichier": "plugins/authority/globalconfig.cpp",
+  "ligne": "32-53,56-77",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "bool GlobalConfig::writeGlobalConfig(QString path,QString fileName,QByteArray info){ ... filePath=GLOBAL_CONFIG_PATH/path/fileName; if(filePath.contains(\"../\"))return false; ... globalFile.open(WriteOnly); globalFile.setPermissions(0x6444); globalFile.write(info);} QByteArray readGlobalConfig(QString path){...open(ReadOnly);return readAll();}",
+  "explication": "writeGlobalConfig/readGlobalConfig/setGlobalConf de l'objet root /globalconfig (main.cpp:51) n'ont AUCUN controle d'appelant (grep PEEK_LIMIT negatif dans globalconfig.cpp). Ecriture/lecture de fichiers sous /etc/ukui/usd/config/ en root ; le seul filtre de chemin est un rejet de la sous-chaine \"../\" (pas de canonicalisation, chemins absolus et liens symboliques non traites). Les fichiers crees sont mis en 0x6444 (lecture pour tous).",
+  "scenario": "Tout utilisateur local ecrit par root un contenu qu'il fournit dans un fichier sous /etc/ukui/usd/config (nom et contenu controles par l'appelant), ou lit des fichiers de ce repertoire root. Le contenu ecrit est ensuite relu par les greffons xrandr de la session (xrandr-config.cpp).",
+  "contre_lecture": "Stockage de configuration d'affichage partage entre comptes ; le filtre \"../\" vise a limiter la portee au repertoire prevu, et les donnees ecrites sont des descriptions d'ecran JSON."
+ },
+ {
+  "id": "V2-L1-ukui-session#2",
+  "lot": "V2-L1-ukui-session",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L1-ukui-session.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-settings-daemon",
+   "/home/user/openkylin-src/archive/ukui-greeter",
+   "/home/user/openkylin-src/archive/ukui-screensaver",
+   "/home/user/openkylin-src/archive/ukui-session-manager"
+  ],
+  "depot": "ukui-settings-daemon",
+  "fichier": "plugins/authority/save-security-config.cpp",
+  "ligne": "34-41,101-110,147-210",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "bool SaveSecurityConfig::exitSecurity(){ setSecurityStat(false); deleteDconf(); deleteAllAppConfig(); } bool ClearConfig(QString userName){return deleteSecurityConfig(userName);} deleteAllAppConfig(): QDir(APP_SECURITYFILE_PATH).removeRecursively();",
+  "explication": "L'objet root /securityConfig (main.cpp:55) expose ExitSecurity/ClearConfig/UpdateConfig sans aucun controle d'appelant (pas de PEEK_LIMIT). ExitSecurity desactive le mode securise (dconf locks) et supprime recursivement /opt/system/conf/ukui-security-config ; deleteDconf retire /etc/dconf/db/local.d/01-security-config et le verrou, puis lance dconf update. Portee : neutralisation, par tout utilisateur local, du verrouillage de configuration a l'echelle systeme (hedron/kim).",
+  "scenario": "Un compte non privilegie appelle ExitSecurity sur le service root et desactive le durcissement dconf impose par la gestion de domaine, supprimant les verrous de configuration de tous les comptes.",
+  "contre_lecture": "Interface destinee au client de domaine hedron-client (SecurityConf.ini:client) ; une liste blanche par methode existe dans le .yaml (methodwhitelist) mais ne couvre pas ces methodes et n'est appliquee que par un dbus-daemon patche kysdk hors de cet arbre, non present au corpus."
+ },
+ {
+  "id": "V2-L1-ukui-session#14",
+  "lot": "V2-L1-ukui-session",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V2-L1-ukui-session.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/ukui-screensaver",
+   "/home/user/openkylin-src/archive/ukui-greeter",
+   "/home/user/openkylin-src/archive/ukui-session-manager",
+   "/home/user/openkylin-src/archive/ukui-settings-daemon"
+  ],
+  "depot": "ukui-screensaver",
+  "fichier": "data/ukui-screensaver-qt",
+  "ligne": "2",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "auth requisite pam_nologin.so / auth sufficient pam_succeed_if.so user ingroup nopasswdlogin / @include common-auth",
+  "explication": "Le fichier PAM du verrou/greeter (installe dans /etc/pam.d par data/CMakeLists.txt:5) contient 'auth sufficient pam_succeed_if.so user ingroup nopasswdlogin' AVANT @include common-auth. Tout utilisateur membre du groupe 'nopasswdlogin' est authentifie (deverrouille) sans mot de passe. Constat deja releve en vague B09 ; confirme ici sur l'arbre.",
+  "scenario": "Si un compte est (volontairement ou par erreur) place dans le groupe nopasswdlogin, son ecran se deverrouille sans mot de passe ; l'appartenance au groupe est le seul prerequis.",
+  "contre_lecture": "Mecanisme standard (identique a GDM/LightDM) pour l'autologin sans mot de passe ; le groupe nopasswdlogin n'est normalement peuple que pour des comptes explicitement configures ainsi."
+ }
+]

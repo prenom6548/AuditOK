@@ -1,0 +1,513 @@
+{
+ "lot": "V2-L3-identite-telemetrie",
+ "statut": "complet",
+ "composants": [
+  "kylin-os-manager",
+  "kylin-device-daemon",
+  "libkysdk-applications",
+  "ukui-clipboard",
+  "biometric-authentication"
+ ],
+ "empreintes": {
+  "archive/kylin-os-manager": "7d955c0d32daffa7eb38dfbf2c0133cca4a04cfe7b3002b049111c2a26c83d06",
+  "archive/kylin-device-daemon": "1274f81cfbb15167b4b6711c45cba63b252fd83a93fe2599f12ef5ed6d51cb2d",
+  "archive/libkysdk-applications": "276597732dc2b1289082b9c2abbac8ed476972a6335cd58c2e903585510f2707",
+  "archive/ukui-clipboard": "0c9844f0fb3eda86766b4c08d2879ae2ec0156e559f0ba051c89154dafa9bc83",
+  "archive/biometric-authentication": "9630a722532d1b166b405988310e45e9b4c828bea44517219e2951daa796ee86",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "biometric-authentication",
+   "fichier": "src/biometric-authenticationd.c",
+   "ligne": "1945-1963,2317-2318",
+   "type": "privileges",
+   "severite": "critique",
+   "extrait": "static gboolean gdbus_set_extra_info(... char* extra_info){ pin_flag = 1; strcpy(pincode, extra_info); ... }  // pincode[100] (biometric_common.c:49)",
+   "explication": "Le demon root org.ukui.Biometric (biometric-authentication.service sans User=, data/biometric-authentication.service:1-15) exporte SetExtraInfo sur le bus systeme. Le handler fait strcpy() d'une chaine fournie par l'appelant dans le buffer global pincode[100] (biometric_common.c:49), la longueur reelle (strnlen 4096) etant ignoree (le safe_strcpy est commente l.1958). La politique D-Bus data/org.ukui.Biometric.conf:12-13 autorise context=default a appeler send_destination=org.ukui.Biometric sans restriction d'interface ; SetExtraInfo ne fait AUCUN controle d'appelant (ni get_dbus_caller_uid, ni polkit). Tout utilisateur local peut donc provoquer un debordement de tas controle dans un processus root.",
+   "scenario": "Un compte local non privilegie appelle SetExtraInfo avec une chaine > 99 octets ; le strcpy ecrase la memoire du demon root, au minimum deni de service du service d'authentification, potentiellement execution de code en root (buffer global, donnees attaquant).",
+   "contre_lecture": "Champ destine a transmettre un code PIN/pincode court (<16) depuis le greeter ; les developpeurs supposent un appelant de confiance (greeter) et une taille bornee. Mais rien dans le code ni la politique ne restreint l'appelant ou la taille : c'est une faiblesse reelle, pas une limite theorique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "biometric-authentication",
+   "fichier": "src/biometric-authenticationd.c",
+   "ligne": "2148-2195,304-311(conf)",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "gdbus_get_all_feature_list(... uid, idx_start, idx_end){ ... flist = bio_sto_get_feature_info(db,uid,-1,NULL,...); } // aucun polkit, aucun controle d'appelant",
+   "explication": "GetAllFeatureList, GetFeatureList, Search, Identify, Capture et Verify n'effectuent aucune verification d'appelant ni polkit (seuls Enroll/Clean/SetWrExtendList appellent authority_check_by_polkit). Combinees a data/org.ukui.Biometric.conf:12 (context=default, pas de send_interface), elles permettent a tout utilisateur local de lister/identifier les gabarits biometriques de TOUS les utilisateurs (uid passe en parametre, non valide contre l'appelant). Les gabarits restent chiffres (AES) mais l'enumeration des index/noms et le declenchement de capture/identification exposent des donnees biometriques d'autrui.",
+   "scenario": "Un utilisateur local appelle GetAllFeatureList(uid=0..n) et enumere les empreintes enregistrees des autres comptes (index, nom, type), puis Identify pour tester une empreinte presentee contre un autre compte.",
+   "contre_lecture": "Les operations de lecture sont jugees non sensibles par les developpeurs (seules enroll/clean/modify sont derriere polkit) ; la base reste chiffree. Mais l'exposition inter-utilisateurs de metadonnees biometriques depasse le modele mono-session attendu.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "biometric-authentication",
+   "fichier": "src/lib/biometric_stroge.c",
+   "ligne": "169-220",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "ret = chmod(DB_PATH, S_IRUSR | S_IWUSR); // /var/lib/biometric-auth/biometric.db cree 0600 root",
+   "explication": "Les gabarits sont stockes dans SQLite /var/lib/biometric-auth/biometric.db (DB_PATH, biometric_stroge.h:47), cree par le demon root avec chmod 0600 (root uniquement). Donnees chiffrees AES-128-CFB avant insertion (community_ops.c on_enroll_completed:134-156). Pas de SQLCipher ; la colonne EigenData contient base64(AES(gabarit)). Fait d'inventaire : stockage local root, non transmis sur le reseau (aucun client reseau dans le paquet).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "biometric-authentication",
+   "fichier": "src/drivers/community-multidevice/driver_internal.c;driver_type.h",
+   "ligne": "driver_type.h:51; driver_internal.c:207-275",
+   "type": "crypto",
+   "severite": "elevee",
+   "extrait": "#define DEFAULT_AES_KEY \"<masqué>\"  ... si AESKey absente/vide: snprintf(priv->aes_key, 31, \"%s\", DEFAULT_AES_KEY)",
+   "explication": "Les gabarits d'empreinte (pilotes community-multidevice) sont chiffres AES-128-CFB avec une IV constante (iv[i]=i, community_ops.c community_internal_aes_encrypt:287-290). La cle vient de /etc/biometric-auth/key/community-multidevice-aes.key (genere aleatoirement par debian/biometric-driver-community-multidevice.postinst:16, chmod 0600). Mais si le fichier de cle est absent, vide ou illisible, le pilote bascule SILENCIEUSEMENT sur une cle AES codee en dur DEFAULT_AES_KEY (driver_type.h:51) identique sur toutes les installations. IV fixe + repli sur cle constante = chiffrement reversible des gabarits par quiconque connait le binaire.",
+   "scenario": "Sur une machine ou /etc/biometric-auth/key n'a pas ete genere (echec postinst, image personnalisee) les gabarits sont chiffres avec la cle publique du binaire ; un attaquant lisant biometric.db (ex. sauvegarde, autre faille) dechiffre tous les gabarits hors-ligne.",
+   "contre_lecture": "En installation nominale la cle est aleatoire par machine et le fichier 0600 ; le repli est un filet de securite pour eviter un crash. Reste que l'IV constant et la cle de repli embarquee affaiblissent la confidentialite des gabarits.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "biometric-authentication",
+   "fichier": "src/lib/biometric_stroge.c",
+   "ligne": "910-990",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "snprintf(user_conf_file, MAX_PATH_LEN, \"%s/.biometric_auth/UUID\", pwd->pw_dir); ... fd = fopen(user_conf_file, \"w\"); fprintf(fd, \"%s\\n\", uuid); ... chown(user_conf_file, pwd->pw_uid, pwd->pw_gid);",
+   "explication": "internal_get_uuid_by_uid() s'execute dans le demon root et ecrit ~/.biometric_auth/UUID dans le repertoire personnel de l'utilisateur cible, puis chown vers cet utilisateur, SANS O_NOFOLLOW ni lstat. Le chemin est sous le controle du proprietaire du home. Un utilisateur peut remplacer ~/.biometric_auth ou UUID par un lien symbolique vers un fichier systeme : le fopen(\"w\") root le tronque/ecrase et le chown le donne a l'utilisateur. Declenche a l'enrolement/migration de base (appelable indirectement via Enroll).",
+   "scenario": "L'utilisateur cree ~/.biometric_auth -> lien vers /etc ou un UUID -> lien vers /etc/shadow ; une operation biometrique declenche l'ecriture/chown root et corrompt ou s'approprie la cible : voie d'elevation locale.",
+   "contre_lecture": "Flux concu pour un repertoire personnel de confiance appartenant deja a l'utilisateur ; l'ecriture est anodine en usage normal. Mais l'absence de protection anti-lien symbolique dans un service root est une faiblesse reelle (TOCTOU/symlink).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "biometric-authentication",
+   "fichier": "data/org.ukui.Biometric.limit;src(grep)",
+   "ligne": "data/org.ukui.Biometric.limit:1-20",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "[whitelist] key1..key20 : ukui-greeter, lightdm, ukui-control-center, biometric-config-tool, /usr/bin/d-feet, /usr/bin/hedronagent ...",
+   "explication": "Une liste blanche Kylin d'appelants (data/org.ukui.Biometric.limit) et son empreinte .limit.verify (40 octets) sont installees dans /etc/dbus-1/conf. Mais, comme pour les autres services du lot, le code du demon ne lit JAMAIS ce fichier (grep 'limit' negatif dans src/) : son application depend d'un composant externe (dbus-daemon modifie / module kysec) absent du corpus. En l'etat du source, le controle d'acces effectif aux methodes repose uniquement sur les quelques appels polkit cites.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-clipboard",
+   "fichier": "taskTray/clipboardtray.cpp;taskTray/clipboarddata.cpp",
+   "ligne": "clipboardtray.cpp:297-339,480-520; clipboarddata.h:70-90",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "connect(m_clipboard,&QClipboard::dataChanged,this,&ClipboardTray::dataAdd); ... handelData(... mimeData); data->m_mineData = getMimedata(mData);  // historique en RAM, aucune exclusion des champs mot de passe",
+   "explication": "ukui-clipboard-tray (autostart de session, taskTray/data/ukui-clipboard-tray.desktop) capture en continu CHAQUE changement de presse-papiers (QClipboard::dataChanged -> dataAdd, clipboardtray.cpp:160,297) et conserve tout l'historique (texte, liens, images, fichiers) dans des QList de clipboardData en memoire du processus utilisateur. AUCUNE exclusion des contenus sensibles : rien ne filtre les mots de passe (pas de prise en compte de x-kde-passwordManagerHint ni d'un drapeau 'sensible'), contrairement aux gestionnaires de presse-papiers courants. Les gestionnaires de mots de passe qui copient un secret le voient donc mémorisé dans l'historique.",
+   "scenario": "Un gestionnaire de mots de passe copie un mot de passe ; il entre dans l'historique du presse-papiers et reste consultable dans l'IHM de la session jusqu'a effacement manuel ou fin de session, exposant le secret a un epaule-surfing ou a un autre processus de la session lisant le presse-papiers.",
+   "contre_lecture": "Un historique de presse-papiers est la fonction attendue de l'outil et les donnees ne quittent pas la session de l'utilisateur ; l'omission du drapeau mot-de-passe est un defaut de conception repandu, pas un canal d'exfiltration.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-clipboard",
+   "fichier": "taskTray/clipboardtray.cpp;taskTray/clipboardmodel.cpp",
+   "ligne": "clipboardtray.cpp:289-295(removeAllData); clipboardmodel.cpp:73-82",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "Pas de QFile/QSettings/SQLite pour l'historique ; InMemoryImageProvider (data.cpp) ; QList<clipboardData*> m_items",
+   "explication": "L'historique du presse-papiers n'est PAS persiste sur disque : il vit uniquement dans la memoire du processus de session (QList m_items dans clipboardmodel, images dans InMemoryImageProvider data.cpp:63-98). Il disparait a la fin de la session/redemarrage du service et n'est accessible qu'au processus proprietaire (pas de fichier, pas de socket partagee lisible par un autre utilisateur ; QLocalServer single-instance par uid, third-party/qtsingleapplication qtlocalpeer.cpp:64). Aucune transmission reseau (aucune API reseau dans le paquet). Reponses aux questions cle 2 : historique en RAM, non chiffre (mais non ecrit sur disque), non accessible aux autres utilisateurs/processus, pas d'exclusion des champs mot de passe.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ukui-clipboard",
+   "fichier": "ocrhandler.cpp;utils.cpp;CMakeLists.txt",
+   "ligne": "ocrhandler.cpp:5-28; utils.cpp:68-82; CMakeLists.txt:123-141",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "text_recognition_set_model_config(... ModelDeployType::OnDevice); ... text_recognition_recognize_text_from_image_data_async(...)",
+   "explication": "Si kysdk-coreai-vision est present (HAVE_COREAI_PATH, CMakeLists.txt:123), les images du presse-papiers sont soumises a une OCR configuree explicitement en mode local OnDevice (ocrhandler.cpp:14). A defaut, repli Tesseract local (interface.h getImageText, chi_sim+eng). Aucun envoi reseau du contenu OCR observe dans ce paquet. Fait d'inventaire.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-applications",
+   "fichier": "kysdk-kabase/kabase/buried_point.cpp",
+   "ligne": "48-72,105-180",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "constexpr char dbusServerName[] = \"com.kylin.daq\"; ... m_dbusInterface->call(\"UploadMessage\", packageInfo, enBuriedPointData, QString(sha256));",
+   "explication": "kabase::BuriedPoint (埋点) est une bibliotheque de collecte d'usage applicatif liee dans les applications de session. functionBuriedPoint()/uploadMessage() construisent un JSON {packageName, messageType, tid, FunctionName/cles fournies, createTimeStamp} et l'envoient sur le bus systeme a com.kylin.daq (UploadMessage), avec un SHA-256 des donnees. Le tid persistant est stocke en clair dans ~/.config/buried-point/uploadMessage (QSettings INI). La collecte se limite a des identifiants de fonctionnalite (enum PT, buried_point.hpp) ; la destination finale et l'eventuel envoi reseau relevent de kylin-daq (hors lot, documente en V1-L1 : HTTPS TLS non verifie vers datareporting.openkylin.top:30005). kabase lui-meme n'ouvre aucune socket (grep reseau negatif).",
+   "scenario": "Les actions de l'utilisateur dans les applications Kylin (calculatrice, visionneuse, messagerie...) sont transmises comme evenements d'usage au demon de collecte com.kylin.daq, qui les agrege et peut les remonter au serveur de telemetrie (cf. V1-L1) ; correlables via le tid persistant.",
+   "contre_lecture": "Mecanisme de telemetrie fonctionnelle d'usage (noms de fonctionnalites, pas de contenu utilisateur) ; le tid est un identifiant technique local. L'envoi reel depend de l'etat d'activation de kylin-daq (UploadState), hors de ce paquet.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-applications",
+   "fichier": "kysdk-kabase/kabase/kylin_image_codec/image_save/savemovie.cpp",
+   "ligne": "45-122",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "const QString filePath = \"/tmp/.kylin-image-codec/\"; dir.mkdir(filePath); ... QString cmd=\"apngasm \"+ster+tmpFilePath+ster+\" \"+ster+tmpDir+\"*.png\\\" \"...; m_process->start(cmd); ... deleteTmpImages=\"rm -rf \"+ster+tmpDir+ster;",
+   "explication": "La sauvegarde d'image animee (bibliotheque de session, pas de privilege) cree un repertoire fixe partage /tmp/.kylin-image-codec/ avec mkdir sans mode restrictif ni O_EXCL (savemovie.cpp:47-50), puis compose des commandes shell (apngasm/apng2gif/mv/rm -rf) via QProcess::start(QString) en concatenant des chemins derives du nom de fichier choisi par l'utilisateur, entoures de guillemets simples. Repertoire /tmp previsible partage entre utilisateurs (risque de collision/pre-creation) et commandes construites par concatenation (injection d'arguments si le nom contient des guillemets). Utils::deleteDir (image/utils.cpp:300) fait de meme un 'rm -rf'+chemin.",
+   "scenario": "Un autre utilisateur pre-cree /tmp/.kylin-image-codec ou un sous-repertoire en lien symbolique pour detourner l'ecriture/rm ; ou un nom de fichier force une injection d'arguments dans la commande shell. Impact limite aux droits de l'utilisateur appelant (pas de privilege).",
+   "contre_lecture": "Chemins et noms normalement issus de l'IHM de l'application ; l'outil tourne sans privilege donc l'impact reste dans le perimetre de l'utilisateur. Defaut de durcissement plutot que vulnerabilite exploitable a distance.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-device-daemon",
+   "fichier": "src/mainwindow.cpp;src/qclickwidget.cpp;src/fdclickwidget.cpp",
+   "ligne": "mainwindow.cpp:4349,4409-4421; qclickwidget.cpp:607-655; fdclickwidget.cpp:367-385",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "openFolderCmd = \"/usr/bin/peony \" + QString(mountUri); QProcess::startDetached(openFolderCmd); ... QProcess::startDetached(\"peony \"+m_pathDis1);",
+   "explication": "kylin-device-daemon (session utilisateur, autostart) ouvre les volumes amovibles en construisant une commande 'peony '+URI/chemin fournie par le peripherique (g_file_get_uri), passee a QProcess::startDetached(QString) qui decoupe sur les espaces. Le montage automatique peut etre declenche par l'insertion d'un support non fiable (UDisks2). L'URI/label du support etant controle par l'attaquant materiel, un nom de volume malveillant pourrait injecter des arguments supplementaires a peony. Execution en contexte utilisateur (les ejections/montages privilegies passent par pkexec eject / UDisks2).",
+   "scenario": "Une cle USB avec un label/chemin de montage forge provoque, a l'ouverture automatique, l'ajout d'arguments a la commande peony ; portee limitee aux droits de l'utilisateur de session.",
+   "contre_lecture": "peony est un gestionnaire de fichiers et les URI proviennent de GIO qui les normalise ; l'exploitation requiert un acces physique et un label tres particulier. Defaut de durcissement (startDetached(QString) au lieu de (prog, args)).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "daemons/service/tool_box_interface.cpp",
+   "ligne": "68-130;data/com.kylin-os-manager.conf:20-21",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "void ToolBoxAdaptor::ChangePlace(int place){ ... QFile hosts(\"/etc/hosts\"); ... hosts.open(WriteOnly|Truncate); ... hosts.write(...);} // interface com.KylinOsManager.ToolBox, context=default",
+   "explication": "Le demon root kylin-os-manager-daemon (com.kylin-os-manager.service, User=root) expose l'interface com.KylinOsManager.ToolBox dont la politique data/com.kylin-os-manager.conf:20-21 autorise send_destination au context=default (tout utilisateur local). Les slots ToolBox n'ont AUCUN controle d'appelant (isAllowedCaller des autres interfaces renvoie 'return true;' en tete, dbus.cpp:412 / drivermanagerservicedbus.cpp:412, controle desactive). ChangePlace() reecrit /etc/hosts en root a partir d'un fichier de configuration icbc, et UpdateSource() lance 'apt update' en root. ChangePlace permet a un utilisateur local de modifier la resolution de noms de toute la machine.",
+   "scenario": "Un utilisateur local appelle com.KylinOsManager.ToolBox.ChangePlace : le demon root reecrit /etc/hosts selon icbc-tool.conf, pouvant rediriger des domaines (miroirs apt, telemetrie) ; combine a UpdateSource (apt update root) cela facilite un detournement de la chaine logicielle.",
+   "contre_lecture": "Fonction 'commutation de site' pensee pour un parc ICBC pilote par le centre de controle ; icbc-tool.conf n'est pas livre par defaut (grep negatif) donc l'effet reel est nul sans ce fichier. Reste que l'ecriture de /etc/hosts en root est accessible a tout appelant local sans authentification.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "daemons/service/junk_clean_interface.cpp",
+   "ligne": "98-357;data/com.kylin-os-manager.conf:18-19",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "CleanInstallationPackage/CleanBootPartition/CleanLog(QList<quint64>): QFile::remove(path); QFile::rename(path,backup); ::truncate(path,0); CleanSystemMemory: bash -c \"echo 3 > /proc/sys/vm/drop_caches\"",
+   "explication": "L'interface com.KylinOsManager.JunkClean du meme demon root (politique context=default, data/com.kylin-os-manager.conf:18-19 ; aucun polkit/controle d'appelant) permet a tout utilisateur local de declencher scan et suppression root de fichiers : paquets /var/cache/apt/archives, residus dpkg ('dpkg -P' root, CleanUninstallResidual:170-195), fichiers /boot (vmlinuz/initrd deplaces), et troncature/suppression recursive des journaux sous /var/log (CleanLog + ScanSystemLog). Les 'junk_mark' sont indexes cote serveur mais Scan*/Clean* sont librement appelables. Suppression de noyaux/journaux root pilotee par un utilisateur non privilegie.",
+   "scenario": "Un utilisateur local appelle ScanBootPartition puis CleanBootPartition pour faire deplacer les images noyau par le demon root (systeme non amorcable), ou CleanUninstallResidual pour declencher des 'dpkg -P' root : deni de service, voire manipulation de l'etat des paquets.",
+   "contre_lecture": "Fonctions de nettoyage destinees a etre appelees depuis l'IHM du gestionnaire ; le deplacement /boot va vers un repertoire de sauvegarde (reversible). Mais l'absence totale de controle d'appelant sur des operations destructives root est une faiblesse exploitable par tout compte local.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "daemons/service/dbus.cpp",
+   "ligne": "27-54,412-440",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "void Tool::collectionMessage(...){ //if (!isAllowedCaller()) return; ... }  void Tool::change3rdpartyConf(group,key,value){ QSettings setting(\"/etc/kylin-os-manager/3rdparty.conf\"...); setting.setValue(...); }  bool isAllowedCaller(){ return true; ...}",
+   "explication": "L'interface tool.tool (context=default) du demon root expose change3rdpartyConf() qui ecrit des paires cle/valeur arbitraires fournies par l'appelant dans /etc/kylin-os-manager/3rdparty.conf en root, sans validation ni controle d'appelant (isAllowedCaller forcee a 'return true', dbus.cpp:412). collectionMessage (collecte de journaux/fichiers systeme vers un repertoire via cp/chmod root) a son controle d'appelant commente (dbus.cpp:29-31). Le controle d'appelant Kylin par liste blanche (.limit) existe (data/com.kylin-os-manager.limit) mais n'est pas applique par le code.",
+   "scenario": "Un utilisateur local ecrit des valeurs de configuration arbitraires dans /etc/kylin-os-manager/3rdparty.conf via tool.tool ; impact dependant des consommateurs de ce fichier (aucun trouve dans ce lot : effet non demontre).",
+   "contre_lecture": "Le fichier 3rdparty.conf n'a aucun lecteur identifie dans le corpus, donc pas d'impact direct demontre ; la desactivation de isAllowedCaller peut etre un vestige de debug. Mais une ecriture root non controlee reste une IPC trop permissive.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "kyasDbus/systemdaemon/kacpufm.py;kabluetoothinfo.py",
+   "ligne": "kacpufm.py:191-222; kabluetoothinfo.py:223-248; conf/com.kylin.assistant.systemdaemon.conf:11-12",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "adjust_cpufreq_scaling_governer(value, sender=None): ... os.system('echo %s > %s' % (cpuFMModel, filepath)) ...  disableBluetoothDriver(): os.popen('echo \"blacklist rtk_btusb\" >> %s'%blacklistPath)",
+   "explication": "Le demon root Python com.kylin.assistant.systemdaemon (conf/...service User=root) expose ses methodes @dbus.service.method en context=default (conf:11-12). Une classe PolicyKitService._check_permission existe (kapolicykit.py:37) mais n'est appelee par AUCUNE methode exportee (grep negatif dans kahwinfo/kacpufm/kadevmonitor) : le parametre sender_keyword est capture mais ignore. adjust_cpufreq_scaling_governer ecrit en root les gouverneurs/frequences CPU (os.system avec interpolation, apres validation contre une liste de valeurs valides), et enableBluetooth/disableBluetooth modifient /etc/modprobe.d/blacklist.conf en root (os.popen) sans aucun controle d'appelant. Les valeurs CPU sont validees (liste blanche de gouverneurs/frequences) ; l'ecriture blacklist.conf utilise des chaines fixes.",
+   "scenario": "Tout utilisateur local invoque disableBluetooth (desactivation persistante du materiel bluetooth via blacklist modprobe root) ou adjust_cpufreq_scaling_governer (modification de la politique de frequence CPU de la machine) sans authentification.",
+   "contre_lecture": "La policy polkit com.kylin.assistant.systemdaemon.policy (auth_admin) existe et le code valide les valeurs CPU ; le daemon vise un usage via le centre de controle. Mais le controle polkit n'est pas cable dans le code, donc tout appelant local passe.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp",
+   "ligne": "191-216,255-321",
+   "type": "reseau",
+   "severite": "elevee",
+   "extrait": "QSslConfiguration tmpSSL = creatReq.sslConfiguration(); tmpSSL.setPeerVerifyMode(QSslSocket::VerifyNone); creatReq.setSslConfiguration(tmpSSL); m_networkReply = m_networkManager->post(creatReq, multiPart);",
+   "explication": "Le retour d'incident (service-support, application de session, EnableUpload=true par defaut data/config/kylin-os-manager-plugin.ini:12) televerse une archive 7z vers https://%domain/creatbug (domaine kom.kylinos.cn par defaut, ini:10) en DESACTIVANT la verification du certificat TLS (QSslSocket::VerifyNone, feedbackmanagerlogic.cpp:212-214). L'archive agrege des donnees systeme etendues (conf/log-collection.csv) : /etc/.kyinfo (info d'activation), numero de serie (dmidecode -s), MAC/lshw network, /etc/hosts, resolv.conf, sudoers.d, journaux hedron (politique terminale), /var/log/* ainsi que les coordonnees saisies (telephone, mail, nom ; saveUserData:159-180). TLS non verifie sur un flux transportant des identifiants materiels et des donnees de configuration sensibles.",
+   "scenario": "Un attaquant en position reseau (MITM) intercepte/modifie le televersement de diagnostic : il obtient en clair le numero de serie, la MAC, l'info d'activation, les journaux de politique et les coordonnees de l'utilisateur, faute de verification du certificat.",
+   "contre_lecture": "Le domaine kom.kylinos.cn est un service officiel Kylin et VerifyNone peut viser des certificats internes auto-signes ; l'envoi est declenche par l'utilisateur (bouton). Mais desactiver la verification sur un canal portant des identifiants materiels/personnels reste une faiblesse elevee (collecte declaree a l'utilisateur mais transport non authentifie).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "daemons/kylin-os-manager-driver-acquirer/src/deviceinfodatabase.cpp",
+   "ligne": "22,36-70,611-640",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "openDatabase(\"/usr/share/kylin-os-manager/data/kylin_driver_data.db\", \"<masqué>\"); // PRAGMA key=<masqué> (constant en dur)  ... onlineQueryV10Driver: QString(\"%1://%2/api/v1/getprintertype?...\").arg(\"https\").arg(\"api.kylinos.cn\")",
+   "explication": "Le demon root kylin-os-manager-driver-acquirer (User=root, autostart aussi en session) ouvre une base SQLCipher chiffree avec une cle/mot de passe CODE EN DUR dans le binaire (deviceinfodatabase.cpp:22, masquee ici) : le chiffrement de la base de pilotes n'offre donc aucune confidentialite reelle. Il interroge en ligne api.kylinos.cn (/api/v1/getprintertype) en https (verification TLS par defaut, non desactivee) en envoyant VID/PID/vendor/model du materiel detecte. Collecte d'identifiants materiels de peripheriques transmise a un serveur, declenchee a l'insertion/au demarrage.",
+   "scenario": "A chaque branchement d'imprimante/scanner, les identifiants du peripherique (VID/PID/fabricant/modele) sont envoyes a api.kylinos.cn ; la cle SQLCipher embarquee n'empeche pas la lecture de la base locale par quiconque extrait la constante du binaire.",
+   "contre_lecture": "Requete fonctionnelle de recherche de pilote (donnees peripherique, pas d'identifiant personnel direct) en https verifie ; la cle en dur protege surtout contre une alteration accidentelle. Collecte materielle legitime mais non declaree explicitement a l'utilisateur.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "daemons/service/driver-manager-service/driverfinder/printerdriverfinder.cpp",
+   "ligne": "205-265;kom/kom-configure.cpp:29-48",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "scheme=conf.value(DeviceControl,Protocol); if(scheme=='')scheme='https'; httpRequest=QString(\"%1://%2/api/v1/getprintertype?...&pid=&vid=&manufacter=&model=\")...; manager.get(netRequest);",
+   "explication": "Les 'driverfinder' du demon root interrogent api.kylinos.cn (/api/v1/getprintertype) avec les identifiants materiels (VID/PID/fabricant/modele) de chaque peripherique. Le schema (http/https) ET le domaine sont lus depuis une config INI (kom-configure.cpp:29-48) dont la premiere source est ~/.kylin-os-manager/kylin-os-manager-plugin.ini (repertoire personnel). Un utilisateur peut donc forcer Protocol=http et Domain=<serveur attaquant> pour ce service root : la requete part en clair vers une destination choisie par l'utilisateur, et la reponse (noms de paquets de pilotes a installer) est traitee par le demon root.",
+   "scenario": "Un utilisateur place ~/.kylin-os-manager/kylin-os-manager-plugin.ini avec Protocol=http et Domain=attaquant ; a la detection suivante, le demon root envoie les infos materielles en clair au serveur de l'attaquant et traite sa reponse de pilotes.",
+   "contre_lecture": "La config utilisateur est prevue pour personnaliser le domaine en entreprise ; par defaut https/api.kylinos.cn. Mais qu'un service root lise sa configuration de destination reseau dans un fichier du HOME utilisateur est une faiblesse (influence utilisateur -> flux root).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "daemons/kylin-core-dump-monitor/kylin-core-dump-handler.sh;daemons/sessionservice/sessionclient.cpp",
+   "ligne": "handler.sh:150-195; sessionclient.cpp:30-36,475-492",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "dbus-send --system --type=signal /com/KylinOsManager/ServiceSupport ...RunGlobalFeedback int32:2 ... string:\"${CORE_DUMP_ARICHIVE_FILE_PATH}\" ...  // cote session: service-support-mini -mode=2 ... declenche uploadData()",
+   "explication": "Le service root kylin-core-dump-monitor surveille /var/lib/systemd/coredump (inotifywait) et, pour les programmes 'premiere partie' (listes first-party-*.conf), empaquette le core dump + uname + kylin-build + dpkg -l en /tmp (kylin_coredump_*.tar.gz) puis emet un signal systeme RunGlobalFeedback non authentifie (dbus-send) portant le chemin de l'archive. Cote session, sessionclient.cpp s'y abonne (connexion sur sender vide) et lance service-support-mini -mode=2 qui, en mode passif (EnableUpload=true), televerse l'archive via le flux service-support TLS-non-verifie ci-dessus. Un core dump d'application peut contenir des donnees memoire sensibles ; le signal systeme accepte n'importe quel emetteur.",
+   "scenario": "Un plantage d'une application listee declenche la collecte root du core (donnees memoire) et son televersement automatique ; par ailleurs tout processus local peut emettre le signal RunGlobalFeedback avec un chemin arbitraire pour faire televerser un fichier choisi par la session.",
+   "contre_lecture": "Chaine de remontee de crash classique limitee aux programmes premiere-partie et a declenchement controle ; le signal est un mecanisme de notification interne. Mais l'absence d'authentification de l'emetteur et le televersement TLS-non-verifie de donnees memoire constituent un risque de fuite.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-os-manager",
+   "fichier": "daemons/service/data/com.kylin-os-manager.limit;debian/kylin-os-manager.postinst",
+   "ligne": "limit:1-16; postinst:10-13,61-85",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "key16 = /home/kylin/Gyingjian.py ; key6 = /opt/KylinPvt/bin/... ; postinst: for home_dir in /home/*/ ... chown ... ln -sf .../kylin-os-manager-remote-user .../komt-rcu",
+   "explication": "Faits d'inventaire : (1) les listes blanches D-Bus Kylin (.limit) referencent un chemin en repertoire personnel /home/kylin/Gyingjian.py et des binaires /opt/KylinPvt/bin non fournis par ce paquet ; (2) le postinst parcourt /home/*/Desktop|桌面 pour supprimer/copier/chowner des raccourcis (operations root sur des repertoires utilisateurs, sans protection anti-lien symbolique) ; (3) il installe un lien vers kylin-os-manager-remote-user ('outil controle d'assistance a distance'), binaire absent du source (PROBABLE binaire externe, non auditable ici). Le postinst passe kysec_set readonly sur les .limit.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "PROBABLE"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "kylin-os-manager/service-support",
+   "destination": "https://kom.kylinos.cn/creatbug (domaine configurable, data/config/kylin-os-manager-plugin.ini:10)",
+   "protocole": "HTTPS POST multipart",
+   "fichier_ligne": "plugins/service-support/service-support-backend/src/feedbackmanagerlogic.cpp:191-216",
+   "declencheur": "action utilisateur (envoi d'un retour/incident) ou crash premiere-partie (RunGlobalFeedback)",
+   "donnees": "archive 7z: /etc/.kyinfo, dmidecode serial, MAC/lshw, /etc/hosts, resolv.conf, sudoers.d, journaux hedron+/var/log, + telephone/mail/nom",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-os-manager/driver-acquirer (root)",
+   "destination": "https://api.kylinos.cn/api/v1/getprintertype",
+   "protocole": "HTTPS GET",
+   "fichier_ligne": "daemons/kylin-os-manager-driver-acquirer/src/deviceinfodatabase.cpp:611-640",
+   "declencheur": "insertion de peripherique / demarrage du demon",
+   "donnees": "VID, PID, fabricant, modele du peripherique, arch, version OS",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-os-manager/driver-manager-service (root)",
+   "destination": "api.kylinos.cn (domaine+schema configurables via ~/.kylin-os-manager/*.ini)",
+   "protocole": "HTTP ou HTTPS GET",
+   "fichier_ligne": "daemons/service/driver-manager-service/driverfinder/printerdriverfinder.cpp:205-265",
+   "declencheur": "detection/redetection de peripherique (printer/scanner/video/input/other)",
+   "donnees": "VID, PID, fabricant, modele, arch, version OS",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "libkysdk-applications/kabase BuriedPoint",
+   "destination": "com.kylin.daq (bus systeme) -> kylin-daq (reseau hors lot, cf. V1-L1)",
+   "protocole": "D-Bus systeme (IPC local)",
+   "fichier_ligne": "kysdk-kabase/kabase/buried_point.cpp:48-180",
+   "declencheur": "appel functionBuriedPoint/uploadMessage par une application de session",
+   "donnees": "packageName, messageType, tid persistant, identifiants de fonctionnalite, horodatage, SHA-256",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "biometric-authentication",
+   "destination": "(aucune)",
+   "protocole": "n/a",
+   "fichier_ligne": "grep reseau negatif dans le paquet",
+   "declencheur": "n/a",
+   "donnees": "aucun flux reseau (gabarits stockes localement)",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "ukui-clipboard",
+   "destination": "(aucune)",
+   "protocole": "n/a",
+   "fichier_ligne": "grep reseau negatif (QLocalServer seulement)",
+   "declencheur": "n/a",
+   "donnees": "historique presse-papiers en RAM, non transmis",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "ukui-clipboard-tray",
+   "donnee": "contenu integral du presse-papiers (texte, HTML/liens, images, chemins de fichiers), y compris mots de passe (aucune exclusion)",
+   "fichier_ligne": "taskTray/clipboardtray.cpp:160,297-470",
+   "stockage": "RAM du processus de session (QList clipboardData, InMemoryImageProvider) ; non chiffre ; non persiste sur disque ; perdu a la fin de session",
+   "envoi": "aucun (local uniquement)"
+  },
+  {
+   "composant": "biometric-authentication (demon root)",
+   "donnee": "gabarits biometriques (empreintes), UUID par utilisateur",
+   "fichier_ligne": "src/lib/biometric_stroge.c:169-220,510-585; src/drivers/community-multidevice/community_ops.c:116-156",
+   "stockage": "SQLite /var/lib/biometric-auth/biometric.db (0600 root), EigenData=base64(AES-128-CFB, IV fixe) ; UUID dans ~/.biometric_auth/UUID ; retention illimitee (purge au purge du paquet)",
+   "envoi": "aucun (local)"
+  },
+  {
+   "composant": "kylin-os-manager/service-support",
+   "donnee": "identifiants materiels (serial dmidecode, MAC), /etc/.kyinfo (activation), config reseau, journaux systeme+politique, coordonnees utilisateur",
+   "fichier_ligne": "plugins/service-support/conf/log-collection.csv; feedbackmanagerlogic.cpp:159-321",
+   "stockage": "archive 7z temporaire /tmp (supprimee apres envoi)",
+   "envoi": "HTTPS (TLS non verifie) vers kom.kylinos.cn si EnableUpload=true (defaut)"
+  },
+  {
+   "composant": "kylin-os-manager/driver-acquirer & driver-manager-service (root)",
+   "donnee": "identifiants de peripheriques (VID/PID/fabricant/modele), arch, version OS ; collecte materielle large (dmidecode -s system-serial-number, lshw) cote finders",
+   "fichier_ligne": "daemons/kylin-os-manager-driver-acquirer/src/deviceinfodatabase.cpp:611-640; daemons/service/driver-manager-service/hardwarefinder/pcinfogetter.cpp:131-134",
+   "stockage": "requete reseau (pas de stockage persistant observe)",
+   "envoi": "HTTP/HTTPS vers api.kylinos.cn (domaine configurable)"
+  },
+  {
+   "composant": "libkysdk-applications/kabase BuriedPoint",
+   "donnee": "evenements d'usage applicatif (fonctionnalites utilisees), tid persistant, nom de paquet",
+   "fichier_ligne": "kysdk-kabase/kabase/buried_point.cpp:105-180",
+   "stockage": "tid dans ~/.config/buried-point/uploadMessage (INI, clair)",
+   "envoi": "D-Bus -> com.kylin.daq (remontee reseau eventuelle hors lot)"
+  },
+  {
+   "composant": "kylin-os-manager/kyasDbus systemdaemon (root)",
+   "donnee": "inventaire materiel complet (CPU, memoire, cartes, disques, carte mere) via lshw/dmidecode/lscpu",
+   "fichier_ligne": "kyasDbus/systemdaemon/kahwinfo.py; kamachineinfo.py",
+   "stockage": "retourne a l'appelant D-Bus (context=default)",
+   "envoi": "aucun direct (expose via D-Bus a tout appelant local)"
+  },
+  {
+   "composant": "kylin-os-manager/core-dump-monitor (root)",
+   "donnee": "vidages memoire (core dumps) d'applications premiere-partie + uname + dpkg -l",
+   "fichier_ligne": "daemons/kylin-core-dump-monitor/kylin-core-dump-handler.sh:150-195",
+   "stockage": "/tmp/kylin-core-dump-monitor/*.tar.gz (supprime apres)",
+   "envoi": "televersement via service-support (TLS non verifie) sur signal RunGlobalFeedback"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/biometric-authentication",
+   "fichiers_code_propres": 101,
+   "lignes_code_propres": 20938,
+   "lus_integralement": 13,
+   "lus_partiellement": 10,
+   "pct_fichiers": 12.9,
+   "pct_lignes": 37.7,
+   "definition": "Fichiers .c/.h/.cpp/.py/.sh/.in/.am/.ac + unites systemd/SysV, politiques D-Bus, .limit, polkit, yaml, .service, Makefile.am ; hors .git, debian/ (sauf scripts cites), po/ (traductions), doc/, blobs ud650-extra.so.*. Zone L3 (demon root, lib de stockage, crypto pilote, IPC/polkit) lue a 100% ; le gros de biometric_common.c (helpers/callbacks USB) et community_ops.c (boucles libfprint) lus partiellement.",
+   "fichiers_lus": [
+    "src/biometric-authenticationd.c",
+    "src/biometric-authenticationd.h",
+    "src/biometric-dbus-common.c",
+    "src/dbus_comm.h",
+    "src/lib/biometric_stroge.c",
+    "src/lib/biometric_config.c",
+    "src/drivers/community-multidevice/driver_internal.c",
+    "data/org.ukui.Biometric.conf",
+    "data/biometric-authentication.service",
+    "data/org.ukui.Biometric.yaml",
+    "data/biometric-drivers.conf",
+    "data/Makefile.am",
+    "data/org.ukui.Biometric.limit"
+   ]
+  },
+  {
+   "arbre": "archive/ukui-clipboard",
+   "fichiers_code_propres": 35,
+   "lignes_code_propres": 4849,
+   "lus_integralement": 12,
+   "lus_partiellement": 3,
+   "pct_fichiers": 34.3,
+   "pct_lignes": 44.1,
+   "definition": "Fichiers .cpp/.h/.qml/.desktop/CMakeLists ; hors .git, .pc/, debian/, third-party/qtsingleapplication (tiers Qt Solutions), traductions .ts. QML (IHM) non lu en detail. Tout le C++ propre porteur de logique (capture, historique, OCR, backend Wayland/X11) lu integralement.",
+   "fichiers_lus": [
+    "clipboardbackend.cpp",
+    "ocrhandler.cpp",
+    "data.cpp",
+    "utils.cpp",
+    "main.cpp",
+    "taskTray/clipboarddata.cpp",
+    "taskTray/clipboarddata.h",
+    "taskTray/clipboardtray.cpp",
+    "taskTray/main.cpp",
+    "taskTray/waylandbackendThread.cpp",
+    "ukui-clipboard.desktop",
+    "taskTray/data/ukui-clipboard-tray.desktop"
+   ]
+  },
+  {
+   "arbre": "archive/libkysdk-applications",
+   "fichiers_code_propres": 603,
+   "lignes_code_propres": 88513,
+   "lus_integralement": 5,
+   "lus_partiellement": 5,
+   "pct_fichiers": 0.8,
+   "pct_lignes": 1.3,
+   "definition": "Grand ensemble de bibliotheques de session (kabase, alm, qtwidgets, ukenv, waylandhelper, widgetutils, appconf2). Ciblage L3 sur kabase (buried_point/telemetrie, application_access/IPC, system_information) + recherche de motifs A-E sur tout l'arbre (grep reseau/exec/collecte). La majorite est du code graphique/utilitaire non porteur de risque identite/telemetrie ; couverture en lignes faible par conception (triage cible).",
+   "fichiers_lus": [
+    "kysdk-kabase/kabase/buried_point.cpp",
+    "kysdk-kabase/kabase/application_access.cpp",
+    "kysdk-kabase/kabase/kylin_system/system_information.cpp",
+    "kysdk-kabase/kabase/kabase.pro",
+    "kysdk-application.pro"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-device-daemon",
+   "fichiers_code_propres": 44,
+   "lignes_code_propres": 13836,
+   "lus_integralement": 2,
+   "lus_partiellement": 4,
+   "pct_fichiers": 4.5,
+   "pct_lignes": 2.4,
+   "definition": "Composant de session (automontage UDisks2). Hors .git/.pc/debian/3rd-parties(QtSingleApplication). Triage sur les points d'execution externe (QProcess peony/pkexec), flux D-Bus et absence de reseau. mainwindow.cpp (4483 l.) lu partiellement (sections exec/montage) ; aucun service root, aucun reseau (confirme par grep), d'ou une couverture ciblee.",
+   "fichiers_lus": [
+    "data/kylin-device-daemon.desktop",
+    "data/kylin-device-daemon.ini"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-os-manager",
+   "fichiers_code_propres": 687,
+   "lignes_code_propres": 83889,
+   "lus_integralement": 25,
+   "lus_partiellement": 19,
+   "pct_fichiers": 3.6,
+   "pct_lignes": 4.5,
+   "definition": "Composant tres volumineux (~84k lignes propres). Hors .git/.pc/debian(sauf postinst/limit cites)/3rdparty. Ciblage L3 sur les surfaces d'identite/telemetrie et les services root : demon service (dbus/junk_clean/tool_box/startup + politiques+.limit), demon Python kyasDbus, driver-acquirer+driver-manager (reseau+collecte materielle), service-support (televersement), core-dump-monitor, config. Plugins IHM et finders materiels detailles lus partiellement ; couverture en lignes faible mais ciblee sur les zones a risque.",
+   "fichiers_lus": [
+    "daemons/service/dbus.cpp",
+    "daemons/service/dbus.h",
+    "daemons/service/main.cpp",
+    "daemons/service/tool_box_interface.cpp",
+    "daemons/service/tool_box_interface.h",
+    "daemons/service/junk_clean_interface.cpp",
+    "daemons/service/startup_interface.cpp",
+    "daemons/service/data/com.kylin-os-manager.conf",
+    "daemons/service/data/com.kylin-os-manager.service",
+    "daemons/service/data/com.kylin.os.manager.service",
+    "daemons/service/data/com.kylin-os-manager.startup.conf",
+    "daemons/service/data/com.kylin-os-manager.limit",
+    "daemons/service/data/com.kylin.assistant.systemdaemon.limit",
+    "daemons/kylin-core-dump-monitor/kylin-core-dump-monitor.sh",
+    "daemons/kylin-core-dump-monitor/kylin-core-dump-check.sh",
+    "daemons/kylin-core-dump-monitor/kylin-core-dump-handler.sh",
+    "daemons/kylin-core-dump-monitor/kylin-core-dump-monitor.service",
+    "daemons/kylin-os-manager-driver-acquirer/data/com.kylin-os-manager-driver-acquirer.service",
+    "daemons/kylin-os-manager-driver-acquirer/data/kylin-os-manager-driver-acquirer.desktop",
+    "daemons/kylin-os-manager-driver-acquirer/src/main.cpp",
+    "daemons/kylin-os-manager-driver-acquirer/src/deviceinfodbusservice.cpp",
+    "kyasDbus/systemdaemon/kasystemdbusmain.py",
+    "kyasDbus/systemdaemon/kapolicykit.py",
+    "kyasDbus/systemdaemon/conf/com.kylin.assistant.systemdaemon.conf",
+    "kom/kom-configure.cpp"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "biometric-authentication: pilote ud650.c et blobs ud650-extra.so.{x86_64,aarch64} (ELF precompiles, code source absent) ; pilotes biometric-driver-fido/wechat (paquets separes, wechat fait des appels HTTP OAuth kylinos.cn non audites ici) ; gros du corps de biometric_common.c (helpers USB/callbacks).",
+  "kylin-os-manager: binaire kylin-os-manager-remote-user ('assistance a distance controlee', komt-rcu) reference par postinst mais absent du source (PROBABLE binaire externe) ; binaires /opt/KylinPvt/bin et /home/kylin/Gyingjian.py des listes .limit (hors paquet) ; plugins device-controller/fault_diagnosis/junk_clean (IHM) et treasure-chest/* (wrappers tcpdump/telnet/iperf) lus seulement par triage ; service_support_faq.db (SQLite 1.66 Mo, non ouvert).",
+  "libkysdk-applications: ~98% des lignes (bibliotheques graphiques alm/qtwidgets/ukenv/waylandhelper/widgetutils) non lues integralement ; seules les zones identite/telemetrie (kabase) et les motifs A-E ont ete couverts.",
+  "kylin-device-daemon: mainwindow.cpp (4483 l.) et repair-dialog-box.cpp lus partiellement ; arbre Gitee/GitHub DIVERGENT non acquis.",
+  "Mecanisme d'application effectif des listes blanches D-Bus Kylin (.limit/.limit.verify) : non present dans le corpus (dbus-daemon/kysec externes) ; l'audit statique montre que le CODE des demons n'applique pas ces listes (controles isAllowedCaller forces a 'return true', polkit non cable cote Python)."
+ ],
+ "synthese": "[CONSTATÉ] Empreintes des 5 arbres conformes a empreintes-arbres-sources.tsv. [CONSTATÉ, critique] biometric-authenticationd (demon root, org.ukui.Biometric, policy context=default sans restriction d'interface) expose SetExtraInfo qui fait strcpy() d'une chaine appelant dans pincode[100] sans controle d'appelant (biometric-authenticationd.c:1956) : debordement controlable en root par tout utilisateur local. [CONSTATÉ, elevee] Les gabarits (pilotes community-multidevice) sont chiffres AES-128-CFB a IV constant, avec repli silencieux sur une cle codee en dur si /etc/biometric-auth/key absente (driver_type.h:51). [CONSTATÉ, elevee] Ecritures root sans anti-symlink dans ~/.biometric_auth (biometric_stroge.c:910-990). [CONSTATÉ, moyenne] Les methodes de lecture/identification biometrique (GetAllFeatureList, Identify...) sans polkit permettent l'enumeration inter-utilisateurs des gabarits ; integration PAM via libpam-biometric (paquet separe ukui-biometric-auth, priorite 260 avant pam_unix). Gabarits stockes en SQLite 0600 root, non transmis. [CONSTATÉ, elevee] kylin-os-manager demon root com.kylin-os-manager : interfaces JunkClean (suppression/troncature root de /boot, /var/log, dpkg -P) et ToolBox (reecriture de /etc/hosts, apt update) ouvertes a context=default sans aucun controle d'appelant (isAllowedCaller force a 'return true', dbus.cpp:412) ; idem change3rdpartyConf (ecriture /etc root). [CONSTATÉ, moyenne] Demon root Python kyasDbus : polkit defini mais jamais appele ; disableBluetooth (blacklist modprobe) et adjust_cpufreq_scaling_governer appelables par tout utilisateur. [CONSTATÉ, elevee] service-support televerse une archive (serial dmidecode, MAC, /etc/.kyinfo, journaux de politique, coordonnees) vers kom.kylinos.cn avec QSslSocket::VerifyNone (feedbackmanagerlogic.cpp:212), EnableUpload=true par defaut. [CONSTATÉ, moyenne] driver-acquirer (root) : base SQLCipher a cle en dur (deviceinfodatabase.cpp:22) et envoi des identifiants peripheriques a api.kylinos.cn ; les driverfinder root lisent leur domaine/schema dans un INI du HOME utilisateur (influence utilisateur -> flux root). [CONSTATÉ, moyenne] core-dump-monitor (root) empaquette des vidages memoire d'apps premiere-partie et les fait televerser via service-support (TLS non verifie) sur un signal systeme RunGlobalFeedback non authentifie. [CONSTATÉ, moyenne] libkysdk-applications/kabase buried_point (埋点) relaie des evenements d'usage + tid persistant vers com.kylin.daq (remontee finale hors lot, cf. V1-L1 : TLS non verifie). [CONSTATÉ] ukui-clipboard : historique du presse-papiers (texte/images/fichiers) en RAM de session uniquement, non chiffre, non persiste, non accessible aux autres utilisateurs, mais SANS exclusion des champs mot de passe ; OCR local OnDevice ; aucun reseau. [CONSTATÉ, faible] kylin-device-daemon (session) et kabase/savemovie : QProcess::startDetached(QString) sur chemins/labels non fiables (/tmp previsible) : durcissement. [PROBABLE] binaire d'assistance a distance kylin-os-manager-remote-user et chemins .limit hors paquet non auditables. Couverture ciblee L3 : zones identite/telemetrie et services root lues integralement ; pourcentages en lignes faibles sur les gros arbres graphiques (libkysdk-applications 1.3%, kylin-os-manager 4.5%) par triage assume."
+}

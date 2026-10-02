@@ -1,0 +1,70 @@
+#!/bin/bash
+
+if [ "$BASH" != "/bin/bash" ] && [ "$BASH" != "/usr/bin/bash" ]; then
+    bash "$0" "$@"
+    exit $?
+fi
+
+
+cpu_vendor="0x48"
+#cpu_name=$(lscpu | grep Vendor | awk '{print $3}')
+cpu_name=$(< /proc/cpuinfo grep implementer|head -n1|awk '{print $NF}')
+
+function set_ubt_a32a64()
+{
+	cpu_name=$(< /proc/cpuinfo grep implementer|head -n1|awk '{print $NF}')
+	if [ "${cpu_vendor}" != "${cpu_name}" ]; then
+		return 0
+	fi
+
+	[ -e "/proc/sys/fs/binfmt_misc/ubt_a32a64" ] && echo -1 > /proc/sys/fs/binfmt_misc/ubt_a32a64
+	if [ -x /opt/kmre/exagear/ubt_a32a64 ]; then
+		echo ":ubt_a32a64:M::\x7fELF\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x02\x00\x28\x00:\xff\xff\xff\xff\xff\xff\xff\x00\x00\x00\x00\x00\x00\x00\x00\x00\xfe\xff\xff\xff:/opt/kmre/exagear/ubt_a32a64:POCF" > /proc/sys/fs/binfmt_misc/register
+		< /proc/sys/fs/binfmt_misc/ubt_a32a64 grep "enabled"
+		if [ $? -ne 0 ]; then
+        		echo "set ubt_a32a64 failed for kunpeng920"
+    		fi
+        	return 0
+	fi
+	
+	return 0
+}
+
+# Kunpeng 920
+if [ $(cat /proc/cpuinfo | grep -ci "kunpeng") -gt 0 ]; then
+	if [ "${cpu_vendor}" = "${cpu_name}" ]; then
+		if [ -f /opt/kmre/exagear/ubt_a32a64 ]; then
+			chmod +x /opt/kmre/exagear/ubt_a32a64
+			set_ubt_a32a64
+			sleep 2
+
+			if [ -f /opt/system/resource/kmre/exagear-register.sh ]; then
+				chmod +x /opt/system/resource/kmre/exagear-register.sh
+			fi
+
+			if [ -f /lib/systemd/system/kylin-kmre-exagear-register.service ]; then
+				/bin/systemctl enable /lib/systemd/system/kylin-kmre-exagear-register.service
+			fi
+		fi
+	fi
+fi
+
+
+# daemon reload
+systemctl daemon-reload
+
+case "$1" in
+    configure)
+        rm -f /etc/xdg/autostart/kylin-kmre-filewatcher.desktop 2>/dev/null
+    ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+    ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+    ;;
+esac
+
+exit 0

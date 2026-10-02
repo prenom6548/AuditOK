@@ -1,0 +1,817 @@
+{
+ "lot": "P2-openssh",
+ "composants": [
+  "openssh"
+ ],
+ "empreintes": {
+  "archive/openssh": "f8e627c44e99273fffa1ba55f887139ca2684b93be97128b6b3ff9346acf18c6",
+  "conforme": true,
+  "fichiers": 990,
+  "reference_tsv": "archive/openssh\t990\tf8e627c44e99273fffa1ba55f887139ca2684b93be97128b6b3ff9346acf18c6",
+  "amont_reconstruit_hors_debian_sha256_liste": "bec53fe881da07d3fc182d6120d12970afd313890dcea32953d13744e64a9c13 (849 fichiers, liste 'sha256sum' triee LC_ALL=C, apres inversion des 35 patches en copie scratchpad)"
+ },
+ "findings": [
+  {
+   "depot": "openssh",
+   "fichier": "auth-pam.c",
+   "ligne": "915-923",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "case PAM_ERROR_MSG: case PAM_TEXT_INFO: *num = 0; free(*info); *info = msg; msg = NULL; ctxt->pam_done = SshPamAgain; sshbuf_free(buffer); return (0);  ||  monitor.c:1224-1227: if (ret == 0 && num == 0) sshpam_authok = sshpam_ctxt;  ||  monitor.c:1299: int r = sshpam_authok != NULL && sshpam_authok == sshpam_ctxt;",
+   "explication": "Patch Ubuntu (PR openssh-portable #452, non fusionne en amont) auth-pam-Immediately-report-interactive-instructions-to-c.patch (l.55-61). En amont, un message PAM_TEXT_INFO/PAM_ERROR_MSG etait accumule (boucle continue). Desormais sshpam_query() renvoie 0 avec num=0 des le premier message informatif. Or le moniteur privilegie (monitor.c:1224-1227, code amont inchange) interprete ret==0 && num==0 comme 'PAM a reussi' et arme sshpam_authok ; mm_answer_pam_free_ctx (monitor.c:1299, entree MON_AUTHDECIDE monitor.c:199) renvoie alors 1 = authentifie. Le flux honnete (query -> respond, respond remet sshpam_authok a NULL monitor.c:1264) n'est pas affecte et un client distant seul ne provoque qu'une desynchronisation fatale de SA connexion (auth2.c:338 appelle auth2_challenge_stop, le moniteur attend ensuite MONITOR_REQ_PAM_ACCOUNT que le fils honnete n'envoie pas). Le risque porte sur la garantie de separation de privileges : un processus sshd-auth (non privilegie, sandbox seccomp) compromis peut obtenir du moniteur une authentification keyboard-interactive/pam sans mot de passe pour tout utilisateur valide (root seulement si PermitRootLogin yes), sous reserve de pam_acct_mgmt. Analyse statique uniquement (non teste dynamiquement). Origine Ubuntu, PAS Kylin. Note : l'amont presente deja une variante plus etroite (cas PAM_AUTH_ERR precede de messages, auth-pam.c:931-941).",
+   "scenario": "Conditions cumulatives : openssh-server installe (non present sur l'ISO), KbdInteractiveAuthentication yes (non par defaut, sshd_config:86) et UsePAM yes, pile PAM 'auth' emettant un message PAM_TEXT_INFO/PAM_ERROR_MSG avant l'invite (ex. modules 2FA/OTP, pam_faillock, module biometrique openKylin s'il figure dans common-auth - a verifier lot PAM). Un attaquant ayant obtenu une execution de code dans sshd-auth avant authentification (2e etape d'une chaine d'exploitation, p. ex. bogue memoire preauth) envoie au moniteur PAM_INIT_CTX, PAM_QUERY (recoit le message informatif => sshpam_authok arme) puis PAM_FREE_CTX sans PAM_RESPOND : le moniteur conclut 'authentifie' et ouvre une session pour l'utilisateur choisi. La separation de privileges, censee contenir une compromission preauth, est ainsi contournee.",
+   "contre_lecture": "Patch public d'un developpeur Canonical visant l'ergonomie (affichage immediat des instructions PAM, RFC 4256), porte par Ubuntu depuis 2023 ; aucun lien avec Kylin. Exige une compromission prealable du processus sandboxe et une configuration non par defaut ; sans cela, aucun contournement n'est atteignable par un client distant. La faiblesse resulte d'une interaction non anticipee avec une heuristique du moniteur, pas d'une intention.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/source/format",
+   "ligne": "1",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "3.0 (native)  ||  debian/.git-dpm:5-7: openssh_10.2p1.orig.tar.gz / c34efade16109f065ec8c834f237bcedd8d7ef5c / 1974519",
+   "explication": "Le paquet source openKylin est reconditionne en format natif (dl/build/openssh/openssh_10.2p1-ok3.dsc : 'Format: 3.0 (native)', un seul tar.xz, aucun orig). Les 35 patches de debian/patches sont deja appliques dans l'arbre et ne sont plus appliques par dpkg-source (la serie devient documentaire). Verification faite en copie scratchpad : application inverse des 35 patches dans l'ordre inverse = 0 rejet, 0 fuzz (seuls des decalages de lignes sur 4 patches Ubuntu et debian-config), 849 fichiers hors debian/ reconstruits (empreinte de la liste sha256 triee : bec53fe881da07d3fc182d6120d12970afd313890dcea32953d13744e64a9c13). L'arbre = base + serie ; mais la base n'a PAS pu etre comparee hors ligne a openssh-10.2p1.tar.gz signe (debian/upstream/signing-key.asc present). Une modification Kylin hors patches dans les fichiers amont ne serait detectable que par ce diff.",
+   "scenario": "Une modification de code amont (ex. auth2-*.c) ajoutee directement dans l'arbre natif, sans patch ni entree de changelog, passerait inapercue d'une revue limitee a debian/patches ; elle serait compilee dans sshd.",
+   "contre_lecture": "Reconditionnement natif = pratique d'import mecanique observee ailleurs chez openKylin (apt, ca-certificates...). Indices de non-alteration : aucune chaine Kylin hors changelog, sshd_config identique octet pour octet a Ubuntu (md5), coherence .depend / fichiers .c, revue ciblee du code d'authentification sans anomalie.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/changelog",
+   "ligne": "1-17",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "openssh (1:10.2p1-ok3) huanghe ... rebuild source for openKylin / (1:10.2p1-ok2) Enable LTO during build to fix compilation problems. / (1:10.2p1-ok1) resolute ... kylin <kylin@kylinlxw>",
+   "explication": "Delta openKylin documente : 3 entrees de changelog sans changement fonctionnel annonce, base Ubuntu 1:10.2p1-2ubuntu3. Aucun patch specifique Kylin (35 patches = Debian 10.2p1-2 + Ubuntu), aucune chaine kylin/kysec dans l'arbre hors changelog. Seul changement probable cote build : debian/rules:3 'optimize=+lto' (coherent avec ok2 ; non verifiable sans le rules Ubuntu). debian/control:4 conserve 'Maintainer: Ubuntu Developers' (attribution trompeuse de la responsabilite du paquet). ok1 signe par une identite non nominative 'kylin@kylinlxw' avec distribution 'resolute' (import mecanique).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "sshd_config",
+   "ligne": "25-139",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "#PermitRootLogin prohibit-password / #PasswordAuthentication yes / #PermitEmptyPasswords no / KbdInteractiveAuthentication no / UsePAM yes / X11Forwarding yes",
+   "explication": "Controle positif : le sshd_config livre a un md5 (variantes debconf incluses) present dans debian/openssh-server.ucf-md5sum:173-176 sous '# From 1:10.0p1-5ubuntu2' => identique au fichier Ubuntu. Valeurs par defaut compilees (servconf.c fill_default_server_options) conformes a l'amont : PermitRootLogin prohibit-password, PermitEmptyPasswords no, StrictModes yes, LogLevel INFO, MaxAuthTries 6, IgnoreRhosts yes, HostbasedAuthentication no. Algorithmes (myproposal.h:27-118) = defauts OpenSSH 10.x (pas de DH/SHA1/CBC reactives cote serveur). Postinst (openssh-server.postinst:69-95) ne modifie que PermitRootLogin/PasswordAuthentication selon debconf (defauts templates:3,19 = conserver prohibit-password et mots de passe autorises). Pile PAM (openssh-server.sshd.pam.in) = Debian standard (common-auth/account/session, pam_nologin, pam_loginuid), sans pam_permit ni affaiblissement.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "sshd_config",
+   "ligne": "114",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "X11Forwarding yes  ||  readconf.c:2900: options->forward_x11_trusted = 1;",
+   "explication": "Divergences Debian/Ubuntu standard (debian-config.patch) par rapport a l'amont : serveur X11Forwarding yes ; client ForwardX11Trusted yes par defaut (l'option -X equivaut a -Y : le serveur distant obtient un acces X11 de confiance au display local, capture clavier/ecran possible si le serveur est compromis). Non specifique Kylin.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "sshd_config",
+   "ligne": "62-63",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "# Expect .ssh/authorized_keys2 to be disregarded by default in future. / #AuthorizedKeysFile\t.ssh/authorized_keys .ssh/authorized_keys2",
+   "explication": "restore-authorized_keys2.patch (Debian) commente la ligne amont 'AuthorizedKeysFile .ssh/authorized_keys' : le defaut compile s'applique et ~/.ssh/authorized_keys2 est aussi lu. Vecteur de persistance discret connu (fichier moins surveille). Standard Debian, non Kylin.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "readpass.c",
+   "ligne": "225-229",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "writemsg(const char *msg) { (void)write(STDERR_FILENO, \"\\r\", 1); (void)write(STDERR_FILENO, msg, strlen(msg)); ...  ||  sshconnect2.c: notifier = notify_start(0, \"%s\", inst);",
+   "explication": "Patch Ubuntu sshconnect2-Write-kbd-interactive-service-info-and-instru.patch (l.58-64, 90-105) : le nom/l'instruction keyboard-interactive et le message de changement de mot de passe fournis par le SERVEUR passent de logit() (assaini par strnvis dans log.c) a notify_start()/writemsg() qui ecrit les octets bruts sur le terminal client. Un serveur malveillant peut injecter des sequences d'echappement terminal avant authentification. Impact marginal (apres connexion, le serveur ecrit deja librement sur le terminal ; les invites amont sont deja affichees brutes). openssh-client est installe sur l'ISO. Origine Ubuntu.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "kexgssc.c",
+   "ligne": "248-250",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "case KEX_GSS_C25519_SHA256: if (sshbuf_ptr(server_blob)[sshbuf_len(server_blob)] & 0x80) fatal(\"The received key has MSB of last octet set!\");",
+   "explication": "gssapi.patch (Debian/gsskex, l.1637-1639) : lecture d'un octet au-dela de la fin du tampon (index len au lieu de len-1) ; le controle de la cle curve25519 du serveur est inoperant et constitue une sur-lecture d'1 octet. Cote client seulement, et seulement avec GSSAPIKeyExchange yes (defaut no, readconf.c). Herite de Debian, non Kylin.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "ssh-gss.h",
+   "ligne": "79-84",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "#define GSS_KEX_DEFAULT_KEX KEX_GSS_GRP14_SHA256_ID \",\" KEX_GSS_GRP16_SHA512_ID \",\" KEX_GSS_NISTP256_SHA256_ID \",\" KEX_GSS_C25519_SHA256_ID",
+   "explication": "Echange de cles GSSAPI (gssapi.patch, rejete par l'amont, porte par Debian/Fedora) : ajoute de la surface preauth (kexgsss.c, monitor GSSSIGN/GSSUPCREDS) mais desactive par defaut (sshd_config:98 '#GSSAPIKeyExchange no', servconf.c gss_keyex=0). Correctif CVE-2026-3497 present (plus aucun sshpkt_disconnect dans kexgss*.c/gss-*.c ; ret_flags initialise kexgsss.c). Algorithmes GSS SHA1 retires des defauts (gss-api-defaults.patch). Cote client, ssh_config:53 active GSSAPIAuthentication yes (Debian).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/systemd/ssh.socket",
+   "ligne": "7-8",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "ListenStream=0.0.0.0:22 / ListenStream=[::]:22",
+   "explication": "Si openssh-server est installe, ssh.socket est active par dh_installsystemd (debian/rules:216, sans --no-enable) : sshd ecoute 22/tcp IPv4+IPv6 (activation par socket Ubuntu, systemd-socket-activation.patch, sockets AF_VSOCK acceptes l.177-184 ; sshd-socket-generator regenere les ListenStream depuis sshd_config). debian/systemd/sshd@.service:8,13 importe le credential systemd 'ssh.ephemeral-authorized_keys-all' comme AuthorizedKeysFile (confiance deleguee a l'hote VM/conteneur ; Debian 10.1p1-1). Constat ISO : seul openssh-client 1:10.2p1-ok3 figure dans casper filesystem.manifest ; openssh-server n'est PAS installe par defaut => aucun sshd a l'ecoute sur une installation standard.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/rules",
+   "ligne": "36",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "SSH_EXTRAVERSION := $(DEB_VENDOR)-$(shell echo '$(DEB_VERSION)' | sed -e 's/.*-//; ...')",
+   "explication": "package-versioning.patch + debian-banner.patch (Debian) : la banniere SSH annonce vendeur et revision du paquet (servconf.c:510 DebianBanner=1 par defaut). Facilite l'inventaire des versions vulnerables par un tiers ; desactivable par 'DebianBanner no'.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/rules",
+   "ligne": "3",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "export DEB_BUILD_MAINT_OPTIONS := hardening=+all optimize=+lto",
+   "explication": "Controle positif : durcissement complet conserve (hardening=+all), tests unitaires/compat executes (rules:164-169), sandbox seccomp par defaut (pas de --with-sandbox force ; liste blanche sandbox-seccomp-filter.c sans execve/socket/connect). Options : --with-tcp-wrappers (rules:85, libwrap dans sshd-session preauth, restore-tcp-wrappers.patch), --with-pam, --with-selinux, --with-audit=linux, --with-kerberos5. Aucune option de durcissement retiree.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/rules",
+   "ligne": "234-235",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "execute_after_dh_fixperms-arch: chmod u+s debian/openssh-client/usr/lib/openssh/ssh-keysign",
+   "explication": "ssh-keysign setuid root (Debian standard ; inactif sauf EnableSSHKeysign yes, readconf.c:3013 defaut 0) ; ssh-agent setgid _ssh (debian/openssh-client.postinst:19-27, anti-ptrace). Installes avec openssh-client (present sur l'ISO).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/openssh-server.postinst",
+   "ligne": "48-57",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "create_keys() { hostkeys=\"$(get_config_option HostKey)\"; create_key ... /etc/ssh/ssh_host_rsa_key -t rsa ... ecdsa ... ed25519",
+   "explication": "Cles d'hote generees a l'installation (postinst) et par sshd-keygen.service (ConditionFirstBoot, 'ssh-keygen -A' ne genere que les cles absentes). Aucune cle livree dans le paquet. Une image derivee qui preinstallerait openssh-server partagerait les cles generees au build si elles ne sont pas supprimees ; non applicable a l'ISO actuelle (openssh-server absent).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "misc.c",
+   "ligne": "1470-1516",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "secure_permissions(struct stat *st, uid_t uid) ... if ((st->st_mode & 020) != 0) { /* group must have exactly one member, the owner */",
+   "explication": "user-group-modes.patch (Debian) assouplit StrictModes : fichiers ~/.ssh/* group-writable acceptes si le groupe ne contient que le proprietaire. selinux-role.patch (Debian) permet a un client de demander un role SELinux via 'user/role' (auth2.c, MONITOR_REQ_AUTHROLE) - effet uniquement si SELinux actif. Divergences Debian documentees, non Kylin.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "openssh",
+   "fichier": "debian/tests/util",
+   "ligne": "57",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "kdb5_util create -s -P <masqué>",
+   "explication": "Secrets de fixture d'autopkgtest en clair (debian/tests/util:57, debian/tests/ssh-gssapi:12 password=<masqué>) pour un royaume Kerberos de test ; non installes dans les paquets binaires. Sans portee.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "patches": [
+  {
+   "nom": "gssapi.patch",
+   "titre_declare": "GSSAPI key exchange support",
+   "contenu_reel": "Echange de cles GSSAPI (RFC 4462 + draft curdle) : nouveaux kexgssc.c/kexgsss.c, cle d'hote 'null' (ssh-null.c), methode userauth gssapi-keyex, requetes moniteur GSSSIGN/GSSUPCREDS, renouvellement de credentials, options GSSAPIKeyExchange/KexAlgorithms/ClientIdentity/ServerIdentity/TrustDns/StoreCredentialsOnRekey ; inclut le correctif Ubuntu CVE-2026-3497 (ssh_packet_disconnect, init de variables).",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "Makefile.in",
+    "README.md",
+    "auth.c",
+    "auth2-gss.c",
+    "auth2-methods.c",
+    "auth2.c",
+    "clientloop.c",
+    "configure.ac",
+    "gss-genr.c",
+    "gss-serv-krb5.c",
+    "gss-serv.c",
+    "kex-names.c",
+    "kex.c",
+    "kex.h",
+    "kexdh.c",
+    "kexgen.c",
+    "kexgssc.c(nouveau)",
+    "kexgsss.c(nouveau)",
+    "monitor.c",
+    "monitor.h",
+    "monitor_wrap.c",
+    "monitor_wrap.h",
+    "readconf.c",
+    "readconf.h",
+    "servconf.c",
+    "servconf.h",
+    "session.c",
+    "ssh-gss.h",
+    "ssh-null.c(nouveau)",
+    "ssh.1",
+    "ssh.c",
+    "ssh_config",
+    "ssh_config.5",
+    "sshconnect2.c",
+    "sshd-auth.c",
+    "sshd-session.c",
+    "sshd.c",
+    "sshd_config",
+    "sshd_config.5",
+    "sshkey.c",
+    "sshkey.h"
+   ],
+   "resume": "Patch Debian standard (Wilkinson/Watson/Jelen). Surface preauth accrue mais desactive par defaut. Sur-lecture 1 octet cote client kexgssc.c:249 (heritee)."
+  },
+  {
+   "nom": "restore-tcp-wrappers.patch",
+   "titre_declare": "Restore TCP wrappers support",
+   "contenu_reel": "Option configure --with-tcp-wrappers ; controle hosts_access() dans sshd-session.c avant authentification ; doc sshd.8.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "configure.ac",
+    "sshd-session.c",
+    "sshd.8"
+   ],
+   "resume": "Patch Debian standard ; ajoute libwrap au processus preauth (filtrage /etc/hosts.allow|deny)."
+  },
+  {
+   "nom": "selinux-role.patch",
+   "titre_declare": "Handle SELinux authorisation roles",
+   "contenu_reel": "Analyse 'user/role[:style]' dans auth2.c, transmission du role au moniteur (MONITOR_REQ_AUTHROLE, mm_inform_authserv a 3 champs), contexte SELinux par role pour exec et pty.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "auth.h",
+    "auth2.c",
+    "monitor.c",
+    "monitor.h",
+    "monitor_wrap.c",
+    "monitor_wrap.h",
+    "openbsd-compat/port-linux.c",
+    "openbsd-compat/port-linux.h",
+    "platform.c",
+    "platform.h",
+    "session.c",
+    "session.h",
+    "sshd-session.c",
+    "sshpty.c",
+    "sshpty.h"
+   ],
+   "resume": "Patch Debian standard ; touche le parsing du nom d'utilisateur et le moniteur ; effet seulement avec SELinux actif."
+  },
+  {
+   "nom": "ssh-vulnkey-compat.patch",
+   "titre_declare": "Accept obsolete ssh-vulnkey configuration options",
+   "contenu_reel": "Ajoute useblacklistedkeys (client) et permitblacklistedkeys (serveur) comme options obsoletes ignorees.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "readconf.c",
+    "servconf.c"
+   ],
+   "resume": "Compatibilite de configuration (Debian, CVE-2008-0166 historique)."
+  },
+  {
+   "nom": "keepalive-extensions.patch",
+   "titre_declare": "Various keepalive extensions",
+   "contenu_reel": "Alias ProtocolKeepAlives/SetupTimeOut ; ServerAliveInterval=300 par defaut en BatchMode ; documentation.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "readconf.c",
+    "ssh_config.5",
+    "sshd_config.5"
+   ],
+   "resume": "Debian standard, cote client."
+  },
+  {
+   "nom": "syslog-level-silent.patch",
+   "titre_declare": "\"LogLevel SILENT\" compatibility",
+   "contenu_reel": "Ajoute 'SILENT' comme alias de QUIET ; supprime le message 'Pseudo-terminal will not be allocated' en mode QUIET.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "log.c",
+    "ssh.c"
+   ],
+   "resume": "Pas de reduction de journalisation au-dela du niveau QUIET amont."
+  },
+  {
+   "nom": "user-group-modes.patch",
+   "titre_declare": "Allow harmless group-writability",
+   "contenu_reel": "Nouvelle fonction secure_permissions() remplacant les tests (mode & 022) dans auth-rhosts.c, auth.c, misc.c safe_path, readconf.c : group-writable accepte si le groupe ne compte que le proprietaire ; doc.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "auth-rhosts.c",
+    "auth.c",
+    "misc.c",
+    "misc.h",
+    "readconf.c",
+    "ssh.1",
+    "ssh_config.5"
+   ],
+   "resume": "Assouplissement StrictModes documente par Debian depuis 2006."
+  },
+  {
+   "nom": "scp-quoting.patch",
+   "titre_declare": "Adjust scp quoting in verbose mode",
+   "contenu_reel": "Affichage verbeux de scp avec arguments entre quotes.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "scp.c"
+   ],
+   "resume": "Cosmetique (Ubuntu/Debian)."
+  },
+  {
+   "nom": "shell-path.patch",
+   "titre_declare": "Look for $SHELL on the path for ProxyCommand/LocalCommand",
+   "contenu_reel": "execv->execvp et execl->execlp pour ProxyCommand/LocalCommand cote client.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "sshconnect.c"
+   ],
+   "resume": "Debian standard ; recherche de $SHELL dans PATH, cote client."
+  },
+  {
+   "nom": "dnssec-sshfp.patch",
+   "titre_declare": "Force use of DNSSEC even if \"options edns0\" isn't in resolv.conf",
+   "contenu_reel": "Drapeau RRSET_FORCE_EDNS0 dans getrrsetbyname compat pour obtenir le bit AD des enregistrements SSHFP.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "dns.c",
+    "openbsd-compat/getrrsetbyname.c",
+    "openbsd-compat/getrrsetbyname.h"
+   ],
+   "resume": "Renforce la verification DNSSEC des SSHFP (VerifyHostKeyDNS non par defaut)."
+  },
+  {
+   "nom": "mention-ssh-keygen-on-keychange.patch",
+   "titre_declare": "Mention ssh-keygen in ssh fingerprint changed warning",
+   "contenu_reel": "Ajoute la commande 'ssh-keygen -f ... -R ...' aux messages de cle d'hote changee ; la verification n'est pas modifiee.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "sshconnect.c"
+   ],
+   "resume": "Message uniquement."
+  },
+  {
+   "nom": "package-versioning.patch",
+   "titre_declare": "Include the Debian version in our identification",
+   "contenu_reel": "SSH_RELEASE inclut SSH_EXTRAVERSION (vendeur-revision) dans la banniere.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "kex.c",
+    "version.h"
+   ],
+   "resume": "Divulgation de version assumee par Debian."
+  },
+  {
+   "nom": "debian-banner.patch",
+   "titre_declare": "Add DebianBanner server configuration option",
+   "contenu_reel": "Option serveur DebianBanner (defaut yes) choisissant SSH_RELEASE ou SSH_RELEASE_MINIMUM ; signature de kex_exchange_identification etendue.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "kex.c",
+    "kex.h",
+    "servconf.c",
+    "servconf.h",
+    "sshconnect.c",
+    "sshd-session.c",
+    "sshd_config.5"
+   ],
+   "resume": "Debian standard."
+  },
+  {
+   "nom": "authorized-keys-man-symlink.patch",
+   "titre_declare": "Install authorized_keys(5) as a symlink to sshd(8)",
+   "contenu_reel": "Lien de page de manuel dans Makefile.in.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "Makefile.in"
+   ],
+   "resume": "Documentation."
+  },
+  {
+   "nom": "openbsd-docs.patch",
+   "titre_declare": "Adjust various OpenBSD-specific references in manual pages",
+   "contenu_reel": "Chemins /etc/ssh/moduli, references rdomain/login.conf adaptees a Linux.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "moduli.5",
+    "ssh-keygen.1",
+    "sshd.8",
+    "sshd_config.5"
+   ],
+   "resume": "Documentation."
+  },
+  {
+   "nom": "ssh-argv0.patch",
+   "titre_declare": "ssh(1): Refer to ssh-argv0(1)",
+   "contenu_reel": "Ajout d'une reference de manuel.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "ssh.1"
+   ],
+   "resume": "Documentation."
+  },
+  {
+   "nom": "doc-hash-tab-completion.patch",
+   "titre_declare": "Document that HashKnownHosts may break tab-completion",
+   "contenu_reel": "Documentation.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "ssh_config.5"
+   ],
+   "resume": "Documentation."
+  },
+  {
+   "nom": "ssh-agent-setgid.patch",
+   "titre_declare": "Document consequences of ssh-agent being setgid in ssh-agent(1)",
+   "contenu_reel": "Documentation.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "ssh-agent.1"
+   ],
+   "resume": "Documentation."
+  },
+  {
+   "nom": "gnome-ssh-askpass2-icon.patch",
+   "titre_declare": "Give the ssh-askpass-gnome window a default icon",
+   "contenu_reel": "gtk_window_set_default_icon_from_file vers /usr/share/pixmaps.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "contrib/gnome-ssh-askpass2.c"
+   ],
+   "resume": "Cosmetique."
+  },
+  {
+   "nom": "debian-config.patch",
+   "titre_declare": "Various Debian-specific configuration changes",
+   "contenu_reel": "Client : ForwardX11Trusted=1, Include ssh_config.d, SendEnv, HashKnownHosts yes, GSSAPIAuthentication yes. Serveur : Include sshd_config.d (bloc de commentaire Ubuntu), KbdInteractiveAuthentication no, UsePAM yes, X11Forwarding yes, PrintMotd no, AcceptEnv LANG LC_* COLORTERM NO_COLOR, sftp /usr/lib/openssh ; tests UsePAM yes ; docs.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "readconf.c",
+    "regress/test-exec.sh",
+    "ssh.1",
+    "ssh_config",
+    "ssh_config.5",
+    "sshd_config",
+    "sshd_config.5"
+   ],
+   "resume": "Version Ubuntu du patch Debian (non rafraichi au format git, explique les decalages). Divergences de posture connues (X11)."
+  },
+  {
+   "nom": "restore-authorized_keys2.patch",
+   "titre_declare": "Restore reading authorized_keys2 by default",
+   "contenu_reel": "Commente 'AuthorizedKeysFile .ssh/authorized_keys' dans sshd_config : authorized_keys2 relu.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "sshd_config"
+   ],
+   "resume": "Debian standard ; vecteur de persistance discret."
+  },
+  {
+   "nom": "systemd-socket-activation.patch",
+   "titre_declare": "Support systemd socket activation",
+   "contenu_reel": "sshd.c : recuperation LISTEN_FDS/LISTEN_PID, sockets AF_INET/AF_INET6/AF_VSOCK passes par systemd, conservation a la re-execution, option -N transmise a sshd-session (ignoree par sshd-auth), decalage des fds de re-exec ; configure.ac SYSTEMD_SOCKET_ACTIVATION.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "configure.ac",
+    "sshd.c",
+    "sshd-session.c",
+    "sshd-auth.c"
+   ],
+   "resume": "Patch Ubuntu (Langasek, Rosbrook, Watson, Trevisan) ; touche la gestion des sockets d'ecoute, aucun bypass identifie."
+  },
+  {
+   "nom": "skip-utimensat-test-on-zfs.patch",
+   "titre_declare": "Skip utimensat test on ZFS",
+   "contenu_reel": "Test de regression ignore sur ZFS.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "openbsd-compat/regress/utimensattest.c"
+   ],
+   "resume": "Tests uniquement."
+  },
+  {
+   "nom": "regress-conch-dev-zero.patch",
+   "titre_declare": "regress: Redirect conch stdin from /dev/zero",
+   "contenu_reel": "Test d'interop conch.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "regress/conch-ciphers.sh"
+   ],
+   "resume": "Tests uniquement."
+  },
+  {
+   "nom": "downgrade-pkcs11-error.patch",
+   "titre_declare": "upstream: downgrade a useless error() -> debug()",
+   "contenu_reel": "Retroportage amont V_10_2 : error->debug_f dans pkcs11_fetch_*.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "ssh-pkcs11.c"
+   ],
+   "resume": "Retroportage amont."
+  },
+  {
+   "nom": "link-ssh-against-ssh-pkcs11.patch",
+   "titre_declare": "link ssh against ssh-pkcs11.o",
+   "contenu_reel": "Retroportage amont (bz3879) : SSHOBJS lie ssh-pkcs11.o au lieu de ssh-pkcs11-client.o.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "Makefile.in"
+   ],
+   "resume": "Retroportage amont ; dernier patch de la serie Debian (.git-dpm:1)."
+  },
+  {
+   "nom": "auth-Add-KbdintResult-definition-to-define-result-values-.patch",
+   "titre_declare": "auth: Add KbdintResult definition to define result values explicitly",
+   "contenu_reel": "Remplace les litteraux -1/0/1 par KbdintResultFailure/Success/Again (valeurs identiques, verifie) dans auth-bsdauth.c, auth-pam.c, auth2-chall.c ; auth.h.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "auth-bsdauth.c",
+    "auth-pam.c",
+    "auth.h",
+    "auth2-chall.c"
+   ],
+   "resume": "Ubuntu (PR #452) ; refactorisation sans changement semantique."
+  },
+  {
+   "nom": "auth-pam-Add-an-enum-to-define-the-PAM-done-status.patch",
+   "titre_declare": "auth-pam: Add an enum to define the PAM done status",
+   "contenu_reel": "Constantes SshPamError/None/Authenticated (-1/0/1) pour pam_done ; valeurs identiques.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "auth-pam.c"
+   ],
+   "resume": "Ubuntu (PR #452) ; refactorisation."
+  },
+  {
+   "nom": "auth-pam-Add-debugging-information-when-we-receive-PAM-me.patch",
+   "titre_declare": "auth-pam: Add debugging information when we receive PAM messages",
+   "contenu_reel": "debug3 du type et du texte des messages PAM_ERROR_MSG/PAM_TEXT_INFO dans le thread de conversation.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "auth-pam.c"
+   ],
+   "resume": "Ubuntu (PR #452) ; journalisation au niveau DEBUG3 seulement."
+  },
+  {
+   "nom": "auth-pam-Immediately-report-interactive-instructions-to-c.patch",
+   "titre_declare": "auth-pam: Immediately report interactive instructions to clients",
+   "contenu_reel": "sshpam_query() renvoie immediatement (num=0, info=message, pam_done=SshPamAgain) sur PAM_ERROR_MSG/PAM_TEXT_INFO au lieu d'accumuler ; sshpam_respond() renvoie KbdintResultAgain dans cet etat ; pam_done remis a SshPamNone a chaque query.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "auth-pam.c"
+   ],
+   "resume": "Ubuntu (PR #452, non fusionne amont). Interaction avec l'heuristique moniteur 'ret==0 && num==0 => authok' (monitor.c:1224-1227) : affaiblit la separation de privileges (constat moyenne, PROBABLE)."
+  },
+  {
+   "nom": "sshconnect2-Write-kbd-interactive-service-info-and-instru.patch",
+   "titre_declare": "sshconnect2: Write kbd-interactive service, info and instructions as utf-8",
+   "contenu_reel": "Client : nom/instruction kbd-int et info de changement de mot de passe affiches via notify_start()/writemsg() (octets bruts) au lieu de logit() (assaini strnvis).",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "sshconnect2.c"
+   ],
+   "resume": "Ubuntu (PR #452). Supprime l'assainissement de chaines serveur avant authentification (constat faible)."
+  },
+  {
+   "nom": "sshd-socket-generator.patch",
+   "titre_declare": "(aucun en-tete DEP-3) - ajout de sshd-socket-generator.c",
+   "contenu_reel": "Nouveau generateur systemd (sshd-socket-generator.c, 314 l.) lisant sshd_config et ecrivant ssh.socket.d/addresses.conf si Port/ListenAddress non defaut ; cible Makefile.in et installation dans systemd_system_generator_dir ; commentaire sshd_config.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "sshd-socket-generator.c(nouveau)",
+    "Makefile.in",
+    "sshd_config"
+   ],
+   "resume": "Ubuntu (changelog 'd/p/sshd-socket-generator.patch: add generator for socket activation') ; s'execute en root a chaque daemon-reload ; pas de reseau, ecriture limitee au repertoire generateur."
+  },
+  {
+   "nom": "test-set-UsePAM-no-on-some-tests.patch",
+   "titre_declare": "Set UsePAM=no for regress/putty-*.sh",
+   "contenu_reel": "Tests putty avec UsePAM no.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "regress/putty-ciphers.sh",
+    "regress/putty-kex.sh",
+    "regress/putty-transfer.sh"
+   ],
+   "resume": "Ubuntu ; tests uniquement."
+  },
+  {
+   "nom": "test-workaround-dd-broken-pipe.patch",
+   "titre_declare": "Use GNU dd where uutils dd breaks",
+   "contenu_reel": "Tests : utilise /usr/bin/gnudd si present.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "regress/putty-transfer.sh",
+    "regress/transfer.sh"
+   ],
+   "resume": "Ubuntu (LP #2125943) ; tests uniquement."
+  },
+  {
+   "nom": "gss-api-defaults.patch",
+   "titre_declare": "Do not default to weak GSS-API exchange algorithms",
+   "contenu_reel": "Retire gss-group14-sha1- et gss-gex-sha1- de GSS_KEX_DEFAULT_KEX ; docs.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "ssh-gss.h",
+    "ssh_config.5",
+    "sshd_config.5"
+   ],
+   "resume": "Ubuntu 2ubuntu3 (LP #2144812, RFC 8732) ; renforcement."
+  }
+ ],
+ "flux_reseau": [
+  {
+   "sens": "entrant",
+   "proto": "TCP/22 IPv4+IPv6",
+   "composant": "sshd via ssh.socket (debian/systemd/ssh.socket:7-8)",
+   "condition": "openssh-server installe (ABSENT de l'ISO 3.0) ; socket active par defaut a l'installation (debian/rules:216)"
+  },
+  {
+   "sens": "entrant",
+   "proto": "AF_VSOCK",
+   "composant": "sshd (systemd-socket-activation.patch l.177-184) / sshd@.service",
+   "condition": "socket vsock fourni par systemd (VM/conteneur)"
+  },
+  {
+   "sens": "sortant",
+   "proto": "TCP/22 (ou port choisi)",
+   "composant": "ssh/scp/sftp (openssh-client installe sur l'ISO)",
+   "condition": "a l'initiative de l'utilisateur"
+  },
+  {
+   "sens": "sortant",
+   "proto": "Kerberos/KDC + DNS",
+   "composant": "client ssh, GSSAPIAuthentication yes (ssh_config:53)",
+   "condition": "si l'utilisateur dispose d'un ccache Kerberos"
+  },
+  {
+   "sens": "sortant",
+   "proto": "DNS (SSHFP, EDNS0/DNSSEC)",
+   "composant": "client ssh (dnssec-sshfp.patch)",
+   "condition": "VerifyHostKeyDNS active (non par defaut)"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "debian/openssh-server.apport",
+   "donnees": "sortie 'sshd -T' (configuration effective)",
+   "condition": "rapport de bogue apport ET consentement explicite (ui.yesno, l.17-27)"
+  },
+  {
+   "composant": "debian/openssh-client.apport",
+   "donnees": "conffiles openssh-client (avec consentement), paquets lies et 'ssh -V' (sans question)",
+   "condition": "rapport de bogue apport uniquement"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/openssh",
+   "patches_total": 35,
+   "patches_lus": 35,
+   "fichiers_debian": 137,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "gssapi.patch",
+    "restore-tcp-wrappers.patch",
+    "selinux-role.patch",
+    "ssh-vulnkey-compat.patch",
+    "keepalive-extensions.patch",
+    "syslog-level-silent.patch",
+    "user-group-modes.patch",
+    "scp-quoting.patch",
+    "shell-path.patch",
+    "dnssec-sshfp.patch",
+    "mention-ssh-keygen-on-keychange.patch",
+    "package-versioning.patch",
+    "debian-banner.patch",
+    "authorized-keys-man-symlink.patch",
+    "openbsd-docs.patch",
+    "ssh-argv0.patch",
+    "doc-hash-tab-completion.patch",
+    "ssh-agent-setgid.patch",
+    "gnome-ssh-askpass2-icon.patch",
+    "debian-config.patch",
+    "restore-authorized_keys2.patch",
+    "systemd-socket-activation.patch",
+    "skip-utimensat-test-on-zfs.patch",
+    "regress-conch-dev-zero.patch",
+    "downgrade-pkcs11-error.patch",
+    "link-ssh-against-ssh-pkcs11.patch",
+    "auth-Add-KbdintResult-definition-to-define-result-values-.patch",
+    "auth-pam-Add-an-enum-to-define-the-PAM-done-status.patch",
+    "auth-pam-Add-debugging-information-when-we-receive-PAM-me.patch",
+    "auth-pam-Immediately-report-interactive-instructions-to-c.patch",
+    "sshconnect2-Write-kbd-interactive-service-info-and-instru.patch",
+    "sshd-socket-generator.patch",
+    "test-set-UsePAM-no-on-some-tests.patch",
+    "test-workaround-dd-broken-pipe.patch",
+    "gss-api-defaults.patch"
+   ],
+   "fichiers_debian_lus_integralement": 71,
+   "fichiers_debian_hors_patches": 101,
+   "fichiers_debian_lus_partiellement": [
+    "debian/changelog (entrees openKylin + Ubuntu 10.2p1 + Debian 10.1p1/10.2p1)",
+    "debian/openssh-server.ucf-md5sum (verification md5)",
+    "debian/tests/ssh-gssapi",
+    "debian/tests/sshd-socket-generator",
+    "debian/tests/systemd-socket-activation",
+    "debian/README.Debian",
+    "debian/copyright",
+    "debian/po/* (verifie : uniquement msgid/msgstr)"
+   ],
+   "fichiers_debian_non_lus": [
+    "debian/NEWS",
+    "debian/upstream/signing-key.asc",
+    "debian/gnome-ssh-askpass.1",
+    "debian/ssh-argv0.1",
+    "debian/ssh-askpass-gnome.png (binaire)"
+   ],
+   "verifications_complementaires": [
+    "inversion des 35 patches (0 rejet, 0 fuzz)",
+    "md5 sshd_config vs ucf-md5sum Ubuntu",
+    "coherence .c / .depend",
+    "recherche chaines Kylin dans tout l'arbre",
+    "revue ciblee du code amont : auth-passwd.c, auth2-passwd.c, auth2.c, auth.c, auth-pam.c, auth2-chall.c, monitor.c (handlers PAM/password/keyverify), sshkey.c/ssh-ed25519.c verify, servconf.c/readconf.c defauts, myproposal.h, pathnames.h, sandbox-seccomp-filter.c, readpass.c, kexgssc.c",
+    "manifeste ISO (openssh-server absent)"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "Integrite de la base amont : diff de l'arbre reconstruit contre openssh-10.2p1.tar.gz verifie par signature (debian/upstream/signing-key.asc) non realisable hors ligne ; seule une modification Kylin hors patches dans les ~849 fichiers amont echapperait a cet audit (revue ciblee seulement).",
+  "Correspondance binaires ISO (openssh-client 1:10.2p1-ok3) / sources non verifiee (pas de build reproductible).",
+  "Constat PAM/moniteur : analyse statique, non confirme dynamiquement ; dependance a la pile PAM 'auth' d'openKylin (modules emettant PAM_TEXT_INFO, p. ex. biometrie) a verifier dans le lot PAM.",
+  "debian/rules Ubuntu 1:10.2p1-2ubuntu3 non disponible pour confirmer que seul 'optimize=+lto' differe.",
+  "Signature PGP du .dsc (dl/build/openssh) non verifiee (cle non identifiee).",
+  "debian/NEWS, pages de manuel Debian, signing-key.asc non lus."
+ ],
+ "synthese": "Empreinte conforme (f8e627c4..., 990 fichiers). [CONSTATÉ] Paquet reconditionne en format 3.0 (native) : les 35 patches sont pre-appliques ; leur inversion en copie donne 0 rejet/0 fuzz, l'arbre = base + serie Debian 10.2p1-2 + delta Ubuntu 1:10.2p1-2ubuntu3.\n[CONSTATÉ] Aucun patch ni fichier source specifique Kylin ; aucune chaine kylin/kysec hors changelog ; delta openKylin = 3 entrees de changelog (rebuild, LTO) et probablement 'optimize=+lto' dans debian/rules:3. Maintainer reste 'Ubuntu Developers'.\n[CONSTATÉ] Tous les titres de patches sont fideles a leur contenu (aucun titre trompeur). Classement : 25 [LÉGITIME], 10 [À EXAMINER] (gssapi, restore-tcp-wrappers, selinux-role, user-group-modes, debian-config, restore-authorized_keys2, systemd-socket-activation, auth-pam-Immediately-report, sshconnect2-Write-kbd-interactive, sshd-socket-generator), 0 [SUSPECT].\n[CONSTATÉ] sshd_config identique octet pour octet a Ubuntu (md5 dans ucf-md5sum) ; defauts amont preserves (PermitRootLogin prohibit-password, PermitEmptyPasswords no, KbdInteractiveAuthentication no, UsePAM yes) ; algorithmes = defauts OpenSSH 10.x ; hardening=+all, tests actifs, sandbox seccomp ; aucune cle/mot de passe en dur livre.\n[CONSTATÉ] openssh-server n'est PAS installe sur l'ISO 3.0 (seul openssh-client) : pas de sshd a l'ecoute par defaut ; s'il est installe, ssh.socket ecoute 22/tcp IPv4/IPv6.\n[PROBABLE][moyenne] Le patch Ubuntu auth-pam-Immediately-report-interactive-instructions (PR #452) rend atteignable, sur message PAM_TEXT_INFO, l'heuristique du moniteur 'ret==0 && num==0 => authok' (monitor.c:1224-1227, 1299) : un sshd-auth compromis pourrait obtenir une authentification keyboard-interactive/pam sans mot de passe (affaiblissement de la separation de privileges ; necessite KbdInteractiveAuthentication yes, non par defaut). Origine Ubuntu, pas Kylin.\n[CONSTATÉ][faible] Patch Ubuntu sshconnect2 : chaines kbd-int du serveur ecrites brutes sur le terminal client (readpass.c:225-229). [CONSTATÉ][faible] kexgssc.c:249 sur-lecture d'1 octet (gsskex Debian, GSSAPIKeyExchange client non par defaut). [CONSTATÉ][faible] Divergences Debian : X11Forwarding yes / ForwardX11Trusted yes, authorized_keys2 relu.\nCouverture : 35/35 patches lus integralement (dont gssapi.patch 3898 l.), 71/101 autres fichiers debian/ lus integralement (25 partiellement dont 18 po verifies sans code, 5 non lus), revue ciblee du code d'authentification amont. Limite principale : base amont non comparee hors ligne a l'archive signee openssh-10.2p1."
+}

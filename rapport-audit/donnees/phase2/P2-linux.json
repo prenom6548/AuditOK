@@ -1,0 +1,842 @@
+{
+ "lot": "P2-linux",
+ "composants": [
+  "linux"
+ ],
+ "empreintes": {
+  "archive/linux": "c3d931a2d687eb03423e8fecf912ab87b74e0ee1ca339820a07b02eaac013324",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0007-build-loongarch-ext4.patch",
+   "ligne": "9442",
+   "type": "durcissement",
+   "severite": "elevee",
+   "extrait": "+CONFIG_SECURITY_LOCKDOWN_LSM policy<{'amd64': 'y', 'arm64': 'y', 'loong64': 'n', 'riscv64': 'y'}> ; l.6376-6378 : -CONFIG_MODULE_SIG_SHA256 {'loong64':'y'} / +CONFIG_MODULE_SIG {'loong64':'n'}",
+   "explication": "Le patch 0007 (titre : « mise à jour des dépendances loongarch ; correction de l'absence d'ext4 ») réécrit 5 843 réglages loong64 de l'annotation (2 276 ajouts, 3 506 modifications, 61 retraits ; aucune autre arch. touchée). Il supprime pour loong64 la frontière root→noyau : SECURITY_LOCKDOWN_LSM y→n (l.9442), MODULE_SIG=n (l.6378, MODULE_SIG_SHA256 retiré l.6376), IMA y→n (l.4481), EVM y→n (l.3052), INTEGRITY_SIGNATURE n (l.4728), SECONDARY_TRUSTED_KEYRING/SYSTEM_BLACKLIST_KEYRING/TRUSTED_KEYS n (l.9416/11449/11746), STRICT_DEVMEM=n avec DEVMEM=y (l.11384/2136) ; MODULE_FORCE_LOAD=y existait déjà (0001:4618). La config importée porte CONFIG_CC_VERSION_TEXT=\"gcc (GCC) 12.3.1 (kylin 12.3.1-62.p03.ky11)\" (l.1185) : .config complet d'un autre produit Kylin (ky11), non dérivé des annotations Ubuntu. Pourtant debian.master/rules.d/loong64.mk déclare uefi_signed = true (0001:10002).",
+   "scenario": "Sur une machine loong64, tout processus root (y compris après une élévation locale ou via un paquet tiers malveillant) peut charger un module noyau non signé (insmod, voire --force), ou écrire la RAM physique via /dev/mem : rootkit persistant indétectable par IMA, contournement de la chaîne Secure Boot que suggère uefi_signed=true.",
+   "contre_lecture": "Les plateformes Loongson n'ont souvent ni infrastructure de signature de modules ni Secure Boot opérationnel ; l'équipe a pu reprendre tel quel le .config Kylin V11 fonctionnel pour corriger rapidement l'absence d'ext4 (EXT4_FS loong64 ajouté l.3070) sans viser la sécurité. Aucun indice d'intention malveillante.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0007-build-loongarch-ext4.patch",
+   "ligne": "3294",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "+CONFIG_FORTIFY_SOURCE                          policy<{'amd64': 'y', 'arm64': 'y', 'loong64': 'n'}>",
+   "explication": "Pour loong64, 0007 retire les protections mémoire présentes dans 0001 ou chez Ubuntu : FORTIFY_SOURCE n (l.3294), HARDENED_USERCOPY n (l.3718), SLAB_FREELIST_HARDENED n et SLAB_FREELIST_RANDOM n (l.10133-10134), INIT_ON_ALLOC_DEFAULT_ON n (l.4581), LIST_HARDENED n (l.5552), ZERO_CALL_USED_REGS n (l.13400), RANDOMIZE_KSTACK_OFFSET_DEFAULT n (l.8505), SCHED_STACK_END_CHECK n (l.9256), BUG_ON_DATA_CORRUPTION n (l.1054), KFENCE n (l.5247), BPF_JIT_ALWAYS_ON n (l.899), SECURITY_DMESG_RESTRICT n (l.9437), DEBUG_FS_ALLOW_ALL y (l.2046), MAGIC_SYSRQ_DEFAULT_ENABLE 0x1 (l.5671). Amélioration en sens inverse : BPF_UNPRIV_DEFAULT_OFF n→y (l.907), RANDOMIZE_BASE y.",
+   "scenario": "Une vulnérabilité mémoire noyau (débordement de tas ou de pile, use-after-free, fuite d'adresse via dmesg) devient nettement plus simple à exploiter de façon fiable par un utilisateur local loong64 pour obtenir root ; aucune vulnérabilité nouvelle n'est créée par ce seul réglage.",
+   "contre_lecture": "Valeurs proches du loongson64_defconfig et des réglages par défaut de l'amont ; le choix vise probablement la performance ou la compatibilité de pilotes hors arbre plutôt qu'un affaiblissement délibéré.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0007-build-loongarch-ext4.patch",
+   "ligne": "5515",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "+CONFIG_LEGACY_TIOCSTI                          policy<{'amd64': 'n', 'arm64': 'n', 'loong64': 'y', 'riscv64': 'n'}>",
+   "explication": "LEGACY_TIOCSTI vaut n pour amd64/arm64/riscv64 (déjà en 0001:4101), mais 0007 le passe à y pour loong64. L'affirmation d'un autre lot (« LEGACY_TIOCSTI=n ») n'est donc exacte que pour 3 architectures sur 4. LEGACY_PTYS=y et LDISC_AUTOLOAD=y y sont aussi activés pour loong64 (l.5512, l.5331).",
+   "scenario": "Sur loong64, un processus moins privilégié partageant le terminal de contrôle d'une session privilégiée (par exemple après su/sudo sans pty dédié) peut injecter des caractères dans l'entrée du shell privilégié et lui faire exécuter des commandes.",
+   "contre_lecture": "Valeur par défaut amont historique, utile à quelques outils anciens ; sudo moderne avec use_pty atténue le risque.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0007-build-loongarch-ext4.patch",
+   "ligne": "5614",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "+CONFIG_LSM policy<{... 'loong64': '\"landlock,lockdown,yama,loadpin,safesetid,ipe,bpf\"' ...}> ; l.2118 DEFAULT_SECURITY_APPARMOR loong64 n",
+   "explication": "Sur loong64, AppArmor et SELinux sont compilés (0001:6916/6926) mais absents de la liste LSM par défaut (déjà absents en 0001:4148). DEFAULT_SECURITY_DAC=y y figure depuis 0001:1806 ; 0007 ajoute DEFAULT_SECURITY_APPARMOR=n pour loong64 (l.2118), désactive LANDLOCK, LOADPIN, SAFESETID et IPE (l.9439-9447) bien qu'ils figurent dans la liste, et laisse BPF_LSM non défini. Seuls capability et Yama restent actifs. amd64/arm64/riscv64 ont la liste Ubuntu \"landlock,lockdown,yama,integrity,apparmor\".",
+   "scenario": "Sur loong64, les profils AppArmor livrés par la distribution (navigateurs, services réseau) ne sont pas appliqués, sauf si l'administrateur ajoute lsm= à la ligne de commande : un service compromis n'est plus confiné.",
+   "contre_lecture": "La liste correspond au défaut amont pour DEFAULT_SECURITY_DAC ; openKylin peut s'appuyer sur un autre mécanisme (kysec) sur ce matériel, mais il est absent de ce delta.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0001-update-packaging-config.patch",
+   "ligne": "4511",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "+CONFIG_MITIGATION_GDS                           policy<{'amd64': 'n'}>",
+   "explication": "Les annotations amd64 désactivent explicitement CONFIG_MITIGATION_GDS (Gather Data Sampling / « Downfall », CVE-2022-40982), dont le défaut amont est y. Dans l'amont récent, cette option à n fixe la mitigation GDS par défaut à « off », ce qui désactive aussi la mitigation microcode via MSR sur les processeurs Intel concernés. Cette sémantique est connue de l'auditeur mais n'a pu être vérifiée : l'arbre 7.0 est absent.",
+   "scenario": "Sur un poste Intel concerné (Core de 6e à 11e génération, Xeon Skylake à Ice Lake) démarré sans gather_data_sampling=force, un utilisateur local ou une VM invitée peut inférer des données de registres vectoriels (clés AES, données d'autres processus ou du noyau).",
+   "contre_lecture": "Choix de performance documenté par l'amont (la mitigation coûte sur AVX) ; la valeur a pu être héritée d'une ancienne option GDS_FORCE_MITIGATION=n renommée. Le parc openKylin vise aussi des processeurs non Intel (Hygon, Zhaoxin, Phytium, Loongson).",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0001-update-packaging-config.patch",
+   "ligne": "9514",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "+CONFIG_X86_KERNEL_IBT                           policy<{'amd64': 'n'}>",
+   "explication": "Intel CET-IBT (intégrité du flot de contrôle « forward-edge » du noyau) est explicitement désactivé sur amd64 ; Debian et Ubuntu récents l'activent. La raison probable est la compatibilité avec des modules hors arbre.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0001-update-packaging-config.patch",
+   "ligne": "9960",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "+do_skip_checks = true   (amd64.mk ; idem arm64.mk l.9988, loong64.mk l.10007, riscv64.mk l.10035)",
+   "explication": "Les quatre fichiers debian.master/rules.d/<arch>.mk posent do_skip_checks = true. Le contrôle « annotations --check » de la .config finale est donc sauté (debian/rules.d/2-binary-arch.mk:43-46), de même que les contrôles de debian/rules:116-118. L'annotation est par ailleurs compactée : seule la section « Annotations without notes » subsiste (0001:287), sans aucune note de justification. Des options critiques n'y sont fixées pour aucune arch. (MODULE_SIG pour amd64/arm64/riscv64, MODULE_SIG_FORCE/ALL, LOCK_DOWN_*, STRICT_KERNEL_RWX, IO_STRICT_DEVMEM, STACKPROTECTOR_STRONG hors loong64) et dépendent des défauts Kconfig. Les nouvelles options de 0008 en « default y » (TCG_HYGON, TCM_HYGON, HYGON_GM, HYGON_PSP2CPU_CMD, TDM_DEV_HYGON, TDM_KERNEL_GUARD ; 0008:2488-3007) entrent donc dans la build sans revue d'annotation.",
+   "scenario": "Un rebasage ou un patch qui change un défaut Kconfig (ou ajoute un pilote en default y) peut désactiver silencieusement un durcissement ou activer une interface sensible dans les noyaux livrés, sans faire échouer la construction.",
+   "contre_lecture": "Le saut des contrôles est courant pendant la mise au point d'un noyau de développement (7.0) multi-arch ; il peut être temporaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/rules.d/2-binary-arch.mk",
+   "ligne": "314",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "\t# debian/scripts/checks/module-signature-check \"$*\" \"$(pkgdir)\" $(do_skip_checks)",
+   "explication": "Le contrôle de politique de signature des pilotes staging est commenté. debian/signature-inclusion (l.1-4) ne contient que des commentaires et debian/scripts/sign-module n'est appelé par aucun fichier de debian/. Chez Ubuntu, ce mécanisme empêche de signer, donc de charger sous Secure Boot, les pilotes staging non validés. Ici, tous les modules staging seraient signés par la clé de build (mécanisme amont non vérifiable). Le staging inclut ASHMEM, réintroduit par 0001.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0008-build-new-version-7.0.0-3.patch",
+   "ligne": "10166-10168",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "+\t.name = \"ccp_share\",\n+\t.fops = &ccp_share_fops,\n+\t.mode = 0666,",
+   "explication": "Sur processeur Hygon, ccp-mdev est compilé dans ccp (ccp-objs, 0008 Makefile) et crée /dev/ccp_share accessible à tous (0666). Tout utilisateur peut d'abord mapper un tampon noyau global partagé entre tous les processus, dont le premier appelant choisit la taille (kzalloc, l.10133 ; remap_pfn_range, l.10148). Il peut aussi, par ioctl MCCP_SHARE_OP_DMA_MAP (l.10009), épingler durablement ses pages (pin_user_pages_fast, FOLL_LONGTERM, sans contrôle RLIMIT_MEMLOCK, l.9563) et les mapper à une IOVA de son choix, sans contrôle de plage, dans le domaine IOMMU partagé par les CCP passés en mode utilisateur. /dev/ccpN (mmap sans contrôle de l'index de BAR ni de la longueur, l.9385-9388) n'a pas de mode explicite. Le changelog annonce « drop mdev support », mais ce code reste compilé.",
+   "scenario": "Un utilisateur local non privilégié sur poste ou serveur Hygon peut épuiser la mémoire par épinglage illimité (déni de service). Il peut aussi corrompre l'état de coordination partagé ou préempter des IOVA utilisées par un service crypto privilégié qui pilote le CCP en mode utilisateur : interférence, voire détournement des DMA vers ses propres pages (fuite de données traitées).",
+   "contre_lecture": "Code d'origine fournisseur (Hygon, openEuler) prévu pour une bibliothèque crypto multi-processus non root. Le chemin n'existe que si l'IOMMU est actif et le CCP présent. Aucune lecture de mémoire noyau arbitraire n'a été établie.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0008-build-new-version-7.0.0-3.patch",
+   "ligne": "11887-11893",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "+static int mmap_psp(...)\n+\tpage = virt_to_phys((void *)psp_misc->data_pg_aligned) >> PAGE_SHIFT;\n+\tif (remap_pfn_range(vma, vma->vm_start, page, (vma->vm_end - vma->vm_start),",
+   "explication": "/dev/hygon_psp_config (l.12014, sans .mode, donc root par défaut sauf règle udev) mappe vm_end-vm_start octets à partir d'une seule page allouée, sans contrôle de taille ni de vm_pgoff : un mmap de plusieurs pages expose la mémoire physique noyau adjacente en lecture et écriture. La même page, partagée avec l'espace utilisateur, contient le verrou mb_mutex que le noyau utilise ensuite pour sérialiser les commandes SEV/CSV (sev-dev.c modifié, 0008:15234+). L'ioctl HYGON_PSP_MUTEX_ENABLE attend ce verrou en boucle sans délai (timeout 0, l.11952).",
+   "scenario": "Un processus root ou un groupe autorisé par udev obtient lecture et écriture de la mémoire noyau, ce qui contourne le verrouillage (lockdown) actif sur amd64. Un processus détenteur de la page peut aussi bloquer indéfiniment les commandes PSP/SEV (déni de service).",
+   "contre_lecture": "Interface réservée à root, destinée aux outils Hygon de gestion du PSP ; présente uniquement sur matériel Hygon.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0008-build-new-version-7.0.0-3.patch",
+   "ligne": "11137-11214",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "+static void hct_noiommu_set_memory_wb(unsigned long address)\n+\tpgd_t *pgd = current->mm->pgd + pgd_index(address);\n... +\tset_pte_atomic(pte, new_pte);",
+   "explication": "hct.ko (CRYPTO_DEV_HCT, default m, pas d'alias de chargement automatique) : l'ioctl de /dev/hct_noiommu (mode par défaut) parcourt et réécrit les PTE de l'appelant (bits PAT/PCD/PWT effacés) sans mmap_lock, sans verrou de PTE ni vidage de TLB, sur nr_pages fourni par l'utilisateur (l.11183, l.11214). /dev/hct_mig, créé seulement dans une VM invitée, est en 0666 (l.11398-11400) et mappe un état global partagé de 2 pages modifiable par tous.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0008-build-new-version-7.0.0-3.patch",
+   "ligne": "11549-11590",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "+#define VSOCK_PORT 12345 ... +\t\tif (peer_addr.svm_cid != VMADDR_CID_HOST) {",
+   "explication": "Dans une VM invitée sur Hygon, hct.ko ouvre un serveur AF_VSOCK noyau sur le port 12345 (kthread hct_vsock_thread). Seul le CID hôte (2) est accepté. Le protocole tient en 3 opérations sur un état de migration (magic 0x76484354) ; l'analyse des messages ne montre pas de dépassement (tampon de 128 octets, longueur contrôlée).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0008-build-new-version-7.0.0-3.patch",
+   "ligne": "15015-15058",
+   "type": "obfuscation",
+   "severite": "faible",
+   "extrait": "+\tf_kallsyms_lookup_name = (unsigned long (*)(const char *))kprobe_symbol_address_byname(\"kallsyms_lookup_name\");\n+\tsct_addr = (unsigned long *)f_kallsyms_lookup_name(\"sys_call_table\");",
+   "explication": "tdm-kernel-guard (TDM_KERNEL_GUARD, tristate default y) utilise, en module, la technique kprobe pour résoudre kallsyms_lookup_name, non exporté en amont, puis sys_call_table et l'IDT afin de les faire mesurer par le PSP. Le but est défensif et désactivé par défaut (tdm_guard_enabled=false, l.14780 ; activation par tdm_guard=on). La technique contourne néanmoins une restriction volontaire de l'amont. Bogue : task_id est uint32_t et le test « < 0 » n'est jamais vrai (l.14893).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0008-build-new-version-7.0.0-3.patch",
+   "ligne": "10622",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "+\tcase CSV_HGSC_CERT_IMPORT:\n+\t\tret = csv_ioctl_do_hgsc_import(&input);",
+   "explication": "Sur Hygon, /dev/sev est servi par csv_fops (l.15376). La commande d'import de certificat HGSC, qui modifie l'état du firmware, ne vérifie pas FMODE_WRITE, contrairement aux commandes SEV équivalentes de l'amont : un descripteur ouvert en lecture seule suffit.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0001-update-packaging-config.patch",
+   "ligne": "10146-10154",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "+\twiphy->flags |= WIPHY_FLAG_NETNS_OK;\n...\n+\twiphy_net_set(common_wiphy, current->nsproxy->net_ns);",
+   "explication": "Sous le titre « update packaging config », le pilote virt_wifi est modifié : la wiphy unique et globale (common_wiphy) devient déplaçable entre espaces de noms réseau. À chaque création de lien, elle est rattachée de force au netns de l'appelant par wiphy_net_set(), sans passer par cfg80211_switch_netns() qui maintient la cohérence des netdevs. VIRT_WIFI=m sur amd64/arm64/riscv64 (0007:13130), USER_NS=y.",
+   "scenario": "Si les espaces de noms utilisateur non privilégiés sont autorisés et le module chargeable automatiquement, un utilisateur local peut créer un netns, y ajouter un lien virt_wifi et y aspirer la wiphy partagée. Il perturbe ainsi le Wi-Fi émulé d'autres conteneurs (par exemple le conteneur Android Kmre) et crée un état cfg80211 incohérent, source potentielle de bogues noyau.",
+   "contre_lecture": "Modification fonctionnelle pour fournir un Wi-Fi émulé au conteneur Android dans son netns ; virt_wifi n'est pas chargé par défaut et sa création exige CAP_NET_ADMIN dans le netns.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0001-update-packaging-config.patch",
+   "ligne": "10081-10090",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "+static uint32_t binder_debug_mask = 0;\n...\n+\tnode->txn_security_ctx = false;",
+   "explication": "Sous un titre « packaging », binder ignore désormais FLAT_BINDER_FLAG_TXN_SECURITY_CTX : les nœuds qui demandent le contexte de sécurité de l'émetteur (servicemanager Android) ne le reçoivent plus, et l'espace utilisateur Android retombe sur getpidcon(), sujet aux courses. Le masque de journalisation par défaut (erreurs utilisateur, transactions échouées ou mortes) est mis à 0. ANDROID_BINDER_IPC=y sur amd64/arm64/riscv64. Ce changement vise sans doute la compatibilité avec un hôte sans LSM fournissant un secctx.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0001-update-packaging-config.patch",
+   "ligne": "10179",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "+obj-y\t\t\t\t+= android/   (drivers/staging/Makefile) ; 0001:729 +CONFIG_ASHMEM policy<{'amd64': 'y', 'arm64': 'y'}>",
+   "explication": "Le pilote staging ashmem (/dev/ashmem), retiré de l'amont en 5.18, est réintroduit (969 lignes) et compilé en dur sur amd64/arm64. Le code correspond à la dernière version amont et inclut le correctif de surcharge du mmap de vmfile ; il n'est plus maintenu en amont et a un historique de CVE. Ajout de code noyau sous un titre « update packaging config ».",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0004-fix-fix-loongarch-and-riscv64-build-error.patch",
+   "ligne": "59-160",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "+EXPORT_SYMBOL_GPL(loongarch_set_current_blocked); ... +EXPORT_SYMBOL_GPL(loongarch_restore_altstack); +int setup_rt_frame(void *sig_return, ...",
+   "explication": "Sous le titre « correction d'erreur de build », 0004 exporte vers les modules des primitives internes de signal (set_current_blocked, copy_siginfo_to_user, __save_altstack, restore_altstack) et rend non statiques gpr_get/gpr_set/read_user/write_user/setup_rt_frame. Le changelog l'attribue à « LoongArch: Export some signal functions » ; le but probable est un module de compatibilité ABI hors arbre. Cela élargit la surface offerte aux modules, non signés sur loong64.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0002-build-build-linux-7.0.0-2.patch",
+   "ligne": "125519",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "+    file = gf_file_open(\"/var/fb.FB\", OS_RDWR | OS_CREAT | OS_APPEND | OS_LARGEFILE, 0666);",
+   "explication": "Le pilote GPU Glenfly « arise » (≈175 000 lignes, DRM_ARISE=m loong64 uniquement) écrit depuis le noyau un vidage de mémoire GPU dans /var/fb.FB, créé en 0666, quand le mode de débogage post_hang_dump est actif. Il ouvre aussi des fichiers par filp_open/kernel_write (os_interface.c, l.180716-180777).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0002-build-build-linux-7.0.0-2.patch",
+   "ligne": "193160",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "+static int arm_smmu_resume(struct device *dev)\n+{ ...\n+\tarm_smmu_device_reset(smmu, true);\n+\treturn 0;",
+   "explication": "Le support suspend/resume ajouté à l'IOMMU arm-smmu-v3 ignore l'échec de réinitialisation à la reprise. Si la réinitialisation échoue, la SMMU peut rester désactivée et les DMA des périphériques passer sans filtrage (mode bypass selon GBPA).",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0008-build-new-version-7.0.0-3.patch",
+   "ligne": "1-9",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "From: root <root@localhost> ... Subject: build: new version 7.0.0-3 ... 1. 增加海光平台的安全特性支持 2. 修复D3000M的声卡问题",
+   "explication": "Traçabilité : les 8 patches ont pour auteur « root <root@localhost> » et regroupent des dizaines de commits (0002 : 522 fichiers, 252 000 lignes ; 0008 : 62 fichiers, 15 455 insertions). 0008 ajoute à la racine du noyau un journal de portage hygon-ccp-patch-port-summary.md (l.15788-16163), apparemment produit par un assistant (« 若需我进一步…可直接告知 »). Ce journal ne couvre pas TDM/TPM/TCM/CSV, ajoutés eux aussi, et contredit le changelog (mdev déclaré supprimé, ccp-mdev toujours compilé).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/series",
+   "ligne": "1-8",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "0001-update-packaging-config.patch ... 0008-build-new-version-7.0.0-3.patch",
+   "explication": "Aucune occurrence de kysec, de /proc/kylin_sched, ni d'un symbole CONFIG_*KYSEC* dans les 72 fichiers ou dans l'annotation reconstituée ; aucune liste LSM ne contient kysec. Si kysec ou kylin_sched existent dans ce noyau, ils sont dans l'arbre .orig, absent ici, ou dans un autre paquet.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/templates/image.postinst.in",
+   "ligne": "43-60",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "depmod $version ... linux-update-symlinks $change $version $image_path ... run-parts --report --exit-on-error --arg=$version --arg=$image_path /etc/kernel/postinst.d /usr/share/kernel/postinst.d",
+   "explication": "Les scripts de mainteneur (image.preinst/postinst/prerm/postrm, extra.*, headers.postinst) sont identiques au modèle Ubuntu : depmod, linux-update-symlinks, déclencheurs dpkg exécutant /etc/kernel/*.d (update-initramfs ou dracut et grub y sont délégués). On n'y trouve ni kysec_set, ni accès réseau, ni écriture hors des chemins dpkg/noyau. debian/control recommande « dracut | linux-initramfs-tool » ; Provides/Replaces identiques à Ubuntu.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "linux",
+   "fichier": "debian/patches/0001-update-packaging-config.patch",
+   "ligne": "1341",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "+CONFIG_CMDLINE                                  policy<{'arm64': '\"console=ttyAMA0\"', 'loong64': '\"nokaslr\"'}>",
+   "explication": "Historique : dans l'état 0001, loong64 avait une ligne de commande intégrée « nokaslr » et RANDOMIZE_BASE non défini. 0007 corrige ce point (RANDOMIZE_BASE=y l.8502, CMDLINE=\"\" l.1400, CMDLINE_BOOTLOADER=y). Rien à corriger dans l'état final.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "patches": [
+  {
+   "nom": "0001-update-packaging-config.patch",
+   "titre_declare": "update packaging config",
+   "contenu_reel": "Crée debian.master/ (annotations de 9 342 lignes compactée sans notes, control.stub.in, rules.d/{amd64,arm64,loong64,riscv64}.mk avec do_skip_checks=true et uefi_signed=true, vars.*, reconstruct, modprobe.d) ET modifie du code noyau : binder (txn_security_ctx forcé à false, debug_mask=0), virt_wifi (wiphy globale déplaçable entre netns, wiphy_net_set au newlink, traces retirées), réintroduction du pilote staging ashmem (obj-y android/, ASHMEM bool) ; .gitignore.",
+   "titre_fidele": false,
+   "classement": "[SUSPECT]",
+   "fichiers_amont": [
+    ".gitignore",
+    "drivers/android/binder.c",
+    "drivers/net/wireless/virtual/virt_wifi.c",
+    "drivers/staging/Kconfig",
+    "drivers/staging/Makefile",
+    "drivers/staging/android/*",
+    "debian.master/*"
+   ],
+   "resume": "Titre « packaging » trompeur : contient des changements de code noyau, dont un mécanisme de sécurité (contexte de sécurité binder) et l'isolation netns de virt_wifi ; configuration de base amd64 globalement alignée sur Ubuntu, sauf MITIGATION_GDS=n et X86_KERNEL_IBT=n."
+  },
+  {
+   "nom": "0002-build-build-linux-7.0.0-2.patch",
+   "titre_declare": "build: build linux 7.0.0-2",
+   "contenu_reel": "≈252 000 lignes, 522 fichiers : support complet SoC Phytium (bus PIO, GPIO, I2C, I3C, SPI/QSPI, MMC, UART, CAN, MAC, DMA, PWM, hwmon, IPMI BT/KCS, snoop, devfreq, PMU DDR, HDA/I2S/codecs, USB, TCM SE), pilote GPU Glenfly « arise » (≈285 fichiers), pilote SCSI LeapRAID, et retouches du cœur : clockevents/tick-broadcast (correctif amont next_event_forced), mm/swap_cgroup (correctif de déréférencement NULL), lib/logic_pio, ACPI EC, PCI (reset de bus Phytium, io-upper), arm-smmu-v3 (suspend/resume), xhci, i8042, spi/mtd, arm64 cpuinfo/cputype, defconfigs.",
+   "titre_fidele": false,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "drivers/gpu/drm/arise/**",
+    "drivers/scsi/leapraid/**",
+    "drivers/*/phytium*",
+    "sound/soc/phytium/**",
+    "kernel/time/clockevents.c",
+    "kernel/time/tick-broadcast.c",
+    "mm/swap_cgroup.c",
+    "lib/logic_pio.c",
+    "drivers/acpi/ec.c",
+    "drivers/pci/pci.c",
+    "drivers/pci/setup-bus.c",
+    "drivers/iommu/arm/arm-smmu-v3/arm-smmu-v3.c",
+    "drivers/usb/host/xhci*.c",
+    "drivers/input/serio/i8042.c",
+    "arch/arm64/**",
+    "MAINTAINERS"
+   ],
+   "resume": "Titre générique (« build ») pour un énorme ajout de pilotes, cohérent avec le changelog 7.0.0-2.0ok1. Aucune altération de posture identifiée dans les fichiers du cœur relus ; revue des pilotes uniquement par motifs (couverture partielle)."
+  },
+  {
+   "nom": "0003-fix-fix-build-error-of-drivers-gpu-drm-arise.patch",
+   "titre_declare": "fix: fix build error of drivers/gpu/drm/arise",
+   "contenu_reel": "Une ligne : chemin GFGPU_FULL_PATH du Makefile arise.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "drivers/gpu/drm/arise/Makefile"
+   ],
+   "resume": "Correctif de build bénin."
+  },
+  {
+   "nom": "0004-fix-fix-loongarch-and-riscv64-build-error.patch",
+   "titre_declare": "fix: fix loongarch and riscv64 build error",
+   "contenu_reel": "Makefile (mrproper ne supprime plus debian/), dépendances de build loong64, perf (cible rust loongarch, unwind-libdw) ; MAIS aussi arch/loongarch/kernel/extern.c : 4 EXPORT_SYMBOL_GPL de primitives de signal, et ptrace.c/signal.c : gpr_get, gpr_set, read_user, write_user et setup_rt_frame rendues non statiques.",
+   "titre_fidele": false,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "Makefile",
+    "arch/loongarch/kernel/{Makefile,extern.c,ptrace.c,signal.c}",
+    "tools/perf/Makefile.config",
+    "tools/perf/arch/loongarch/util/Build",
+    "debian.master/control.stub.in"
+   ],
+   "resume": "Titre partiellement fidèle : l'export d'API de signal vers les modules n'est pas un correctif de build (probablement pour un module de compatibilité ABI hors arbre)."
+  },
+  {
+   "nom": "0005-fix-riscv.patch",
+   "titre_declare": "fix: 解决riscv架构下无法编包的问题 (impossible de construire les paquets sur riscv)",
+   "contenu_reel": "Ajoute riscv64 à vars.generic (+ grub-efi-riscv64) et réactive les paquets image et headers dans riscv64.mk.",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "debian.master/control.d/vars.generic",
+    "debian.master/rules.d/riscv64.mk"
+   ],
+   "resume": "Empaquetage riscv64, bénin."
+  },
+  {
+   "nom": "0006-feat-add-Phytium-support.patch",
+   "titre_declare": "feat: add Phytium support",
+   "contenu_reel": "Pilote DRM Phytium (pe220x/px210, debugfs 0644 avec tampons bornés, mmap GEM), glue stmmac dwmac-phytium, en-tête phytmac, et 25 options Phytium =y pour arm64 dans les annotations (+ STMMAC_ETH arm64 m→y).",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "drivers/gpu/drm/phytium/**",
+    "drivers/gpu/drm/{Kconfig,Makefile}",
+    "drivers/net/ethernet/stmicro/stmmac/*phytium*",
+    "drivers/net/ethernet/phytium/phytmac_v1.h",
+    "Documentation/devicetree/bindings/gpu/phytium,dc.yaml",
+    "debian.master/config/annotations"
+   ],
+   "resume": "Support matériel conforme au titre ; aucune option de sécurité touchée."
+  },
+  {
+   "nom": "0007-build-loongarch-ext4.patch",
+   "titre_declare": "build: 更新loongarch编译包依赖; 修复集成系统无ext4格式问题 (mise à jour des dépendances de build loongarch ; correction de l'absence du format ext4)",
+   "contenu_reel": "Remplace la configuration loong64 par un .config complet importé d'un environnement Kylin « ky11 » (CC_VERSION_TEXT) : 5 843 réglages loong64 modifiés. EXT4_FS=y ajouté, mais aussi désactivation de lockdown, MODULE_SIG, IMA/EVM, trousseaux, FORTIFY, HARDENED_USERCOPY, SLAB_FREELIST_*, INIT_ON_ALLOC, KFENCE, LANDLOCK, STRICT_DEVMEM, et activation de LEGACY_TIOCSTI ; BPF_UNPRIV_DEFAULT_OFF et RANDOMIZE_BASE améliorés. Le reste du patch : Makefile ARCH=loong64→SRCARCH, Build-Depends, cibles clang/rust de perf.",
+   "titre_fidele": false,
+   "classement": "[SUSPECT]",
+   "fichiers_amont": [
+    "Makefile",
+    "debian.master/config/annotations",
+    "debian.master/control.stub.in",
+    "tools/perf/Makefile.config"
+   ],
+   "resume": "Titre trompeur par omission : le correctif ext4 masque le démantèlement de la posture de sécurité du noyau loong64."
+  },
+  {
+   "nom": "0008-build-new-version-7.0.0-3.patch",
+   "titre_declare": "build: new version 7.0.0-3 (corps : 1. support des fonctions de sécurité Hygon ; 2. correctif son D3000M)",
+   "contenu_reel": "≈15 500 lignes : pilotes Hygon CCP (SM2/SM3/SM4, sm4-xts/gcm), ccp-mdev (/dev/ccp_share 0666, /dev/ccpN), hct.ko (/dev/hct_noiommu, /dev/hct_mig 0666, serveur vsock invité 12345), PSP Hygon (/dev/hygon_psp_config, verrou partagé avec l'espace utilisateur dans sev-dev.c), CSV (/dev/sev → csv_fops, import de certificat HGSC, ring buffer), TDM (/dev/tdm, tdm-kernel-guard via kprobe→kallsyms_lookup_name), pilotes TPM/TCM Hygon, CIS SM3/SM4 x86 + opcode map, CPUID 0x8C860000 et KVM, testmgr ; correctifs Phytium (phytmac, spi-v2, HDA) ; journal de portage .md à la racine.",
+   "titre_fidele": false,
+   "classement": "[SUSPECT]",
+   "fichiers_amont": [
+    "arch/x86/crypto/*cis*",
+    "arch/x86/include/asm/cpufeature*.h",
+    "arch/x86/kernel/cpu/hygon.c",
+    "arch/x86/kvm/{cpuid.c,reverse_cpuid.h}",
+    "crypto/testmgr.*",
+    "drivers/char/tpm/{tcm_hygon.c,tpm_hygon.c,Kconfig,Makefile}",
+    "drivers/crypto/ccp/**",
+    "include/linux/{ccp.h,psp-hygon.h}",
+    "include/uapi/linux/psp-hygon.h",
+    "sound/hda/controllers/phytium.c",
+    "drivers/spi/spi-phytium-v2.c",
+    "drivers/net/ethernet/phytium/*",
+    "hygon-ccp-patch-port-summary.md"
+   ],
+   "resume": "Titre générique ; le corps décrit l'essentiel, sans les correctifs Phytium. Nouvelles interfaces privilégiées, dont des nœuds 0666 offrant des opérations DMA/IOMMU et de la mémoire noyau partagée, un mmap non borné de mémoire noyau (root) et une modification du verrouillage SEV ; options en default y hors contrôle d'annotation."
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "hct.ko (CRYPTO_DEV_HCT, m)",
+   "protocole": "AF_VSOCK SOCK_STREAM",
+   "port": 12345,
+   "sens": "écoute (invité Hygon uniquement)",
+   "pairs_acceptes": "VMADDR_CID_HOST (2)",
+   "fichier_ligne": "debian/patches/0008-build-new-version-7.0.0-3.patch:11549-11590",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "collectes": [],
+ "couverture": [
+  {
+   "arbre": "archive/linux",
+   "patches_total": 8,
+   "patches_lus": 4,
+   "fichiers_debian": 72,
+   "pct_patches": 50,
+   "patches_lus_liste": [
+    "0003-fix-fix-build-error-of-drivers-gpu-drm-arise.patch",
+    "0004-fix-fix-loongarch-and-riscv64-build-error.patch",
+    "0005-fix-riscv.patch",
+    "0007-build-loongarch-ext4.patch (partie annotations : analyse programmatique exhaustive des 13 559 lignes ; reste lu intégralement)"
+   ],
+   "patches_lus_partiellement": {
+    "0001-update-packaging-config.patch": "intégral hors ashmem.c (969 l., parcouru par motifs + mmap/init lus) ; annotations analysées exhaustivement par programme",
+    "0002-build-build-linux-7.0.0-2.patch": "≈2 % lu ligne à ligne (tous les fichiers hors pilotes : arch, kernel, mm, lib, pci, iommu, acpi, xhci, i8042, Kconfig/Makefile) ; 252 000 lignes parcourues par motifs (interfaces utilisateur, mmap, ioctl, kallsyms, kprobes, fichiers, sockets)",
+    "0006-feat-add-Phytium-support.patch": "annotations, Kconfig/Makefile, debugfs et mmap GEM lus ; reste du pilote DRM parcouru par motifs",
+    "0008-build-new-version-7.0.0-3.patch": "≈35 % lu ligne à ligne : Kconfig/Makefile, cpufeature/hygon/KVM, hct.c complet, interfaces de ccp-mdev, hygon/psp-dev, csv ioctl, tdm ioctl, tdm-kernel-guard complet, psp-dev/sev-dev/sp-* amont, journal .md ; implémentations crypto SM2/SM3/SM4, ccp-ops, ccp-dev-v5, asm CIS, tpm/tcm_hygon, ring-buffer parcourus par motifs"
+   },
+   "fichiers_debian_lus": "63 fichiers hors patches : 58 lus intégralement (rules, rules.d/*, templates/*, scripts/*, control.d/*, changelog, copyright, tests/*, tools/generic, services/udev, source/*, debian.env, gbp.conf, signature-inclusion, snapcraft.mk, *.ignore) ; 5 partiellement (control : en-tête et relations ; kconfig/annotations.py et run.py : logique d'import/compactage/vérification ; fix-filenames.c et hv_set_ifconfig : motifs) ; debian.master/* reconstitué hors corpus (git apply dans le brouillon) et lu intégralement."
+  }
+ ],
+ "non_couvert": [
+  "Arbre noyau amont 7.0 (.orig) absent : défauts Kconfig, select implicites, crochet de signature (scripts/Makefile.modinst / sign-module), sémantique de MITIGATION_GDS et présence éventuelle de kysec ou /proc/kylin_sched dans l'orig non vérifiables",
+  ".config finale non produite (compilation interdite) : valeurs effectives des options absentes des annotations inconnues",
+  "Options absentes des annotations (toutes arch.) : LOCK_DOWN_KERNEL_FORCE_NONE/INTEGRITY/CONFIDENTIALITY, LOCK_DOWN_IN_EFI_SECURE_BOOT, MODULE_SIG_FORCE, MODULE_SIG_ALL, MODULE_SIG_SHA512, STRICT_KERNEL_RWX, STRICT_MODULE_RWX, IO_STRICT_DEVMEM, RANDOMIZE_MEMORY, DEVKMEM (supprimé en amont)",
+  "Options absentes pour amd64/arm64/riscv64 (présentes seulement pour loong64) : MODULE_SIG, STACKPROTECTOR(_STRONG), STRICT_DEVMEM, DEVMEM, DEBUG_FS, KPROBES, RANDOMIZE_KSTACK_OFFSET, INIT_ON_FREE_DEFAULT_ON, BUG_ON_DATA_CORRUPTION, BPF_UNPRIV_DEFAULT_OFF ; RANDOMIZE_BASE absent pour amd64 ; FORTIFY_SOURCE absent pour riscv64 ; HIBERNATION absent pour arm64",
+  "Saveur arm64 generic-64k : absente de l'en-tête FLAVOUR des annotations, politique effective héritée non vérifiée",
+  "0002 : pilotes arise (≈175 000 l.), LeapRAID (≈16 000 l.), Phytium (≈50 000 l.) non relus ligne à ligne",
+  "0008 : implémentations crypto Hygon (SM2/SM3/SM4 CCP, sm4/sm3 CIS asm), ccp-dev-v5, ring-buffer, tpm_hygon/tcm_hygon, tdm-dev (hors ioctl) non relus ligne à ligne ; exactitude cryptographique non évaluée",
+  "0006 : pilote DRM Phytium hors interfaces debugfs/mmap",
+  "Règles udev (autres paquets) fixant les droits de /dev/ccpN, /dev/hygon_psp_config, /dev/hct_noiommu, /dev/tdm, /dev/sev, /dev/ashmem",
+  "Paquet linux-signed / clés de signature UEFI et chaîne Secure Boot (hors de ce dépôt)",
+  "Réglage sysctl des espaces de noms utilisateur non privilégiés (conditionne le constat virt_wifi)"
+ ],
+ "durcissement_config": [
+  {
+   "option": "CONFIG_SECURITY_LOCKDOWN_LSM",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 passé de y à n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:9442 (annotations reconstituée l.8390)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_SECURITY_LOCKDOWN_LSM_EARLY",
+   "valeur": "amd64=y, arm64=y, loong64=-, riscv64=y ; loong64 '-' (indéfini) depuis 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:9443 (annotations reconstituée l.8391)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_LOCK_DOWN_KERNEL_FORCE_NONE",
+   "valeur": "non_couvert (absent des annotations pour toutes les arch. ; valeur = défaut Kconfig/select, non vérifiable sans arbre amont) ; LOCK_DOWN_KERNEL_FORCE_INTEGRITY/CONFIDENTIALITY et LOCK_DOWN_IN_EFI_SECURE_BOOT également absents : mode de verrouillage effectif inconnu",
+   "fichier_ligne": "non_couvert",
+   "attendu_debian": "y + LOCK_DOWN_IN_EFI_SECURE_BOOT=y (verrouillage automatique sous Secure Boot chez Debian/Ubuntu)",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_MODULE_SIG",
+   "valeur": "loong64=n ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; amd64/arm64/riscv64 : PROBABLE y via « select MODULE_SIG if MODULES » de SECURITY_LOCKDOWN_LSM (Kconfig amont non vérifiable) ; loong64 : MODULE_SIG_SHA256=y retiré et MODULE_SIG=n posé par 0007:6376-6378",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:6378 (annotations reconstituée l.5572)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_MODULE_SIG_FORCE",
+   "valeur": "non_couvert (absent des annotations pour toutes les arch. ; valeur = défaut Kconfig/select, non vérifiable sans arbre amont)",
+   "fichier_ligne": "non_couvert",
+   "attendu_debian": "n (Debian/Ubuntu ; application via lockdown sous Secure Boot)",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_MODULE_SIG_ALL",
+   "valeur": "non_couvert (absent des annotations pour toutes les arch. ; valeur = défaut Kconfig/select, non vérifiable sans arbre amont) ; défaut Kconfig amont y si MODULE_SIG (PROBABLE)",
+   "fichier_ligne": "non_couvert",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_IMA",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:4481 (annotations reconstituée l.3963)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_EVM",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007 ; INTEGRITY_SIGNATURE loong64 n (0007:4728)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:3052 (annotations reconstituée l.2777)",
+   "attendu_debian": "y (Ubuntu)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_BPF_UNPRIV_DEFAULT_OFF",
+   "valeur": "loong64=y ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; loong64 n→y par 0007 (amélioration) ; autres arch. : défaut Kconfig amont y (PROBABLE)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:907 (annotations reconstituée l.909)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_BPF_JIT_ALWAYS_ON",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:899 (annotations reconstituée l.902)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_STACKPROTECTOR_STRONG",
+   "valeur": "loong64=y ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; amd64/arm64/riscv64 : défaut Kconfig y (PROBABLE)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:11338 (annotations reconstituée l.9866)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_FORTIFY_SOURCE",
+   "valeur": "amd64=y, arm64=y, loong64=n ; absent pour riscv64 (défaut Kconfig, non vérifiable) ; loong64 y→n par 0007 ; riscv64 absent",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:3294 (annotations reconstituée l.2995)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_RANDOMIZE_BASE",
+   "valeur": "arm64=y, loong64=y, riscv64=y ; absent pour amd64 (défaut Kconfig, non vérifiable) ; amd64 absent (défaut x86 y, PROBABLE) ; loong64 : était désactivé en 0001 via CMDLINE=\"nokaslr\" (0001:1341), corrigé par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:8502 (annotations reconstituée l.7501)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_RANDOMIZE_KSTACK_OFFSET",
+   "valeur": "loong64=y ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:8504 (annotations reconstituée l.7503)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_RANDOMIZE_KSTACK_OFFSET_DEFAULT",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:8505 (annotations reconstituée l.7504)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_HARDENED_USERCOPY",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:3718 (annotations reconstituée l.3391)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_INIT_ON_ALLOC_DEFAULT_ON",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:4581 (annotations reconstituée l.4055)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_INIT_ON_FREE_DEFAULT_ON",
+   "valeur": "loong64=n ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:4582 (annotations reconstituée l.4056)",
+   "attendu_debian": "n",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_SLAB_FREELIST_HARDENED",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:10133 (annotations reconstituée l.8872)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_SLAB_FREELIST_RANDOM",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:10134 (annotations reconstituée l.8873)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_STRICT_KERNEL_RWX",
+   "valeur": "non_couvert (absent des annotations pour toutes les arch. ; valeur = défaut Kconfig/select, non vérifiable sans arbre amont) ; généralement non désactivable (ARCH_HAS_STRICT_KERNEL_RWX) ; STRICT_MODULE_RWX également absent",
+   "fichier_ligne": "non_couvert",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_STRICT_DEVMEM",
+   "valeur": "loong64=n ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; loong64=n alors que DEVMEM=y (0007:2136) et lockdown absent",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:11384 (annotations reconstituée l.9912)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_IO_STRICT_DEVMEM",
+   "valeur": "non_couvert (absent des annotations pour toutes les arch. ; valeur = défaut Kconfig/select, non vérifiable sans arbre amont) ; absent : sans valeur explicite, défaut Kconfig amont n (PROBABLE) — écart possible non confirmable",
+   "fichier_ligne": "non_couvert",
+   "attendu_debian": "y (Ubuntu)",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_LEGACY_TIOCSTI",
+   "valeur": "amd64=n, arm64=n, loong64=y, riscv64=n ; l'affirmation « =n » d'un autre lot n'est vraie que pour amd64/arm64/riscv64 ; loong64=y (0007)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5515 (annotations reconstituée l.4901)",
+   "attendu_debian": "n",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_DEVMEM",
+   "valeur": "loong64=y ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:2136 (annotations reconstituée l.2010)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_DEVKMEM",
+   "valeur": "non_couvert (absent des annotations pour toutes les arch. ; valeur = défaut Kconfig/select, non vérifiable sans arbre amont)",
+   "fichier_ligne": "non_couvert",
+   "attendu_debian": "sans objet (supprimé en amont depuis 5.13)",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_KEXEC",
+   "valeur": "amd64=y, arm64=y, loong64=y, riscv64=y",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:3870 (annotations reconstituée l.4653)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_KEXEC_SIG",
+   "valeur": "amd64=y, arm64=y ; absent pour loong64/riscv64 (défaut Kconfig, non vérifiable) ; KEXEC_BZIMAGE_VERIFY_SIG amd64=y ; loong64 KEXEC_FILE=y sans KEXEC_SIG",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:3876 (annotations reconstituée l.4661)",
+   "attendu_debian": "y (amd64/arm64)",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_HIBERNATION",
+   "valeur": "amd64=y, loong64=y, riscv64=y ; absent pour arm64 (défaut Kconfig, non vérifiable) ; arm64 absent",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:2853 (annotations reconstituée l.3507)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_PROC_KCORE",
+   "valeur": "amd64=y, arm64=y, loong64=y, riscv64=y",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:5980 (annotations reconstituée l.7268)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_DEBUG_FS",
+   "valeur": "loong64=y ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; loong64 DEBUG_FS_ALLOW_ALL=y (0007:2046)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:2045 (annotations reconstituée l.1930)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_KPROBES",
+   "valeur": "loong64=n ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; loong64=n (plus restrictif) ; amd64/arm64/riscv64 absents mais BPF_KPROBE_OVERRIDE=y implique KPROBES=y (PROBABLE)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5257 (annotations reconstituée l.4719)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_SECURITY_SELINUX",
+   "valeur": "amd64=y, arm64=y, loong64=y, riscv64=y",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:6926 (annotations reconstituée l.8396)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_SECURITY_APPARMOR",
+   "valeur": "amd64=y, arm64=y, loong64=y, riscv64=y ; compilé partout mais absent de la liste LSM loong64",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:6916 (annotations reconstituée l.8378)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_SECURITY_YAMA",
+   "valeur": "amd64=y, arm64=y, loong64=y, riscv64=y",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:6932 (annotations reconstituée l.8408)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_LSM",
+   "valeur": "amd64=\"landlock,lockdown,yama,integrity,apparmor\", arm64=\"landlock,lockdown,yama,integrity,apparmor\", loong64=\"landlock,lockdown,yama,loadpin,safesetid,ipe,bpf\", riscv64=\"landlock,lockdown,yama,integrity,apparmor\" ; loong64 sans apparmor ni integrity ; landlock/loadpin/safesetid/ipe listés mais =n, BPF_LSM absent pour loong64",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5614 (annotations reconstituée l.4985)",
+   "attendu_debian": "\"landlock,lockdown,yama,integrity,apparmor\" (Ubuntu)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_DEFAULT_SECURITY_APPARMOR",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n, DEFAULT_SECURITY_DAC=y",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:2118 (annotations reconstituée l.1994)",
+   "attendu_debian": "y (Ubuntu)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_SECURITY_LANDLOCK",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:9440 (annotations reconstituée l.8388)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_USER_NS",
+   "valeur": "amd64=y, arm64=y, loong64=y, riscv64=y",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:9051 (annotations reconstituée l.10845)",
+   "attendu_debian": "y",
+   "ecart": false
+  },
+  {
+   "option": "CONFIG_SECURITY_DMESG_RESTRICT",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:9437 (annotations reconstituée l.8385)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_LIST_HARDENED",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5552 (annotations reconstituée l.4930)",
+   "attendu_debian": "y (Ubuntu)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_ZERO_CALL_USED_REGS",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64=n",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:13400 (annotations reconstituée l.11536)",
+   "attendu_debian": "y (Ubuntu)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_SCHED_STACK_END_CHECK",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:9256 (annotations reconstituée l.8230)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_BUG_ON_DATA_CORRUPTION",
+   "valeur": "loong64=n ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:1054 (annotations reconstituée l.1016)",
+   "attendu_debian": "y (Ubuntu)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_KFENCE",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5247 (annotations reconstituée l.4712)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_MITIGATION_GDS",
+   "valeur": "amd64=n ; absent pour arm64/loong64/riscv64 (défaut Kconfig, non vérifiable) ; amd64=n explicite depuis 0001 : mitigation Downfall/GDS désactivée par défaut (sémantique amont, PROBABLE)",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:4511 (annotations reconstituée l.5441)",
+   "attendu_debian": "y (défaut amont)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_X86_KERNEL_IBT",
+   "valeur": "amd64=n ; absent pour arm64/loong64/riscv64 (défaut Kconfig, non vérifiable) ; amd64=n explicite depuis 0001",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:9514 (annotations reconstituée l.11410)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_SECONDARY_TRUSTED_KEYRING",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:9416 (annotations reconstituée l.8373)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_SYSTEM_BLACKLIST_KEYRING",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:11449 (annotations reconstituée l.9978)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_TRUSTED_KEYS",
+   "valeur": "amd64=y, arm64=y, loong64=n, riscv64=y ; loong64 y→n par 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:11746 (annotations reconstituée l.10335)",
+   "attendu_debian": "y",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE",
+   "valeur": "amd64=0x01b6, arm64=0x01b6, loong64=0x1, riscv64=0x01b6 ; loong64=0x1 (toutes fonctions SysRq)",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5671 (annotations reconstituée l.5036)",
+   "attendu_debian": "0x01b6",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_LDISC_AUTOLOAD",
+   "valeur": "amd64=n, arm64=n, loong64=y, riscv64=n ; loong64=y",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5331 (annotations reconstituée l.4773)",
+   "attendu_debian": "n (valeur amd64/arm64/riscv64 du même fichier)",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_LEGACY_PTYS",
+   "valeur": "amd64=n, arm64=n, loong64=y, riscv64=n ; loong64=y",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:5512 (annotations reconstituée l.4899)",
+   "attendu_debian": "n",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_MODULE_FORCE_LOAD",
+   "valeur": "loong64=y ; absent pour amd64/arm64/riscv64 (défaut Kconfig, non vérifiable) ; loong64=y depuis 0001 (chargement forcé ignorant vermagic)",
+   "fichier_ligne": "debian/patches/0001-update-packaging-config.patch:4618 (annotations reconstituée l.5570)",
+   "attendu_debian": "n",
+   "ecart": true
+  },
+  {
+   "option": "CONFIG_CMDLINE",
+   "valeur": "arm64=\"console=ttyAMA0\", loong64=\"\" ; absent pour amd64/riscv64 (défaut Kconfig, non vérifiable) ; loong64 \"nokaslr\" en 0001 (0001:1341) remplacé par \"\" en 0007",
+   "fichier_ligne": "debian/patches/0007-build-loongarch-ext4.patch:1400 (annotations reconstituée l.1324)",
+   "attendu_debian": "\"\" / non défini",
+   "ecart": false
+  }
+ ],
+ "synthese": "Empreinte conforme (c3d931a2…, 72 fichiers). Le delta openKylin du noyau 7.0 tient en 8 patches quilt (≈305 000 lignes) qui créent debian.master/ et ajoutent beaucoup de code noyau. Classement : 3 [LÉGITIME] (0003, 0005, 0006), 2 [À EXAMINER] (0002, 0004), 3 [SUSPECT] (0001, 0007, 0008). Titres non fidèles : 0001, 0002, 0004, 0007, 0008. Constat principal (élevée, CONSTATÉ) : 0007, présenté comme un correctif de dépendances et d'ext4 loong64, importe un .config Kylin « ky11 » qui désactive pour loong64 lockdown, signature des modules, IMA/EVM et STRICT_DEVMEM ; la frontière root→noyau disparaît sur cette architecture, alors que loong64.mk déclare uefi_signed=true. 0007 retire aussi sur loong64 FORTIFY, HARDENED_USERCOPY, SLAB_FREELIST_*, INIT_ON_ALLOC, KFENCE et LIST_HARDENED (moyenne), active LEGACY_TIOCSTI (l'affirmation « =n » d'un autre lot ne vaut que pour amd64/arm64/riscv64) et laisse AppArmor hors de la liste LSM (moyenne). amd64 reste aligné sur Ubuntu (lockdown y, BPF_JIT_ALWAYS_ON y, LSM Ubuntu, LEGACY_TIOCSTI n), avec deux écarts : MITIGATION_GDS=n (Downfall, moyenne, PROBABLE) et X86_KERNEL_IBT=n (faible). Les contrôles de configuration sont désactivés (do_skip_checks=true sur les 4 arch., module-signature-check commenté) et l'annotation est compactée sans notes : de nombreux durcissements dépendent des défauts Kconfig, non vérifiables ici (moyenne, CONSTATÉ). 0001, titré « packaging », modifie binder (contexte de sécurité ignoré), virt_wifi (wiphy globale déplaçable entre netns, moyenne PROBABLE) et réintroduit ashmem. 0008 ajoute des interfaces Hygon privilégiées : /dev/ccp_share et /dev/hct_mig en 0666 (DMA/IOMMU et mémoire partagée, moyenne PROBABLE), mmap non borné de mémoire noyau via /dev/hygon_psp_config (root, moyenne PROBABLE), réécriture de PTE sans verrou, résolution kallsyms par kprobe et serveur vsock invité. Ni kysec ni /proc/kylin_sched ne figurent dans ce delta. Les scripts de mainteneur sont conformes au modèle Ubuntu (aucun kysec_set, aucun accès réseau). Couverture : 4/8 patches lus intégralement (50 %), 4 partiellement ; 0002 n'est couvert qu'à environ 2 % ligne à ligne. L'absence de preuve ne vaut pas sûreté.",
+ "statut": "complet"
+}

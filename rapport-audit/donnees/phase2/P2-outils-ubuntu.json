@@ -1,0 +1,705 @@
+{
+ "lot": "P2-outils-ubuntu",
+ "composants": [
+  "aptdaemon",
+  "apport"
+ ],
+ "empreintes": {
+  "archive/aptdaemon": "4180877abcc729fcf99cfee137e85e15820f2ccfdb1a17048201b7ed8b9656f0",
+  "archive/apport": "be1747af6037399e6c0bf31c888daa13d348c637b2ce4dc837c69d2cf4ec9804",
+  "conforme": true,
+  "note": "21 et 44 fichiers, identiques à empreintes-arbres-sources.tsv (colonne 3) ; debian.tar.xz openKylin (ref-p2) identiques aux arbres archive/*/debian ; orig apport sha256 identique à Ubuntu ; références cmp identiques au cliché (aptdaemon.json enrichi depuis de orig_vs_natif_hors_debian pour 2.0.2, pris en compte)."
+ },
+ "findings": [
+  {
+   "depot": "aptdaemon",
+   "fichier": "ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/aptdaemon/core.py",
+   "ligne": "2011-2021",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "@dbus.service.method(APTDAEMON_DBUS_INTERFACE, in_signature=\"ss\", out_signature=\"b\") def SetEnviron(self , key , value): ... os.environ[key] = value / return True",
+   "explication": "L'archive amont (orig) livrée par openKylin n'est pas l'orig Ubuntu : elle contient une méthode D-Bus SetEnviron ajoutée par Kylin dans le démon root aptd, sans sender_keyword ni contrôle policykit (aucun appel à _check_auth/policykit1), atteignable par tout utilisateur local (ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/data/org.debian.apt.conf:10-14, policy context=\"default\" allow send_destination=\"org.debian.apt\"). Elle écrit une variable d'environnement arbitraire dans le processus root, héritée par les processus enfants (dpkg, scripts de mainteneur, debconf). Dans la version auditée ok7, cette méthode est RETIRÉE par archive/aptdaemon/debian/patches/0001-update-new-version.patch:164-177 (format 3.0 (quilt), série appliquée à l'extraction) : l'arbre source ok7 après application de la série est identique octet pour octet à Ubuntu noble 0ubuntu44 patché (283 fichiers, hors fichier 'core'). Le client openKylin 3.0 kylin-system-updater 3.0.0.0-ok56 appelle toujours cette API (archive/kylin-system-updater/backend/SystemUpdater/UpdateManagerDbus.py:122 interface.SetEnviron(key,value) ; :456-457 avec XAUTHORITY et DISPLAY ; backend/SystemUpdater/UpdateManager.py:605) : l'écosystème Kylin a été conçu autour de cette méthode. La neutralisation repose uniquement sur un correctif au titre générique ('update new version').",
+   "scenario": "Si l'orig est construit sans appliquer la série quilt (dpkg-source --skip-patches, dépôt git en mode patches-non-appliqués, ou version future abandonnant 0001), aptd réexpose SetEnviron : un utilisateur local sans privilège appelle la méthode sur le bus système pour placer dans l'environnement du démon root une variable influençant les processus root lancés lors de la transaction suivante (élévation locale vers root). Aucun code d'exploitation n'est fourni.",
+   "contre_lecture": "Fonction conçue pour transmettre DISPLAY/XAUTHORITY de la session graphique à aptd (dialogues debconf/conffile), cf. kylin-system-updater:456-457 ; openKylin l'a explicitement retirée en ok6/ok7, et l'appel côté client échoue proprement (UpdateManagerDbus.py:124-130). Le paquet binaire construit depuis le source ok7 ne devrait pas la contenir (non vérifié sur binaire).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "aptdaemon",
+   "fichier": "archive/aptdaemon/debian/changelog",
+   "ligne": "7-41",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "aptdaemon (1.1.1+bzr982-ok6) nile; * Update new version. -- 25 Apr 2024 16:46:28 / ... aptdaemon (1.1.1+bzr982-ok1) yangtze; * Sync kylin-desktop -- 14 Aug 2022",
+   "explication": "Le correctif qui retire SetEnviron (0001-update-new-version.patch, en-tête Date: Thu, 25 Apr 2024 16:46:58) est apparu en ok6 (2024-04-25). Les membres de l'orig.tar.xz sont datés 2022-08-14 11:57 (= ok1 'Sync kylin-desktop'), et ok4 indique seulement 'Update orig.tar format'. Les versions ok1 à ok5 (yangtze, openKylin 1.x, 2022-08 → 2024-01) ont donc très probablement été construites depuis cet orig SANS le correctif, c'est-à-dire avec la méthode D-Bus root non authentifiée SetEnviron, les protections de suppression des paquets essentiels désactivées et allow_downgrade=True. Ce constat porte sur des versions antérieures à 3.0 (la 3.0 livre ok7, neutralisée).",
+   "scenario": "Sur un poste openKylin 1.x équipé d'aptdaemon ok1–ok5 : tout utilisateur local appelle SetEnviron sur le bus système puis déclenche une opération aptd ; les processus root enfants héritent de l'environnement contrôlé (élévation locale). Aucun code d'exploitation n'est fourni.",
+   "contre_lecture": "Les debian/ et binaires ok1–ok5 ne sont pas disponibles : ces versions ont pu porter un autre correctif retirant SetEnviron, ou un orig différent. Indice manquant : debian/patches et paquets binaires ok1–ok5 (archives openKylin yangtze).",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "aptdaemon",
+   "fichier": "ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/aptdaemon/worker/aptworker.py",
+   "ligne": "684-687, 1031-1038, 1230",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "# if pkg.essential is True: / #     raise TransactionFailed(ERROR_NOT_REMOVE_ESSENTIAL_PACKAGE, ... / # for pkg in changes: #  if pkg.marked_delete and (pkg.essential is True or ... pkg.name == \"aptdaemon\") / ret = deb.check(allow_downgrade=True)",
+   "explication": "Trois autres modifications Kylin présentes dans l'orig et absentes de tout correctif Ubuntu : (1) refus de suppression des paquets Essential mis en commentaire (RemovePackages) ; (2) refus de suppression des paquets Essential/Priority required/aptdaemon mis en commentaire (contrôle des changements de cache) ; (3) InstallFile autorise les rétrogradations (deb.check(allow_downgrade=True)). Une 4e modification (ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/aptdaemon/progress.py:535 signal.signal(signal.SIGHUP, signal.SIG_IGN) dans l'enfant dpkg) est bénigne. Les quatre sont annulées par archive/aptdaemon/debian/patches/0001-update-new-version.patch:236, 261-291, 299-300. Ce ne sont pas des contrôles d'autorisation (polkit install-or-remove-packages / install-file reste exigé, auth_admin_keep) mais des garde-fous.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "aptdaemon",
+   "fichier": "ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/core",
+   "ligne": "1 (fichier binaire, 84 029 440 octets)",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "ELF 64-bit LSB core file, x86-64, SVR4-style, from 'Xvfb :99 -screen 0 1280x1024x24 -nolisten tcp -auth <masqué>', real uid: 1000, execfn: '/usr/bin/Xvfb'",
+   "explication": "L'orig openKylin contient à sa racine un vidage mémoire (core dump) d'un processus Xvfb lancé par xvfb-run pendant l'exécution des tests sur la machine qui a produit l'archive (uid 1000, compte personnel). Absent de l'orig Ubuntu ; non installé par les paquets binaires (absent des debian/*.install). Caractérisation en lecture seule (file, readelf -n, strings) — comptes uniquement : notes NT_PRSTATUS×9, NT_FPREGSET×9, NT_PRPSINFO, NT_SIGINFO, NT_AUXV, NT_FILE ; 6 793 chaînes ≥6 caractères ; 59 variables d'environnement distinctes (variables de construction dpkg-buildflags/DEB_*, HOME, LOGNAME, PWD, LANG, DBUS_SESSION_BUS_ADDRESS, GPG_AGENT_INFO, XAUTHORITY : valeurs <masqué>) ; 1 préfixe de répertoire personnel distinct (9 occurrences, <masqué>) ; 0 occurrence des motifs clé privée PEM/OpenSSH/PGP, ssh-rsa/ed25519, MIT-MAGIC-COOKIE, Authorization/Bearer, password=/passwd=, token=, préfixes de jetons ghp_/glpat-/AKIA/xoxb-, adresses e-mail, adresses IPv4, URL http(s). Bibliothèques mappées (libLLVM-9, libffi 7, libelf 0.176) : environnement de type Ubuntu 20.04/Kylin V10 ; SOURCE_DATE_EPOCH = 2022-01-07. Aucune donnée secrète identifiée par motifs ; fuite limitée (identité du compte et chemins du poste). Le fait établit surtout que l'orig a été régénéré à partir d'un arbre de travail sur un poste de développeur après exécution des tests, et non tiré de l'amont.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "aptdaemon",
+   "fichier": "archive/aptdaemon/debian/patches/0001-update-new-version.patch",
+   "ligne": "3, 152-177",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "Subject: update new version ... -    def SetEnviron(self , key , value): ... -        os.environ[key] = value",
+   "explication": "Titre non fidèle au contenu : 'update new version' recouvre (a) la réapplication de 6 correctifs Ubuntu 0ubuntu35–44 et (b) la suppression d'une méthode D-Bus du démon root et la réactivation de garde-fous. L'écart va dans le sens d'un RÉTABLISSEMENT de la posture amont (pas d'affaiblissement), mais l'opacité empêche la traçabilité (le changelog ok6 dit seulement 'Update new version.').",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "aptdaemon",
+   "fichier": "archive/aptdaemon/debian/rules",
+   "ligne": "7",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "export DEB_BUILD_OPTIONS=nocheck",
+   "explication": "Ajout openKylin (absent d'Ubuntu 0ubuntu44) : la suite de tests est désactivée inconditionnellement et toute autre option DEB_BUILD_OPTIONS fournie par l'environnement de construction est écrasée. Tests perdus : liste blanche des dépôts de haute confiance, verrous, worker (dont simulation d'installation de .deb locaux). Aucun impact sur le code livré (paquet Architecture: all, pas de drapeaux de compilation).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "aptdaemon",
+   "fichier": "ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/aptdaemon/core.py",
+   "ligne": "825, 1076-1077, 1112, 1149",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "raise ValueError(\"Security exception: Absolute path for locale\") / if self.role == enums.ROLE_INSTALL_FILE: yield self._check_auth() / with set_euid_egid(self.uid, self.gid):",
+   "explication": "Hypothèse « cuisson » CONFIRMÉE : les 36 correctifs Ubuntu absents de la série openKylin sont tous présents dans l'arbre final — 30 intégrés à l'orig (25 vérifiés par application inverse isolée propre, 2 par identité de l'arbre cumulé, 3 sans objet car ne touchant que pkcompat.py supprimé par drop_pkcompat) et 6 réappliqués par 0001. Correctifs de sécurité vérifiés présents : CVE-2020-15703 (core.py:825), CVE-2020-27349 (core.py:1076-1077), CVE-2020-16128 (core.py:1112, 1149 ; utils.py:64), CVE-2015-1323/lp1449587 (worker/aptworker.py:1216-1219), plus allow-unauthenticated (aptworker.py:1056) et fix-high-trust-pkcompat (aptworker.py:117). Aucun correctif de sécurité Ubuntu manquant par rapport à 0ubuntu44 ; aucune CVE publiée par Ubuntu après 0ubuntu44 (changelog 2.0.2build1). Ubuntu 2.0.0 a en revanche retiré la gestion des clés (AddVendorKeyFromKeyserver/AddVendorKeyFromFile, conservées chez openKylin : core.py:1775, 1802, sous polkit change-repository auth_admin_keep) : réduction de surface non reprise.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apport",
+   "fichier": "ref-p2/openkylin/apport_2.28.1-ok3/orig/data/apport",
+   "ligne": "647, 769, 1124-1127",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "create_directory(apport.fileutils.report_dir, 0o1777) / if _check_global_pid_and_forward(options): return 0 / gid = pwd.getpwnam(\"whoopsie\").pw_gid ... except (OSError, KeyError): os.fchown(fd, report_owner.uid, report_owner.gid)",
+   "explication": "openKylin 2.28.1-ok3 est basé sur la version de sortie 2.28.1-0ubuntu2 (orig identique, sha256 b9a83445…, signature amont valide) et ne contient aucun des correctifs publiés depuis par Ubuntu dans noble-security jusqu'à 2.28.1-0ubuntu3.8 (42 fichiers de correctifs absents). Correctifs de sécurité manquants : CVE-2025-5054 (course PID lors du transfert de vidages vers les conteneurs → lecture du vidage d'un programme SUID ; 10 correctifs de 0ubuntu3.6 : apport-move-consistency_checks-call-further-up, apport-do-not-override-options.pid, apport-open-proc-pid-as-early-as-possible, fileutils-respect-proc_pid_fd-in-get_core_path, apport-use-opened-proc-pid-everywhere, apport-do-consistency-check-before-forwarding-crashes, apport-require-dump-mode-to-be-specified, apport-determine-report-owner-by-dump_mode, apport-do-not-forward-crash-for-dump_mode-2, apport-support-pidfd-F-parameter-from-kernel ; plus correctifs de régression check-exe-mtime (3.7) et apport-Do-not-hide-FileNotFoundError (3.8)) ; CVE-2025-5467 (rapports lisibles par le groupe primaire du propriétaire en l'absence du groupe whoopsie : apport-Do-not-change-report-group-to-report-owners-primar, 3.6) ; durcissement /var/crash LP#2066995 (apport-do-not-modify-permission-of-existing-var-crash, apport-create-var-crash-with-setgid-permission, et archive/apport/debian/apport.postinst:7 'mkdir -p -m 1777 /var/crash' au lieu de 3777 + chmod g+s). Dans l'orig openKylin, le transfert vers conteneur (data/apport:769) précède les contrôles de cohérence (consistency_checks, data/apport:951).",
+   "scenario": "Un administrateur installe depuis le dépôt openKylin apport et apport-core-dump-handler (apport devient gestionnaire core_pattern). Un utilisateur local provoque le plantage d'un programme SUID et exploite la course sur /proc/<pid> pour obtenir un vidage contenant des données sensibles (CVE-2025-5054) ; ou un membre du même groupe primaire lit les rapports .crash d'un autre utilisateur (CVE-2025-5467). Aucun code d'exploitation n'est fourni.",
+   "contre_lecture": "Le paquet apport n'est PAS installé dans l'ISO 3.0 (seuls python3-apport et python3-problem-report : rapport-audit/donnees/iso-3.0/casper--filesystem.manifest:1652, 1696) ; systemd-coredump est le gestionnaire installé (:1796). Installer apport seul satisfait 'apport-core-dump-handler | systemd-coredump' par systemd-coredump, chemin qui retourne avant le transfert vulnérable (data/apport:760-761). Les correctifs sont dans data/apport (paquet apport) sauf fileutils.py. Exposition conditionnée à une installation volontaire.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apport",
+   "fichier": "archive/apport/debian/patches/0005-1-openkylin.patch",
+   "ligne": "21-22",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "-    if \"debian\" in ids: / +    if \"debian\" or \"openkylin\" in ids:",
+   "explication": "Erreur de logique Python : l'expression vaut toujours vrai (chaîne non vide \"debian\"), donc determine_packaging_implementation() (apport/packaging_impl/__init__.py:15 après application) retourne toujours 'apt_dpkg' quel que soit /etc/os-release. Effet pratique conforme à l'intention sur openKylin (système dpkg) ; sans impact de sécurité. Le correctif supprime aussi 3 tests (lignes 34-51, 60-66, 79-104 : test_add_gdb_info_damaged, test_add_gdb_info_exe_missing, test_ui_update_view), non mentionnés dans le titre mais annoncés au changelog ok2 ('Fix 2: delete some failed test case').",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apport",
+   "fichier": "archive/apport/debian/patches/0006-2-test_signal_crashes.py-T-test_modify_after_start.patch",
+   "ligne": "19-68",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "-    def test_modify_after_start(self): / -        \"\"\"Ignore executables which got modified after process started.\"\"\"",
+   "explication": "Suppression du test d'intégration qui vérifie un contrôle de sécurité du gestionnaire (ignorer un exécutable modifié après le démarrage du processus). Le contrôle à l'exécution reste intact dans l'orig (ref-p2/openkylin/apport_2.28.1-ok3/orig/data/apport:886-895 'executable was modified after program start, ignoring') ; seule la non-régression n'est plus vérifiée à la construction. Motif déclaré : test en échec dans l'environnement de construction openKylin (cause non documentée).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apport",
+   "fichier": "archive/apport/debian/patches/Default-to-Ubuntu-crash-DB.patch",
+   "ligne": "18",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "-default = 'debug' / +default = 'ubuntu'  (crashdb.conf final : 'ubuntu': {'impl': 'launchpad', 'bug_pattern_url': 'http://people.canonical.com/~ubuntu-archive/bugpatterns/bugpatterns.xml', ...})",
+   "explication": "Correctif hérité à l'identique d'Ubuntu, non adapté à openKylin : la base de rapports par défaut reste Launchpad (Canonical) et les fichiers de motifs/doublons sont lus en HTTP clair sur people.canonical.com (etc/apport/crashdb.conf:3, 19-21 après application). Disable-Launchpad-crash-reports-for-the-24.04-release.patch:17 limite les types acceptés à Bug et Package (pas de plantages). Flux déclenché uniquement par une action utilisateur (ubuntu-bug/apport-bug/apport-cli/apport-collect, interfaces apport-gtk/kde) fournies par des paquets non installés dans l'ISO 3.0. Le client whoopsie (paquet whoopsie 0.2.77-ok1, hors lot, non installé) vise https://daisy.ubuntu.com (archive/whoopsie/debian/whoopsie.init:12).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "apport",
+   "fichier": "ref-p2/openkylin/apport_2.28.1-ok3/orig/apport_python_hook.py",
+   "ligne": "15-31",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "CONFIG = \"/etc/default/apport\" ... except OSError: # if the file does not exist, assume it's enabled / return True",
+   "explication": "Activation par défaut : le paquet apport (gestionnaire de plantages, /etc/default/apport enabled=1, service apport) n'est pas installé dans l'ISO 3.0 ; whoopsie et apport-noui non plus → aucun envoi automatique. En revanche python3-apport est installé et, faute de /etc/default/apport, apport.packaging.enabled() et le hook Python considèrent apport ACTIVÉ (orig apport/packaging.py:211-216). Conséquences : aptdaemon (installé) écrit des rapports locaux /var/crash/*.crash lors d'exceptions du worker (ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/aptdaemon/crash.py:40-73, appelé par worker/__init__.py:141-175) ; le hook Python écrit des rapports locaux pour les programmes empaquetés si l'interpréteur l'installe via sitecustomize (python3.12 non audité ici). Collecte locale uniquement, aucun flux réseau.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "patches": [
+  {
+   "nom": "0001-update-new-version.patch",
+   "titre_declare": "update new version",
+   "contenu_reel": "Réapplique 6 correctifs Ubuntu non intégrés à l'orig (test-with-timeout, fix-some-deprecated-code, gdk-gtk-versions.py, drop-function-not-in-3.11, setup-py-import-distutils-extra, pep8-to-pycodestyle) et annule 4 modifications Kylin de l'orig : suppression de la méthode D-Bus root non authentifiée SetEnviron (core.py), retrait de SIGHUP ignoré (progress.py), réactivation des refus de suppression des paquets essentiels (aptworker.py ×2), retrait de allow_downgrade=True (aptworker.py). Résultat : source identique octet pour octet à Ubuntu noble 1.1.1+bzr982-0ubuntu44 patché (hors fichier 'core').",
+   "titre_fidele": false,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "aptdaemon/client.py",
+    "aptdaemon/core.py",
+    "aptdaemon/errors.py",
+    "aptdaemon/gtk3widgets.py",
+    "aptdaemon/progress.py",
+    "aptdaemon/test.py",
+    "aptdaemon/worker/aptworker.py",
+    "setup.py",
+    "tests/test_pep8.py"
+   ],
+   "resume": "Titre générique masquant le retrait d'une API D-Bus root ; effet net favorable (alignement exact sur Ubuntu). Non [SUSPECT] car l'écart rétablit la posture amont au lieu de l'affaiblir. Lu intégralement (341 lignes) et vérifié par application."
+  },
+  {
+   "nom": "Add-bin-oem-getlogs.patch",
+   "titre_declare": "Add bin/oem-getlogs",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu noble 2.28.1-0ubuntu2",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "bin/oem-getlogs"
+   ],
+   "resume": "Hérité Ubuntu ; vérifié par empreinte, en-tête lu."
+  },
+  {
+   "nom": "Add-general-hooks.patch",
+   "titre_declare": "Add general hooks",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu noble 2.28.1-0ubuntu2",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "apport/hookutils.py",
+    "data/general-hooks/cloud_archive.py",
+    "data/general-hooks/powerpc.py",
+    "data/general-hooks/ubuntu-gnome.py",
+    "data/general-hooks/ubuntu.py"
+   ],
+   "resume": "Hérité Ubuntu ; vérifié par empreinte, en-tête lu."
+  },
+  {
+   "nom": "Default-to-Ubuntu-crash-DB.patch",
+   "titre_declare": "Default to Ubuntu crash DB",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu noble 2.28.1-0ubuntu2",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "etc/apport/crashdb.conf"
+   ],
+   "resume": "Hérité Ubuntu ; lu intégralement : base par défaut Launchpad, non adaptée à openKylin (constat informationnel)."
+  },
+  {
+   "nom": "Disable-Launchpad-crash-reports-for-the-24.04-release.patch",
+   "titre_declare": "Disable Launchpad crash reports for the 24.04 release",
+   "contenu_reel": "hérité : identique octet pour octet à ubuntu noble 2.28.1-0ubuntu2",
+   "titre_fidele": true,
+   "classement": "[LÉGITIME]",
+   "fichiers_amont": [
+    "etc/apport/crashdb.conf"
+   ],
+   "resume": "Hérité Ubuntu ; lu intégralement : problem_types = Bug, Package."
+  },
+  {
+   "nom": "0005-1-openkylin.patch",
+   "titre_declare": "!1 判断操作系统时增加对openkylin的判断 Merge pull request !1 (traduction : « ajouter openkylin lors de la détermination du système d'exploitation »)",
+   "contenu_reel": "Remplace la condition de détection de dpkg par une expression toujours vraie (\"debian\" or \"openkylin\" in ids) et supprime 3 tests (test_add_gdb_info_damaged, test_add_gdb_info_exe_missing, test_ui_update_view).",
+   "titre_fidele": false,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "apport/packaging_impl/__init__.py",
+    "tests/integration/test_report.py",
+    "tests/integration/test_ui_cli.py"
+   ],
+   "resume": "Titre partiel (suppression de tests non mentionnée, mais annoncée au changelog ok2) ; bogue logique bénin. Lu intégralement."
+  },
+  {
+   "nom": "0006-2-test_signal_crashes.py-T-test_modify_after_start.patch",
+   "titre_declare": "!2 删除失败的测试用例：test_signal_crashes.py::T::test_modify_after_start (traduction : « supprimer le test en échec … »)",
+   "contenu_reel": "Supprime le seul test test_modify_after_start (51 lignes), qui vérifie qu'apport ignore un exécutable modifié après le démarrage du processus.",
+   "titre_fidele": true,
+   "classement": "[À EXAMINER]",
+   "fichiers_amont": [
+    "tests/integration/test_signal_crashes.py"
+   ],
+   "resume": "Fidèle ; retire la non-régression d'un contrôle de sécurité (contrôle à l'exécution intact). Lu intégralement."
+  }
+ ],
+ "correctifs_ubuntu_aptdaemon": [
+  {
+   "nom": "fix-high-trust-pkcompat.diff",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/worker/aptworker.py"
+   ]
+  },
+  {
+   "nom": "dbus_timeout.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/client.py",
+    "aptdaemon/core.py"
+   ]
+  },
+  {
+   "nom": "py3_inheritable.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/progress.py"
+   ]
+  },
+  {
+   "nom": "lp1356823.diff",
+   "statut": "sans objet : ne touche que aptdaemon/pkcompat.py, supprimé par drop_pkcompat (absent des deux arbres)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/pkcompat.py"
+   ]
+  },
+  {
+   "nom": "lp1449587.diff",
+   "statut": "intégré à l'orig openKylin (vérifié par identité de l'arbre cumulé ; inverse isolée bloquée par des correctifs ultérieurs)",
+   "cve": "CVE-2015-1323",
+   "fichiers": [
+    "aptdaemon/core.py",
+    "aptdaemon/policykit1.py",
+    "aptdaemon/progress.py",
+    "aptdaemon/worker/aptworker.py",
+    "tests/*"
+   ]
+  },
+  {
+   "nom": "pep8-accommodations.diff",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "apport/aptdaemon.py",
+    "tests/test_pep8.py"
+   ]
+  },
+  {
+   "nom": "lp1487087.diff",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "tests/test_high_trust_repository_whitelist.py"
+   ]
+  },
+  {
+   "nom": "fix-installation.patch",
+   "statut": "sans objet : ne touche que aptdaemon/pkcompat.py, supprimé par drop_pkcompat (absent des deux arbres)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/pkcompat.py"
+   ]
+  },
+  {
+   "nom": "native-arch.patch",
+   "statut": "sans objet : ne touche que aptdaemon/pkcompat.py, supprimé par drop_pkcompat (absent des deux arbres)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/pkcompat.py"
+   ]
+  },
+  {
+   "nom": "key_value_typo.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/worker/aptworker.py"
+   ]
+  },
+  {
+   "nom": "lintian_deprecated_error.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "data/lintian/ubuntu/aptdaemon.profile"
+   ]
+  },
+  {
+   "nom": "lp1439769-aptdaemon-autoinstall.patch",
+   "statut": "intégré à l'orig openKylin (vérifié par identité de l'arbre cumulé ; inverse isolée bloquée par des correctifs ultérieurs)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/core.py",
+    "aptdaemon/worker/aptworker.py"
+   ]
+  },
+  {
+   "nom": "drop_pkcompat.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/pkcompat.py (supprimé)",
+    "aptdaemon/core.py"
+   ]
+  },
+  {
+   "nom": "pk1.1.1_compat.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/worker/pkworker.py"
+   ]
+  },
+  {
+   "nom": "lp1623856-window-height.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/gtk3widgets.py"
+   ]
+  },
+  {
+   "nom": "lp1689668-config-file-window.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/gtk3widgets.py"
+   ]
+  },
+  {
+   "nom": "lp1690541-details-open-twice.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/gtk3widgets.py"
+   ]
+  },
+  {
+   "nom": "python3.7-compat.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/client.py"
+   ]
+  },
+  {
+   "nom": "do-not-raise-stopiteration.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/core.py",
+    "aptdaemon/networking.py",
+    "doc/source/aptdaemon.client.rst"
+   ]
+  },
+  {
+   "nom": "pk-debconf-helper.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/client.py",
+    "aptdaemon/core.py"
+   ]
+  },
+  {
+   "nom": "failing-tests.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/test.py",
+    "tests/*"
+   ]
+  },
+  {
+   "nom": "frontend-locking.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/lock.py",
+    "aptdaemon/worker/aptworker.py"
+   ]
+  },
+  {
+   "nom": "lock-is-held-typo.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/lock.py"
+   ]
+  },
+  {
+   "nom": "fix-dependency-solving.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/worker/aptworker.py"
+   ]
+  },
+  {
+   "nom": "remove-lintian-scanning-of-local-packages.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/progress.py",
+    "aptdaemon/worker/aptworker.py",
+    "setup.py",
+    "tests/*"
+   ]
+  },
+  {
+   "nom": "allow-unauthenticated.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/worker/aptworker.py"
+   ]
+  },
+  {
+   "nom": "apport-report.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/crash.py"
+   ]
+  },
+  {
+   "nom": "CVE-2020-15703.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "CVE-2020-15703",
+   "fichiers": [
+    "aptdaemon/core.py"
+   ]
+  },
+  {
+   "nom": "test-with-timeout.patch",
+   "statut": "absent de l'orig, réappliqué par 0001-update-new-version.patch",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/test.py"
+   ]
+  },
+  {
+   "nom": "CVE-2020-16128.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "CVE-2020-16128",
+   "fichiers": [
+    "aptdaemon/core.py",
+    "aptdaemon/utils.py",
+    "aptdaemon/worker/aptworker.py"
+   ]
+  },
+  {
+   "nom": "CVE-2020-27349.patch",
+   "statut": "intégré à l'orig openKylin (application inverse isolée propre)",
+   "cve": "CVE-2020-27349",
+   "fichiers": [
+    "aptdaemon/core.py"
+   ]
+  },
+  {
+   "nom": "fix-some-deprecated-code.patch",
+   "statut": "absent de l'orig, réappliqué par 0001-update-new-version.patch",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/client.py",
+    "aptdaemon/errors.py",
+    "aptdaemon/gtk3widgets.py"
+   ]
+  },
+  {
+   "nom": "gdk-gtk-versions.py",
+   "statut": "absent de l'orig, réappliqué par 0001-update-new-version.patch",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/gtk3widgets.py"
+   ]
+  },
+  {
+   "nom": "drop-function-not-in-3.11.patch",
+   "statut": "absent de l'orig, réappliqué par 0001-update-new-version.patch",
+   "cve": "",
+   "fichiers": [
+    "aptdaemon/core.py"
+   ]
+  },
+  {
+   "nom": "setup-py-import-distutils-extra.patch",
+   "statut": "absent de l'orig, réappliqué par 0001-update-new-version.patch",
+   "cve": "",
+   "fichiers": [
+    "setup.py"
+   ]
+  },
+  {
+   "nom": "pep8-to-pycodestyle",
+   "statut": "absent de l'orig, réappliqué par 0001-update-new-version.patch",
+   "cve": "",
+   "fichiers": [
+    "tests/test_pep8.py"
+   ]
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "apport (paquets apport, apport-gtk/kde ; non installés ISO 3.0)",
+   "destination": "https://launchpad.net, https://api.launchpad.net (OAuth launchpadlib, accès WRITE_PRIVATE) ; dépôt de pièces jointes https://launchpad.net/+storeblob",
+   "protocole": "HTTPS",
+   "declencheur": "action utilisateur (ubuntu-bug, apport-bug, apport-cli, apport-collect, interfaces graphiques) ; base par défaut 'ubuntu' ; types acceptés Bug et Package uniquement",
+   "actif_par_defaut": false,
+   "reference": "etc/apport/crashdb.conf:3,18-26 (après Default-to-Ubuntu-crash-DB.patch:18 et Disable-Launchpad…:17) ; ref-p2/openkylin/apport_2.28.1-ok3/orig/apport/crashdb_impl/launchpad.py:165-172, 1213",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apport (interface)",
+   "destination": "http://people.canonical.com/~ubuntu-archive/bugpatterns/bugpatterns.xml",
+   "protocole": "HTTP clair",
+   "declencheur": "collecte d'un rapport dans l'interface (recherche de motifs de bogues connus)",
+   "actif_par_defaut": false,
+   "reference": "etc/apport/crashdb.conf:20 ; ref-p2/openkylin/apport_2.28.1-ok3/orig/apport/report.py:1224",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apport (interface)",
+   "destination": "http://people.canonical.com/~ubuntu-archive/apport-duplicates (signature de plantage hachée dans l'URL)",
+   "protocole": "HTTP clair",
+   "declencheur": "rapport de type autre que Bug (vérification de doublon)",
+   "actif_par_defaut": false,
+   "reference": "etc/apport/crashdb.conf:21 ; ref-p2/openkylin/apport_2.28.1-ok3/orig/apport/crashdb.py:300-308 ; apport/ui.py:1645-1647",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apport (bases snap-github, ubuntu-wsl)",
+   "destination": "https://github.com/login/device/code, https://github.com/login/oauth/access_token, https://api.github.com/repos/{owner}/{repo}/issues (identifiant d'application <masqué>)",
+   "protocole": "HTTPS",
+   "declencheur": "rapport d'un snap ou de WSL, action utilisateur",
+   "actif_par_defaut": false,
+   "reference": "etc/apport/crashdb.conf:32-45 ; ref-p2/openkylin/apport_2.28.1-ok3/orig/apport/crashdb_impl/github.py:72-130",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apport-noui + whoopsie (non installés ISO 3.0 ; whoopsie hors lot)",
+   "destination": "https://daisy.ubuntu.com (CRASH_DB_URL de whoopsie)",
+   "protocole": "HTTPS",
+   "declencheur": "automatique si /var/lib/apport/autoreport existe (posé par apport-noui.postinst) : apport-autoreport.path/.timer → whoopsie-upload-all",
+   "actif_par_defaut": false,
+   "reference": "archive/apport/debian/apport-noui.postinst:5-10 ; archive/apport/debian/apport-autoreport.service:3-9 ; archive/whoopsie/debian/whoopsie.init:12",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apport-retrace / apport-valgrind (non installés)",
+   "destination": "https://api.launchpad.net/devel, http://ppa.launchpad.net/… (symboles de débogage)",
+   "protocole": "HTTPS/HTTP",
+   "declencheur": "outil développeur lancé manuellement",
+   "actif_par_defaut": false,
+   "reference": "ref-p2/openkylin/apport_2.28.1-ok3/orig/apport/packaging_impl/apt_dpkg.py:155, 1703-1729",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "aptdaemon (installé ISO 3.0)",
+   "destination": "miroirs APT de sources.list ; serveurs de clés hkp/ldap/http(s) fournis par l'appelant (AddVendorKeyFromKeyserver, polkit change-repository auth_admin_keep)",
+   "protocole": "selon APT / hkp",
+   "declencheur": "transactions D-Bus autorisées par polkit",
+   "actif_par_defaut": true,
+   "reference": "ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/aptdaemon/worker/aptworker.py:555-577 ; aptdaemon/core.py:1775",
+   "registre": "CONSTATÉ",
+   "note": "comportement amont inchangé vs Ubuntu 0ubuntu44"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "aptdaemon crash.py (via python3-apport, installés)",
+   "donnees": "Title, Traceback, Package/version, informations OS (add_os_info), TransactionRole, TransactionPackages, TransactionDepends, TransactionKwargs, TransactionLocale, TransactionOutput, codes d'erreur",
+   "stockage": "local /var/crash/*.crash",
+   "declencheur": "exception du worker aptd ; actif car /etc/default/apport absent → enabled() vrai",
+   "reference": "ref-p2/openkylin/aptdaemon_1.1.1+bzr982-ok7/orig/aptdaemon/crash.py:40-73 ; aptdaemon/worker/__init__.py:141-175 ; ref-p2/openkylin/apport_2.28.1-ok3/orig/apport/packaging.py:211-216",
+   "reseau": false,
+   "registre": "CONSTATÉ"
+  },
+  {
+   "composant": "apport_python_hook (python3-apport, installé)",
+   "donnees": "Traceback, PythonArgs (sys.argv), informations processus (add_proc_info : ligne de commande, environnement filtré), groupes de l'utilisateur, paquet",
+   "stockage": "local /var/crash/<programme>.<uid>.crash (0640)",
+   "declencheur": "exception non interceptée d'un programme Python empaqueté, SI le hook est installé par sitecustomize de l'interpréteur (python3.12 3.12.2-ok5 non audité)",
+   "reference": "ref-p2/openkylin/apport_2.28.1-ok3/orig/apport_python_hook.py:18-31, 106-146",
+   "reseau": false,
+   "registre": "PROBABLE"
+  },
+  {
+   "composant": "gestionnaire apport (paquet apport + apport-core-dump-handler ou systemd-coredump ; non installés)",
+   "donnees": "CoreDump, ProcMaps, ProcStatus, ProcEnviron filtré, Stacktrace (gdb), informations paquets, crochets généraux Ubuntu (Add-general-hooks.patch) et crochets de paquets",
+   "stockage": "local /var/crash",
+   "declencheur": "plantage d'un processus, /etc/default/apport enabled=1 après installation",
+   "reference": "ref-p2/openkylin/apport_2.28.1-ok3/orig/data/apport ; ref-p2/openkylin/apport_2.28.1-ok3/orig/etc/default/apport:4",
+   "reseau": false,
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/aptdaemon",
+   "patches_total": 1,
+   "patches_lus": 1,
+   "fichiers_debian": 21,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "0001-update-new-version.patch"
+   ],
+   "detail": "debian/ : 5 fichiers modifiés/ajoutés vs Ubuntu 0ubuntu44 (changelog, patches/series, rules, gbp.conf, 0001) lus intégralement ; 16 identiques (vérifiés par l'outil) dont control et *.install relus partiellement. 36 correctifs Ubuntu retirés : 36/36 statués par application mécanique (série complète appliquée sur copie, application inverse isolée, arbre cumulé de 30 correctifs comparé à l'orig openKylin) ; 12 lus intégralement (CVE-2020-15703, CVE-2020-16128, CVE-2020-27349, fix-high-trust-pkcompat, allow-unauthenticated + les 6 réappliqués + en-têtes de lp1449587/CVE-2015-1323), 24 en-têtes. Orig : 26/26 écarts (24 modifiés, 1 ajouté, 1 absent) qualifiés par diff (100 %)."
+  },
+  {
+   "arbre": "archive/apport",
+   "patches_total": 6,
+   "patches_lus": 2,
+   "fichiers_debian": 44,
+   "pct_patches": 100,
+   "patches_lus_liste": [
+    "0005-1-openkylin.patch",
+    "0006-2-test_signal_crashes.py-T-test_modify_after_start.patch",
+    "Default-to-Ubuntu-crash-DB.patch (hérité, lu en entier)",
+    "Disable-Launchpad-crash-reports-for-the-24.04-release.patch (hérité, lu en entier)"
+   ],
+   "detail": "2 propres lus intégralement ; 4 hérités vérifiés par empreinte (en-têtes lus, 2 lus en entier). debian/ : 5 fichiers modifiés/ajoutés vs 0ubuntu2 lus intégralement ; en outre lus : rules, control, apport.install, python3-apport.install, python3-problem-report.install, apport-core-dump-handler.install, apport.links, apport.maintscript, apport.postinst, apport-noui.postinst/prerm/dirs, apport-autoreport.path/service/timer, apport.logrotate, not-installed, clean (≈20/44). Comparaison 0ubuntu3.8 : 42 fichiers de correctifs absents recensés, 16 liés à la sécurité identifiés (en-têtes lus, 3 lus en entier), diff de apport.install/maintscript/postinst/control/tests/control."
+  }
+ ],
+ "non_couvert": [
+  "Paquets binaires aptdaemon/python3-aptdaemon 1.1.1+bzr982-ok7 et python3-apport 2.28.1-ok3 non disponibles : conformité binaire ↔ source non vérifiée (notamment absence effective de SetEnviron dans l'aptd livré).",
+  "debian/ et binaires d'aptdaemon ok1–ok5 non disponibles : l'exposition historique à SetEnviron reste PROBABLE.",
+  "Source de python3.12 3.12.2-ok5 absent du corpus : activation du hook apport via sitecustomize non vérifiée.",
+  "whoopsie 0.2.77-ok1 (hors lot) : seul debian/whoopsie.init consulté pour l'URL de collecte.",
+  "Vidage mémoire 'core' : seules les chaînes et notes ELF ont été examinées par comptes ; les données binaires non textuelles (p. ex. cookie X 16 octets) ne sont pas analysées.",
+  "Code amont apport (orig identique à Ubuntu, signature valide) non réaudité au-delà des flux réseau et collectes ; 24 correctifs Ubuntu aptdaemon non-sécurité vérifiés mécaniquement sans lecture ligne à ligne.",
+  "Cohérence entre le kylin-system-updater installé (binaire sans source) et archive/kylin-system-updater non vérifiée (lot distinct)."
+ ],
+ "synthese": "aptdaemon : l'hypothèse d'intégration est CONFIRMÉE (CONSTATÉ). L'orig openKylin = orig Ubuntu + 30 correctifs Ubuntu intégrés + 4 modifications de code Kylin + un vidage mémoire ; 0001-update-new-version.patch réapplique les 6 derniers correctifs Ubuntu et annule les 4 modifications Kylin. L'arbre ok7 patché est identique octet pour octet à Ubuntu noble 0ubuntu44 patché : 36/36 correctifs Ubuntu présents, dont CVE-2015-1323, CVE-2020-15703, CVE-2020-16128, CVE-2020-27349 ; aucun correctif de sécurité manquant. Le delta hors debian/ révèle toutefois dans l'orig une méthode D-Bus SetEnviron du démon root, sans authentification, qui écrit os.environ (core.py:2011-2021), plus la désactivation des garde-fous sur les paquets essentiels et allow_downgrade=True. Tout est neutralisé en ok7 par un correctif au titre générique (moyenne, CONSTATÉ). Les versions ok1–ok5 ont probablement été livrées avec ces modifications (élevée, PROBABLE, hors 3.0). kylin-system-updater 3.0 appelle encore SetEnviron. L'orig contient un vidage mémoire Xvfb de 84 Mo issu d'un poste de développeur : aucun secret repéré par motifs, seulement des comptes (faible, CONSTATÉ). debian/rules force nocheck (faible). apport : orig identique à Ubuntu (signature valide), 4 correctifs hérités à l'identique, 2 propres. 0005 introduit une condition toujours vraie (bénigne) et supprime 3 tests ; 0006 supprime le test de non-régression d'un contrôle de sécurité, contrôle qui reste en place. openKylin est resté sur la version de sortie 2.28.1-0ubuntu2 : il manque les correctifs de noble-security jusqu'à 0ubuntu3.8, dont CVE-2025-5054, CVE-2025-5467 et le durcissement de /var/crash (moyenne, CONSTATÉ). L'exposition est conditionnelle, car le paquet apport n'est pas installé dans l'ISO 3.0 (seuls python3-apport et python3-problem-report le sont ; le gestionnaire installé est systemd-coredump). Flux : base de rapports par défaut Launchpad/Canonical, motifs et doublons en HTTP clair, whoopsie vers daisy.ubuntu.com ; aucun n'est actif par défaut, tous demandent une action ou l'installation de paquets absents. Collecte locale active : rapports /var/crash d'aptdaemon, car /etc/default/apport absent vaut « activé ».",
+ "reference": {
+  "aptdaemon": {
+   "plus_proche": "ubuntu noble 1.1.1+bzr982-0ubuntu44 (resolute/questing : 2.0.2 natif, branche différente)",
+   "orig": "écarts : 24 modifiés, 1 ajouté, 1 absent — 30 correctifs Ubuntu intégrés (dont pkcompat.py supprimé), 4 modifications de code Kylin (core.py SetEnviron, progress.py SIGHUP, aptworker.py ×3 hunks) et 1 vidage mémoire ELF 'core' de 84 Mo ; après application de 0001, arbre identique octet pour octet à Ubuntu 0ubuntu44 patché (hors 'core')",
+   "patches_herites_identiques": 0,
+   "patches_propres_openkylin": 1,
+   "patches_modifies": 0,
+   "patches_retires": 36,
+   "patches_retires_effectivement_absents": 0,
+   "fichiers_debian_hors_patches_modifies_ou_ajoutes": 3
+  },
+  "apport": {
+   "plus_proche": "ubuntu noble 2.28.1-0ubuntu2",
+   "orig": "identique octet pour octet à ubuntu noble 2.28.1-0ubuntu2 et 2.28.1-0ubuntu3.8 (sha256 b9a834451c835e96…, signature amont valide)",
+   "patches_herites_identiques": 4,
+   "patches_propres_openkylin": 2,
+   "patches_modifies": 0,
+   "patches_retires": 0,
+   "fichiers_debian_hors_patches_modifies_ou_ajoutes": 2,
+   "vs_noble_security_2.28.1-0ubuntu3.8": {
+    "correctifs_absents": 42,
+    "correctifs_securite_absents": [
+     "CVE-2025-5054 (10 correctifs + 2 de régression)",
+     "CVE-2025-5467 (1 correctif)",
+     "durcissement /var/crash LP#2066995 (2 correctifs + apport.postinst)"
+    ]
+   }
+  }
+ }
+}

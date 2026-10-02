@@ -1,0 +1,259 @@
+{
+ "lot": "P2-dpkg",
+ "composants": [
+  "dpkg",
+  "dpkg-wrapper"
+ ],
+ "empreintes": {
+  "archive/dpkg": "92d91338713c7451a4cd5539438e504594cd6703f33cbb59a5bbcc092d060212",
+  "archive/dpkg-wrapper": "168ba25e8eb6178d0c60192a81248eb94dfe29072d618f839abe7b717f06060a",
+  "conforme": true,
+  "detail": "44 et 19 fichiers ; identiques à empreintes-arbres-sources.tsv l. 29 et 28, pour /home/user/openkylin-src/archive et pour /home/user/AuditOK/sources-openkylin/archive. dpkg : 44/44 fichiers identiques au debian.tar.xz (sha256 eacbe398… = .dsc:28) ; orig.tar.gz sha256 a86894a0… = .dsc:27. dpkg-wrapper : tar.xz sha256 30dbea54… = .dsc:17, 19 fichiers listés, 3 recoupés par sha256."
+ },
+ "reference": {
+  "dpkg": {
+   "plus_proche": "ubuntu resolute 1.23.7ubuntu1 (paquet natif)",
+   "orig": "identique hors debian/ à l'arbre natif Ubuntu 1.23.7ubuntu1 (2142/2142, diff -rq revérifié : 0 écart). Face à Debian sid 1.23.7 : 40 modifiés, 4 ajoutés, 2 absents (Makefile.in, configure), tous des changements Ubuntu (code C lib/dpkg, src, utils ; Perl Vendor/BuildFlags ; man). Orig .tar.gz reconditionné par openKylin, non signé par l'amont.",
+   "patches_herites_identiques": 0,
+   "patches_propres_openkylin": 1,
+   "patches_modifies": 0,
+   "patches_retires": 0,
+   "fichiers_debian_hors_patches_modifies_ou_ajoutes": 6,
+   "detail_debian": "modifiés : changelog, control, dpkg-dev.install, rules, source/format ; ajoutés : buildflags.conf (+ patches/series, patches/feat_openKylin.patch) ; 36 fichiers identiques à Ubuntu."
+  },
+  "dpkg-wrapper": {
+   "plus_proche": "aucune (paquet natif openKylin/Kylin, absent de Debian et d'Ubuntu)",
+   "orig": "sans objet (3.0 (native) ; tarball = 19 fichiers debian/ seulement, aucun code)",
+   "patches_herites_identiques": 0,
+   "patches_propres_openkylin": 0,
+   "patches_modifies": 0,
+   "patches_retires": 0,
+   "fichiers_debian_hors_patches_modifies_ou_ajoutes": 19
+  }
+ },
+ "findings": [
+  {
+   "depot": "dpkg",
+   "fichier": "debian/patches/feat_openKylin.patch",
+   "ligne": "28, 50",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "+++ b/scripts/Dpkg/Vendor/openKylin.pm ... +package Dpkg::Vendor::openKylin;  || orig scripts/Dpkg/Vendor.pm:181-182 : push @names, join q{}, map { ucfirst } @vendor_parts; push @names, join q{}, map { ucfirst lc } @vendor_parts;",
+   "explication": "Le module fournisseur ajouté par le seul correctif openKylin s'appelle openKylin.pm (o minuscule). Or Dpkg::Vendor::get_vendor_object() de 1.23.7 (orig scripts/Dpkg/Vendor.pm:178-194) ne tente que Dpkg::Vendor::OpenKylin et Dpkg::Vendor::Openkylin : le module livré par libdpkg-perl (build_Contents-amd64.gz l. 1791743) n'est jamais chargé sur un système de fichiers sensible à la casse. Le fichier d'origine de base-files 14-ok3 (archive/base-files/origins/openkylin:1-3, lien default posé par debian/postinst.in:43-45) déclare « Vendor: openKylin » SANS champ Parent : la résolution retombe sur Dpkg::Vendor::Default (Vendor.pm:196-201), dont le crochet update-buildflags n'ajoute rien (Default.pm:204-205). Sur un openKylin 3.0 installé (dpkg, dpkg-dev, libdpkg-perl 1.23.7-ok3 et base-files sont dans casper--filesystem.manifest l. 110, 111, 528), dpkg-buildflags et debhelper ne fournissent donc ni -g -O2, ni -fstack-protector-strong, ni -D_FORTIFY_SOURCE, ni -Werror=format-security, ni -Wl,-z,relro / -z,now, ni -fstack-clash-protection, ni -fcf-protection ; seul /etc/dpkg/buildflags.conf ajoute -Wl,--as-needed. Les crochets sanitize-environment (umask 022, locale : Debian.pm:87-89), has-fuzzy-native-source et les profils Ubuntu (noudeb) prennent aussi le comportement Default. Mécanisme établi par lecture de code (aucune exécution). Régression introduite par la montée de version : dpkg 1.22.6 chargeait encore le nom exact par un repli « nom obsolète » (réf. Ubuntu 1.22.6ubuntu6 scripts/Dpkg/Vendor.pm:220-228), supprimé dès 1.22.21 (réf. 1.22.21ubuntu3 Vendor.pm:179-195). Conséquence annexe hors lot : dpkg-vendor --derives-from Ubuntu/Debian est faux pour tous les paquets (origine sans Parent).",
+   "scenario": "Un éditeur ou un administrateur construit des paquets .deb sur openKylin 3.0 (dpkg-buildpackage/debhelper) : les exécutables produits, y compris des services root, ne reçoivent aucun des drapeaux de durcissement de la distribution ; si le compilateur ne les active pas par défaut, un débordement de pile ou de tampon y devient exploitable sans canari, sans FORTIFY et avec une GOT réinscriptible.",
+   "contre_lecture": "Erreur de nommage involontaire (changelog:21 « adapt to openKylin.pm ») plutôt qu'intention ; l'effet réel dépend des défauts de gcc-15 15.2.0-16ok8 (source absente du corpus : un GCC à défauts Ubuntu active SSP, FORTIFY, relro, now, PIE et CET indépendamment de dpkg-buildflags) et de DEB_VENDOR ou d'une autre origine dans l'environnement de construction.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/rules",
+   "ligne": "13, 17-22, 52",
+   "type": "durcissement",
+   "severite": "moyenne",
+   "extrait": "export DEB_BUILD_MAINT_OPTIONS = hardening=+all ... $(CURDIR)/build-aux/run-script scripts/dpkg-buildflags.pl ... $(shell $(dpkg_buildflags) --export=configure)",
+   "explication": "dpkg (Essential, exécuté en root, analyse des archives .deb : ar, tar, décompresseurs) est configuré avec les drapeaux du dpkg-buildflags de l'arbre, qui charge les modules Dpkg::Vendor de l'arbre et lit l'origine de l'hôte de construction (build-aux/run-script:15-16 ne redéfinit pas DPKG_ORIGINS_DIR). Sur un hôte openKylin (origine openKylin sans Parent), hardening=+all ne porte sur aucune fonctionnalité, Default n'en définissant pas : dpkg 1.23.7-ok3 serait compilé sans les drapeaux de durcissement de dpkg-buildflags, seuls restant les défauts du compilateur, les avertissements WFLAGS et -Wl,--as-needed. Indice indirect : l'entrée ok3 ajoute -Wl,--as-needed au niveau système (buildflags.conf:1), ce que le GCC d'Ubuntu fait par défaut, ce qui suggère un compilateur sans les défauts Ubuntu, donc peut-être aussi sans SSP/FORTIFY/now par défaut. Manque pour confirmer : le binaire dpkg_1.23.7-ok3_amd64.deb (SHA256 fef937fe…, index Packages archive.openkylin.top l. 23566 sqq.) pour readelf (BIND_NOW, GNU_RELRO, __stack_chk_fail, symboles __*_chk, note IBT/SHSTK), un journal de construction ou un .buildinfo (Vendor, DEB_VENDOR, drapeaux), les sources de gcc-15.",
+   "scenario": "Un paquet .deb piégé (dépôt tiers ou fichier installé par dpkg -i) exploite un défaut mémoire du code d'extraction de dpkg ; sans canari de pile, FORTIFY ni RELRO complet, la prise de contrôle du processus root est facilitée.",
+   "contre_lecture": "Le parc de construction peut définir DEB_VENDOR, utiliser une autre origine ou un dpkg-dev plus ancien ; gcc-15 d'openKylin peut activer ces protections par défaut. Le .dsc de dpkg-wrapper (3.0 native avec révision, signé après dpkg 1.23.7-ok3) aurait été refusé par dpkg-source 1.23.7 sous le fournisseur Default (orig V3/Native.pm:95-100) : l'environnement qui l'a produit ne retombait donc pas sur Default, ou utilisait un dpkg-dev antérieur à 1.23.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "dpkg-wrapper",
+   "fichier": "debian/control",
+   "ligne": "8-14",
+   "type": "confiance",
+   "severite": "moyenne",
+   "extrait": "Package: dpkg-wrapper | Architecture: all | Depends: ${shlibs:Depends}, ${misc:Depends} | Description: a dpkg wrapper. hook some essential options and make it accessible.",
+   "explication": "La source publiée (dpkg-wrapper_1.0.0.0-0k2.1ok1.tar.xz, SHA256 30dbea54… = .dsc:17 et Sources archive.openkylin.top l. 10890) contient 19 fichiers, tous sous debian/, et aucune ligne de code : squelette dh_make (rules:17-18 « %: dh $@ », aucun .install, scripts de mainteneur uniquement en .ex ignorés par debhelper, dpkg-wrapper-docs.docs visant un paquet inexistant, copyright:3-8 non rempli). Construite, elle donnerait un paquet arch:all ne contenant que /usr/share/doc/dpkg-wrapper/{copyright,README.Debian,changelog}, sans champ Depends (substvars vides) et sans script de mainteneur. Le binaire publié dans huanghe/main (archive.openkylin.top huanghe_main_amd64_Packages.gz l. 23544-23558 ; archive.build l. 21763) : dpkg-wrapper_1.0.0.0-0k2.1ok1_all.deb, SHA256 058bb16b…, 12 872 octets, Installed-Size: 63 (l. 23552), Depends: dpkg, libkysdk-conf2-tools (l. 23553) ; il installe /usr/bin/dpkg_wrapper, /usr/bin/apt_wrapper, /usr/bin/wrapper_common (build_Contents-amd64.gz l. 45767, 44455, 52325) et pas de copyright (seul changelog.Debian.gz, l. 487557). Aucun de ces éléments ne peut provenir de la source : binaire sans source correspondante, diffusé et signé dans le dépôt principal. Ni la source ni le binaire ne déclarent Pre-Depends, Provides, Replaces, Conflicts, Breaks ou Essential ; Priority: optional. Absent du manifeste de l'ISO ; aucune dépendance inverse dans les 11 index Packages.",
+   "scenario": "Un administrateur ou une édition dérivée installe dpkg-wrapper : des scripts root non auditables s'interposent devant dpkg et apt et peuvent modifier les options transmises (forçages, contournements), journaliser ou exécuter d'autres actions à chaque opération de paquet, sans source publiée permettant de vérifier ou de reproduire le binaire.",
+   "contre_lecture": "Le code réel vit probablement dans un dépôt interne Kylin (Original-Maintainer sunzhen@kylinos.cn, version de lignée « 0k2 ») et n'a pas été poussé dans l'archive source ; la fonction attendue (intégration du mode ostree immuable, cf. libkysdk-system) est légitime ; le paquet n'est pas installé par défaut.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libkysdk-system",
+   "fichier": "src/packages/tools/libkypackage_general.c",
+   "ligne": "222-226, 250-253, 327-334, 449",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "strcmp(real_path, \"/usr/bin/dpkg_wrapper\") != 0 && strcmp(real_path, \"/usr/bin/dpkg\") != 0 ... WRAPPER_TAG=\"dpkg_wrapper\" ... return \"/usr/bin/dpkg.orig\";",
+   "explication": "Corroboration de la fonction de dpkg-wrapper (fichier d'un autre lot, lu partiellement : l. 1-60 et 180-461). kypackage_general (paquet libkysdk-package, installé par l'ISO : manifest l. 903 ; Contents l. 47947 ; debian/libkysdk-package.install:11), exécuté en root, n'accepte qu'un parent dont l'exécutable, /usr/bin/dpkg_wrapper ou /usr/bin/apt_wrapper mais aussi /usr/bin/dpkg, /usr/bin/apt ou /usr/bin/apt-get, contient la balise WRAPPER_TAG=dpkg_wrapper/apt_wrapper ; il lance ensuite /usr/bin/dpkg.orig, apt.orig ou apt-get.orig dans un « ns_mode » ostree (libostreemode.so, l. 46, 355). Cette conception suppose qu'une fois dpkg-wrapper installé, /usr/bin/dpkg, apt et apt-get soient les scripts enveloppes, et que les vrais binaires soient détournés en *.orig, ce que seuls les scripts de mainteneur du binaire dpkg-wrapper (sans source, absents du corpus) peuvent faire (dpkg-divert). La description du paquet (« hook some essential options », control:13-14) va dans le même sens. Aucune autre source du corpus ne mentionne dpkg.orig. Manque : le .deb (control.tar : preinst/postinst) ou la sortie de dpkg-divert --list sur une machine où il est installé.",
+   "scenario": "Si dpkg-wrapper est installé, chaque invocation root de dpkg ou apt passe d'abord par un script non audité qui remplace le binaire Essential dpkg ; une erreur ou une altération de ce script compromet toutes les installations suivantes (persistance, modification silencieuse des options).",
+   "contre_lecture": "Mécanisme plausible d'isolation des gestionnaires de paquets pour le système immuable ostree, hors ISO standard ; le contrôle de balise, de propriétaire root et d'absence d'écriture groupe/autres (l. 228-239) limite l'usurpation de l'appelant.",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/patches/feat_openKylin.patch",
+   "ligne": "1-3, 8-17",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "Subject: <short summary of the patch> ... TODO: Put a short summary on the line above and replace this paragraph ... dpkg (1.23.7-ok1) huanghe; urgency=medium  * 升级大版本以适配glibc=2.43.",
+   "explication": "En-tête dpkg-source --commit non rempli. La seule description est l'entrée de changelog 1.23.7-ok1 (« montée de version majeure pour s'adapter à glibc 2.43 »), sans rapport avec le contenu : un module fournisseur de 544 lignes qui définit la politique de drapeaux de compilation et de durcissement de la distribution, plus son enregistrement dans scripts/Makefile.am et Makefile.in. Le contenu correspond à l'entrée 1.22.21-ok2 « adapt to openKylin.pm » (changelog:21). Le titre ne correspond pas au contenu ; aucun indice de dissimulation volontaire (modèle laissé tel quel).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/patches/feat_openKylin.patch",
+   "ligne": "81-82, 150-190, 345-364, 492-495",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "hardening => { pie => undef, stackprotector => 1, stackprotectorstrong => 1, fortify => 1, format => 1, relro => 1, bindnow => 0, }, ... $flags->append('CPPFLAGS', '-D_FORTIFY_SOURCE=2');",
+   "explication": "openKylin.pm copie une ancienne Dpkg::Vendor::Debian/Ubuntu (liste PIE avec kfreebsd, sans loong64) et hérite de Default, non de Debian/Ubuntu. Face à 1.23.7 (orig Vendor/Debian.pm:156-168, Ubuntu.pm:205-226), il lui manque stackclash (-fstack-clash-protection), branch (-fcf-protection sur amd64, -mbranch-protection sur arm64), la zone abi (time64), elfpackagemetadata et framepointer ; FORTIFY reste au niveau 2 au lieu de 3 (Ubuntu.pm:217) ; bindnow vaut 0 ; pas de -Bsymbolic-functions ; le crochet archive-keyrings renvoie le trousseau Debian (l. 81-82) et package-keyrings est absent ; les blocs LTO sont dupliqués (l. 345-364) et la clé optimize aussi (l. 167-172). Code mort sous 1.23.7 (voir le constat sur la résolution du fournisseur), mais il deviendrait la politique effective si le module était renommé OpenKylin.pm ou chargé par un dpkg-dev 1.22.6 (repli « nom obsolète »). dpkg-dev/libdpkg-perl 1.22.6-ok5 figurent encore dans l'index (sources absentes du corpus).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/rules",
+   "ligne": "12",
+   "type": "durcissement",
+   "severite": "faible",
+   "extrait": "export DEB_BUILD_OPTIONS += nocheck",
+   "explication": "Ajouté en 1.23.7-ok2 (changelog:9 « Disable test, failed on perl 5.36 » ; l'archive a bien perl 5.36.0-ok8.2). Toute la suite de tests amont (tests unitaires Perl et C, tests fonctionnels d'extraction, de détournements et de déclencheurs) est désactivée sans liste d'exclusion ciblée, pour un gestionnaire de paquets exécuté en root. Ubuntu ne coupe les tests que sur riscv64 (orig Vendor/Ubuntu.pm:119-125). La cause précise des échecs n'est pas documentée. Le code étant identique à Ubuntu (où les tests passent), le risque porte sur les régressions liées à l'environnement de construction openKylin.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/buildflags.conf",
+   "ligne": "1",
+   "type": "durcissement",
+   "severite": "informationnelle",
+   "extrait": "APPEND LDFLAGS -Wl,--as-needed",
+   "explication": "Nouveau fichier installé par dpkg-dev.install:3 en /etc/dpkg/buildflags.conf (fichier de configuration, Contents l. 2954 ; dpkg-dev est sur l'ISO). Il ajoute --as-needed à toutes les constructions qui passent par dpkg-buildflags (portée système). Aucun affaiblissement ; conforme à l'entrée ok3 (changelog:3). Sur un openKylin 3.0 installé, c'est le seul drapeau que dpkg-buildflags fournit (voir le constat sur la résolution du fournisseur).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/dpkg.cfg",
+   "ligne": "8-10",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "# Do not enable debsig-verify by default; since the distribution is not using embedded signatures, debsig-verify would reject all packages. no-debsig",
+   "explication": "Configuration par défaut identique à Debian et Ubuntu (seule autre directive : log /var/log/dpkg.log, l. 13). dpkg ne vérifie aucune signature de .deb ; debsig-verify (Suggests, control:77) est absent de tous les index. Les champs cert_subject_cn/o/ou des index binaires (ex. Packages l. 23562-23564) indiquent un schéma de certificat openKylin que dpkg lui-même ne vérifie pas (vérification éventuelle par un autre composant, non couverte). L'intégrité repose sur la chaîne APT (lot P2-apt) ; dpkg -i d'un fichier local ne fait aucune vérification, comme chez Debian/Ubuntu. dpkg crée /etc/dpkg/dpkg.cfg.d vide (dpkg.install:3) : aucune option force-*, path-exclude ni hook n'est livrée par ce paquet.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "ostree-extra-utils (binaire sans source)",
+   "fichier": "rapport-audit/donnees/binaires-sans-source/ostree-extra-utils/fichiers.txt",
+   "ligne": "8",
+   "type": "confiance",
+   "severite": "faible",
+   "extrait": "-rw-r--r-- root/root 40 2025-12-24 09:58 ./etc/dpkg/dpkg.cfg.d/ostree-guard  || DEBIAN-prerm:10 HOOK_CONFIG=\"/etc/dpkg/dpkg.cfg.d/ostree-guard\"",
+   "explication": "C'est le seul fragment dpkg.cfg.d des index (build_Contents-amd64.gz l. 2956). Il est livré par ostree-extra-utils 2.0.0.0-0k1.20update1, installé par l'ISO (manifest l. 1560), dont la source est une coquille dh_make (sources-coquilles-vides.csv). Le prerm l'appelle HOOK_CONFIG : il s'agit vraisemblablement d'une directive pre-invoke ou post-invoke qui exécute une commande en root à chaque appel de dpkg. Son contenu (40 octets) n'est pas dans le corpus ; c'est la seule configuration dpkg par défaut de l'ISO hors dpkg.cfg. À extraire dans le lot ostree (G10).",
+   "registre": "PROBABLE"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/changelog",
+   "ligne": "1-29",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "dpkg (1.23.7-ok1) huanghe; urgency=medium  * 升级大版本以适配glibc=2.43. ... dpkg (1.22.21-ok2) huanghe  * adapt to openKylin.pm. ... dpkg (1.22.21-ok1) huanghe  * build for openkylin.",
+   "explication": "Le changelog Ubuntu (23 636 lignes, historique Debian et Ubuntu) est remplacé par 5 entrées openKylin à partir de 1.22.21-ok1 ; les versions 1.22.6-ok1 à ok5 (dpkg-dev et libdpkg-perl 1.22.6-ok5 encore dans l'index) n'y figurent pas. L'entrée ok1 ne déclare ni le rebasage sur l'arbre natif Ubuntu 1.23.7ubuntu1, ni la conversion 3.0 (native) → 3.0 (quilt) (source/format:1) avec un orig .tar.gz reconstitué (non signé par l'amont ; sha256 a86894a0… = .dsc:27), ni la réintroduction du module fournisseur. ok2 et ok3 correspondent exactement à rules:12 et à buildflags.conf + dpkg-dev.install:3. Dans les index binaires, le champ Maintainer est réécrit en « Ubuntu Developers » et le mainteneur openKylin relégué en Original-Maintainer (Packages l. 23574-23575), signe de pkgbinarymangler (154-ok4, absent de l'ISO) dans l'environnement de construction : métadonnée de provenance trompeuse.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg",
+   "fichier": "debian/control",
+   "ligne": "4-7, 65-77",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "Maintainer: openKylin Developers <packaging@lists.openkylin.top> ... Vcs-Browser: https://gitee.com/openkylin/dpkg ... Package: dpkg ... Essential: yes",
+   "explication": "Seuls changent Maintainer, Vcs-* (gitee) et la suppression de XSBC-Original-Maintainer et d'Uploaders. Aucune modification de Build-Depends, Depends, Pre-Depends, Breaks, Provides ou Suggests ; Essential: yes et Priority: required inchangés ; --with-libselinux conservé (rules:25-27).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg (orig)",
+   "fichier": "lib/dpkg/pkg-spec.c",
+   "ligne": "108",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "ps->arch = dpkg_arch_get(DPKG_ARCH_NATIVE);",
+   "explication": "L'orig openKylin est identique, hors debian/, à l'arbre natif Ubuntu 1.23.7ubuntu1 (2142/2142 fichiers ; vérifié à nouveau par diff -rq : 0 écart). Face à Debian 1.23.7 : 40 fichiers modifiés, 4 ajoutés (data/varianttable et 3 jeux de test amd64v3), 2 absents (Makefile.in, configure). Toutes ces modifications sont Ubuntu et documentées dans le changelog Ubuntu 1.23.7ubuntu1 : noms non qualifiés résolus vers l'architecture native (pkg-spec.c:108), contournement LP#1015567 (parse.c), zstd niveau 19 (compress.c:45), Architecture-Variant (dpkg-db.h, parse.c, pkg.c, src/main/unpack.c, src/deb/build.c), DPKG_UNTRANSLATED_MESSAGES (utils/update-alternatives.c:2955), Vendor/BuildFlags (lto-disabled-list, framepointer, fortify 3). Héritées, non ré-auditées en détail. L'action polkit org.dpkg.pkexec.update-alternatives (auth_admin_keep) est identique à Debian.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "dpkg-wrapper",
+   "fichier": "debian/control",
+   "ligne": "4 ; changelog:1",
+   "type": "confiance",
+   "severite": "informationnelle",
+   "extrait": "Maintainer: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com> || dpkg-wrapper (1.0.0.0-0k2.1ok1) nile.bedrock-proposed; urgency=medium",
+   "explication": "Incohérences de provenance : paquet Kylin attribué à « Ubuntu Developers » dès la source (control:4, repris dans le .dsc) ; distribution « nile.bedrock-proposed » (série openKylin 2.x) pour un paquet de huanghe ; auteur du squelette wangqinghao (README:6) mais Original-Maintainer sunzhen (control:10) ; format 3.0 (native) avec révision Debian, accepté par dpkg-source seulement en avertissement (dpkg-dev ≤ 1.22.21, ou fournisseur Debian/Ubuntu en 1.23.7) ; copyright:3-8 non rempli. Ne pas confondre avec /usr/share/kare/container-scripts/dpkg-wrapper.sh du paquet kare (binaires-sans-source/kare/fichiers.txt:162), autre binaire sans source.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "patches": [
+  {
+   "nom": "feat_openKylin.patch",
+   "titre_declare": "Subject: <short summary of the patch> (modèle dpkg-source --commit non rempli ; description = entrée changelog 1.23.7-ok1 « 升级大版本以适配glibc=2.43 »)",
+   "contenu_reel": "Crée scripts/Dpkg/Vendor/openKylin.pm (544 lignes) : classe fournisseur openKylin héritant de Default ; crochets archive-keyrings (trousseau Debian), builtin-build-depends, extend-patch-header (Bug-Debian), update-buildprofiles (noudeb) et update-buildflags avec une politique complète de compilation : -g -O2, LTO sur amd64/arm64/ppc64el/s390x sauf lto-disabled-list (blocs dupliqués), SSP strong, FORTIFY=2, format-security, relro, bindnow désactivé, PIE intégré ; sans stackclash, branch/CET, abi, elfpackagemetadata. L'enregistre dans scripts/Makefile.am et Makefile.in (installé par libdpkg-perl). Aucun code C, rien d'exécuté par dpkg en root. Inatteignable par Dpkg::Vendor 1.23.7 (casse du nom).",
+   "titre_fidele": false,
+   "classement": "[SUSPECT]",
+   "fichiers_amont": [
+    "scripts/Dpkg/Vendor/openKylin.pm (nouveau)",
+    "scripts/Makefile.am",
+    "scripts/Makefile.in"
+   ],
+   "resume": "SUSPECT au sens de la consigne : titre non fidèle (modèle + changelog sans rapport) ET politique de durcissement plus faible que Ubuntu/Debian 1.23.7. Aucun indice de malveillance (pas de réseau, de porte dérobée ni de code root). Le module est de toute façon du code mort en 1.23.7, ce qui fait retomber la résolution sur Default (constat dédié)."
+  }
+ ],
+ "flux_reseau": [],
+ "collectes": [],
+ "couverture": [
+  {
+   "arbre": "archive/dpkg",
+   "patches_total": 1,
+   "patches_lus": 1,
+   "patches_verifies_empreinte": 0,
+   "fichiers_debian": 44,
+   "fichiers_lus_integralement": 42,
+   "fichiers_lus_partiellement": 2,
+   "pct_patches": 100,
+   "pct_fichiers_integral": 95.5,
+   "patches_lus_liste": [
+    "feat_openKylin.patch"
+   ],
+   "detail_partiels": "debian/copyright (en-têtes Files/License, identique à Ubuntu) ; debian/README.bug-usertags (recherche d'URL et de « kylin », identique à Ubuntu).",
+   "diff_reference": "8/8 fichiers modifiés ou ajoutés face à Ubuntu 1.23.7ubuntu1 lus en diff -u (changelog, control, dpkg-dev.install, rules, source/format, buildflags.conf, patches/series, patches/feat_openKylin.patch).",
+   "code_amont_lu": [
+    "scripts/Dpkg/Vendor.pm (60-217, intégral pour la résolution)",
+    "scripts/Dpkg/Vendor/Default.pm (run_hook, 183-260)",
+    "scripts/Dpkg/Vendor/Debian.pm (55-260 ; 380-680 par recherche ciblée)",
+    "scripts/Dpkg/Vendor/Ubuntu.pm (1-300)",
+    "scripts/Dpkg/BuildFlags.pm (60-160)",
+    "scripts/dpkg-buildflags.pl (100-160)",
+    "scripts/Dpkg/Source/Package.pm (check_signature 540-576)",
+    "scripts/Dpkg/Source/Package/V3/Native.pm (70-104)",
+    "build-aux/run-script",
+    "utils/update-alternatives.polkit.in",
+    "diff Ubuntu/Debian des 8 fichiers C modifiés",
+    "Vendor.pm de 1.22.6ubuntu6 et 1.22.21ubuntu3 (résolution)"
+   ],
+   "index_interroges": "11 Packages.gz, 10 Sources.gz, build_Contents-amd64.gz (zgrep), casper--filesystem.manifest, provenance-paquets-installes.csv"
+  },
+  {
+   "arbre": "archive/dpkg-wrapper",
+   "patches_total": 0,
+   "patches_lus": 0,
+   "patches_verifies_empreinte": 0,
+   "fichiers_debian": 19,
+   "fichiers_lus_integralement": 19,
+   "fichiers_lus_partiellement": 0,
+   "pct_patches": 100,
+   "pct_fichiers_integral": 100,
+   "patches_lus_liste": [],
+   "detail": "Aucun correctif (natif). Les 19 fichiers ont été lus en entier, y compris les modèles manpage.xml.ex (290 l.) et manpage.sgml.ex (154 l.). Tarball du .dsc listé. Entrées binaires de l'index et du Contents examinées. Recoupement dans libkysdk-system (libkypackage_general.c 1-60 et 180-461)."
+  }
+ ],
+ "non_couvert": [
+  "Binaires .deb absents du corpus : dpkg_1.23.7-ok3_amd64.deb (vérification readelf du durcissement réel impossible) et dpkg-wrapper_1.0.0.0-0k2.1ok1_all.deb (contenu de /usr/bin/dpkg_wrapper, apt_wrapper, wrapper_common et scripts de mainteneur inconnus ; détournement de dpkg non vérifiable).",
+  "Environnement du parc de construction openKylin (DEB_VENDOR, fichier d'origine, version de dpkg-dev, .buildinfo) : inconnu.",
+  "Source de gcc-15 15.2.0-16ok8 (durcissement activé par défaut par le compilateur) absente du corpus.",
+  "Sources de dpkg 1.22.6-ok5 (dpkg-dev et libdpkg-perl encore dans l'index) : présence d'openKylin.pm, chargeable par le repli « nom obsolète » de 1.22.6, non vérifiée.",
+  "Contenu (40 octets) de /etc/dpkg/dpkg.cfg.d/ostree-guard (ostree-extra-utils, binaire sans source installé par l'ISO) : à extraire dans le lot ostree/G10.",
+  "Les 40 fichiers modifiés par Ubuntu face à Debian sont caractérisés mais pas ré-audités en détail.",
+  "libkysdk-system/kypackage_general (lot V1-L3) lu seulement pour le recoupement ; libostreemode.so (ostree-maintain-daemon, coquille) non examiné.",
+  "Schéma de certificat openKylin des paquets (champs cert_subject_* des index) : le composant qui le vérifie (s'il existe) n'est pas identifié dans ce lot.",
+  "base-files : une origine sans champ Parent affecte dpkg-vendor --derives-from pour tous les paquets ; effet transversal non évalué ici."
+ ],
+ "synthese": "dpkg 1.23.7-ok3 : l'orig est identique à l'arbre natif Ubuntu 1.23.7ubuntu1 (2142/2142, CONSTATÉ) ; les 40 écarts face à Debian sont des modifications Ubuntu héritées et documentées. Le delta openKylin se réduit à 1 correctif propre, 5 fichiers debian/ modifiés et 1 ajouté ; aucun code C, aucun script de mainteneur et aucune dépendance modifiés, Essential et Priority inchangés, dpkg.cfg identique (no-debsig, comme Debian/Ubuntu). Le correctif feat_openKylin.patch est classé [SUSPECT] au sens de la consigne : son titre est un modèle non rempli avec une entrée de changelog sans rapport (CONSTATÉ), et il ajoute une politique de compilation plus faible qu'Ubuntu/Debian 1.23.7 (pas de stack-clash ni de CET/BTI, FORTIFY=2, bindnow à 0 ; CONSTATÉ, latent). Constat principal (moyenne, CONSTATÉ) : le module s'appelle openKylin.pm alors que Dpkg::Vendor 1.23.7 ne cherche que OpenKylin/Openkylin, et l'origine de base-files n'a pas de Parent. dpkg-buildflags retombe donc sur le fournisseur Default et ne fournit plus aucun drapeau d'optimisation ni de durcissement sur un openKylin 3.0 installé. Seul reste -Wl,--as-needed, ajouté par le nouveau /etc/dpkg/buildflags.conf. Par la même voie, dpkg lui-même (root), construit avec le dpkg-buildflags de l'arbre, a pu être compilé sans ces drapeaux (moyenne, PROBABLE : il manque le binaire, le journal de construction et les défauts de gcc-15). Les tests amont de dpkg sont désactivés (rules:12, faible). dpkg-wrapper : la source est un squelette dh_make de 19 fichiers, sans code. Il ne peut produire qu'un paquet de documentation, sans Depends ni script, et ne peut ni remplacer ni détourner dpkg. Pourtant, le binaire signé du dépôt principal (SHA256 058bb16b…, 63 Ko installés) dépend de dpkg et de libkysdk-conf2-tools et installe /usr/bin/dpkg_wrapper, apt_wrapper et wrapper_common : binaire sans source (confiance, moyenne, CONSTATÉ). D'après libkysdk-system (kypackage_general, lance dpkg.orig, apt.orig et apt-get.orig), il est conçu pour s'interposer devant dpkg, apt et apt-get, vraisemblablement par dpkg-divert, dans le mode ostree (moyenne, PROBABLE). Il n'est pas sur l'ISO et aucun paquet n'en dépend. Par ailleurs, l'ISO livre /etc/dpkg/dpkg.cfg.d/ostree-guard (crochet dpkg probable), issu d'un paquet sans source et de contenu inconnu (faible, PROBABLE, lot ostree). Aucun flux réseau, aucune collecte, aucune porte dérobée ni aucun affaiblissement d'authentification n'est trouvé dans le delta lu. Couverture : correctif 1/1 (100 %) ; debian/ dpkg 42/44 lus intégralement (95,5 %), 2 lus partiellement et identiques à Ubuntu ; dpkg-wrapper 19/19 (100 %)."
+}

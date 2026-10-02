@@ -1,0 +1,183 @@
+[
+ {
+  "id": "V1-L1-telemetrie-daq#0",
+  "lot": "V1-L1-telemetrie-daq",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L1-telemetrie-daq.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-daq",
+   "/home/user/openkylin-src/archive/libkysdk-diagnosetest"
+  ],
+  "depot": "kylin-daq",
+  "fichier": "src/TransmitModule.cpp",
+  "ligne": "977-1010",
+  "type": "confiance",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "if (url.scheme() == \"https\") { QSslConfiguration config; config.setProtocol(QSsl::TlsV1SslV3); config.setPeerVerifyMode(QSslSocket::PeerVerifyMode::VerifyNone); request.setSslConfiguration(config); }",
+  "explication": "Toutes les requêtes HTTPS du démon root (téléversement d'événements, d'états, configuration) désactivent la vérification du certificat serveur (VerifyNone) : aucune validation de chaîne ni de nom d'hôte, aucun épinglage, aucun certificat embarqué (QSslConfiguration construit vide, pas de setCaCertificates ; grep négatif sur ignoreSslErrors/CaCertificate dans src/). Le protocole est en outre forcé à QSsl::TlsV1SslV3 (obsolète). Ces flux portent en en-têtes HTTP le machine-id, le numéro de série DMI, le numéro d'enregistrement d'activation et la clé de service (cf. CommonInfoModule.cpp:279-290) et, dans le corps, les événements applicatifs (MAC, IP locale, termes de recherche éventuels). Point non tranché : la source de Qt (qsslcontext_openssl.cpp) est absente du corpus (archive/qtbase-opensource-src ne contient que debian/) ; si TlsV1SslV3 plafonne la négociation à TLS 1.0 comme le documente Qt 5.15, la poignée de main avec OpenSSL 3.5.5 (archive/openssl/debian/changelog l.1) au niveau de sécurité par défaut pourrait échouer, ce qui conditionne le succès effectif des envois (à vérifier dynamiquement en Phase 3).",
+  "scenario": "Un attaquant en position d'interception (Wi-Fi public, routeur compromis, usurpation DNS de datareporting.openkylin.top) présente n'importe quel certificat : il lit les identifiants matériels/licence et le contenu des événements, et répond à collect-info-server/collect/info/config/v1 avec {\"code\":200,\"bo\":{\"TransmitModule\":{\"UploadRealm\":[\"http://attaquant/\"]}}} ; la configuration est réécrite de façon persistante (ConfModule.cpp:213-266) et toute la télémétrie ultérieure part en clair vers l'attaquant.",
+  "contre_lecture": "Choix probablement fait pour des serveurs internes ou à certificat auto-signé (le changelog montre des adresses privées 172.20.43.232:30051/30053 historiques) ; les données sont surtout de l'inventaire ; l'impact réel dépend de la réussite de la négociation TLS (voir ci-dessus)."
+ },
+ {
+  "id": "V1-L1-telemetrie-daq#1",
+  "lot": "V1-L1-telemetrie-daq",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L1-telemetrie-daq.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-daq",
+   "/home/user/openkylin-src/archive/libkysdk-diagnosetest"
+  ],
+  "depot": "kylin-daq",
+  "fichier": "conf/kylinDaqConf.json",
+  "ligne": "36-39",
+  "type": "telemetrie",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "\"UploadState\":1, \"UploadRealm\": [ \"https://datareporting.openkylin.top:30005/\" ]  (idem conf/defaultConf.json:123-133 « Default »:1 ; src/DBusModule.cpp:44 m_uploadState(UploadEnable))",
+  "explication": "La remontée est active par défaut : le fichier installé dans /var/cache/kylin-daq (kylin-daq.pro:136-138) et la configuration de repli embarquée (conf.qrc -> conf/defaultConf.json) fixent UploadState=1, et le module D-Bus démarre en UploadEnable. Aucun mécanisme de recueil du consentement n'existe dans les deux arbres. Au démarrage du démon : requête de configuration immédiate (DataCommon.cpp:171-173), collecte root à +120 s (DataCommon.cpp:65-67,159 -> Basic/Online/CommonInfoModule::dealInfo) puis toutes les 86 400 s, téléversement toutes les 3 600 s (TransmitModule.cpp:1067-1125) ou dès 100 lignes en cache (CacheRecv.cpp:30-31,47-48). Identifiants ajoutés par le démon à CHAQUE requête de données (en-têtes, CommonInfoModule.cpp:279-290 + TransmitModule.cpp:988-998) : X-Uid=/etc/machine-id, X-Service-Serial-No=numéro de série DMI système (dmidecode, CommonInfoCollection.cpp:23), X-Register-Number=numéro d'enregistrement d'activation (D-Bus org.freedesktop.activation register_number, RegisterNumberInfoCollection.cpp:24-50), X-Os-Serial-Number=clé de service /etc/.kyinfo [servicekey] key (CommonInfoCollection.cpp:143-149), X-Version-Id=SHA-256 du profil. Corps « commonInformation » : CPU, GPU, fabricant/modèle DMI, versions OS/build/ostree/patch, langue, machine-id, numéro de série DMI, clé de service (CommonInfoModule.cpp:113-146) ; « onlineInformation » : heures de démarrage/arrêt (OnlineInfoCollection.cpp:21-60) ; « basicInformation » : versions logicielles (BasicInfoCollection.cpp:21-35). La description du paquet le déclare (debian/control:22-23 « collect user information »).",
+  "scenario": "Le détenteur du point de collecte (ou quiconque contrôle la configuration distante, cf. finding suivant) relie chaque poste à sa licence (clé de service + numéro d'activation, rattachables à l'acheteur) et à son numéro de série matériel, et suit son activité (horaires de démarrage/arrêt, usage des applications instrumentées) dès l'installation, sans action de l'utilisateur.",
+  "contre_lecture": "Fonction d'« amélioration produit » assumée (debian/control) ; un interrupteur existe dans ukui-control-center (page À propos, hors lot) et une case « Send optional diagnostic data » a existé dans l'installeur (kylin-os-installer/debian/changelog:453, hors lot) ; les données sont majoritairement d'inventaire et non du contenu."
+ },
+ {
+  "id": "V1-L1-telemetrie-daq#2",
+  "lot": "V1-L1-telemetrie-daq",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L1-telemetrie-daq.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-daq",
+   "/home/user/openkylin-src/archive/libkysdk-diagnosetest"
+  ],
+  "depot": "kylin-daq",
+  "fichier": "src/ConfModule.cpp",
+  "ligne": "213-266",
+  "type": "reseau",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "void ConfModule::writeConf2(const QString &conf) { ... if(moduleName != s_transmitModuleKey || moduleConfKey != s_transmitModuleUploadStateKey) { moduleConfJsonObj[moduleConfKey] = moduleConfIterT.value(); } ... writeJson(filePath, confJsonObj);",
+  "explication": "Configuration modifiable à distance et persistante : la réponse du serveur à POST <realm>collect-info-server/collect/info/config/v1 (objet « bo », TransmitModule.cpp:126-146,454-457 -> signal sendConfig -> DataCommon.cpp:157) est fusionnée dans /var/cache/kylin-daq/kylinDaqConf.json pour toute clé connue de defaultConf.json, SAUF TransmitModule.UploadState (l.249). Le serveur peut donc changer : UploadRealm (liste d'URL de destination, n'importe quelle chaîne ; seul le schéma http ou https est contrôlé, TransmitModule.cpp:889-900, KylinDaqCommon.cpp:50-76), les intervalles (min 60 s), le nombre de lignes, la rétention (StorageDuration jusqu'à 30 j, CacheRows jusqu'à 100 000), UploadType des modules et le filtrage DBusModule (FilterState/ValidPackageName). Il ne peut PAS ajouter de nouveaux types de données collectées (liste figée dans le code) ni réactiver un UploadState=0 (contrairement à l'historique : changelog 1.2.9.1-0k2.1 « 客户端uploadState字段随着服务端配置文件同步修改 »). Aucune signature ni authentification de la réponse ; combiné à VerifyNone, le canal n'est pas authentifié. Le rechargement est automatique (QFileSystemWatcher, ConfModule.cpp:29-48).",
+  "scenario": "Un serveur compromis ou un intercepteur TLS impose UploadRealm=[\"http://hôte-tiers/\"] : à partir de là, les données de tous les postes concernés partent en clair vers un tiers, durablement (fichier sur disque), sans mise à jour logicielle ni trace côté utilisateur autre que les journaux.",
+  "contre_lecture": "Mécanisme classique de pilotage de flotte (régler la fréquence, migrer de serveur) ; l'exclusion explicite d'UploadState montre une intention de ne pas contourner le choix de l'utilisateur ; les bornes Min/Max limitent les valeurs numériques."
+ },
+ {
+  "id": "V1-L1-telemetrie-daq#15",
+  "lot": "V1-L1-telemetrie-daq",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L1-telemetrie-daq.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/libkysdk-diagnosetest",
+   "/home/user/openkylin-src/archive/kylin-daq"
+  ],
+  "depot": "libkysdk-diagnosetest",
+  "fichier": "kysdk-datacollect/src/libkydatacollect.c",
+  "ligne": "828-885,361-418",
+  "type": "telemetrie",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "node->globalProperty->umid = getMachineId(); node->globalProperty->serviceKey = getServiceKey(); node->globalProperty->registerNumber = getRegisterNumber(); ... getSourceMacAndIp(g_source_ip, g_source_mac); ... cJSON_AddStringToObject(globalProperty, \"sourceMac\", ...)",
+  "explication": "API publique libkysdk-datacollect (libkydatacollect.h:107-172) : kdk_dia_data_init, kdk_dia_data_free, kdk_dia_upload_program_startup, kdk_dia_upload_program_exit, kdk_dia_upload_search_content, kdk_dia_upload_default, kdk_dia_append_page_info, kdk_dia_append_page_flag, kdk_dia_append_custom_property. Chaque événement (clic, visite, recherche, exposition, démarrage, sortie, partage, personnalisé) est automatiquement lié à : machine-id (/etc/machine-id, l.631-666), IP locale et adresse MAC de la dernière interface physique active énumérée (ioctl SIOCGIFCONF/SIOCGIFADDR/SIOCGIFHWADDR, l.535-598), clé de service (/etc/.kyinfo, l.600-629), numéro d'enregistrement d'activation (D-Bus org.freedesktop.activation register_number, l.668-826), nom et version de l'application (l.428-512), horodatage ms et durée de session (l.869-871,972-979). L'appelant peut ajouter eventCode, pageName, pageUrl, pagePath, searchWord (texte de recherche, l.980-988), drapeaux d'entrée/sortie et des paires clé/valeur arbitraires (l.926-930). Le JSON est transmis au démon root par D-Bus système UploadEventMessage (l.293-359) puis téléversé tel quel vers <realm>kylin-data-collection-service/collect-api/submit/v1 avec les en-têtes d'identifiants. Le champ userId de KGlobalProperty n'est jamais rempli. Aucun appel de production à kdk_dia_upload_search_content n'a été trouvé dans ukui-menu (seulement dans ses tests) : le passage effectif de texte saisi reste à établir (Phase 3).",
+  "scenario": "Toute application instrumentée (ukui-menu, extensions du menu, centre de contrôle via libkysdk-base, etc., hors lot) produit, par défaut et sans consentement préalable, un journal d'usage horodaté lié à la MAC, au machine-id et à la licence du poste ; si un appelant passe des termes de recherche ou des chemins/URL dans pageUrl/pagePath/customProperties, ce contenu saisi par l'utilisateur part avec ces identifiants.",
+  "contre_lecture": "Analytique produit classique ; l'IP collectée est l'adresse locale (souvent privée) ; l'envoi est conditionné par l'interrupteur UploadState du démon ; le contenu dépend entièrement des appelants."
+ },
+ {
+  "id": "V1-L5-updateur#0",
+  "lot": "V1-L5-updateur",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L5-updateur.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-system-updater",
+   "/home/user/openkylin-src/gitee/kylin-system-updater",
+   "/home/user/openkylin-src/archive/kylin-update-frontend",
+   "/home/user/openkylin-src/gitee/kylin-update-frontend"
+  ],
+  "depot": "kylin-system-updater",
+  "fichier": "backend/SystemUpdater/Core/DataAcquisition.py",
+  "ligne": "491-593",
+  "type": "telemetrie",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "PINGBACK_INTERNET_URL='http://archive1.kylinos.cn:32294/kylin-update-manager-server/main.php?' ; host_mac=uuid.getnode(); key=.kyinfo servicekey.key ; kmg={'ip','host_mac','serial_number','appname','errorcode'...}; request.urlopen(url) ; requests.post(FILE_URL, data=log.tar.gz)",
+  "explication": "La variante mutable remonte en clair (HTTP, sans TLS) vers archive1.kylinos.cn (externe) et archive.kylinos-intranet.cn (interne) : IP locale, adresse MAC (uuid.getnode), numero de serie machine (/etc/.kyinfo servicekey.key), version OS, nom de paquet, code d'erreur, et en cas d'echec une archive tar.gz des journaux apt/updater. Appele via PHPSeverSend() a chaque fin d'install/upgrade (Database.insert_info). Conditionne par upload_upgrade_log=True (defaut True) / upload_installer_log=False.",
+  "scenario": "Un observateur reseau (MITM, proxy, pays transit) sur le trafic HTTP vers archive1.kylinos.cn:32294 recupere MAC + numero de serie + IP de chaque poste a chaque mise a jour, constituant un identifiant materiel persistant lie a l'activite; l'absence de TLS permet aussi l'injection de reponses.",
+  "contre_lecture": "Remontee de diagnostic de mise a jour declaree dans la politique de confidentialite (codes d'erreur, source, nom/etape/statut de paquet); MAC/serie servent d'identifiant de parc; marquee FIXME 'temporaire PHP' dans le code, donc chemin legacy possiblement desactive si upload_upgrade_log mis a False."
+ },
+ {
+  "id": "V1-L5-updateur#1",
+  "lot": "V1-L5-updateur",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L5-updateur.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-system-updater",
+   "/home/user/openkylin-src/gitee/kylin-system-updater",
+   "/home/user/openkylin-src/archive/kylin-update-frontend",
+   "/home/user/openkylin-src/gitee/kylin-update-frontend"
+  ],
+  "depot": "kylin-system-updater",
+  "fichier": "backend/data/com.kylin.systemupgrade.conf ; backend/data/com.kylin.UpgradeStrategies.conf",
+  "ligne": "14-21",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "<policy context=\"default\"> <allow send_destination=\"com.kylin.systemupgrade\" send_interface=\"com.kylin.systemupgrade.interface\"/> ...",
+  "explication": "Les deux demons systeme tournent en root (User=root / pas de User=, Restart=always) et leur politique D-Bus autorise le contexte default : TOUT utilisateur local peut invoquer toutes les methodes des interfaces. Methodes exposees sensibles : InstallDebFile, InstallPackages, DistUpgradeAll/System/Partial, PurgePackages, FixBrokenDepends, SetDownloadspeedMax, SetEarlyaccessStatus, KillProcessSignal, SetConfigValue, GetSetDatabaseInfo. Le controle d'appelant de la variante mutable se limite a _check_prohibit_user qui ne bloque que les noms de process 'dbus-send' et 'gdbus' (get_proc_from_dbus_name renvoie psutil.Process.name(), le comm /proc, falsifiable). La liste blanche .limit n'est PAS installee (ligne commentee dans .install).",
+  "scenario": "Un utilisateur non privilegie appelle directement les methodes D-Bus root (ex. via un binaire renomme autrement que dbus-send) pour declencher installations/suppressions/arret de processus sans passer par l'IHM.",
+  "contre_lecture": "Les operations reellement sensibles (install/purge) passent ensuite par un controle polkit auth_admin_keep et/ou aptdaemon; l'ouverture context=default est le modele standard des demons systeme Kylin ou l'autorisation est deleguee a polkit plutot qu'a la politique D-Bus."
+ },
+ {
+  "id": "V1-L5-updateur#2",
+  "lot": "V1-L5-updateur",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L5-updateur.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-system-updater",
+   "/home/user/openkylin-src/gitee/kylin-system-updater",
+   "/home/user/openkylin-src/archive/kylin-update-frontend",
+   "/home/user/openkylin-src/gitee/kylin-update-frontend"
+  ],
+  "depot": "kylin-system-updater",
+  "fichier": "backend/SystemUpdater/UpgradeStrategiesDbus.py",
+  "ligne": "331-350",
+  "type": "privileges",
+  "severite": "elevee",
+  "registre": "PROBABLE",
+  "extrait": "def SetDownloadspeedMax(self, speed, set, sender=None): ... with open(\"/etc/apt/apt.conf.d/80apt-download\",\"w+\") as f: f.write('Acquire::http::Dl-Limit \"%s\";\\n' % str(speed))",
+  "explication": "Methode D-Bus accessible en context=default (sans polkit) qui ecrit la chaine 'speed' fournie par l'appelant telle quelle dans un fichier apt.conf.d charge par toute execution apt ulterieure. 'speed' n'est pas validee (str brute). Presente dans les deux demons (UpdateManagerDbus et UpgradeStrategiesDbus), variantes mutable et immutable.",
+  "scenario": "Un utilisateur local appelle SetDownloadspeedMax avec speed='0\\\";\\nDPkg::Pre-Invoke {\\\"commande-root\\\";};\\n//' : l'injection de directives apt.conf (DPkg::Pre-Invoke, Dir::Bin::dpkg) fait executer une commande arbitraire en root au prochain apt/mise a jour -> elevation locale de privileges.",
+  "contre_lecture": "La valeur provient normalement de l'IHM (entier de limite de debit) et l'ecriture n'est pas directement une execution; une validation cote appelant pourrait limiter le format, et le fichier n'est lu qu'au prochain apt. A confirmer par test que apt accepte le saut de ligne injecte."
+ },
+ {
+  "id": "V1-L5-updateur#3",
+  "lot": "V1-L5-updateur",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L5-updateur.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-system-updater",
+   "/home/user/openkylin-src/gitee/kylin-system-updater",
+   "/home/user/openkylin-src/archive/kylin-update-frontend",
+   "/home/user/openkylin-src/gitee/kylin-update-frontend"
+  ],
+  "depot": "kylin-system-updater",
+  "fichier": "backend/SystemUpdater/UpdateManager.py",
+  "ligne": "433-546",
+  "type": "confiance",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "def start_deb_install(...): if not deb_verify(deb_path): if not self.sqlite3_server.deb_policy_keep: (status,err)=PolicyKit_Authority(..., authentication=configs.getWithDefault('InstallAndPurge','install_authority',True), ...) ; else: ... keep, ignore",
+  "explication": "InstallDebFile installe un .deb local arbitraire (chemin fourni par l'appelant D-Bus). deb_verify() appelle /usr/bin/kylinsigntool -v ; si l'outil est absent ou la signature invalide, l'installation N'EST PAS refusee : elle bascule sur une autorisation polkit. Si la cle de config install_authority vaut False, ou si /etc/dpkg/dpkg.cfg place la politique en 'close'/'deter' (allow-kylinsign), le paquet non signe est installe en root sans authentification. Le nom de l'appelant (falsifiable) selectionne l'action polkit (cn.kylin.installer.action / software.center.action...). La verification de signature est donc consultative, pas bloquante.",
+  "scenario": "Un processus local se nommant 'kylin-software-center' appelle InstallDebFile sur un .deb malveillant; selon la config dpkg.cfg/install_authority, l'installation root s'effectue sans mot de passe (mainteneur scripts du .deb executes en root).",
+  "contre_lecture": "Par defaut install_authority=True -> polkit auth_admin_keep demande le mot de passe administrateur, ce qui bloque l'escalade silencieuse; le chemin non signe + polkit reproduit le comportement de 'installer une source inconnue' commun aux magasins d'applications."
+ },
+ {
+  "id": "V1-L5-updateur#5",
+  "lot": "V1-L5-updateur",
+  "fiche": "/home/user/AuditOK/rapport-audit/donnees/phase1/V1-L5-updateur.json",
+  "arbres": [
+   "/home/user/openkylin-src/archive/kylin-system-updater",
+   "/home/user/openkylin-src/gitee/kylin-system-updater",
+   "/home/user/openkylin-src/archive/kylin-update-frontend",
+   "/home/user/openkylin-src/gitee/kylin-update-frontend"
+  ],
+  "depot": "kylin-system-updater",
+  "fichier": "backend-immutable/SystemUpdater/modules/self_upgrade/processor.py",
+  "ligne": "214-273",
+  "type": "persistance",
+  "severite": "elevee",
+  "registre": "CONSTATÉ",
+  "extrait": "run_priority_upgrade: add_new_version(repo_obj,trans,...) -> checkout_files_partly(... override-commit-ids=trans.new_revision ...) ; _activate_new_version -> /opt/update-module/current ; execute_hooks(get_all_post_hooks(manifests))",
+  "explication": "La variante immutable realise une 'auto-mise a jour prioritaire' : elle tire par ostree, depuis la branche/commit indiques par le serveur (push_content issu de /opt/kylin-software-properties/ostree-important.list via com.kylin.software.properties), des fichiers decrits par des manifests, les active sous /opt/update-module/current, puis execute les post_hooks declares dans ces manifests (hooks.py: subprocess.run(hook, shell=True)). Les unites systemd et services D-Bus (kylin-system-updater.service, com.kylin.UpgradeStrategies.service) executent EN PREFERENCE le code sous /opt/update-module/current s'il existe. Le code root du demon de mise a jour est donc remplacable par du contenu pilote serveur, et des commandes shell (post_hooks) sont executees en root.",
+  "scenario": "Un serveur de distribution compromis (ou un MITM si gpg-verify du remote ostree n'est pas applique) pousse un commit/manifest dont les post_hooks executent des commandes arbitraires en root et dont le code remplace le demon updater -> execution de code distant persistante en root.",
+  "contre_lecture": "ostree pull_with_options s'appuie sur la config gpg du remote de deploiement (hors de cet arbre : la verification de signature du commit peut etre active cote /ostree); les post_hooks proviennent de manifests signes dans le commit; mecanisme legitime de mise a jour modulaire du systeme immuable."
+ }
+]

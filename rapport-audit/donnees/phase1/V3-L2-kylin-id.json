@@ -1,0 +1,349 @@
+{
+ "lot": "V3-L2-kylin-id",
+ "composants": [
+  "kylin-id",
+  "kylin-sso-client",
+  "libsync-plugin"
+ ],
+ "note_composants": "Analyse menée sur le contenu binaire distribué (pas de source exploitable). Le 4e paquet du même source, kylin-cloud-sync (non installé par défaut), est caractérisé pour contexte car il partage le même code réseau/TLS/clé.",
+ "empreintes": {
+  "archive/kylin-sso-client": "684a4b142f23b332848082fe5eb5b2295c60451b0dcb2a58dbf3b16aaf3081da",
+  "conforme_arbre_source": true,
+  "note_source": "L'arbre source est une coquille dh_make : 19 fichiers debian/ sans code (control/changelog/rules/copyright/*.ex). Empreinte identique à empreintes-arbres-sources.tsv (col.3). Aucun code propre à auditer côté source.",
+  "deb_sha256": {
+   "kylin-id_2.2.11.2-0k1.18_amd64.deb": "4b2ad5a6bdea0bd66f6d511428001d290eb75830cafa56ee653832327a838fe8",
+   "kylin-sso-client_2.2.11.2-0k1.18_amd64.deb": "856cdae8d8a0f2870f34471353a4fe29cf7598087286080e6e2dc8522e8df6ad",
+   "libsync-plugin_2.2.11.2-0k1.18_amd64.deb": "c793a7b14223cda67aa578d2d046e28ab30d774aa870b31df021ea4cc653a890",
+   "kylin-cloud-sync_2.2.11.2-0k1.18_amd64.deb": "e40f373aed655dcc3279df0bb3bdf03eb2dec0ecd5f7ee2c8d380d15d69e49bd"
+  },
+  "deb_conforme_provenance": true
+ },
+ "findings": [
+  {
+   "depot": "kylin-id",
+   "fichier": "/usr/bin/kylinid-dbus",
+   "ligne": "off=0x3390f-0x4394a (.text), va=0x433909..0x43394a",
+   "type": "crypto",
+   "severite": "elevee",
+   "extrait": "QSslConfiguration ctor; mov $0x0,%esi; call setPeerVerifyMode@plt  (0 = QSslSocket::VerifyNone); mov $0x4,%esi; call setProtocol@plt (TlsV1_2); call QNetworkRequest::setSslConfiguration@plt — puis POST https://id.kylinos.cn/v1/api/...",
+   "explication": "Le service système racine kylinid-dbus construit toutes ses requêtes HTTPS vers id.kylinos.cn en fixant setPeerVerifyMode(QSslSocket::VerifyNone) : la validation du certificat serveur est DÉSACTIVÉE alors que isUseSsl=true (kylin-id.conf) et que les URL sont en https://. Même motif dans kylin-id (5 sites, tous esi=0), libnetworkaccount.so (1 site) et kylin-cloud-sync (1 site). Les flux concernés transportent identifiants Kylin ID, mot de passe (chiffré RSA/AES), jeton d'authentification, numéro de téléphone, code SMS et identifiants matériels.",
+   "scenario": "Un attaquant en position d'homme du milieu (Wi-Fi, DNS/ARP, proxy) présente un faux certificat pour id.kylinos.cn : le client l'accepte sans broncher, capte identifiants et jeton, et peut forger les réponses (ex. renvoyer code 200 + jeton valide) — ce qui alimente notamment le flux de réinitialisation de mot de passe depuis l'écran verrouillé (ukui-screensaver appelle checkKyidAccounts/getCodeByKyidAccounts/checkAccountsInfo sur ce service).",
+   "contre_lecture": "VerifyNone pourrait n'avoir été mis que pour tolérer des bascules d'autorité interne/CDN ou un portail captif pendant le dev ('remove the following line for debug' figure déjà dans la conf D-Bus). Mais ici c'est inconditionnel, en production, sur un composant d'identité installé par défaut : la mention https:// donne une fausse impression de sécurité.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-id",
+   "fichier": "/etc/dbus-1/system.d/org.kylinID.service.conf ; /lib/systemd/system/kylinID.service ; /usr/bin/kylinid-dbus",
+   "ligne": "conf:15-17 ; unit:5-10 ; dbus XML embarqué va~0x45f9.. (introspection)",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "unit: [Service] Type=dbus BusName=org.kylinID.service ExecStart=/usr/bin/kylinid-dbus User=root Restart=always. conf: <policy context=\"default\"><allow send_destination=\"org.kylinID.service\"/></policy>. XML: method checkKyidAccounts(i uid,s kyidAccounts); getCodeByKyidAccounts(s)->as; checkAccountsInfo(s,s,s)->as; IsUserBindKyidAccounts(i uid)->b.",
+   "explication": "kylinid-dbus tourne en root sur le bus SYSTÈME et la politique D-Bus autorise context=\"default\" (TOUT utilisateur local) à lui envoyer des messages. Le binaire ne contient AUCUN contrôle d'appelant : pas de libpolkit (absent des NEEDED), pas de PolkitQt1::Authority, pas de QDBusContext, pas de GetConnectionUnixUser, pas de getuid/geteuid. Les méthodes exposées déclenchent l'envoi d'un SMS au téléphone lié à un compte Kylin ID arbitraire (getCodeByKyidAccounts -> GET https://id.kylinos.cn/v1/api/getCodeByName), tentent une connexion en ligne (checkAccountsInfo -> userLoginWithCode) ; le service lit en interne la base root /var/lib/kylin-id/database/bindInfo.db. Le contrôle polkit org.ukui.cloudAccount.userBound n'est présent que dans le plugin d'UI libnetworkaccount.so (côté utilisateur), pas dans le service racine. Correction après vérification contradictoire (G11) : les opérations d'écriture bind_user/unbind_user/select_bindInfo sont des fonctions internes, NON exposées sur le bus système (4 méthodes seulement : checkKyidAccounts, getCodeByKyidAccounts, checkAccountsInfo, IsUserBindKyidAccounts) ; un utilisateur non privilégié ne peut donc pas réécrire la base, et checkAccountsInfo ne renvoie un jeton qu'après vérification du mot de passe et du code SMS.",
+   "scenario": "Tout utilisateur local (ou tout code non privilégié) appelle getCodeByKyidAccounts('compte-cible') en boucle pour spammer des SMS vers le numéro d'une victime et énumérer les comptes valides (checkKyidAccounts), sans authentification, via un service root. Couplé au VerifyNone ci-dessus, un attaquant on-path peut piloter les réponses qui conditionnent la réinitialisation de mot de passe pré-authentification sur l'écran verrouillé.",
+   "contre_lecture": "Beaucoup de ces méthodes sont de simples relais réseau vers le backend Kylin, qui applique ses propres limites (anti-spam, verrouillage). Le root sert surtout à posséder une base commune multi-sessions et à répondre à l'écran verrouillé (pas de session utilisateur active) ; l'impact 'root local' direct est limité, l'abus principal est l'absence d'authentification de l'IPC et l'usage de ressources tierces.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-id",
+   "fichier": "/usr/bin/kylin-id ; /usr/bin/kylinid-dbus (et libnetworkaccount.so, kylin-cloud-sync)",
+   "ligne": "kylin-id UTF-16 off=0x81318 et 0x81358 (va 0x481300/0x481340), chargés en L26359/L26376 avant ctor KylinAESInfo/QAESEncryption",
+   "type": "crypto",
+   "severite": "moyenne",
+   "extrait": "Chaîne UTF-16 '<masqué>' (clé AES, 8 car.) à va=0x481300 et '<masqué>' (IV/clé, 7 car.) à va=0x481340 ; classe QAESEncryption + KylinAESInfo::UserInfoUtils ; stockage utilisateur '.uinfo', /.config/ukui/kylin-id/, /.cache/kylinId/.",
+   "explication": "Les informations d'utilisateur (dont le jeton) stockées localement sont chiffrées en AES avec une clé ET un IV CODÉS EN DUR dans le binaire (world-readable). La même paire est présente dans kylin-id, kylinid-dbus, libnetworkaccount.so et kylin-cloud-sync. Un fichier /usr/share/kylin-sso-client/All.conf est aussi référencé avec la clé et 'token' (fichier non livré dans kylin-id).",
+   "scenario": "Quiconque lit le fichier chiffré d'un utilisateur (sauvegarde, autre compte avec accès au home, média volé) extrait la clé du binaire public et déchiffre le jeton/identifiants — le chiffrement au repos n'offre aucune protection réelle (obfuscation).",
+   "contre_lecture": "La clé codée en dur protège surtout contre une lecture accidentelle/à l'œil nu ; le jeton a une durée de vie limitée côté serveur et le fichier reste dans le home de l'utilisateur (droits 0600 attendus). Ce n'est pas un secret inter-utilisateur mais un défaut de conception cryptographique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-id",
+   "fichier": "/usr/bin/kylinid-dbus ; /usr/bin/kylin-id",
+   "ligne": "dbus str va~0x45eaa8 ('lsblk...'), va~0x45eaff ('/bin/bash'), QProcess::start@plt L30871/L33975/L34388 ; getSerialNumber via com.kylin.assistant.systemdaemon",
+   "type": "persistance",
+   "severite": "faible",
+   "extrait": "QProcess::start(\"/bin/bash\", {\"-c\", \"lsblk --nodeps -no serial /dev/`lsblk | grep disk | head -1 | awk -F' ' '{print $1}'`\"}) ; appel D-Bus com.kylin.assistant.systemdaemon getSerialNumber ('serial_num','register_number','readMBInfo').",
+   "explication": "Le service (root) lance un shell /bin/bash -c pour lire le numéro de série du disque, et interroge le démon système assistant pour le numéro de série/d'enregistrement de carte mère. La commande est une constante sans interpolation d'entrée utilisateur : pas d'injection, mais exécution d'un shell en root superflue et fragile.",
+   "scenario": "N/A (chaîne fixe, pas d'injection). Risque résiduel : si le PATH ou /bin/bash étaient manipulables par un attaquant local, exécution de code en root — non démontré ici.",
+   "contre_lecture": "Simple collecte d'identifiant matériel via outils standard ; choix d'implémentation paresseux plutôt que vulnérabilité.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-id",
+   "fichier": "/usr/bin/kylin-id ; /usr/bin/kylinid-dbus",
+   "ligne": "str: user_sn_relation/add-user-sn-relation ; champs dev_sn,device_name,kernel,memory,os_name,os_version,device_type",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "POST https://id.kylinos.cn/v2/user/user_sn_relation/add-user-sn-relation {dev_sn, device_name, kernel, memory, os_name, os_version, device_type, relation} ; list-user-sn-relations ; remove-user-sn-relation ; en-tête X-Kuas-Req-From ; Authorization: <jeton>.",
+   "explication": "Lors de la liaison d'appareil (device binding) au compte Kylin ID, le client envoie au serveur des identifiants matériels forts : numéro de série du disque (dev_sn), nom de machine, version noyau, mémoire, nom/version d'OS, type d'appareil. S'y ajoutent, selon les points d'API, numéro de téléphone, compte, code SMS et jeton. Envoi sur canal TLS NON vérifié (cf. finding VerifyNone).",
+   "scenario": "Corrélation durable d'un appareil physique (série disque/carte mère) à une identité réelle (compte + téléphone) côté serveur ; interception possible faute de vérification TLS.",
+   "contre_lecture": "Fonction de liaison d'appareil déclenchée par l'utilisateur à la connexion SSO (contrepartie fonctionnelle : gestion multi-appareils, sécurité du compte) ; données attendues pour ce service.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-sso-client",
+   "fichier": "/usr/lib/x86_64-linux-gnu/ukui-control-center/libnetworkaccount.so",
+   "ligne": "symboles PolkitQt1::Authority::checkAuthorizationSync, UnixProcessSubject ; str 'getent passwd | grep /bin/bash | awk ...'",
+   "type": "privileges",
+   "severite": "informationnelle",
+   "extrait": "PolkitQt1::Authority::checkAuthorizationSync(QString, Subject, AuthorizationFlag) ; UnixProcessSubject ; POST id.kylinos.cn/update_password ; même VerifyNone + clé kylin123.",
+   "explication": "Le plugin de panneau (control-center), NON installé par défaut, applique un contrôle polkit (action org.ukui.cloudAccount.userBound) côté UI avant de lier l'utilisateur, et exécute 'getent passwd' pour lister les UID>=1000. Confirme que le contrôle d'accès polkit du composant est côté client, pas dans le service racine.",
+   "scenario": "N/A (fait d'inventaire ; le contrôle polkit dans l'UI ne protège pas le service racine kylinid-dbus qui, lui, n'a aucun contrôle).",
+   "contre_lecture": "Architecture habituelle (UI demande l'autorisation, backend agit) — mais ici le backend racine ne revérifie pas.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-id",
+   "fichier": "/lib/systemd/system/kylinID.service",
+   "ligne": "1-13",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "[Service] Type=dbus BusName=org.kylinID.service ExecStart=/usr/bin/kylinid-dbus User=root Restart=always  — aucune directive de durcissement.",
+   "explication": "L'unité systemd du service racine ne fixe aucun durcissement (pas de NoNewPrivileges, ProtectSystem, ProtectHome, PrivateTmp, RestrictAddressFamilies, SystemCallFilter, CapabilityBoundingSet). Binaires non-PIE (ELF Type=EXEC) ; RELRO complet (BIND_NOW + GNU_RELRO) et pile non exécutable présents ; stripped.",
+   "scenario": "En cas de bug mémoire dans ce service réseau root, l'absence de bac à sable et de PIE facilite l'exploitation.",
+   "contre_lecture": "Défaut de durcissement courant ; n'est pas une vulnérabilité en soi.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-sso-client",
+   "fichier": "archive/kylin-sso-client/ (source) ; paquets binaires kylin-id/kylin-sso-client/libsync-plugin",
+   "ligne": "debian/* (coquille dh_make)",
+   "type": "confiance",
+   "severite": "moyenne",
+   "extrait": "source = 19 fichiers debian/ dh_make sans code (control, changelog 'Initial Release.', rules par défaut, *.ex) ; aucun dépôt public Gitee (kylin-sso-client, kylin-id) ; Homepage: https://www.kylinos.cn ; Maintainer 'Ubuntu Developers' (générique).",
+   "explication": "kylin-id, composant d'AUTHENTIFICATION / SSO installé par DÉFAUT (service D-Bus racine, manipulation de jetons et identifiants, rôle dans la réinitialisation de mot de passe à l'écran verrouillé), est distribué SANS AUCUN code source publié : l'archive source est une coquille dh_make et aucun dépôt amont n'est trouvable. L'audit n'a pu porter que sur le binaire. Reproductibilité nulle, confiance réduite pour un composant critique.",
+   "scenario": "Impossible de vérifier l'absence de porte dérobée/collecte cachée au-delà de ce que révèle l'analyse binaire ; une modification malveillante en amont ne laisserait pas de trace vérifiable côté source.",
+   "contre_lecture": "Pratique d'empaquetage interne Kylin (source réelle non poussée dans l'archive publique) ; le binaire analysé ne révèle pas de logique manifestement malveillante au-delà des défauts listés. L'absence de source reste un défaut de transparence, pas une preuve de malveillance.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "libsync-plugin",
+   "fichier": "/usr/lib/x86_64-linux-gnu/kylin-cloud-service/lib*item.so (16 greffons)",
+   "ligne": "symboles GSettingsHelper/InfoHelper ; str /.config/ukui/cloud-sync/",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "InfoHelper::readGSettingsData / saveSyncFile ; GSettingsHelper (data/setData/reset) ; NEEDED = libgsettings-qt, libQt5DBus, libQt5Core uniquement (pas de libssl/Network).",
+   "explication": "Greffons 'item' de synchronisation (fond d'écran, écran de veille, polices, clavier, souris, thèmes, etc.), NON installés par défaut. Chacun lit/écrit des clés GSettings pour synchroniser un réglage ; ils ne font pas de réseau ni de TLS directement (le transport est porté par kylin-cloud-sync). Un greffon représentatif (libnetworkitem.so) a été caractérisé ; les 15 autres partagent taille/structure.",
+   "scenario": "N/A (fait d'inventaire).",
+   "contre_lecture": "Modules de synchronisation de préférences desktop, fonctionnels.",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "kylin-id / kylinid-dbus",
+   "destination": "https://id.kylinos.cn/v1/api/ (isTokenValid, phoneLogin, getMCodeImage, getMCodeByPhone, userLogin, logOut, verifyImage, getCodeByName, userLoginWithCode)",
+   "protocole": "HTTPS (TLS1.2) via QNetworkAccessManager GET/POST",
+   "fichier_ligne": "kylinid-dbus str L1349-1555 ; code .text va 0x433909 (SSL cfg)",
+   "declencheur": "action utilisateur (saisie compte/téléphone, connexion, déconnexion) et appels D-Bus de l'écran verrouillé",
+   "donnees": "compte Kylin ID, mot de passe (chiffré), téléphone, code SMS, jeton, image captcha",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-id / kylinid-dbus",
+   "destination": "https://id.kylinos.cn/v2/user/user_sn_relation/{add,list,remove}-user-sn-relation",
+   "protocole": "HTTPS POST application/json, en-tête Authorization: <jeton>, X-Kuas-Req-From",
+   "fichier_ligne": "kylin-id str L1668-1688",
+   "declencheur": "liaison/déliaison d'appareil à la connexion",
+   "donnees": "dev_sn (série disque), device_name, kernel, memory, os_name, os_version, device_type",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-id",
+   "destination": "https://id.kylinos.cn/wechat/{getQRCode,login,polling} ; /bindingPhone ; /find ; /registered",
+   "protocole": "HTTPS GET/POST",
+   "fichier_ligne": "kylin-id str L2054-2087",
+   "declencheur": "connexion WeChat / liaison téléphone / liens d'aide (action utilisateur)",
+   "donnees": "uuid de session WeChat, état, code",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylinid-dbus",
+   "destination": "org.freedesktop.NetworkManager (/org/freedesktop/NetworkManager, signal Connectivity/PropertiesChanged)",
+   "protocole": "D-Bus système (lecture d'état réseau)",
+   "fichier_ligne": "kylinid-dbus str L1432-1434",
+   "declencheur": "surveillance de connectivité",
+   "donnees": "état de connectivité réseau",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-cloud-sync (non installé par défaut)",
+   "destination": "https://id.kylinos.cn/cloud-sync/getCloudSync",
+   "protocole": "HTTPS",
+   "fichier_ligne": "kylin-cloud-sync strings",
+   "declencheur": "synchronisation cloud des réglages",
+   "donnees": "réglages desktop, jeton",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "libnetworkaccount.so (non installé par défaut)",
+   "destination": "https://id.kylinos.cn/v1/api/* ; /update_password",
+   "protocole": "HTTPS",
+   "fichier_ligne": "kylin-sso-client strings",
+   "declencheur": "panneau compte control-center",
+   "donnees": "compte, mot de passe, jeton",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "kylin-id/kylinid-dbus",
+   "donnee": "numéro de série du disque",
+   "fichier_ligne": "kylinid-dbus str va 0x45eaa8 ('lsblk...'), QProcess /bin/bash",
+   "stockage": "envoyé (dev_sn)",
+   "envoi": "POST id.kylinos.cn add-user-sn-relation (TLS non vérifié)"
+  },
+  {
+   "composant": "kylin-id/kylinid-dbus",
+   "donnee": "numéro de série / d'enregistrement carte mère",
+   "fichier_ligne": "kylinid-dbus str L1498-1507 (com.kylin.assistant.systemdaemon getSerialNumber, readMBInfo, register_number)",
+   "stockage": "en mémoire",
+   "envoi": "device binding / usage interne"
+  },
+  {
+   "composant": "kylin-id/kylinid-dbus",
+   "donnee": "modèle CPU, mémoire totale/dispo",
+   "fichier_ligne": "str /proc/cpuinfo '^model name', /proc/meminfo MemTotal/MemAvailable",
+   "stockage": "en mémoire",
+   "envoi": "champ memory du device binding"
+  },
+  {
+   "composant": "kylin-id/kylinid-dbus",
+   "donnee": "nom/version OS, version noyau, nom d'hôte",
+   "fichier_ligne": "str /etc/os-release KYLIN_RELEASE_ID/VERSION_US, QSysInfo::kernelVersion, QHostInfo::localHostName",
+   "stockage": "en mémoire",
+   "envoi": "os_name/os_version/kernel/device_name du device binding"
+  },
+  {
+   "composant": "kylin-id/kylinid-dbus",
+   "donnee": "compte Kylin ID, nom d'utilisateur, numéro de téléphone, jeton, uid",
+   "fichier_ligne": "kylinid-dbus str L1370-1387 ; libkyaccounts.c L867-900 (parsing userInfo: kylinID,userName,token,uid,phone)",
+   "stockage": "fichier .uinfo chiffré AES clé en dur, /.config/ukui/kylin-id/, /.cache/kylinId/",
+   "envoi": "signal D-Bus userInfo (bus session) + API id.kylinos.cn"
+  },
+  {
+   "composant": "kylin-id/kylinid-dbus",
+   "donnee": "association compte Kylin ID <-> uid local",
+   "fichier_ligne": "kylinid-dbus str L1513-1524 ; /var/lib/kylin-id/database/bindInfo.db (table boundInfo: kyidAccounts TEXT pk, uid INTEGER)",
+   "stockage": "SQLite root-owned, 0644, world-readable",
+   "envoi": "local ; lu par IsUserBindKyidAccounts (écran verrouillé)"
+  }
+ ],
+ "role_authentification_session": "Sur le bus SESSION, org.kylinID.service = /usr/bin/kylin-id (boîte de dialogue de connexion SSO, tourne sous l'utilisateur). Sur le bus SYSTÈME, org.kylinID.service = /usr/bin/kylinid-dbus (root). L'écran verrouillé/greeter (ukui-screensaver lockwidget.cpp L2028-2029, resetpwdwidget.cpp L372-384) appelle le service SYSTÈME : IsUserBindKyidAccounts(uid) pour décider s'il propose la réinitialisation par Kylin ID, puis checkKyidAccounts / getCodeByKyidAccounts (envoi SMS) / checkAccountsInfo (retourne un jeton de vérification). Ce jeton est ensuite utilisé par ukui-screensaver (via org.kylin.KprBackend, hors de ce lot) pour changer le mot de passe local — fonction de récupération accessible AVANT ouverture de session. libkysdk-system/libkyaccounts.c appelle le service SESSION (checkLogin, getUserInfo qui renvoie le jeton) pour exposer l'état de connexion Kylin ID aux applications (ex. magasin de logiciels).",
+ "controle_appelant": "AUCUN dans le service racine kylinid-dbus : pas de libpolkit (hors NEEDED), pas de PolkitQt1, pas de QDBusContext/connection().message(), pas de GetConnectionUnixUser/ProcessID, pas de getuid/geteuid. La politique D-Bus système autorise context=default (tout utilisateur) à envoyer vers org.kylinID.service. Le seul contrôle polkit (action org.ukui.cloudAccount.userBound, auth_admin_keep) est dans le plugin d'UI libnetworkaccount.so, non dans le service racine. Un utilisateur local ne peut PAS obtenir le jeton d'un AUTRE utilisateur via ce service : le jeton transite par le bus SESSION (isolé par utilisateur) et le fichier .uinfo réside dans le home de chacun ; bindInfo.db ne contient que la correspondance compte<->uid (pas de jeton).",
+ "couverture": [
+  {
+   "arbre": "kylin-id (deb binaire, installé par défaut)",
+   "fichiers_code_propres": 2,
+   "lignes_code_propres": 0,
+   "lus_integralement": 2,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100,
+   "pct_lignes": 0,
+   "fichiers_lus": [
+    "/etc/dbus-1/session.d/org.kylinID.service.conf",
+    "/etc/dbus-1/system.d/org.kylinID.service.conf",
+    "/lib/systemd/system/kylinID.service",
+    "/usr/share/dbus-1/services/org.kylinID.service.service",
+    "/usr/share/dbus-1/system-services/org.kylinID.service.service",
+    "/usr/share/kylin-id/kylin-id.conf",
+    "/usr/share/polkit-1/actions/org.ukui.cloudAccount.userBound.policy",
+    "/usr/share/doc/kylin-id/copyright",
+    "/usr/share/doc/kylin-id/changelog.Debian.gz",
+    "/var/lib/kylin-id/database/bindInfo.db (schéma)",
+    "ELF /usr/bin/kylin-id (caractérisé: deps, symboles, strings, désassemblage TLS)",
+    "ELF /usr/bin/kylinid-dbus (caractérisé: idem + enregistrement D-Bus, introspection, QProcess)"
+   ],
+   "note": "Tous les 8 fichiers texte + 5 .qm/.db non-texte inventoriés ; 2/2 ELF caractérisés en profondeur."
+  },
+  {
+   "arbre": "kylin-sso-client (deb binaire, non installé par défaut)",
+   "fichiers_code_propres": 1,
+   "lignes_code_propres": 0,
+   "lus_integralement": 1,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100,
+   "pct_lignes": 0,
+   "fichiers_lus": [
+    "/usr/share/doc/kylin-sso-client/copyright",
+    "ELF /usr/lib/.../ukui-control-center/libnetworkaccount.so (caractérisé: deps polkit, TLS VerifyNone, URLs, clé)"
+   ],
+   "note": "1/1 ELF caractérisé (brièvement). Traductions .ts/.qm hors périmètre code."
+  },
+  {
+   "arbre": "libsync-plugin (deb binaire, non installé par défaut)",
+   "fichiers_code_propres": 16,
+   "lignes_code_propres": 0,
+   "lus_integralement": 1,
+   "lus_partiellement": 15,
+   "pct_fichiers": 100,
+   "pct_lignes": 0,
+   "fichiers_lus": [
+    "ELF libnetworkitem.so (représentatif, caractérisé)",
+    "15 autres lib*item.so (deps + absence réseau/TLS vérifiées par balayage)"
+   ],
+   "note": "1 greffon caractérisé en détail ; 15 autres vérifiés par file+readelf+strings (mêmes deps gsettings/dbus, pas de réseau/TLS)."
+  },
+  {
+   "arbre": "kylin-cloud-sync (deb binaire, non installé par défaut, même source)",
+   "fichiers_code_propres": 1,
+   "lignes_code_propres": 0,
+   "lus_integralement": 1,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100,
+   "pct_lignes": 0,
+   "fichiers_lus": [
+    "ELF /usr/bin/kylin-cloud-sync (caractérisé brièvement: TLS VerifyNone, lsblk, clé, endpoint cloud-sync)",
+    "org.ukui.cloudsync.gschema.xml",
+    "com.kylin.cloud-sync.service"
+   ],
+   "note": "Inclus pour contexte (partage code source)."
+  },
+  {
+   "arbre": "archive/kylin-sso-client (SOURCE)",
+   "fichiers_code_propres": 0,
+   "lignes_code_propres": 0,
+   "lus_integralement": 0,
+   "lus_partiellement": 0,
+   "pct_fichiers": 0,
+   "pct_lignes": 0,
+   "fichiers_lus": [
+    "debian/changelog",
+    "debian/control",
+    "debian/rules",
+    "debian/copyright",
+    "debian/source/format",
+    "debian/README.source",
+    "debian/README"
+   ],
+   "note": "Coquille dh_make, 0 fichier de code source — rien à couvrir côté source (cf. finding confiance)."
+  }
+ ],
+ "non_couvert": [
+  "Logique interne exacte de kylinid-dbus (désassemblage ciblé seulement : TLS, enregistrement D-Bus, QProcess, chaînes ; pas de rétro-ingénierie complète de chaque méthode) — binaires stripped.",
+  "Backend serveur id.kylinos.cn (limites anti-spam SMS, vérification réelle du jeton, format des réponses) : hors périmètre, non testable sans réseau.",
+  "org.kylin.KprBackend / SecurityQuestionAnswer (changement effectif du mot de passe local depuis l'écran verrouillé) : porté par ukui-screensaver et un backend hors de ce lot (cf. V2-L1-ukui-session finding 19).",
+  "com.kylin.assistant.systemdaemon getSerialNumber (démon fournissant série carte mère) : composant tiers hors lot.",
+  "Droits réels à l'exécution de .uinfo et des fichiers de jeton (0600 attendu mais non vérifiable sur paquet ; bindInfo.db livré en 0644).",
+  "15 greffons libsync-plugin non désassemblés individuellement (vérif. structurelle seulement).",
+  "Absence de source : impossibilité de confirmer l'exhaustivité des flux/collectes au-delà de l'analyse binaire."
+ ],
+ "hypotheses_kit_phase5": [
+  "Service actif : 'systemctl status kylinID.service' et 'busctl --system list | grep org.kylinID.service' doivent montrer kylinid-dbus actif en root (User=root dans l'unité).",
+  "Utilisateur d'exécution : 'ps -o user= -C kylinid-dbus' = root ; 'ps -o user= -C kylin-id' = utilisateur de session.",
+  "Politique D-Bus : vérifier /etc/dbus-1/system.d/org.kylinID.service.conf -> context=default allow send_destination (tout utilisateur peut émettre).",
+  "Introspection SANS appel de méthode : 'busctl --system introspect org.kylinID.service /org/kylinID/path' (ou gdbus introspect) pour lister checkKyidAccounts/getCodeByKyidAccounts/checkAccountsInfo/IsUserBindKyidAccounts et confirmer l'absence d'annotations d'autorisation.",
+  "Contrôle d'appelant : confirmer l'absence de polkit (aucune action org.kylinID.* dans 'pkaction'), et que le service répond à une introspection depuis un compte non privilégié sans refus d'accès.",
+  "Droits des fichiers de jetons : 'stat -c %a %n' sur /var/lib/kylin-id/database/bindInfo.db (attendu 644, root), et sur ~/.config/ukui/kylin-id/, ~/.cache/kylinId/, ~/.uinfo d'un utilisateur connecté.",
+  "Flux réseau : observer (tcpdump/ss, NON MITM) les connexions vers id.kylinos.cn:443 au moment d'une connexion SSO ; confirmer que le certificat n'est pas validé (test contrôlé avec proxy TLS d'audit sur VM isolée -> la connexion aboutit malgré un certificat non fiable).",
+  "Durcissement : 'systemd-analyze security kylinID.service' (attendu : score faible, aucune directive de sandbox).",
+  "Clé en dur : vérifier (hors ligne) que la même clé AES est présente dans kylin-id, kylinid-dbus, libnetworkaccount.so, kylin-cloud-sync (comparaison d'offsets) — déjà constaté statiquement.",
+  "Rôle écran verrouillé : sur VM, vérifier que le bouton de réinitialisation par Kylin ID n'apparaît que si IsUserBindKyidAccounts(uid) renvoie vrai, et tracer l'appel D-Bus système émis par ukui-screensaver."
+ ],
+ "synthese": "kylin-id (installé par défaut sur l'ISO 3.0) est le client SSO Kylin ID. Son service D-Bus SYSTÈME kylinid-dbus tourne en ROOT (unité kylinID.service, User=root) et expose org.kylinID.service sur /org/kylinID/path. CONSTATÉ (elevee, crypto) : TOUTES les requêtes HTTPS vers id.kylinos.cn sont faites avec setPeerVerifyMode(QSslSocket::VerifyNone) — vérification du certificat DÉSACTIVÉE alors que isUseSsl=true ; motif identique dans kylin-id (5 sites), libnetworkaccount.so et kylin-cloud-sync. CONSTATÉ (elevee, privileges) : le service racine n'a AUCUN contrôle d'appelant (pas de polkit, pas de QDBusContext, pas de vérif UID) et la politique D-Bus autorise tout utilisateur (context=default) ; ses méthodes déclenchent l'envoi de SMS vers le téléphone d'un compte arbitraire (getCodeByKyidAccounts), des connexions en ligne (checkAccountsInfo) et l'écriture d'une base de liaison root. Le seul polkit (org.ukui.cloudAccount.userBound) est côté UI (libnetworkaccount.so), non dans le service racine. CONSTATÉ (moyenne, crypto) : le jeton/les infos utilisateur stockés localement sont chiffrés AES avec clé+IV CODÉS EN DUR (masqués, va 0x481300/0x481340), identiques dans les 4 binaires. CONSTATÉ (moyenne, telemetrie) : à la liaison d'appareil, envoi d'identifiants matériels forts (série disque via /bin/bash+lsblk en root, série carte mère, CPU, mémoire, OS, noyau, hôte) + compte/téléphone/jeton, sur TLS non vérifié. CONSTATÉ (moyenne, confiance) : composant d'authentification installé par défaut distribué SANS code source (archive = coquille dh_make, aucun dépôt public) — reproductibilité nulle. Rôle d'auth de session : l'écran verrouillé appelle ce service racine (IsUserBindKyidAccounts puis checkKyidAccounts/getCodeByKyidAccounts/checkAccountsInfo) pour la réinitialisation de mot de passe par Kylin ID AVANT ouverture de session ; couplé au VerifyNone, un attaquant on-path peut influer sur ce flux (chaîne cross-composant, cf. V2-L1). Un utilisateur local NE peut PAS récupérer le jeton d'un autre (bus session isolé, .uinfo dans le home ; bindInfo.db ne contient que compte<->uid, livré en 0644). Défauts de durcissement (faible) : unité sans sandbox, binaires non-PIE (RELRO complet et NX présents). Couverture : 8/8 fichiers texte kylin-id lus intégralement, 2/2 ELF kylin-id caractérisés en profondeur ; libnetworkaccount.so + 1 greffon libsync + kylin-cloud-sync caractérisés ; source inexistante. Limites : binaires stripped (pas de rétro complète par méthode), backend serveur et composants appelés (KprBackend, systemdaemon) hors lot."
+}

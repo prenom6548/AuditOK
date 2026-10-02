@@ -1,0 +1,426 @@
+{
+ "lot": "V3-L1-boutique",
+ "composants": [
+  "kylin-software-center",
+  "kylin-software-center-plugin-expand",
+  "kylin-software-center-plugin-synchrodata",
+  "kylin-software-center-plugin-preprocessing"
+ ],
+ "empreintes": {
+  "deb/kylin-software-center-plugin-expand_5.0.9.1-ok4.77_amd64.deb": "878275d9bb278c2e54b73cda4f37d89ffd9cc626ffcb08591f6fe28cc142f02e",
+  "deb/kylin-software-center-plugin-synchrodata_5.0.9.1-ok4.77_amd64.deb": "ec2ba9872d0daa3a2f3c9e35a6ccaec54faf13d5580356ff79c4422400051fe5",
+  "deb/kylin-software-center_5.0.9.1-ok4.77_amd64.deb": "a1ca6556568041ca10576a6051255bc4cca0f066cb34e123477659b6b5b4e866",
+  "deb/kylin-software-center-plugin-preprocessing_5.0.9.1-ok4.77_amd64.deb": "726d10b198724055ea6b0ca5768b416f8acdef3956c381508c5d3a1042b6cb7f",
+  "ELF.kylin-software-center.sha256": "7f9b26395525fc102140dbc214374f48e64d9900c97cdc78a177b8ac5c25151b",
+  "ELF.kylin-software-center-plugin-expand.sha256": "ed8ed17ad7343d2472699f7c61635c85165b56810c5692ee27dbbd577bb64c45",
+  "ELF.kylin-software-center-plugin-synchrodata.sha256": "a5f4dcb5418de91f185467fb8456547bc7c87e6c21d8080c8dab2e46150afad3",
+  "conforme": true,
+  "note_conformite": "Les 4 SHA-256 des .deb sont identiques à V3-L1-boutique-provenance.tsv (index Packages signé huanghe main/pty). Arbres extraits = contenu bit-à-bit des data.tar.zst (5643/5/6/13 fichiers vérifiés, 0 écart). Aucune source 5.0.9.1 à empreinter (archive/kylin-software-center = coquille dh_make, sha256 arbre cec5507c...=conforme à empreintes-arbres-sources.tsv)."
+ },
+ "findings": [
+  {
+   "depot": "kylin-software-center (+3 greffons)",
+   "fichier": "(4 .deb 5.0.9.1-ok4.77) vs archive/kylin-software-center (coquille dh_make, 19 fichiers) + gitee ubuntu-kylin-software-center 4.5.77",
+   "ligne": "n/a",
+   "type": "confiance",
+   "severite": "elevee",
+   "extrait": "archive:debian/* = squelette dh_make sans code ; gitee = AUTRE produit (ubuntu-kylin-software-center 4.5.77, Python) ; livré = 5.0.9.1 (C++/Qt + greffon Python) sans source publiée.",
+   "explication": "Les 4 binaires installés par défaut sur l'ISO 3.0 (dont un chemin d'installation privilégié et une collecte d'identifiants matériels) n'ont AUCUNE source publiée correspondante : la 5.0.9.1 n'existe ni dans l'archive (coquille vide) ni sur Gitee (produit/version différents). Build non reproductible, revue de source impossible ; seul le contenu binaire distribué est auditable. SHA-256 des .deb conformes à la provenance signée (voir empreintes).",
+   "scenario": "Une version malveillante ou altérée pourrait être livrée sans détection possible par comparaison au source amont ; aucun tiers ne peut reconstruire ni diff. L'écart source/binaire masque tout ajout (collecte, porte dérobée) introduit à la compilation.",
+   "contre_lecture": "Pratique courante chez Kylin de ne publier que des coquilles d'empaquetage ; le code réel vit sur un GitLab interne (Homepage gitlab2.kylin.com). L'absence de source peut être pure négligence de publication, sans intention. Les .deb proviennent bien de la chaîne signée openKylin.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-synchrodata",
+   "fichier": "/usr/bin/kylin-software-center-plugin-synchrodata",
+   "ligne": "RemoterDaemon::execution_strategy @0x54e99c ; force_app_installation @0x553f7e ; force_app_uninstallation @0x5543e2 ; get_latest_app_strategy @0x4dc804",
+   "type": "persistance",
+   "severite": "elevee",
+   "extrait": ".rodata 'force_app_installation list:' / 'force_app_uninstallation list:' / 'only allow view list:' ; SQL app_strategy (typeId 3/5) ; appStrategy/getLatestAppStrategy ; install_app::install_application_list/remove_application_list -> InstallServer (InstallPackages/PurgePackages)",
+   "explication": "Le démon de synchronisation (service user, minuterie) télécharge depuis api.kylinos.cn des 'stratégies' (table app_strategy) et exécute execution_strategy() : installation forcée (typeId=3), désinstallation forcée (typeId=5) ou 'vue seule'. L'exécution passe par InstallServer::installApplication/removeApplication -> D-Bus système com.kylin.systemupgrade / com.kylin.UpgradeStrategies (InstallDebFile/InstallPackages/PurgePackages) du démon root kylin-system-updater. La requête get_latest_app_strategy envoie ip/mac/hostname/serviceSerialNumber comme sélecteur : le serveur cible des machines par identifiant matériel.",
+   "scenario": "Le serveur api.kylinos.cn (ou un intercepteur si le flux bascule en HTTP via la conf modifiable) pousse une stratégie d'installation forcée ciblant une machine par son n° de série/MAC ; le démon installe silencieusement un paquet via le canal root de l'updater. Combiné aux faiblesses du canal updater (V1-L5 : InstallDebFile context=default, vérif signature consultative), c'est un canal d'installation piloté serveur.",
+   "contre_lecture": "Fonction de gestion de parc légitime (politiques d'applications obligatoires/interdites en entreprise) ; l'installation réelle reste soumise à l'updater root et à ses dépôts APT signés gpg. La vérification TLS par défaut de Qt protège le flux si la conf n'est pas altérée.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-synchrodata / kylin-software-center-plugin-expand",
+   "fichier": "/usr/bin/kylin-software-center-plugin-{synchrodata,expand}",
+   "ligne": "PistonRemoter::get_http_res @syn 0x4b274c (setRawHeader x-ky-*) ; globals::getSerialNumber/getMac/getIp/getActivationCode ; PistonRemoter::get_serial_number @0x4b1712",
+   "type": "telemetrie",
+   "severite": "elevee",
+   "extrait": "en-têtes HTTP x-ky-mac-address, x-ky-serial-number, x-ky-service-serial-number, x-ky-auth-ip, x-ky-auth-code, x-ky-auth-cpu, x-ky-auth-osversion, x-ky-auth-osname, x-ky-kcm-dept-id, x-ky-store-version posés sur CHAQUE requête vers api.kylinos.cn/api/v1/",
+   "explication": "Chaque appel serveur de la boutique joint, en en-têtes, des identifiants matériels/organisationnels : adresse MAC (cat /sys/class/net/*/address), n° de série disque (lsblk --nodeps -no serial) et n° de série carte-mère DMI (D-Bus com.kylin.assistant.systemdaemon mdObtainSystemBoardInfo / com.kylin-os-manager getPcInfo), IP, modèle CPU (/proc/cpuinfo), code d'activation (org.freedesktop.activation register_number), ID région (/etc/kylin-region_id), dépt KCM. Envoi dès le démarrage du démon et à chaque synchro, hors interaction explicite.",
+   "scenario": "Corrélation/suivi d'un poste par identifiants matériels stables côté serveur, sur un canal déclenché automatiquement (minuterie), au-delà du simple catalogue applicatif.",
+   "contre_lecture": "Identifiants utilisés pour l'upload ciblé (stratégies), le support et l'anti-fraude des avis ; déclaré en partie dans la politique de confidentialité openKylin (collecte boutique : nom logiciel installé/désinstallé, ID communauté, version, mot-clé recherche, architecture). MAC/série ne figurent toutefois PAS explicitement dans la liste 'software store' de la politique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-expand",
+   "fichier": "/usr/bin/kylin-software-center-plugin-expand",
+   "ligne": "XML introspection <interface com.kylin.softwarestore.accessserver> ; collectUserInfo/submitDownloadInfomation/submitUninstallInfomation/uploadSearchKeyWords/userAccountLogin @ .rodata 0x96b*-0x8fb*",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "méthodes D-Bus: collectUserInfo(osVersion,storeVersion,serialNumber,macAddress,ipAddress), submitDownloadInfomation/submitUninstallInfomation(appId,arch,mac,ip,systemVersion,packageVersion,storeVersion), uploadSearchKeyWords(keyWords,arch,mac,ip,systemVersion), userAccountLogin(account,password,validateCode)",
+   "explication": "Greffon 'expand' = service D-Bus session com.kylin.softwarestore.accessserver (policy user=kylin own, context=default : tout process de la session peut invoquer). Il relaie vers api.kylinos.cn : collecte (série/MAC/IP/versions), événements install/désinstall (+ computerName=hostname, userName=logname), mots-clés de recherche (store/user/app/searchLog), identifiants de compte Kylin ID (account+password en clair dans les args D-Bus de session, POST HTTPS). Déclencheurs = actions utilisateur dans l'IHM.",
+   "scenario": "Un autre process de la même session lit/émet ces méthodes (bus session, context=default) pour exfiltrer l'historique d'installation ou les mots-clés ; ou interception du compte si le flux est rétrogradé en HTTP via la conf modifiable.",
+   "contre_lecture": "Comportement fonctionnel d'une boutique (avis, historique cloud, remontée d'installations) déclaré dans la politique de confidentialité ; le mot de passe transite normalement en HTTPS vers id/api.kylinos.cn. Bus session = déjà périmètre de l'utilisateur.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-preprocessing",
+   "fichier": "/usr/share/kylin-software-center-plugin-preprocessing/package/packageDbus.py",
+   "ligne": "133,357,504,533 (subprocess shell=True 'dpkg -s %s' % packageName) ; méthodes @ 185,301,382,497,521",
+   "type": "persistance",
+   "severite": "moyenne",
+   "extrait": "output = subprocess.check_output(\"dpkg -s %s 2>/dev/null | awk '/Version: /{print $2}'\" % packageName, shell=True)  # packageName = argument D-Bus (in_signature 's')",
+   "explication": "Service D-Bus session com.kylin.softwarecenter.packageInfo (startDbus.py, SessionBus, policy user=kylin own + context=default). Plusieurs méthodes exposées (getPackageInfo/getPackageUpdateStatus/getPackageInstallStatus/getPackageVersion/getPackageVersionList/getPackageInstalledVersion/getPackageDownloadUrl) passent le nom de paquet reçu par D-Bus dans un subprocess shell=True par interpolation %s, sans quoting -> injection de commande shell. Exécution sous l'utilisateur de la session (pas root). Aucun contrôle d'appelant ni polkit.",
+   "scenario": "Un process de la session (ou appelant malveillant atteignant le bus session) invoque getPackageInstalledVersion avec packageName='x; <commande>' : exécution arbitraire sous l'identité de l'utilisateur. Pas d'élévation (même uid), mais contournement d'éventuels confinements applicatifs et exécution hors du flux prévu.",
+   "contre_lecture": "Le service tourne au niveau de la session : un attaquant déjà dans cette session possède déjà ces privilèges, donc l'impact d'élévation est nul ; l'injection suppose un appelant sur le bus de session de la victime. Noms de paquets normalement issus de la base interne.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-expand / kylin-software-center-plugin-preprocessing",
+   "fichier": "etc/dbus-1/session.d/com.kylin.softwarestore.accessserver.conf ; etc/dbus-1/session.d/com.kylin.softwarecenter.packageInfo.conf",
+   "ligne": "8-21 (les deux)",
+   "type": "privileges",
+   "severite": "moyenne",
+   "extrait": "<policy user=\"kylin\"><allow own=.../></policy> <policy context=\"default\"><allow send_destination=... send_interface=.../></policy>",
+   "explication": "Les deux services D-Bus de session déclarent own réservé à l'utilisateur 'kylin' mais autorisent l'ENVOI depuis context=default (tout appelant du bus de session) vers toutes leurs interfaces, sans polkit ni contrôle d'appelant côté binaire (QDBusContext présent mais pas de vérification observée). Services de session (pas root) : surface ouverte intra-session (voir injection preprocessing et relais accessserver).",
+   "scenario": "Tout process de la session atteint collectUserInfo/packageInfo ; combiné à l'injection packageDbus, exécution/relais réseau déclenchables par un pair de session.",
+   "contre_lecture": "Modèle D-Bus de session classique ; le périmètre reste l'utilisateur courant. Le 'own=kylin' est d'ailleurs incohérent avec un déploiement multi-utilisateur (le service tourne sous l'uid de session réel).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-synchrodata",
+   "fichier": "usr/lib/systemd/user/kylin-software-center.service ; .timer ; postinst",
+   "ligne": "service 1-11 ; timer 1-9 ; postinst: systemctl --global enable kylin-software-center.timer",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "[Timer] OnStartupSec=10min Unit=kylin-software-center.service ; [Service] ExecStart=/usr/bin/kylin-software-center-plugin-synchrodata Restart=on-failure RestartSec=1800 ; postinst: systemctl --global enable ...timer ; dbus services com.kylin.softwarecenter.getsearchresults",
+   "explication": "Unité et minuterie systemd USER (pas système) activées globalement au postinst : le démon synchrodata démarre 10 min après l'ouverture de session de chaque utilisateur et se relance toutes les 30 min sur échec. Il tourne sous l'uid de la session (pas root). C'est lui qui porte la synchro catalogue, l'auto-update et l'exécution des stratégies serveur. add_whitelist.py (postinst GUI) l'inscrit en liste blanche réseau kysec (com.kylin.kysec.netctl).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center",
+   "fichier": "etc/xdg/autostart/kylin-software-center-autostart.desktop",
+   "ligne": "12,17",
+   "type": "persistance",
+   "severite": "informationnelle",
+   "extrait": "Exec=/usr/bin/kylin-software-center -quiet ; NoDisplay=true",
+   "explication": "Autostart de session (conffile). En mode -quiet, main() lit option-settings/auto_start ; si 'false'/vide il réécrit auto_start=False et quitte sans ouvrir l'IHM (pas de démarrage résident de l'IHM par défaut). Le travail de fond permanent est assuré par synchrodata/preprocessing, pas par l'autostart GUI.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-synchrodata / kylin-software-center",
+   "fichier": "/usr/bin/kylin-software-center-plugin-synchrodata ; /usr/bin/kylin-software-center",
+   "ligne": "install_app::slot_down_app @syn 0x49e10c ('wget -c -P ... -O ... -T 30') ; data/uksc.db table package_list.downloadLink",
+   "type": "reseau",
+   "severite": "faible",
+   "extrait": "wget -c -P <dir> <url> -O <file> -o <log> -T 30 ; catalogue: 31579/31615 downloadLink = http://archive2.kylinos.cn/... ; contrôle MD5 (md5sum du catalogue vs globals::getMD5 du fichier)",
+   "explication": "Les paquets .deb sont téléchargés par QProcess 'wget' depuis les URL du catalogue (uksc.db), majoritairement http://archive2.kylinos.cn (clair). L'intégrité repose sur (1) le md5sum fourni par le catalogue, comparé localement, et (2) la vérification gpg APT + la vérif de signature de l'updater root au moment de l'install (hors lot, consultative d'après V1-L5). Le MD5 issu du même canal ne protège pas contre un serveur malveillant ; la garantie réelle est la signature gpg APT côté updater.",
+   "scenario": "Un intercepteur du téléchargement HTTP sert un .deb modifié + MD5 correspondant ; bloqué seulement si l'updater root vérifie la signature gpg/kylinsigntool (non garanti). ",
+   "contre_lecture": "Le chemin d'install normal passe par l'updater qui réinstalle via APT (dépôts signés gpg) ; le wget+md5 sert surtout au cache/affichage. Transport HTTP du dépôt = conception APT openKylin (clé Signed-By).",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-synchrodata",
+   "fichier": "/usr/bin/kylin-software-center-plugin-synchrodata",
+   "ligne": "install_app::check_apk_sign @0x4a5044 (dlopen /usr/lib/<multiarch>/libkysec.so.0 -> kysec_check_pkg_sign) ; signature_verification @0x4a4be0 (libkylin_signtool.so -> BJCA_apkverify)",
+   "type": "crypto",
+   "severite": "informationnelle",
+   "extrait": "dlopen libkysec.so.0 kysec_check_pkg_sign ; dlopen libkylin_signtool.so BJCA_apkverify ; appelé depuis slot_copy_file_to_archives avant install d'un .apk.tar.gz",
+   "explication": "Pour les paquets Android (.apk.tar.gz) la boutique vérifie une signature via libkysec (kysec_check_pkg_sign) et libkylin_signtool (BJCA_apkverify) chargées par dlopen. Pas de désactivation TLS ni de repli non vérifié repéré dans ces chemins. Pour les .deb, la vérification de signature est déléguée à l'updater root.",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center-plugin-synchrodata / kylin-software-center-plugin-expand",
+   "fichier": "/usr/bin/kylin-software-center-plugin-{synchrodata,expand} ; GUI KylinAESInfo::UserInfoUtils",
+   "ligne": "PistonRemoter::save_token @syn 0x4b8f0e ; globals::Crypt ; KSC KylinAESInfo::UserInfoUtils::encryptUserAuth @0x764bea",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "QAESEncryption::Crypt avec clé = MD5(n° série disque) + littéral codé en dur <masqué> ('kylin123' et autres) ; jeton stocké dans ~/.cache/uksc ; GUI chiffre ~/.cache/.../KID*.uinfo avec SHA-256 d'un littéral <masqué>",
+   "explication": "Le jeton de session et les identifiants utilisateur sont chiffrés AES avec une clé dérivée d'un secret codé en dur dans le binaire (masqué) et/ou du n° de série disque, sans sel aléatoire ni stockage protégé (fichier sous ~/.cache). Quiconque lit le binaire et le fichier peut déchiffrer localement. Confidentialité locale faible du jeton/compte.",
+   "scenario": "Un process local lisant ~/.cache/uksc et connaissant la clé embarquée déchiffre le jeton de la boutique de l'utilisateur.",
+   "contre_lecture": "Obfuscation plutôt que protection ; le fichier reste dans le HOME de l'utilisateur (déjà accessible à lui-même). Impact limité à la session locale.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "les 3 ELF",
+   "fichier": "/usr/bin/kylin-software-center ; -plugin-expand ; -plugin-synchrodata",
+   "ligne": "en-têtes ELF",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "Type=EXEC (non-PIE) ; pas de DT_FLAGS BIND_NOW (RELRO partiel, pas de full RELRO) ; stripped ; GNU_STACK RW (NX ok) ; CET IBT/SHSTK présent ; canaris partiels (__stack_chk_fail importé)",
+   "explication": "Binaires non-PIE et sans Full RELRO/BIND_NOW : défaut de durcissement pour des composants installés par défaut traitant des entrées réseau et D-Bus. NX et CET présents ; aucune désactivation TLS (aucun VerifyNone/ignoreSslErrors dans les 3 ELF).",
+   "scenario": "En cas de vulnérabilité mémoire, l'absence de PIE/RELRO facilite l'exploitation.",
+   "contre_lecture": "Durcissement seul ; pas de vulnérabilité mémoire démontrée ici.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center",
+   "fichier": "usr/bin/kylin-software-center-saveLog",
+   "ligne": "4-17,137-186,211-247",
+   "type": "telemetrie",
+   "severite": "faible",
+   "extrait": "rsync -aRL des journaux (~/.log, ~/.cache/uksc, /var/log/kylin-system-updater, /var/log/syslog, /etc/apt/sources.list, /etc/kylin-*) -> tar.gz /tmp puis copie sur le Bureau ; dpkg -l, kare -l, kaiming list",
+   "explication": "Script bash (chmod 755 au postinst, non setuid) de collecte de diagnostic : agrège des journaux système et la liste des paquets dans une archive déposée sur le Bureau. Exécuté manuellement/à la demande, pas d'envoi réseau automatique. Peut inclure /var/log/syslog et sources.list (données potentiellement sensibles) dans une archive remise à l'utilisateur.",
+   "scenario": "",
+   "contre_lecture": "Outil de support local ; l'archive reste sur la machine (Bureau), pas d'exfiltration automatique.",
+   "registre": "CONSTATÉ"
+  },
+  {
+   "depot": "kylin-software-center",
+   "fichier": "/usr/bin/kylin-software-center (DataBurialPoint / DataBurialPointUtils)",
+   "ligne": "0x60d880-0x60e640 ; 0x844184-0x845e60 (kdk_dia_data_init/append_custom_property/upload_default/upload_search_content/program_startup/program_exit)",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "kdk_dia_* (libkysdk-datacollect) : startup/exit, bannerClick, categoryTabClick, installApp, uninstallApp, SearchKeyWordsInput, SearchResultClick, SearchNoResult, BannerExposure",
+   "explication": "L'IHM instrumente les actions d'usage (démarrage, clics bannière/catégorie, install/désinstall, recherches, expositions) via libkysdk-datacollect (埋点). Ces événements sont remis au démon root com.kylin.daq, dont l'upload final (HTTPS datareporting.openkylin.top, TLS VerifyNone) est hors lot (voir V1-L1-telemetrie-daq). Collecte d'usage déclarée dans la politique de confidentialité (mot-clé recherche, nom appli, exposition pub).",
+   "scenario": "",
+   "contre_lecture": "",
+   "registre": "CONSTATÉ"
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "kylin-software-center-plugin-expand/kylin-software-center-plugin-synchrodata/kylin-software-center",
+   "destination": "https://api.kylinos.cn/api/v1/ (base configurable ; isUseSsl/http possible)",
+   "protocole": "HTTPS (POST/GET, vérif TLS Qt par défaut)",
+   "fichier_ligne": "syn PistonRemoter::get_http_res 0x4b274c ; conf server-address=https://api.kylinos.cn/api/v1/",
+   "declencheur": "minuterie synchrodata (OnStartupSec=10min) + actions IHM",
+   "donnees": "catalogue, connexion compte (account/password), avis/notes, collectInfo (série,MAC,IP,versions), install/désinstall (appId,mac,ip,hostname,logname,version), mots-clés recherche, stratégies d'app, messages ; en-têtes x-ky-mac/serial/service-serial/auth-ip/auth-code/cpu/kcm-dept",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-software-center-plugin-synchrodata/kylin-software-center",
+   "destination": "http://archive2.kylinos.cn/... (package_list.downloadLink du catalogue)",
+   "protocole": "HTTP (wget -c -O)",
+   "fichier_ligne": "syn install_app::slot_down_app 0x49e10c ; uksc.db package_list",
+   "declencheur": "install/màj d'un paquet (IHM ou auto-update)",
+   "donnees": "aucune donnée applicative montante ; téléchargement .deb ; intégrité = md5sum catalogue + gpg APT/updater à l'install",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-software-center-plugin-expand",
+   "destination": "https://api.kylinos.cn/api/v1/file/upload/wishApp/image",
+   "protocole": "HTTPS multipart/form-data POST",
+   "fichier_ligne": "expand PistonRemoter::upload_Image 0x43b09a",
+   "declencheur": "action utilisateur (liste de souhaits)",
+   "donnees": "images fournies par l'utilisateur + en-têtes identifiants",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-software-center-plugin-synchrodata/kylin-software-center-plugin-expand",
+   "destination": "https://archive2.kylinos.cn/APK/KYLIN_APK/kmre/",
+   "protocole": "HTTPS",
+   "fichier_ligne": ".rodata kydroid_server (conf) ; check_auto_update_software 0x54aa8a",
+   "declencheur": "applications Android (kmre/kydroid)",
+   "donnees": "téléchargement d'apk",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-software-center",
+   "destination": "https://id.kylinos.cn/{login,registered,find} (navigateur)",
+   "protocole": "HTTPS (ouverture externe)",
+   "fichier_ligne": "conf kylin_id_path/register_account/find_pwd",
+   "declencheur": "connexion/inscription Kylin ID",
+   "donnees": "authentification compte (dans le navigateur/kylin-id)",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-software-center",
+   "destination": "com.kylin.daq (D-Bus) -> datareporting.openkylin.top (hors lot)",
+   "protocole": "D-Bus puis HTTPS (TLS VerifyNone côté daq, cf V1-L1)",
+   "fichier_ligne": "DataBurialPoint* kdk_dia_* 0x60d880+",
+   "declencheur": "actions d'usage IHM",
+   "donnees": "événements d'usage (recherches, install, clics, expositions pub) + identifiants ajoutés par libkysdk-datacollect",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "kylin-software-center-plugin-synchrodata/kylin-software-center-plugin-expand",
+   "donnee": "adresse MAC",
+   "fichier_ligne": "globals::getMac (cat /sys/class/net/<if>/address) 0x458ffc",
+   "stockage": "conf ~/.cache/uksc/kylin-software-center.conf (GUI: chiffrée globals::Crypt)",
+   "envoi": "en-tête x-ky-mac-address -> api.kylinos.cn ; D-Bus collectUserInfo/submit*Infomation"
+  },
+  {
+   "composant": "kylin-software-center-plugin-synchrodata",
+   "donnee": "n° de série disque",
+   "fichier_ligne": "PistonRemoter::save_token/readToken: lsblk --nodeps -no serial ; globals::getSerialNumber (/etc/.kyinfo servicekey)",
+   "stockage": "clé AES du jeton ; conf",
+   "envoi": "en-tête x-ky-serial-number -> api.kylinos.cn"
+  },
+  {
+   "composant": "kylin-software-center-plugin-synchrodata",
+   "donnee": "n° de série carte-mère / PC (DMI)",
+   "fichier_ligne": "PistonRemoter::get_serial_number: D-Bus com.kylin.assistant.systemdaemon mdObtainSystemBoardInfo ; com.kylin-os-manager getPcInfo 0x4b1712",
+   "stockage": "en mémoire",
+   "envoi": "en-tête x-ky-service-serial-number -> api.kylinos.cn"
+  },
+  {
+   "composant": "kylin-software-center-plugin-synchrodata",
+   "donnee": "adresse IP",
+   "fichier_ligne": "globals::getIp (ip route / ifconfig) 0x458aae",
+   "stockage": "conf (GUI chiffré)",
+   "envoi": "en-tête x-ky-auth-ip + payloads strategy/message/collectInfo"
+  },
+  {
+   "composant": "kylin-software-center-plugin-synchrodata",
+   "donnee": "modèle CPU / architecture / GPU",
+   "fichier_ligne": "globals::getCpu (/proc/cpuinfo) ; getArch (dpkg --print-architecture) ; getGPU",
+   "stockage": "conf",
+   "envoi": "en-tête x-ky-auth-cpu ; cpuArchitecture dans payloads"
+  },
+  {
+   "composant": "kylin-software-center-plugin-synchrodata",
+   "donnee": "code d'activation / ID région / dépt KCM",
+   "fichier_ligne": "globals::getActivationCode (org.freedesktop.activation register_number) ; getOrganizationalID (/etc/kylin-region_id)",
+   "stockage": "en mémoire",
+   "envoi": "en-têtes x-ky-auth-code / x-ky-kcm-dept-id -> api.kylinos.cn"
+  },
+  {
+   "composant": "kylin-software-center-plugin-expand",
+   "donnee": "nom d'hôte et nom d'utilisateur",
+   "fichier_ligne": "globals::getHostName (hostname) ; getLogName (logname) ; accessServerDbus::submitDownloadInfomation/submitUninstallInfomation",
+   "stockage": "-",
+   "envoi": "payload computerName/userName -> store/user/application (install/désinstall)"
+  },
+  {
+   "composant": "kylin-software-center-plugin-expand",
+   "donnee": "mots-clés de recherche",
+   "fichier_ligne": "accessServerDbus::uploadSearchKeyWords -> store/user/app/searchLog",
+   "stockage": "-",
+   "envoi": "api.kylinos.cn (avec mac/ip/arch/systemVersion)"
+  },
+  {
+   "composant": "kylin-software-center-plugin-expand",
+   "donnee": "identifiants de compte Kylin ID (account/password/phone)",
+   "fichier_ligne": "accessServerDbus::userAccountLogin/userPhoneLogin -> store/user/accountLogin",
+   "stockage": "jeton chiffré AES ~/.cache/uksc",
+   "envoi": "api.kylinos.cn (HTTPS)"
+  },
+  {
+   "composant": "kylin-software-center/kylin-software-center-plugin-synchrodata",
+   "donnee": "historique d'installation local",
+   "fichier_ligne": "LocalDataInformation ~/.cache/uksc/localDataInfomation.db (historyInstall/recentUpdates)",
+   "stockage": "SQLite ~/.cache/uksc",
+   "envoi": "getUserInstallHistory -> api.kylinos.cn si connecté (historique cloud)"
+  },
+  {
+   "composant": "kylin-software-center",
+   "donnee": "événements d'usage (埋点)",
+   "fichier_ligne": "DataBurialPoint* kdk_dia_*",
+   "stockage": "com.kylin.daq (SQLite /var/cache/kylin-daq)",
+   "envoi": "datareporting.openkylin.top via daq (hors lot)"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "kylin-software-center-plugin-preprocessing (contenu .deb)",
+   "fichiers_code_propres": 9,
+   "lignes_code_propres": 2886,
+   "lus_integralement": 9,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100,
+   "pct_lignes": 100,
+   "fichiers_lus": [
+    "usr/share/.../data/dbService.py",
+    "usr/share/.../package/packageDbus.py",
+    "usr/share/.../data/themePackageState.py",
+    "usr/share/.../model/globals.py",
+    "usr/share/.../model/logmanager.py",
+    "usr/share/.../kylin-software-center-plugin-preprocessing.py",
+    "usr/share/.../startDbus.py",
+    "usr/bin/kylin-software-center-plugin-preprocessing (wrapper sh)",
+    "etc/dbus-1/session.d/com.kylin.softwarecenter.packageInfo.conf + .service + .service systemd + postinst"
+   ]
+  },
+  {
+   "arbre": "kylin-software-center-plugin-expand (contenu .deb)",
+   "fichiers_code_propres": 3,
+   "lignes_code_propres": 28,
+   "lus_integralement": 3,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100,
+   "pct_lignes": 100,
+   "fichiers_lus": [
+    "etc/dbus-1/session.d/com.kylin.softwarestore.accessserver.conf",
+    "usr/share/dbus-1/services/com.kylin.softwarestore.accessserver.service",
+    "postrm",
+    "+ ELF kylin-software-center-plugin-expand caractérisé (readelf/strings/objdump ciblé)"
+   ]
+  },
+  {
+   "arbre": "kylin-software-center-plugin-synchrodata (contenu .deb)",
+   "fichiers_code_propres": 5,
+   "lignes_code_propres": 78,
+   "lus_integralement": 5,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100,
+   "pct_lignes": 100,
+   "fichiers_lus": [
+    "usr/lib/systemd/user/kylin-software-center.service",
+    "usr/lib/systemd/user/kylin-software-center.timer",
+    "usr/share/dbus-1/services/com.kylin.softwarecenter.getsearchresults.service",
+    "postinst",
+    "postrm",
+    "+ ELF kylin-software-center-plugin-synchrodata caractérisé"
+   ]
+  },
+  {
+   "arbre": "kylin-software-center (contenu .deb, hors images/.qm/.svg/catalogue)",
+   "fichiers_code_propres": 10,
+   "lignes_code_propres": 600,
+   "lus_integralement": 10,
+   "lus_partiellement": 0,
+   "pct_fichiers": 100,
+   "pct_lignes": 100,
+   "fichiers_lus": [
+    "usr/bin/kylin-software-center-saveLog",
+    "usr/share/kylin-software-center/add_whitelist.py",
+    "usr/share/kylin-software-center/kylin-software-center.conf",
+    "etc/xdg/autostart/kylin-software-center-autostart.desktop",
+    "usr/share/applications/kylin-software-center.desktop",
+    "usr/share/kylin-software-center/data/Readme.txt",
+    "usr/share/kylin-software-center/data/clientAPItest/values.json",
+    "usr/share/kylin-software-center/data/clientAPItest/serviceip.txt",
+    "usr/share/kylin-software-center/foot.txt",
+    "postinst/postrm",
+    "+ ELF kylin-software-center (7,6 Mo) caractérisé ; catalogue uksc.db inspecté en lecture seule (schéma+source_list+downloadLink)"
+   ]
+  }
+ ],
+ "hypotheses_phase5": [
+  "Services actifs par défaut en session : kylin-software-center.service + .timer (synchrodata, uid session, ~10min après login, relance 30min) ; kylin-software-center-plugin-preprocessing.service (uid session, relance 600s) ; activables D-Bus : com.kylin.softwarestore.accessserver, com.kylin.softwarecenter.packageInfo, com.kylin.softwarecenter.getsearchresults (bus session).",
+  "Vérifier qu'aucun des 4 binaires ne tourne en root (pas de User= système ; services user) ; confirmer uid réel des démons.",
+  "Politiques D-Bus de session : confirmer que context=default autorise tout appelant intra-session vers accessserver et packageInfo ; tester l'injection shell de packageDbus.py (getPackageInstalledVersion packageName piégé) sous l'uid de session.",
+  "Flux réseau : capturer les requêtes vers api.kylinos.cn (en-têtes x-ky-mac/serial/service-serial/auth-ip/auth-code/cpu/kcm-dept) au démarrage du démon et lors install/désinstall/recherche ; confirmer HTTPS et vérif certificat (défaut Qt) ; vérifier si server-address/isUseSsl de ~/.cache/uksc/kylin-software-center.conf peut forcer HTTP.",
+  "Téléchargement .deb en HTTP vers archive2.kylinos.cn (wget) ; vérifier que l'install réelle repasse par l'updater root et refuse un paquet non signé gpg.",
+  "Stratégies serveur : observer get_latest_app_strategy et execution_strategy ; tester si une réponse serveur (ou MITM) déclenche une install/désinstall forcée via le canal root updater.",
+  "Collecte d'identifiants : confirmer lsblk/ifconfig/cat /sys/class/net, D-Bus mdObtainSystemBoardInfo/getPcInfo/register_number, et persistance dans ~/.cache/uksc/kylin-software-center.conf (champs chiffrés ip/mac).",
+  "Permissions/umask des fichiers ~/.cache/uksc (jeton AES, localDataInfomation.db, uksc*.db) ; faisabilité du déchiffrement local du jeton avec la clé embarquée.",
+  "add_whitelist.py (postinst) : confirmer l'inscription des binaires en liste blanche réseau kysec (com.kylin.kysec.netctl)."
+ ],
+ "non_couvert": [
+  "Code machine C++ des 3 ELF non décompilé intégralement : caractérisation par readelf (bibliothèques, symboles), strings, XML d'introspection D-Bus embarqué, et objdump -d CIBLÉ sur les chemins sensibles (install, télémétrie, collecte d'identifiants, crypto/jeton, TLS). Pas de preuve d'absence de comportement caché hors de ces chemins.",
+  "Vérification de signature des .deb au moment de l'installation : réalisée par le démon root kylin-system-updater (lot V1-L5), hors de ce composant ; la boutique s'y délègue (InstallDebFile/InstallPackages).",
+  "Upload final de la télémétrie d'usage (kdk_dia -> com.kylin.daq -> datareporting.openkylin.top, TLS VerifyNone) : couvert par V1-L1-telemetrie-daq.",
+  "Comportement d'exécution réel (services actifs, droits effectifs, flux réseau observés, contenu des stratégies serveur) : à valider en Phase 5 sur VM.",
+  "Contenu détaillé du catalogue uksc.db au-delà du schéma et des URL/listes (4684 applications, règles de ciblage cpu_model/no_cpu_model, grille publicitaire)."
+ ],
+ "synthese": "CONSTATÉ : 4 paquets binaires (kylin-software-center + greffons expand/synchrodata/preprocessing), tous sur l'ISO 3.0, SHA-256 .deb conformes à la provenance signée ; AUCUNE source publiée pour la 5.0.9.1 (archive=coquille dh_make, Gitee=autre produit 4.5.77) -> constat de confiance (elevee), audit sur binaire. CONSTATÉ : la boutique n'installe pas elle-même en root : elle télécharge le .deb (wget, archive2.kylinos.cn en HTTP, contrôle md5 via catalogue) puis délègue l'installation au démon root kylin-system-updater via D-Bus système (InstallDebFile/InstallPackages/PurgePackages) ; vérif de signature .deb assurée (consultativement) par l'updater (hors lot). Les .apk vérifient une signature via libkysec/kysec_check_pkg_sign et libkylin_signtool/BJCA_apkverify (dlopen). CONSTATÉ (elevee) : le greffon synchrodata (service systemd USER + minuterie, uid session) exécute des 'stratégies' téléchargées depuis api.kylinos.cn : installation/désinstallation FORCÉES d'applications (app_strategy typeId 3/5, execution_strategy), ciblées par n° de série/MAC/hostname, réalisées via le canal root de l'updater. CONSTATÉ (elevee) : chaque requête vers https://api.kylinos.cn/api/v1/ porte en en-têtes des identifiants matériels/organisationnels (MAC, série disque, série carte-mère DMI, IP, CPU, code d'activation, dépt KCM) collectés par shell (lsblk/ifconfig/cat /sys/class/net) et D-Bus (assistant.systemdaemon, os-manager, activation). TLS vérifié par défaut (Qt) ; AUCUN VerifyNone/ignoreSslErrors dans les 3 ELF. Mais la base serveur et un drapeau isUseSsl/http sont modifiables dans ~/.cache/uksc/kylin-software-center.conf. CONSTATÉ (moyenne) : greffon expand = service D-Bus session com.kylin.softwarestore.accessserver (user=kylin own, context=default) relayant collecte (collectInfo), install/désinstall (+hostname/username), mots-clés de recherche et identifiants de compte (userAccountLogin account/password) vers api.kylinos.cn. CONSTATÉ (moyenne) : greffon preprocessing = service D-Bus session Python com.kylin.softwarecenter.packageInfo (context=default) ; plusieurs méthodes passent le nom de paquet reçu par D-Bus dans subprocess shell=True par interpolation %s -> injection de commande shell, exécutée sous l'uid de la session (pas d'élévation, impact intra-session). CONSTATÉ (faible) : jeton d'auth/compte chiffré AES avec clé issue d'un littéral codé en dur (masqué) + n° de série disque, dans ~/.cache/uksc ; ELF non-PIE sans Full RELRO/BIND_NOW (CET/NX présents) ; saveLog agrège des journaux (syslog, sources.list) en archive locale sans envoi. INFO : télémétrie d'usage IHM via kdk_dia (libkysdk-datacollect) -> com.kylin.daq -> datareporting.openkylin.top (upload TLS VerifyNone, hors lot V1-L1). Collecte boutique partiellement déclarée dans la politique de confidentialité openKylin (nom appli, ID communauté, mot-clé, architecture) ; MAC/numéros de série ne figurent pas explicitement dans sa rubrique 'software store'. Couverture : 100% des fichiers texte/scripts propres lus intégralement (27 fichiers env.) ; 3/3 ELF caractérisés (readelf+strings+XML D-Bus+objdump ciblé) ; limite = code compilé non décompilé hors chemins sensibles. Empreintes conformes, arbres = contenu exact des .deb (0 écart)."
+}

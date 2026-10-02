@@ -1,0 +1,892 @@
+{
+ "lot": "V2-L4-ia-cloud",
+ "statut": "complet",
+ "composants": [
+  "kylin-aiassistant",
+  "kylin-baidu-nlp-engine",
+  "kylin-qwen-nlp-engine",
+  "kylin-xunfei-nlp-engine",
+  "kylin-deepseek-nlp-engine",
+  "kylin-custom-nlp-engine",
+  "kylin-baidu-speech-engine",
+  "kylin-xunfei-speech-engine",
+  "kylin-baidu-vision-engine",
+  "kylin-xunfei-vision-engine",
+  "kylin-ai-data-management-service",
+  "kylin-ai-document-qa-service"
+ ],
+ "empreintes": {
+  "archive/kylin-aiassistant": "9765ea92bf33a9a8f3fe3e8d478b0ddd04c1c9afdcc2b65d9473012e84debbe0",
+  "archive/kylin-baidu-nlp-engine": "f48699d7238c3577e9a4bcd37c60c62c896390c64fc546fd96e01bcce4ea2d72",
+  "archive/kylin-qwen-nlp-engine": "4ed0959d551f1277ae6f404331cec334c248c6f0450da26fde0971f8df492f6a",
+  "archive/kylin-xunfei-nlp-engine": "2b7001a8b6669a38061fa2b76fd9c90ba0fecb0f8dcd031cc6c6577dcc8a4473",
+  "archive/kylin-deepseek-nlp-engine": "3a4322e8a61590010fbdd66fd0d2e8cf6c52cc69c439729840379624e074051f",
+  "archive/kylin-custom-nlp-engine": "006ff15a44ccdf3fe814f298b08d51bafbc7cc10eb510bf580324b93a56da4bd",
+  "archive/kylin-baidu-speech-engine": "05ff22f9d10d9f4665abc87dafef578f53569c1e0b31e7e5fa709cf262b52b8b",
+  "archive/kylin-xunfei-speech-engine": "c58dbd4aa3dfe0caf1fa4780fe209dc6f7689d4f88087ff55db5b01ecb7ef6d1",
+  "archive/kylin-baidu-vision-engine": "2546b69c55a137934f2fef8203e009f93d2d0cc3480ad94f9e827b0f0de988f5",
+  "archive/kylin-xunfei-vision-engine": "e5dc2c75b513f2737c36ec7d91af67581eb6bc9fd2ba694c6884211d4f7f3339",
+  "archive/kylin-ai-data-management-service": "de5901663a0b3d6ce1c880f758648cf7a9c8ab353576dbf8bef5ac959dd2933e",
+  "archive/kylin-ai-document-qa-service": "502d53b81898e125ad82c8d25f12e7e8b2a72159d42291bd0f4a75229c7c6bee",
+  "conforme": true
+ },
+ "findings": [
+  {
+   "depot": "kylin-baidu-speech-engine",
+   "fichier": "third-party/libhv-v1.3.3/ssl/openssl.c ; src/baiduspeechengine_p.cpp ; src/token.cpp",
+   "ligne": "openssl.c:34,69-83 ; baiduspeechengine_p.cpp:252-253,277,338,463-473 ; token.cpp:67-81",
+   "type": "confiance",
+   "severite": "elevee",
+   "extrait": "openssl.c:34 int mode = SSL_VERIFY_NONE; ; p.cpp:252 \"wss://vop.baidu.com/realtime_asr?sn=kylin-ai-subsystem\" + timestamp_ ; p.cpp:465 request.url = \"https://tsn.baidu.com/text2audio\"; hv::HttpClient client; ; token.cpp:67-69 ...oauth/2.0/token?client_id=...&client_secret=<masqué>",
+   "explication": "Trois flux du moteur Baidu passent par libhv (copie embarquee v1.3.3 compilee dans la .so) et non par cpr : (1) reconnaissance continue WebSocket wss://vop.baidu.com/realtime_asr (audio micro PCM 16 kHz + trame START contenant appid et appkey, l.277/635-645), (2) synthese vocale https://tsn.baidu.com/text2audio via hv::HttpClient (texte a lire + jeton d'acces), (3) obtention du jeton https://openapi.baidu.com/oauth/2.0/token via hv::HttpClient (client_id ET client_secret en clair dans l'URL). Aucun code Kylin ne fournit hssl_ctx_opt_t ni verify_peer (grep withTLS/verify_peer/hssl_ctx_opt vide dans src/) : le contexte SSL est cree par hssl_ctx_new(NULL) (event/nio.c:198, http/client/HttpClient.cpp:229) donc SSL_VERIFY_NONE, sans aucun controle post-poignee de main (pas de SSL_get_verify_result ni de verification de nom d'hote). Le certificat serveur n'est donc jamais verifie sur ces flux. Comportement par defaut amont de libhv, non corrige par Kylin. Les flux cpr du meme moteur (pro_api, getBaiduSpeechToken) verifient TLS (defaut libcurl).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un attaquant en position d'interception (Wi-Fi public, routeur compromis, proxy d'entreprise malveillant, DNS empoisonne) presente un certificat auto-signe pour vop.baidu.com / tsn.baidu.com / openapi.baidu.com : la poignee de main reussit, il recoit en clair le flux audio du microphone pendant une dictee/reunion, l'appkey Baidu et, lors de l'initialisation TTS, l'API Key + Secret Key du compte Baidu de l'utilisateur (reutilisables a ses frais) ; il peut aussi injecter de fausses transcriptions qui seront traitees comme commandes par l'assistant.",
+   "contre_lecture": "Libhv est utilise tel quel avec ses reglages par defaut (verification desactivee amont pour simplifier le deploiement) ; le moteur n'est actif que si l'utilisateur a saisi ses propres cles Baidu et choisi ce moteur ; les flux cpr equivalents (reconnaissance ponctuelle, jeton) verifient bien TLS, ce qui suggere un oubli plutot qu'une intention."
+  },
+  {
+   "depot": "kylin-xunfei-speech-engine",
+   "fichier": "third-party/libhv-v1.3.3/ssl/openssl.c ; src/xunfeispeechengine_p.h ; src/xunfeispeechengine_p.cpp",
+   "ligne": "openssl.c:34 ; p.h:28-30,142-144 ; p.cpp:188-196,377,436,512-513,565-592,835-864,1053",
+   "type": "confiance",
+   "severite": "elevee",
+   "extrait": "p.h:142 realtimeAsrHostUrl_{\"wss://rtasr.xfyun.cn/v1/ws\"}; 143 asrHostUrl_{\"wss://iat-api.xfyun.cn/v2/iat\"}; 144 ttsHostUrl_{\"wss://tts-api.xfyun.cn/v2/tts\"} ; class XunfeiWebSocketClient : public hv::WebSocketClient",
+   "explication": "Tous les flux du moteur iFlytek (dictee continue rtasr, reconnaissance ponctuelle iat, synthese tts) sont des WebSocket TLS libhv ouverts par client.open(url) sans option TLS (WebSocketClient.cpp:56-57 withTLS() sans hssl_ctx_opt) : certificat serveur non verifie (SSL_VERIFY_NONE par defaut, aucun controle de nom d'hote). Donnees exposees : audio micro (binaire, l.512) ou audio base64 (l.561), texte a synthetiser base64 (l.831), app_id ; l'authentification se fait par signature HMAC (SHA1 pour rtasr l.190-195, SHA256 pour iat/tts l.575-582) dans l'URL : le secret lui-meme ne transite pas, mais l'URL signee est rejouable pendant sa fenetre de validite. Les heures de signature viennent de l'horloge locale (util.cpp:216-226).",
+   "registre": "CONSTATÉ",
+   "scenario": "Attaquant en interception reseau : il termine le TLS avec n'importe quel certificat, lit l'audio de dictee/reunion et les textes lus a voix haute, et peut renvoyer de fausses transcriptions a l'assistant (injection de texte interprete comme requete). Il peut rejouer l'URL signee pour consommer le quota iFlytek de la victime pendant la fenetre de validite.",
+   "contre_lecture": "Configuration par defaut amont de libhv ; moteur inactif tant que l'utilisateur n'a pas saisi ses propres identifiants iFlytek ; le secret API n'est pas transmis (signature HMAC), ce qui limite l'impact sur les identifiants."
+  },
+  {
+   "depot": "kylin-baidu-speech-engine",
+   "fichier": "src/baiduspeechengine_p.cpp ; src/token.cpp ; src/logger.h",
+   "ligne": "baiduspeechengine_p.cpp:566 ; token.cpp:87-88 ; logger.h:164",
+   "type": "crypto",
+   "severite": "moyenne",
+   "extrait": "LOGI(\"apiKey_, secretKey_\", apiKey_, secretKey_); ... LOGI(\"Http body  :\", response.body); ... std::atomic<Level> level_{LOG_LEVEL_INFO};",
+   "explication": "A chaque generation de jeton (generateAccessToken, appelee a l'initialisation de la reconnaissance ponctuelle et a chaque expiration), l'API Key ET la Secret Key Baidu de l'utilisateur sont ecrites en clair sur la sortie standard du processus hote au niveau INFO, qui est le niveau par defaut du logger (logger.h:164, abaisse seulement par RUN_IN_DEBUG). token.cpp:88 journalise aussi le corps de la reponse OAuth (access_token) au niveau INFO. Le processus hote est le runtime IA de session (service utilisateur) dont stdout part dans le journal systemd (cf. V1-L8). En complement, toutes les variantes setConfig des moteurs ecrivent la configuration complete (cles comprises) sur stderr si elle est jugee invalide (ex. baiduspeechengine_p.cpp:77-89, qwennlpengine_p.cpp:72, deepseeknlpengine_p.cpp:109-114, customnlpengine_p.cpp:254, xunfeinlpengine_p.cpp:231).",
+   "registre": "CONSTATÉ",
+   "scenario": "Un utilisateur ayant acces au journal (membre des groupes adm/systemd-journal, administrateur, outil de collecte de journaux ou rapport de bogue joint) recupere les cles Baidu d'un autre compte et les utilise a ses frais ; un rapport de diagnostic envoye au support divulgue les identifiants.",
+   "contre_lecture": "Trace de debogage oubliee (le commentaire ne masque pas les cles) ; le journal utilisateur n'est lisible par defaut que par l'utilisateur lui-meme et les groupes d'administration ; les cles sont celles que l'utilisateur a lui-meme saisies."
+  },
+  {
+   "depot": "kylin-qwen-nlp-engine",
+   "fichier": "qwennlpengine_p.cpp",
+   "ligne": "498,533-534",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "fprintf(stdout, \"message: %s\\n\", message.c_str()); ... std::string postString = qwen_nlp_util::jsonToString(context_); printf(\"post string %s\\n\", postString.c_str());",
+   "explication": "Le corps complet de chaque requete (invite systeme, historique de conversation, outils, et dans le cas RAG le texte des documents injecte dans l'invite) est imprime sans condition sur stdout avant l'envoi a DashScope. Meme motif dans les autres moteurs NLP : deepseeknlpengine_p.cpp:448,492 (stderr), customnlpengine_p.cpp:407,447, xunfeinlpengine_p.cpp:468 (fprintf) et 513 (LOGI, niveau par defaut INFO), baidunlpengine_p.cpp:454 (LOGI \"Baidu chat context\"). Les transcriptions vocales sont aussi journalisees au niveau INFO : baiduspeechengine_p.cpp:146 (LOGI(message) de chaque resultat ASR), xunfeispeechengine_p.cpp:256,336,747. Ces bibliotheques sont chargees dans le runtime IA de session : le contenu des conversations se retrouve dans le journal systemd utilisateur, en plus des journaux propres au runtime releves en V1-L8.",
+   "registre": "CONSTATÉ",
+   "scenario": "Toute personne ou tout outil ayant acces au journal de l'utilisateur (administrateur, groupe adm, collecte centralisee de journaux, archive de rapport de bogue) lit l'integralite des conversations IA, y compris le contenu des documents soumis a l'assistant.",
+   "contre_lecture": "Traces de developpement non retirees ; journal local, non envoye sur le reseau par ce code ; le contenu est deja envoye au fournisseur cloud choisi par l'utilisateur."
+  },
+  {
+   "depot": "kylin-aiassistant",
+   "fichier": "kylin-aiassistant/systemchat.cpp ; kylin-aiassistant/main.cpp",
+   "ligne": "systemchat.cpp:64,220,683 ; main.cpp:230",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "KyInfo() << \"DocumentReader get file alltext : \" << docText; ... KyInfo() << \"文本类回答-chat-\" << itemObject; ... initUkuiLog4qt(\"kylin-aiassistant\");",
+   "explication": "Quand l'utilisateur joint un document a une question (mode normal), l'assistant journalise au niveau INFO le texte integral extrait du document (systemchat.cpp:683) puis chaque fragment de reponse du modele (l.220). Le journal est initialise par ukui-log4qt (main.cpp:230, hors QT_DEBUG) dans le repertoire de l'utilisateur. Le code de pairage avec la passerelle kylin-bot est aussi journalise (gatewaywebsocketmanager.cpp:226).",
+   "registre": "CONSTATÉ",
+   "scenario": "Le contenu de documents confidentiels joints a une question persiste en clair dans les fichiers journaux de l'utilisateur, au-dela de la suppression de l'historique dans l'interface, et peut etre recupere via une sauvegarde, un rapport de bogue ou un autre compte administrateur.",
+   "contre_lecture": "Journalisation de diagnostic courante ; fichiers dans le repertoire personnel de l'utilisateur ; aucun envoi reseau de ces journaux par ce code."
+  },
+  {
+   "depot": "kylin-xunfei-nlp-engine",
+   "fichier": "src/util.cpp",
+   "ligne": "135-137,164-245,260-277",
+   "type": "reseau",
+   "severite": "faible",
+   "extrait": "#define TIME_SERVER \"cn.pool.ntp.org\" ... socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP) ... sendto(socketFd, (const char *)&packet, sizeof(NtpPacket), 0, ...)",
+   "explication": "Avant chaque conversation (getAuthenticationUrl -> getGmtTime), le moteur interroge en UDP/123 non authentifie le serveur cn.pool.ntp.org (jusqu'a 5 essais, delai 200 ms) pour dater la signature HMAC, avec repli sur l'horloge locale. Flux non documente mais sans donnee utilisateur ; la reponse NTP n'est pas validee (pas de controle du champ origine), un attaquant peut fausser la date et provoquer l'echec d'authentification (deni de service). Il revele aussi l'usage du moteur iFlytek a l'observateur reseau.",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-baidu-nlp-engine",
+   "fichier": "src/token.cpp",
+   "ligne": "25-30",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "\"https://aip.baidubce.com/oauth/2.0/token?client_id=\" + apiKey + \"&client_secret=\" + <masqué> + \"&grant_type=client_credentials\"",
+   "explication": "Le secret client Baidu est transmis dans la chaine de requete de l'URL (HTTPS verifie par cpr). Meme motif dans kylin-baidu-vision-engine/src/token.cpp:25-26 et kylin-baidu-speech-engine/src/token.cpp:30-31,67-70 (cette derniere variante sans verification TLS, cf. constat libhv). Les jetons d'acces sont ensuite passes en parametre d'URL (baidunlpengine_p.cpp:467, baiduvisionengine_p.cpp:263,390). Pratique imposee par l'API Baidu, mais les URL sont plus exposees (journaux de proxy, messages d'erreur).",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-qwen-nlp-engine",
+   "fichier": "qwennlpengine_p.cpp",
+   "ligne": "258-264,445-450,291-292",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "// stream、max_tokens、enable_search 恢复默认值 ... context_[\"enable_search\"] = true;",
+   "explication": "La recherche web cote Alibaba est activee par defaut a chaque requete (enable_search=true) ; elle n'est desactivee que si l'appelant fournit explicitement web_search=false (conversion l.291). Les invites de l'utilisateur peuvent donc etre utilisees comme requetes de recherche par le fournisseur sans que l'option ait ete choisie.",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-custom-nlp-engine",
+   "fichier": "customnlpengine_p.cpp ; test_custom_nlp_engine.cpp",
+   "ligne": "248-284,449-458 ; test:31",
+   "type": "reseau",
+   "severite": "informationnelle",
+   "extrait": "buildChatAndContentGenerationUrl(configJson[\"apiUrl\"].asString()); ... session_.SetHeader(cpr::Header{{\"Content-Type\", \"application/json\"}, {\"Authorization\", \"Bearer \" + apiKey_}}); ; test:31 \"apiKey\" : \"<masqué>\"",
+   "explication": "Le moteur personnalise envoie invites et cle Bearer a l'URL saisie par l'utilisateur, sans restriction de schema : une URL http:// (cas Ollama local prevu par l'interface) transmet cle et conversation en clair. TLS verifie si https (defaut cpr). Le fichier de test (compile seulement avec ENABLE_TEST, non livre) contient une cle au format sk- de 35 caracteres (valeur masquee, validite non verifiee) et des adresses privees 10.41.x.x:11434.",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-baidu-speech-engine",
+   "fichier": "src/baiduspeechengine_p.cpp",
+   "ligne": "391,454,640,677",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "postJson[\"cuid\"] = \"kylin-ai-subsystem\"; ... bodyJson[\"data\"][\"cuid\"] = \"kylin-ai-subsystem\" + timestamp_;",
+   "explication": "Fait favorable : l'identifiant de terminal (cuid) exige par l'API Baidu est une constante + horodatage, et non un identifiant materiel (pas de MAC, machine-id ni numero de serie). Aucun moteur du lot ne lit /etc/machine-id, DMI, MAC ou nom d'utilisateur (grep negatif sur les 9 arbres moteurs).",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-baidu-vision-engine",
+   "fichier": "src/baiduresponseprocessor.cpp ; src/imageloader.cpp",
+   "ligne": "151-160 ; 40-47,55-59",
+   "type": "reseau",
+   "severite": "faible",
+   "extrait": "auto imageUrl = finalImage[\"img_url\"].asString(); ... vision::image_loader::downloadImage(imageUrl, errorMessage); ... FreeImage_LoadFromMemory(format, memory);",
+   "explication": "Les moteurs de vision ne font que du texte->image (aucune image utilisateur envoyee). Le moteur Baidu telecharge ensuite l'image depuis une URL fournie par le serveur (aucune restriction de schema ni de domaine) et la decode avec FreeImage : surface d'attaque de decodage d'image cote client si la reponse serveur est compromise.",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-ai-document-qa-service",
+   "fichier": "document-qa-service/src/handleGetTextFileContents.cpp ; document-qa-service/src/service/service.cpp ; document-qa-service/src/dao/parser.cpp ; debian/kylin-ai-document-qa-service.postinst ; document-qa-service/conf/KnowledgeBase.json",
+   "ligne": "handleGetTextFileContents.cpp:21-50 ; service.cpp:84-117 ; parser.cpp:40-47,68-72 ; postinst:5 ; KnowledgeBase.json:2",
+   "type": "privileges",
+   "severite": "elevee",
+   "extrait": "filepaths.emplace_back(item[\"filepath\"].get<std::string>()); ... service.getFileContent(filepaths, fileContent); ... ret.add(\"file_content\", fileContent); REGISTER_SERVICE_HANDLER(\"getTextFileContents\", ...)",
+   "explication": "Le service utilisateur kylin-ai-document-qa-service, active pour toutes les sessions par le postinst (deb-systemd-helper --user enable), expose la methode getTextFileContents : elle prend une liste de chemins ARBITRAIRES fournie par l'appelant, sans aucune validation (ni liste blanche, ni canonicalisation, ni controle d'appartenance), fait decouper ces fichiers par le service documentaire (gRPC local, s'executant lui aussi sous l'identite de l'utilisateur) et renvoie leur texte integral a l'appelant. addTextFiles indexe de meme des chemins arbitraires. Le transport est fourni par libkyai-business-framework (hors lot, lu pour qualifier) : serveur GDBus pair-a-pair sur unix:abstract=/tmp/.kylin-ai-business-unix/<euid>/Knowledgebase.sock (constant.cpp:21, businessServer.cpp:34-35), cree par g_dbus_server_new_sync(..., G_DBUS_SERVER_FLAGS_NONE, guid, nullptr /*observateur*/, ...) (businessServer.cpp:42) ; le gestionnaire de connexion se contente de JOURNALISER les identifiants du pair puis accepte toujours (handler.cpp:26-45, return true). Une socket abstraite n'a aucune permission de fichier. Meme modele pour DataManagement.sock (kylin-ai-data-management-service, active par defaut : getAllFileInfos, getSummarysOfFiles, getTagsOfFiles divulguent la liste des fichiers indexes et les resumes IA de leur contenu ; addTextFiles/updateFilesContentData font indexer des chemins arbitraires) et pour KnowledgeBaseService.sock (kylin-ai-knowledge-base-service, unite installee mais non activee par defaut : uploadDocuments + retrieval acceptent chemins, dbFilePath et mot de passe fournis par l'appelant, handleKnowledgeBase.cpp:112-160,209-310).",
+   "registre": "PROBABLE",
+   "scenario": "Sur un poste partage (salle, serveur multi-utilisateurs, session SSH), l'utilisateur local B calcule l'UID de A (visible dans /etc/passwd), se connecte a unix:abstract=/tmp/.kylin-ai-business-unix/<uidA>/Knowledgebase.sock et appelle getTextFileContents sur ~A/Documents/*.docx|pdf|txt : le service de A lit et lui renvoie le texte de ces documents malgre des droits 0700 sur le repertoire de A. Via DataManagement.sock il obtient d'abord la liste des fichiers indexes et leurs resumes IA pour cibler les plus sensibles. Un processus confine (bac a sable partageant l'espace de noms reseau) de A peut faire de meme pour contourner son confinement.",
+   "contre_lecture": "Le framework suppose que seul l'utilisateur proprietaire connait le chemin (prefixe contenant l'UID) ; selon la version de GLib et les politiques systeme, l'authentification EXTERNAL pourrait etre restreinte ; le service documentaire (unite utilisateur sans section [Install]) n'est peut-etre pas demarre en permanence, et il peut refuser les formats non reconnus. Manque pour CONSTATÉ : test dynamique de connexion inter-UID sur l'ISO (version GLib, demarrage effectif de kylin-ai-document-service) et liste des formats acceptes par le service documentaire (hors lot)."
+  },
+  {
+   "depot": "kylin-ai-document-qa-service",
+   "fichier": "knowledge-base-service/src/inferenceengine.cpp ; knowledge-base-service/src/querydiversifier/diversifystrategy.cpp ; knowledge-base-service/conf/knowledgebaseservice.json",
+   "ligne": "inferenceengine.cpp:353-356,361-403,419-447 ; diversifystrategy.cpp:24,84-94 ; knowledgebaseservice.json:20-27,40-46",
+   "type": "reseau",
+   "severite": "moyenne",
+   "extrait": "// 若模型名为空，则系统将根据“设置->AI 模块管理”中该部署类型当前配置的模型进行初始化 if (config.modelName.empty() == false) { chat_model_config_set_name(...) } ... \"model_name\": \"\"",
+   "explication": "Le service de base de connaissances construit l'invite RAG en y injectant le texte des extraits (chunks) des documents de l'utilisateur retrouves pour la question (buildGenerateContext, l.399,419-447), plus l'historique, et l'envoie via libkysdk-genai-nlp sans jamais fixer le type de deploiement (aucun appel chat_model_config_set_deploy_type dans tout l'arbre) ni le modele (model_name vide dans la configuration). Le SDK serialise alors deploy_type=\"Default\" (libkysdk-genai-nlp/src/_chatmodelconfig.cpp:183-196, hors lot) et laisse le runtime choisir le modele configure ; selon V1-L8 le modele NLP par defaut est le moteur cloud d'essai kylin-qwen-plus. La reformulation de requetes (query_diversify.enable=true) envoie aussi la question au meme modele. A l'inverse, kylin-ai-data-management-service force explicitement OnDevice (tagTask.cpp:33-39, summaryTask.cpp:30-36).",
+   "registre": "PROBABLE",
+   "scenario": "Un utilisateur interroge sa base de connaissances (documents internes importes dans l'assistant) en croyant a un traitement local : des extraits de ses documents partent vers le service cloud d'essai (operateur et destination inconnus, binaire sans source) sans qu'aucun choix de modele cloud n'ait ete fait.",
+   "contre_lecture": "Le choix du modele \"Default\" peut se resoudre en modele local si l'utilisateur l'a configure ou si un modele local est installe ; l'envoi suit une action explicite (question posee) ; la resolution reelle est dans kylin-ai-runtime et les greffons (hors lot)."
+  },
+  {
+   "depot": "kylin-aiassistant",
+   "fichier": "kylin-aiassistant/res/qml/IntroductionContent.qml ; kylin-aiassistant/res/html/openKylin操作系统AI功能使用协议250228-0318.html ; kylin-aiassistant/global/kaglobal.cpp",
+   "ligne": "IntroductionContent.qml:53-58,129-141,154-170 (onSkipClicked l.159) ; kaglobal.cpp:330-332,460-463 ; msgpane.qrc:124-125",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "onAgreeClicked: { updateConfig(\"is-first-install\", false) ... } onDisagreeClicked: { quitApplication() } ; kaglobal.cpp:330 case kyai::assistant::ErrorCode::FreeAllocatedQuotaExceeded: ... \"Your free trial quota has been exhausted.\"",
+   "explication": "Barriere de consentement : au premier lancement (is-first-install / is-first-install-50), l'assistant affiche un accord ; refuser ferme l'application ; la barre de selection et l'envoi depuis la selection restent desactives tant que le guide n'est pas termine (SelectPopupIconWindow.qml:315). Mais l'accord (3 051 caracteres) est un texte de responsabilite et d'usage acceptable : il indique que les fonctions IA sont fournies par des « fournisseurs de modeles » sans en nommer aucun, ne mentionne ni l'existence d'un modele cloud d'essai gratuit utilise sans configuration (dont le code gere pourtant le quota : FreeAllocatedQuotaExceeded, y compris pour les resumes de reunion), ni la nature des donnees envoyees (invites, documents joints, transcriptions de reunion), ni la telemetrie d'usage (kdk_dia). L'etape « ajouter un modele » du guide peut etre ignoree (onSkipClicked). La barriere est en outre propre a l'interface : le runtime IA, les services de documents et la passerelle kylin-bot ne la consultent pas.",
+   "registre": "PROBABLE",
+   "scenario": "Un utilisateur accepte l'accord, saute la configuration de modele et soumet un document professionnel ou une reunion a resumer : le contenu est envoye au service cloud d'essai (destination non documentee, cle par defaut embarquee dans un binaire sans source) sans information prealable sur le destinataire ni sur le pays de traitement.",
+   "contre_lecture": "L'accord precise que l'IA est fournie par des tiers et l'envoi suit toujours une action explicite de l'utilisateur ; l'information detaillee peut figurer dans la politique de confidentialite du systeme ou dans le panneau « Gestion des modules IA » (hors lot). Manque : identification de la destination du moteur freetrial (binaire sans source)."
+  },
+  {
+   "depot": "kylin-aiassistant",
+   "fichier": "kylin-aiassistant/msgpane.cpp ; res/qml/ModelSwitchButton.qml ; res/qml/Chat.qml ; voice-assistant/main.cpp",
+   "ligne": "msgpane.cpp:3925-3956 ; ModelSwitchButton.qml:511,682,867,1051,1237 ; Chat.qml:930 ; main.cpp:463,559 ; voice-assistant/main.cpp:156-158",
+   "type": "telemetrie",
+   "severite": "moyenne",
+   "extrait": "msgPane.onSendDataCollectWithProps(\"switch_cloud_model_click_event\", \"modelSwitchPage\", {\"modelName\": modelName}) ... kdk_dia_upload_default(node, eventCode..., pageName...)",
+   "explication": "L'assistant et l'assistant vocal emettent des evenements d'usage via libkysdk-datacollect : demarrage/arret, envoi de message, copie, like, changement de modele avec le nom du modele choisi, envoi de message vocal. Aucun contenu de conversation n'est transmis par ces appels. D'apres V1-L1, la bibliotheque y ajoute machine-id, IP, MAC et numeros de service et kylin-daq les televerse (envoi actif par defaut, TLS non verifie). Ni l'accord IA ni l'interface de l'assistant ne mentionnent cette collecte.",
+   "registre": "CONSTATÉ",
+   "scenario": "L'operateur de datareporting.openkylin.top (ou un intercepteur, faute de verification TLS selon V1-L1) peut profiler l'usage de l'IA par poste identifie (frequence d'utilisation, fournisseur de modele choisi) sans que l'utilisateur en soit informe dans l'assistant.",
+   "contre_lecture": "Telemetrie produit classique, sans contenu ; interrupteur global UploadState gere par le systeme ; la gravite principale est deja portee par le constat V1-L1."
+  },
+  {
+   "depot": "kylin-ai-document-qa-service",
+   "fichier": "document-qa-service/src/dao/database.h ; document-qa-service/src/dao/database.cpp ; knowledge-base-service/knowledgebasecreator/ragmain.cpp ; kylin-aiassistant:kylin-aiassistant/kb/knowledgebasechat.cpp",
+   "ligne": "database.h:75 ; database.cpp:51-55 ; ragmain.cpp:18 ; faqmain.cpp:19 ; knowledgebasechat.cpp:13,169-174",
+   "type": "crypto",
+   "severite": "faible",
+   "extrait": "static constexpr const char* DATABASE_PASSWORD = \"<masqué>\"; ... client_->LoadDBFile(dbFilePath, true, DATABASE_PASSWORD); ; knowledgebasechat.cpp:13 appName = \"kylin-aiassistant\"; kb_session_create(appName, appName, kbPath...)",
+   "explication": "Les bases vectorielles des documents utilisateur sont ouvertes avec un mot de passe constant code en dur (~/.local/share/document_qa_service/document_qa.db ; outils knowledgebasecreator) ; l'assistant utilise comme appId ET mot de passe de sa base de connaissances la chaine publique \"kylin-aiassistant\" (~/.config/kylin-aiassistant/knowledgeBase). Si le moteur vectoriel chiffre les donnees avec ce secret, le chiffrement n'apporte aucune protection ; repertoires crees avec les droits par defaut (umask) sans restriction explicite.",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-aiassistant",
+   "fichier": "kylin-aiassistant/msgpane.cpp ; kylin-aiassistant/webapibridge.cpp ; kylin-aiassistant/configmanager.cpp ; kylin-aiassistant/tasksessionmanager.cpp",
+   "ligne": "msgpane.cpp:181-228,257-264 ; webapibridge.cpp:43-53,220-279,415,434,499 ; configmanager.cpp:73-77,213 ; tasksessionmanager.cpp:189-199",
+   "type": "reseau",
+   "severite": "faible",
+   "extrait": "req.setUrl(QUrl(QStringLiteral(\"http://\") + configuredGatewayHost() + path)); ... headers.insert(QStringLiteral(\"Authorization\"), QStringLiteral(\"Bearer \") + token);",
+   "explication": "En cas d'echec de la socket Unix, l'assistant se replie sur HTTP en clair vers gateway-host (defaut 127.0.0.1:42617, lu dans ~/.config/kylin-aiassistant/settings.ini) en joignant le jeton gateway-token stocke en clair dans ce meme fichier. Sur la boucle locale l'impact est faible (TCP desactive par defaut cote kylin-bot selon V1-L7) ; si gateway-host est modifie vers une machine distante, conversations, documents en data-URI et jeton circulent sans chiffrement.",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-aiassistant",
+   "fichier": "voice-assistant/mainwindow.cpp ; voice-assistant/screensharecapture.cpp ; voice-assistant/gatewaychatclient.cpp",
+   "ligne": "mainwindow.cpp:233,816-831,1005-1029 ; screensharecapture.cpp:124-202 ; gatewaychatclient.cpp:84-96",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "if (m_screenShare) { const voiceassistant::VoiceScreenGrabResult grab = voiceassistant::capturePrimaryScreenPngBase64(); ... saveChatMessageToDatabase(text, true, QString(), hasScreenImage ? imageBase64 : QString());",
+   "explication": "Le partage d'ecran de l'assistant vocal est desactive par defaut (m_screenShare(false)) et active par un bouton avec incrustation visible ; lorsqu'il est actif, chaque message vocal valide joint une capture plein ecran (org.ukui.kwin.Screenshot) a la requete envoyee a la passerelle kylin-bot puis au fournisseur LLM configure, et la capture est conservee dans l'historique local. Flux fonctionnel declenche par l'utilisateur ; la passerelle kylin-bot peut par ailleurs capturer l'ecran sans confirmation (constat V1-L7).",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-aiassistant",
+   "fichier": "kylin-aiassistant/dbus/kadbusoperator.cpp ; kylin-aiassistant/window/windowcontroller.cpp",
+   "ligne": "kadbusoperator.cpp:97-100,133-170,199-207 ; windowcontroller.cpp:299-302",
+   "type": "privileges",
+   "severite": "faible",
+   "extrait": "registerObject(\"/org/ukui/kylin_aiassistant\", ..., ExportNonScriptableSlots | ExportAllSignals); ... bool KADBusOperator::SaveVoiceChatMessage(...) ... bool KADBusOperator::ShowChatAndSendText(QString text)",
+   "explication": "Interface D-Bus de session sans controle d'appelant : tout processus de la session peut inserer des messages arbitraires dans l'historique de l'assistant (SaveVoiceChatMessage), declencher des notifications (NotifyVoiceTaskCompleted) ou appeler ShowChatAndSendText ; ce dernier n'aboutit a aucun envoi (le signal sendVoiceTextToChat n'a aucun consommateur QML ni C++ : chemin mort). Portee limitee a l'utilisateur de la session (bus de session).",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  },
+  {
+   "depot": "kylin-ai-data-management-service",
+   "fichier": "conf/DataManagement.json ; src/aiIndex/aiIndex.cpp ; src/dao/fileDatabase.cpp",
+   "ligne": "DataManagement.json:5-9 ; aiIndex.cpp:113-140,141-175 ; fileDatabase.cpp:24-38",
+   "type": "telemetrie",
+   "severite": "informationnelle",
+   "extrait": "\"extract_tag_nlp_model_deploy_type\": \"OnDevice\", \"extract_summary_nlp_model_deploy_type\": \"OnDevice\" ... schemaID = \"org.ukui.search.settings\"; keyName = \"ai-index-enable\"",
+   "explication": "Le service d'indexation IA (service utilisateur active par defaut) ne choisit pas lui-meme les fichiers : il indexe les chemins que lui transmet l'appelant (addTextFiles/addImageFiles, typiquement la recherche UKUI) lorsque la cle gsettings ai-index-enable est vraie, et traite les taches pendant l'inactivite de session (signal org.gnome.SessionManager.Presence). Il calcule embeddings texte/image, tags et resumes avec des modeles locaux (OnDevice explicite) ; aucun flux cloud dans ce code. Stockage : ~/.local/kylin-ai-business-framework/datamanagement/database/fileinfo.db (SQLite non chiffre : chemins, dates, resumes, tags) + base vectorielle (kysdk-vector-engine).",
+   "registre": "CONSTATÉ",
+   "scenario": "",
+   "contre_lecture": ""
+  }
+ ],
+ "flux_reseau": [
+  {
+   "composant": "kylin-baidu-nlp-engine",
+   "destination": "https://aip.baidubce.com/oauth/2.0/token (443)",
+   "protocole": "HTTPS POST (cpr/libcurl)",
+   "fichier_ligne": "src/token.cpp:25-30",
+   "declencheur": "premiere requete de chat apres configuration, puis expiration du jeton (code 111)",
+   "donnees": "client_id (API Key) et client_secret dans l'URL ; recoit access_token",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-baidu-nlp-engine",
+   "destination": "https://aip.baidubce.com/rpc/2.0/ai_custom/v1/wenxinworkshop/chat/completions_pro",
+   "protocole": "HTTPS POST SSE (cpr)",
+   "fichier_ligne": "src/baidunlpengine_p.cpp:466-477",
+   "declencheur": "requete de chat transmise par le runtime IA (moteur choisi/configure par l'utilisateur)",
+   "donnees": "messages (invite systeme, historique, question), drapeaux recherche web, access_token en parametre d'URL",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-xunfei-nlp-engine",
+   "destination": "wss://spark-api.xf-yun.com/v3.5/chat",
+   "protocole": "WebSocket TLS (libcurl websockets)",
+   "fichier_ligne": "src/xunfeinlpengine_p.h:81 ; src/xunfeinlpengine_p.cpp:181-188,512-514 ; src/token.cpp:22-37",
+   "declencheur": "requete de chat (moteur iFlytek configure)",
+   "donnees": "app_id, messages (systeme+historique+question), outil web_search ; URL signee HMAC-SHA256 (api_key en clair dans l'en-tete authorization encode)",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-xunfei-nlp-engine",
+   "destination": "cn.pool.ntp.org:123",
+   "protocole": "NTP UDP en clair",
+   "fichier_ligne": "src/util.cpp:137,192-225,260-277",
+   "declencheur": "chaque ouverture de connexion de chat (jusqu'a 5 essais)",
+   "donnees": "paquet NTP client (aucune donnee utilisateur)",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-qwen-nlp-engine",
+   "destination": "https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+   "protocole": "HTTPS POST SSE (cpr)",
+   "fichier_ligne": "qwennlpengine_p.cpp:536-545",
+   "declencheur": "requete de chat (moteur Qwen configure par l'utilisateur)",
+   "donnees": "Authorization: Bearer <cle API>, messages, outils, enable_search=true par defaut",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-deepseek-nlp-engine",
+   "destination": "https://api.deepseek.com/chat/completions",
+   "protocole": "HTTPS POST SSE (cpr)",
+   "fichier_ligne": "deepseeknlpengine_p.cpp:488-500",
+   "declencheur": "requete de chat (moteur DeepSeek configure)",
+   "donnees": "Authorization: Bearer <cle API>, messages, outils",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-custom-nlp-engine",
+   "destination": "URL saisie par l'utilisateur (apiUrl + /chat/completions ou /completions), http ou https",
+   "protocole": "HTTP(S) POST (cpr Session)",
+   "fichier_ligne": "customnlpengine_p.cpp:264-284,449-458",
+   "declencheur": "requete de chat (modele personnalise ajoute par l'utilisateur)",
+   "donnees": "Authorization: Bearer <cle>, messages, outils",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-baidu-speech-engine",
+   "destination": "wss://vop.baidu.com/realtime_asr?sn=kylin-ai-subsystem<horodatage>",
+   "protocole": "WebSocket TLS (libhv)",
+   "fichier_ligne": "src/baiduspeechengine_p.cpp:252-253,277,338",
+   "declencheur": "demarrage d'une reconnaissance vocale continue (dictee, reunion, assistant vocal) avec moteur Baidu",
+   "donnees": "trame START (appid, appkey, cuid constant) puis flux audio PCM 16 kHz du microphone",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-baidu-speech-engine",
+   "destination": "https://vop.baidu.com/pro_api",
+   "protocole": "HTTPS POST (cpr)",
+   "fichier_ligne": "src/baiduspeechengine_p.cpp:387-403",
+   "declencheur": "reconnaissance vocale ponctuelle",
+   "donnees": "audio base64, jeton, cuid constant",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-baidu-speech-engine",
+   "destination": "https://tsn.baidu.com/text2audio",
+   "protocole": "HTTPS POST (libhv HttpClient)",
+   "fichier_ligne": "src/baiduspeechengine_p.cpp:445-473",
+   "declencheur": "synthese vocale (lecture a voix haute des reponses)",
+   "donnees": "texte a lire (segments de 500 car.), jeton, cuid constant",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-baidu-speech-engine",
+   "destination": "https://openapi.baidu.com/oauth/2.0/token",
+   "protocole": "HTTPS POST (libhv HttpClient pour la TTS ; cpr pour l'ASR)",
+   "fichier_ligne": "src/token.cpp:28-34 (cpr) ; 64-81 (libhv)",
+   "declencheur": "initialisation de la synthese / reconnaissance, expiration du jeton",
+   "donnees": "client_id et client_secret dans l'URL",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-xunfei-speech-engine",
+   "destination": "wss://rtasr.xfyun.cn/v1/ws",
+   "protocole": "WebSocket TLS (libhv)",
+   "fichier_ligne": "src/xunfeispeechengine_p.h:142 ; p.cpp:188-196,436,512",
+   "declencheur": "reconnaissance continue (dictee/reunion) avec moteur iFlytek",
+   "donnees": "appid, horodatage, signature HMAC-SHA1 dans l'URL ; audio binaire du microphone",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-xunfei-speech-engine",
+   "destination": "wss://iat-api.xfyun.cn/v2/iat",
+   "protocole": "WebSocket TLS (libhv)",
+   "fichier_ligne": "src/xunfeispeechengine_p.h:143 ; p.cpp:550-592,759",
+   "declencheur": "reconnaissance ponctuelle",
+   "donnees": "app_id, audio base64 ; URL signee HMAC-SHA256",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-xunfei-speech-engine",
+   "destination": "wss://tts-api.xfyun.cn/v2/tts",
+   "protocole": "WebSocket TLS (libhv)",
+   "fichier_ligne": "src/xunfeispeechengine_p.h:144 ; p.cpp:819-864,1053",
+   "declencheur": "synthese vocale",
+   "donnees": "app_id, texte a lire base64 ; URL signee HMAC-SHA256",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-baidu-vision-engine",
+   "destination": "https://aip.baidubce.com (oauth/2.0/token, rpc/2.0/ernievilg/v1/txt2imgv2, getImgv2)",
+   "protocole": "HTTPS POST (cpr)",
+   "fichier_ligne": "src/token.cpp:25 ; src/baiduvisionengine_p.cpp:263-283,390-399",
+   "declencheur": "generation d'image demandee par l'utilisateur",
+   "donnees": "invite texte + style, dimensions, nombre ; puis task_id (interrogation chaque seconde)",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-baidu-vision-engine",
+   "destination": "URL img_url renvoyee par Baidu (domaine non fixe)",
+   "protocole": "HTTP(S) GET (cpr Session::Download)",
+   "fichier_ligne": "src/baiduresponseprocessor.cpp:155-160 ; src/imageloader.cpp:40-47",
+   "declencheur": "fin d'une tache texte->image",
+   "donnees": "aucune (telechargement de l'image produite)",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-xunfei-vision-engine",
+   "destination": "https://spark-api.cn-huabei-1.xf-yun.com/v2.1/tti",
+   "protocole": "HTTPS POST (cpr)",
+   "fichier_ligne": "src/xunfeivisionengine_p.h:67 ; p.cpp:252-272",
+   "declencheur": "generation d'image demandee par l'utilisateur",
+   "donnees": "app_id, invite texte + style, dimensions ; URL signee HMAC",
+   "tls_verifie": "oui",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "destination": "kylin-ai-runtime (SDK kyai-assistant OsAssistant::chatAsync, IPC local) puis moteur cloud selectionne par le runtime (par defaut freetrial kylin-qwen-plus selon V1-L8)",
+   "protocole": "IPC D-Bus local puis HTTPS (dans les greffons)",
+   "fichier_ligne": "kylin-aiassistant/systemchat.cpp:598,655-712 ; msgpane.cpp:1104-1193",
+   "declencheur": "envoi d'un message par l'utilisateur en mode normal, apres acceptation de l'accord (premier lancement)",
+   "donnees": "question, invite d'instruction, texte integral des documents joints (DocumentReader), chemin d'image, drapeaux recherche web/reflexion",
+   "tls_verifie": "n.d.",
+   "classification": "indetermine"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "destination": "passerelle kylin-bot : $XDG_RUNTIME_DIR/kylin-bot/gateway.sock ou ~/.kylinbot/gateway.sock ; repli http://<gateway-host> (defaut 127.0.0.1:42617, modifiable dans settings.ini)",
+   "protocole": "HTTP/WebSocket sur socket Unix ; repli HTTP TCP en clair",
+   "fichier_ligne": "kylin-aiassistant/msgpane.cpp:172-264 ; webapibridge.cpp:220-279,290-318,415,434,499 ; tasksessionmanager.cpp:189-199",
+   "declencheur": "mode agent (modeType=1), interface web kbot embarquee, synchronisation cron toutes les 5 s (main.cpp:403-405)",
+   "donnees": "messages, documents et image en data-URI (msgpane.cpp:316-375), jeton Bearer gateway-token ; le fournisseur LLM final est celui configure dans kylin-bot (V1-L7)",
+   "tls_verifie": "non",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-aiassistant (voice-assistant)",
+   "destination": "passerelle kylin-bot (meme socket) puis fournisseur LLM configure dans kylin-bot",
+   "protocole": "WebSocket/HTTP sur socket Unix",
+   "fichier_ligne": "voice-assistant/mainwindow.cpp:1005-1029 ; gatewaychatclient.cpp:95-96",
+   "declencheur": "message vocal valide ; capture d'ecran ajoutee seulement si l'utilisateur a active le partage d'ecran (desactive par defaut, mainwindow.cpp:233)",
+   "donnees": "texte reconnu + invite systeme ; capture plein ecran PNG base64 si partage actif",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "destination": "libkysdk-datacollect -> kylin-daq (D-Bus systeme) -> https://datareporting.openkylin.top:30005 (V1-L1)",
+   "protocole": "D-Bus puis HTTPS (VerifyNone selon V1-L1)",
+   "fichier_ligne": "kylin-aiassistant/msgpane.cpp:3925-3956 ; res/qml/Chat.qml:930 ; main.cpp:463,559 ; voice-assistant/main.cpp:156-158 ; res/qml/ModelSwitchButton.qml:511,682,867,1051,1237",
+   "declencheur": "demarrage/arret de l'application, clics d'interface, changement de modele, envoi de message vocal",
+   "donnees": "codes d'evenement d'usage, nom du modele choisi ; la bibliotheque y ajoute machine-id, IP, MAC, numeros de service (V1-L1)",
+   "tls_verifie": "non",
+   "classification": "opaque"
+  },
+  {
+   "composant": "kylin-ai-document-qa-service (knowledge-base-service)",
+   "destination": "kylin-ai-runtime via libkysdk-genai-nlp (genai_text_*), type de deploiement non fixe (\"Default\") -> moteur choisi par le runtime, potentiellement cloud",
+   "protocole": "IPC local puis HTTPS (greffons)",
+   "fichier_ligne": "knowledge-base-service/src/inferenceengine.cpp:353-403,419-447 ; src/querydiversifier/diversifystrategy.cpp:18-94 ; conf/knowledgebaseservice.json:20-27,40-46",
+   "declencheur": "question de l'utilisateur sur sa base de connaissances (assistant)",
+   "donnees": "question, historique, et extraits (chunks) des documents de l'utilisateur injectes dans l'invite ; reformulations de la question (query_diversify active)",
+   "tls_verifie": "n.d.",
+   "classification": "indetermine"
+  },
+  {
+   "composant": "kylin-ai-data-management-service",
+   "destination": "kylin-ai-runtime via genai_text_* avec ModelDeployType::OnDevice (modele local Qwen-2.5-3b)",
+   "protocole": "IPC local",
+   "fichier_ligne": "src/aiIndex/tagTask.cpp:29-41 ; src/aiIndex/summaryTask.cpp:27-38 ; conf/DataManagement.json:5-7",
+   "declencheur": "periode d'inactivite de la session si l'index IA (gsettings org.ukui.search.settings ai-index-enable) est actif",
+   "donnees": "premier bloc de texte des fichiers a indexer (tags, resume)",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-ai-document-qa-service",
+   "destination": "ENTRANT : unix:abstract=/tmp/.kylin-ai-business-unix/<euid>/Knowledgebase.sock (et KnowledgeBaseService.sock pour knowledge-base-service)",
+   "protocole": "GDBus pair-a-pair, socket abstraite sans permission, sans observateur d'authentification (libkyai-business-framework businessServer.cpp:42)",
+   "fichier_ligne": "document-qa-service/conf/KnowledgeBase.json:2 ; src/handleGetTextFileContents.cpp:21-50 ; knowledge-base-service/conf/knowledgebaseservice.json:2",
+   "declencheur": "connexion de tout processus local (meme espace de noms reseau)",
+   "donnees": "en entree : chemins de fichiers ; en sortie : texte integral des fichiers, resultats de recherche, reponses RAG",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-ai-data-management-service",
+   "destination": "ENTRANT : unix:abstract=/tmp/.kylin-ai-business-unix/<euid>/DataManagement.sock",
+   "protocole": "GDBus pair-a-pair, socket abstraite (meme framework)",
+   "fichier_ligne": "conf/DataManagement.json:2 ; src/controller/*.cpp (REGISTER_SERVICE_HANDLER)",
+   "declencheur": "connexion de tout processus local",
+   "donnees": "en sortie : liste des fichiers indexes, resumes, tags, resultats de similarite",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  },
+  {
+   "composant": "kylin-ai-data-management-service / kylin-ai-document-qa-service",
+   "destination": "service documentaire (gRPC unix:///tmp/document_service_sync_*.sock) et kysdk-vector-engine (gRPC)",
+   "protocole": "gRPC local (bibliotheques hors lot)",
+   "fichier_ligne": "kylin-ai-data-management-service/src/dao/documentParse.cpp:34-45 ; kylin-ai-document-qa-service/document-qa-service/src/dao/parser.cpp:34-47,68-72",
+   "declencheur": "indexation / ajout de documents / questions",
+   "donnees": "chemins de fichiers ; texte decoupe et vecteurs",
+   "tls_verifie": "n.d.",
+   "classification": "fonctionnel"
+  }
+ ],
+ "collectes": [
+  {
+   "composant": "kylin-aiassistant",
+   "donnee": "texte de la selection PRIMARY (划词) a chaque changement de selection, toutes applications",
+   "fichier_ligne": "kylin-aiassistant/textselect/selectcontrol.cpp:63,67,205,226-257 ; textselect/clipboard.cpp:27",
+   "stockage": "memoire uniquement (comparaison, affichage de la barre flottante) ; initialise au demarrage meme en mode silencieux (main.cpp:565), actif par defaut (configmanager.cpp:194-195 is-stroke-word/scribe-auto-invoke=true)",
+   "envoi": "aucun envoi automatique : transmis au modele seulement apres clic sur la barre, bouton desactive tant que le guide n'est pas termine (res/qml/SelectPopupIconWindow.qml:315)"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "donnee": "texte integral des documents joints (pdf via pdftotext, docx, txt...) et images jointes",
+   "fichier_ligne": "kylin-aiassistant/systemchat.cpp:671-689 ; msgpane.cpp:1007-1040,1088-1135 ; global/documentreader.cpp",
+   "stockage": "journal ukui-log4qt (texte integral, systemchat.cpp:683) ; references en base SQLite",
+   "envoi": "envoye dans l'invite au runtime IA puis au moteur selectionne (cloud par defaut selon V1-L8) ou a la passerelle kylin-bot en mode agent"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "donnee": "historique des conversations (questions, reponses, chemins de fichiers, sessions vocales et agent)",
+   "fichier_ligne": "kylin-aiassistant/chatdatabase.cpp:1024-1029 ; documentreferencedatabase.cpp:149-154 ; dbus/kadbusoperator.cpp:133-170",
+   "stockage": "SQLite non chiffree ~/.config/kylin-aiassistant/kylin_aiassistant_database.db ; parametres ~/.config/kylin-aiassistant/settings.ini (dont gateway-token en clair)",
+   "envoi": "local ; historique renvoye comme contexte aux modeles"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "donnee": "fichiers ajoutes par l'utilisateur a la base de connaissances (copies)",
+   "fichier_ligne": "kylin-aiassistant/global/kaglobal.h:34 ; kaglobal.cpp:52 ; kb/uploadtask.cpp:32-245",
+   "stockage": "copie dans ~/.config/kylin-aiassistant/upload (rendue en lecture seule) + knowledgebase_database.db (kb/knowledgebasedatabase.cpp:79-84)",
+   "envoi": "indexes par le service knowledge-base ; extraits envoyes au LLM lors des questions (voir flux)"
+  },
+  {
+   "composant": "kylin-aiassistant (voice-assistant)",
+   "donnee": "capture plein ecran de l'ecran principal (org.ukui.kwin.Screenshot screenshotFullscreen, repli QScreen::grabWindow)",
+   "fichier_ligne": "voice-assistant/screensharecapture.cpp:124-202,248-255 ; mainwindow.cpp:1005-1029",
+   "stockage": "base de donnees de l'assistant via SaveVoiceChatMessage (saveChatMessageToDatabase avec imageBase64)",
+   "envoi": "passerelle kylin-bot -> fournisseur LLM ; uniquement si l'utilisateur active le partage d'ecran (incrustation visible, screenshareoverlay.cpp)"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "donnee": "valeurs DMI sys_vendor, product_name, product_version, board_name",
+   "fichier_ligne": "kylin-aiassistant/webapibridge.cpp:320-337",
+   "stockage": "journal (qWarning) ; utilisees localement pour un mode d'affichage degrade sur un modele KaiTian",
+   "envoi": "aucun envoi constate"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "donnee": "evenements d'usage (envoi de message, copie, like, changement de modele avec nom du modele, demarrage/arret ; les appels de textselect/selection.cpp:230,355,419 sont du code mort : SelectWidget n'est instancie nulle part)",
+   "fichier_ligne": "kylin-aiassistant/msgpane.cpp:3925-3956 ; res/qml/Chat.qml:930,3164,5224,6550 ; res/qml/ModelSwitchButton.qml:511,682,867,1051,1237 ; main.cpp:463,559 ; voice-assistant/mainwindow.cpp:52-54 ; voice-assistant/main.cpp:156-158",
+   "stockage": "transmis a kylin-daq (base /var/cache/kylin-daq/data.db selon V1-L1)",
+   "envoi": "datareporting.openkylin.top avec identifiants machine ajoutes par la bibliotheque (V1-L1)"
+  },
+  {
+   "composant": "kylin-baidu-speech-engine / kylin-xunfei-speech-engine",
+   "donnee": "audio du microphone (flux continu ou enregistrement ponctuel) fourni par le runtime",
+   "fichier_ligne": "baiduspeechengine_p.cpp:312-348,387-399 ; xunfeispeechengine_p.cpp:490-522,550-562",
+   "stockage": "aucun stockage dans le moteur",
+   "envoi": "Baidu vop.baidu.com / iFlytek *.xfyun.cn (TLS non verifie pour les WebSocket libhv)"
+  },
+  {
+   "composant": "kylin-baidu-speech-engine",
+   "donnee": "API Key et Secret Key Baidu de l'utilisateur",
+   "fichier_ligne": "src/baiduspeechengine_p.cpp:566 ; src/token.cpp:88",
+   "stockage": "stdout du processus hote (journal systemd utilisateur) au niveau INFO par defaut",
+   "envoi": "non (local) ; transmis par ailleurs dans l'URL OAuth"
+  },
+  {
+   "composant": "moteurs NLP (qwen, deepseek, custom, xunfei, baidu)",
+   "donnee": "corps complet des requetes de chat (invites, historique, documents injectes)",
+   "fichier_ligne": "qwennlpengine_p.cpp:498,534 ; deepseeknlpengine_p.cpp:448,492 ; customnlpengine_p.cpp:407,447 ; xunfeinlpengine_p.cpp:468,513 ; baidunlpengine_p.cpp:454",
+   "stockage": "stdout/stderr du runtime IA (journal systemd utilisateur)",
+   "envoi": "envoye au fournisseur cloud du moteur"
+  },
+  {
+   "composant": "kylin-ai-data-management-service",
+   "donnee": "chemins des fichiers indexes, date de modification, tags et resumes generes, vecteurs d'embedding du contenu texte et image",
+   "fichier_ligne": "src/dao/fileDatabase.cpp:24-105 ; src/dao/dataManagementVectorDatabase.cpp ; src/aiIndex/*Task.cpp",
+   "stockage": "SQLite ~/.local/kylin-ai-business-framework/datamanagement/database/fileinfo.db (repertoires crees avec les droits par defaut/umask) ; base vectorielle via kysdk-vector-engine (hors lot)",
+   "envoi": "aucun envoi cloud par ce code (modeles OnDevice) ; la liste des fichiers est fournie par l'appelant (addTextFiles/addImageFiles)"
+  },
+  {
+   "composant": "kylin-ai-document-qa-service",
+   "donnee": "texte decoupe et vecteurs des documents ajoutes a une base de connaissances ; historique de questions",
+   "fichier_ligne": "document-qa-service/src/dao/database.cpp:51-55 ; knowledge-base-service/src/storagemanager/traditionaldatabaseengine.cpp:87-94 ; storagemanager/vectorizationengine.cpp:27,75-77 ; storagemanager/textsearchengine.cpp:16-29",
+   "stockage": "~/.local/share/document_qa_service/document_qa.db (mot de passe constant) ; pour l'assistant ~/.config/kylin-aiassistant/knowledgeBase/{knowledge_base.db, vector.db, index Xapian} ; repertoires crees avec droits par defaut",
+   "envoi": "extraits envoyes au LLM \"Default\" (cloud probable) lors des questions ; texte integral renvoye a tout client de la socket abstraite (getTextFileContents)"
+  },
+  {
+   "composant": "kylin-aiassistant",
+   "donnee": "transcriptions et resumes de reunions (enregistrement micro a la demande)",
+   "fichier_ligne": "kylin-aiassistant/msgpane.cpp:1940-2000,2335-2405 ; global/kaglobal.cpp:450-463",
+   "stockage": "~/Documents/kylin-aiassistant/meeting (main.cpp:139-170) et base SQLite de l'assistant",
+   "envoi": "audio vers le moteur de parole selectionne (local ou cloud) ; transcription vers le modele NLP (essai cloud gratuit possible) pour le resume"
+  }
+ ],
+ "couverture": [
+  {
+   "arbre": "archive/kylin-aiassistant",
+   "fichiers_code_propres": 460,
+   "lignes_code_propres": 125649,
+   "lus_integralement": 6,
+   "lus_partiellement": 21,
+   "pct_fichiers": 1.3,
+   "pct_lignes": 3.3,
+   "fichiers_lus": [
+    "kylin-aiassistant/configmanager.cpp",
+    "kylin-aiassistant/textselect/clipboard.cpp",
+    "kylin-aiassistant/textselect/selectcontrol.cpp",
+    "kylin-aiassistant/dbus/kadbusoperator.cpp",
+    "kylin-aiassistant/main.cpp",
+    "voice-assistant/main.cpp",
+    "kylin-aiassistant/msgpane.cpp (partiel, ~700 l.)",
+    "kylin-aiassistant/systemchat.cpp (partiel, ~260 l.)",
+    "kylin-aiassistant/textselect/selection.cpp (partiel, ~300 l.)",
+    "kylin-aiassistant/webapibridge.cpp (partiel, ~260 l.)",
+    "kylin-aiassistant/window/windowcontroller.cpp (partiel, ~40 l.)",
+    "kylin-aiassistant/tasksessionmanager.cpp (partiel, ~60 l.)",
+    "kylin-aiassistant/gatewaywebsocketmanager.cpp (partiel, ~40 l.)",
+    "kylin-aiassistant/global/kaglobal.cpp (partiel, ~60 l.)",
+    "kylin-aiassistant/global/documentreader.cpp (partiel, ~15 l.)",
+    "kylin-aiassistant/kb/uploadtask.cpp (partiel, ~40 l.)",
+    "kylin-aiassistant/kb/knowledgebasechat.cpp (partiel, ~70 l.)",
+    "kylin-aiassistant/res/qml/IntroductionContent.qml (partiel, ~200 l.)",
+    "kylin-aiassistant/res/qml/main.qml (partiel, ~50 l.)",
+    "kylin-aiassistant/res/qml/SelectPopupIconWindow.qml (partiel, ~10 l.)",
+    "kylin-aiassistant/res/qml/ModelSwitchButton.qml (partiel, ~10 l.)",
+    "kylin-aiassistant/res/qml/AgreementPage.qml (partiel, ~15 l.)",
+    "kylin-aiassistant/kylin-aiassistant.pro (partiel, ~70 l.)",
+    "voice-assistant/mainwindow.cpp (partiel, ~110 l.)",
+    "voice-assistant/screensharecapture.cpp (partiel, ~60 l.)",
+    "voice-assistant/gatewaychatclient.cpp (partiel, ~15 l.)",
+    "peony-menu-plugin-kylin-aiassistant/aiassistant-menu-plugin.cpp (partiel, ~15 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-baidu-nlp-engine",
+   "fichiers_code_propres": 14,
+   "lignes_code_propres": 1672,
+   "lus_integralement": 6,
+   "lus_partiellement": 3,
+   "pct_fichiers": 42.9,
+   "pct_lignes": 57.4,
+   "fichiers_lus": [
+    "src/baidunlpengine_p.cpp",
+    "src/token.cpp",
+    "src/util.cpp",
+    "src/logger.cpp",
+    "src/baidunlpengine.cpp",
+    "src/baidunlpengine_p.h",
+    "src/logger.h (partiel, ~60 l.)",
+    "src/servererror.cpp (partiel, ~30 l.)",
+    "test/test_baidu_nlp_engine.cpp (partiel, ~10 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-qwen-nlp-engine",
+   "fichiers_code_propres": 10,
+   "lignes_code_propres": 1852,
+   "lus_integralement": 2,
+   "lus_partiellement": 3,
+   "pct_fichiers": 20.0,
+   "pct_lignes": 41.8,
+   "fichiers_lus": [
+    "qwennlpengine_p.cpp",
+    "qwennlpengine.cpp",
+    "test_qwen_nlp_engine.cpp (partiel, ~10 l.)",
+    "util.cpp (partiel, ~20 l.)",
+    "qwennlpengine_p.h (partiel, ~20 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-xunfei-nlp-engine",
+   "fichiers_code_propres": 14,
+   "lignes_code_propres": 2159,
+   "lus_integralement": 4,
+   "lus_partiellement": 2,
+   "pct_fichiers": 28.6,
+   "pct_lignes": 53.8,
+   "fichiers_lus": [
+    "src/xunfeinlpengine_p.cpp",
+    "src/token.cpp",
+    "src/util.cpp",
+    "src/xunfeinlpengine.cpp",
+    "src/xunfeinlpengine_p.h (partiel, ~10 l.)",
+    "test/test_xunfei_nlp_engine.cpp (partiel, ~10 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-deepseek-nlp-engine",
+   "fichiers_code_propres": 10,
+   "lignes_code_propres": 1382,
+   "lus_integralement": 2,
+   "lus_partiellement": 2,
+   "pct_fichiers": 20.0,
+   "pct_lignes": 54.9,
+   "fichiers_lus": [
+    "deepseeknlpengine_p.cpp",
+    "deepseeknlpengine.cpp",
+    "test_deepseek_nlp_engine.cpp (partiel, ~10 l.)",
+    "util.cpp (partiel, ~15 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-custom-nlp-engine",
+   "fichiers_code_propres": 10,
+   "lignes_code_propres": 1521,
+   "lus_integralement": 2,
+   "lus_partiellement": 3,
+   "pct_fichiers": 20.0,
+   "pct_lignes": 59.5,
+   "fichiers_lus": [
+    "customnlpengine_p.cpp",
+    "customnlpengine.cpp",
+    "test_custom_nlp_engine.cpp (partiel, ~40 l.)",
+    "util.cpp (partiel, ~20 l.)",
+    "customnlpengine_p.h (partiel, ~20 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-baidu-speech-engine",
+   "fichiers_code_propres": 19,
+   "lignes_code_propres": 3155,
+   "lus_integralement": 4,
+   "lus_partiellement": 3,
+   "pct_fichiers": 21.1,
+   "pct_lignes": 40.9,
+   "fichiers_lus": [
+    "src/baiduspeechengine_p.cpp",
+    "src/token.cpp",
+    "src/util.cpp",
+    "src/baiduspeechengine.cpp",
+    "src/logger.h (partiel, ~20 l.)",
+    "CMakeLists.txt (partiel, ~45 l.)",
+    "test/test_baidu_speech_engine.cpp (partiel, ~20 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-xunfei-speech-engine",
+   "fichiers_code_propres": 16,
+   "lignes_code_propres": 3124,
+   "lus_integralement": 2,
+   "lus_partiellement": 3,
+   "pct_fichiers": 12.5,
+   "pct_lignes": 44.1,
+   "fichiers_lus": [
+    "src/xunfeispeechengine_p.cpp",
+    "src/xunfeispeechengine.cpp",
+    "src/xunfeispeechengine_p.h (partiel, ~60 l.)",
+    "src/util.cpp (partiel, ~60 l.)",
+    "test/test_xunfei_speech_engine.cpp (partiel, ~15 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-baidu-vision-engine",
+   "fichiers_code_propres": 18,
+   "lignes_code_propres": 1784,
+   "lus_integralement": 5,
+   "lus_partiellement": 1,
+   "pct_fichiers": 27.8,
+   "pct_lignes": 46.4,
+   "fichiers_lus": [
+    "src/baiduresponseprocessor.cpp",
+    "src/imageloader.cpp",
+    "src/baiduvisionengine_p.cpp",
+    "src/token.cpp",
+    "src/baiduvisionengine.cpp",
+    "src/util.cpp (partiel, ~15 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-xunfei-vision-engine",
+   "fichiers_code_propres": 16,
+   "lignes_code_propres": 1504,
+   "lus_integralement": 4,
+   "lus_partiellement": 2,
+   "pct_fichiers": 25.0,
+   "pct_lignes": 33.3,
+   "fichiers_lus": [
+    "src/xunfeivisionengine_p.cpp",
+    "src/token.cpp",
+    "src/imageloader.cpp",
+    "src/xunfeivisionengine.cpp",
+    "src/xunfeivisionengine_p.h (partiel, ~5 l.)",
+    "src/util.cpp (partiel, ~30 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-ai-data-management-service",
+   "fichiers_code_propres": 65,
+   "lignes_code_propres": 6558,
+   "lus_integralement": 7,
+   "lus_partiellement": 7,
+   "pct_fichiers": 10.8,
+   "pct_lignes": 14.2,
+   "fichiers_lus": [
+    "src/main.cpp",
+    "src/aiIndex/nlpBaseTask.cpp",
+    "src/controller/handlerAddTextFiles.cpp",
+    "src/service/constant.cpp",
+    "src/controller/handlerGetAllFilesInfos.cpp",
+    "conf/DataManagement.json",
+    "conf/kyai-data-management-service.service",
+    "src/aiIndex/aiIndex.cpp (partiel, ~300 l.)",
+    "src/dao/documentParse.cpp (partiel, ~80 l.)",
+    "src/aiIndex/tagTask.cpp (partiel, ~30 l.)",
+    "src/aiIndex/summaryTask.cpp (partiel, ~30 l.)",
+    "src/dao/fileDatabase.cpp (partiel, ~40 l.)",
+    "src/controller/handlerGetSummarysOfFiles.cpp (partiel, ~15 l.)",
+    "src/controller/handlerUpdateFilesContentData.cpp (partiel, ~20 l.)"
+   ]
+  },
+  {
+   "arbre": "archive/kylin-ai-document-qa-service",
+   "fichiers_code_propres": 87,
+   "lignes_code_propres": 11763,
+   "lus_integralement": 9,
+   "lus_partiellement": 10,
+   "pct_fichiers": 10.3,
+   "pct_lignes": 7.3,
+   "fichiers_lus": [
+    "document-qa-service/src/handleGetTextFileContents.cpp",
+    "document-qa-service/src/handleAddTextFile.cpp",
+    "document-qa-service/src/service/service.cpp",
+    "document-qa-service/src/dao/parser.cpp",
+    "knowledge-base-service/server.cpp",
+    "knowledge-base-service/conf/knowledgebaseservice.json",
+    "document-qa-service/conf/KnowledgeBase.json",
+    "knowledge-base-service/conf/kylin-ai-knowledgebase-service.service",
+    "document-qa-service/conf/kylin-ai-document-qa-service.service",
+    "knowledge-base-service/src/inferenceengine.cpp (partiel, ~180 l.)",
+    "knowledge-base-service/src/handleKnowledgeBase.cpp (partiel, ~30 l.)",
+    "knowledge-base-service/src/common/utils.cpp (partiel, ~50 l.)",
+    "document-qa-service/src/dao/database.cpp (partiel, ~30 l.)",
+    "knowledge-base-service/src/querydiversifier/diversifystrategy.cpp (partiel, ~15 l.)",
+    "knowledge-base-service/src/storagemanager/storagemanager.cpp (partiel, ~20 l.)",
+    "knowledge-base-service/src/storagemanager/traditionaldatabaseengine.cpp (partiel, ~15 l.)",
+    "document-qa-client/src/knowledgebaseproxy.cpp (partiel, ~60 l.)",
+    "knowledge-base-service/src/hybridretriever/fuzzycompositererankerplugin.cpp (partiel, ~10 l.)",
+    "knowledge-base-service/src/knowledgebaseservice.cpp (partiel, ~10 l.)"
+   ]
+  }
+ ],
+ "non_couvert": [
+  "Resolution effective du type de deploiement \"Default\" et du repli cloud : implementee dans kylin-ai-runtime / greffons (lot V1-L8) ; le moteur freetrial et libkylin-ai-default-key sont des binaires sans source : destination, TLS et cle par defaut non constatables.",
+  "Greffons kylin-*-ai-engine-plugin (pont entre runtime et ces bibliotheques) non presents dans le lot : l'ordre de priorite des moteurs cloud et la propagation des cles ne sont pas verifies ici.",
+  "web_kbot (interface React embarquee, 89 fichiers src + bundle dist) : non relu dans ce lot (couvert partiellement par V1-L7) ; correspondance dist/src non verifiee.",
+  "ukui-search (appelant de addTextFiles/addImageFiles et proprietaire de la cle gsettings ai-index-enable) hors lot : perimetre exact des fichiers indexes et valeur par defaut de l'index IA non constates.",
+  "Bibliotheques kysdk-vector-engine, kylin-ai-document-service (gRPC) et kyai-business-framework (serveur IPC, journalisation PRINT_*) hors lot : points de terminaison gRPC, permissions des sockets abstraites et semantique de log_level non verifiees.",
+  "Emplacement exact des fichiers ukui-log4qt (bibliotheque hors lot) : presume ~/.log/kylin-aiassistant*.log.",
+  "Contenu des accords d'utilisation HTML (res/html) non analyse juridiquement.",
+  "libkyai-business-framework, libkysdk-genai-nlp et kylin-ai-document-service lus seulement aux lignes citees pour qualifier les constats (hors lot) ; comportement GLib exact de l'authentification EXTERNAL inter-UID sur l'ISO a confirmer en Phase 3 (test dynamique).",
+  "libhv v1.3.3 embarquee : lue seulement ssl/openssl.c:14-95, event/nio.c:180-220, http/client/HttpClient.cpp:210-260, http/client/WebSocketClient.cpp:50-60, evpp/TcpClient.h:195-215 ; pas de diff avec l'amont ; capacites serveur (bind/listen) non utilisees par le code Kylin lu.",
+  "cpr embarque (7 copies identiques, session.cpp md5 aca9e8bc...) : seuls les reglages TLS par defaut verifies (ssl_options.h:81,427-429 ; session.cpp:443-445,492-495).",
+  "kylin-aiassistant : ~93 % des lignes non lues (QML d'interface, web_kbot, docparse, voice-kyling, scheduled, x11windowhelper) ; motifs reseau/collecte/execution balayes sur tout le code propre hors web_kbot.",
+  "Resumes de reunion et lecture a voix haute : chemin complet via kyai-assistant/kysdk-coreai-speech non suivi au-dela de l'appel SDK."
+ ],
+ "synthese": "Empreintes des 12 arbres conformes a empreintes-arbres-sources.tsv. [CONSTATÉ] Les 9 moteurs cloud sont des bibliotheques chargees dans le runtime IA de session ; ils n'emettent rien seuls : chaque flux suit une requete du runtime, et seulement si l'utilisateur a saisi SES cles (aucune cle en dur hors un fichier de test non livre, valeur masquee). Destinations fixes : aip.baidubce.com, vop/tsn/openapi.baidu.com, dashscope.aliyuncs.com, api.deepseek.com, spark-api.xf-yun.com, *.xfyun.cn, spark-api.cn-huabei-1.xf-yun.com ; URL libre (http autorise) pour le moteur personnalise ; NTP en clair vers cn.pool.ntp.org (moteur NLP iFlytek). Donnees : invites/historique/documents injectes, audio micro, texte a lire ; aucun envoi d'image utilisateur (vision = texte->image), aucun identifiant materiel (cuid constant). [CONSTATÉ, elevee] Les flux WebSocket/HTTP des moteurs de parole Baidu (ASR temps reel, TTS, jeton OAuth avec secret) et iFlytek (rtasr/iat/tts) passent par libhv avec SSL_VERIFY_NONE : audio, textes et identifiants interceptables ; les flux cpr verifient TLS. [CONSTATÉ, moyenne] Cles Baidu (API+Secret) et contenu integral des conversations/transcriptions journalises en clair au niveau INFO par defaut ; l'assistant journalise aussi le texte integral des documents joints. [PROBABLE, elevee] Les services document-qa et data-management (actives par defaut) exposent sur des sockets D-Bus ABSTRAITES sans controle d'appelant des methodes renvoyant le texte de fichiers arbitraires (getTextFileContents) ou la liste/les resumes des fichiers indexes : lecture inter-utilisateurs des documents d'une session ouverte (test dynamique requis). [PROBABLE, moyenne] La base de connaissances envoie extraits de documents + question a un modele « Default » (cloud d'essai par defaut selon V1-L8) ; l'indexation data-management est explicitement locale (OnDevice). [CONSTATÉ/PROBABLE, moyenne] kylin-aiassistant affiche un accord au premier lancement (refus = fermeture, selection inactive avant acceptation) mais cet accord ne nomme aucun destinataire, ne mentionne ni le modele d'essai gratuit (quota gere dans le code) ni la telemetrie kdk_dia (evenements d'usage + nom du modele, identifiants machine ajoutes en aval, V1-L1). Contexte envoye : uniquement ce que l'utilisateur soumet (texte, documents, image, selection apres clic) ; capture d'ecran seulement si le partage d'ecran vocal est active (desactive par defaut) ; pas de presse-papiers ni de fichiers ouverts collectes automatiquement. Couverture : moteurs 33-60 % des lignes propres (toutes les implementations *_p.cpp, token et util reseau lues integralement ; en-tetes, logger.h et tests balayes), services 7-14 %, assistant 3 % (balayage par motifs complet hors web_kbot). Destination reelle du moteur freetrial et cle par defaut : binaires sans source, non constatables."
+}
