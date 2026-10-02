@@ -1,0 +1,361 @@
+/*
+ * Copyright (C) 2019 Tianjin KYLIN Information Technology Co., Ltd.
+ *               2014  Hong Jen Yee (PCMan) <pcman.tw@gmail.com>
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2.1 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+ *
+ */
+#include "sessionapplication.h"
+#include "modulemanager.h"
+#include "idleadbusdaptor.h"
+#include "idlewatcher.h"
+
+#include <QDebug>
+#include <QMediaPlayer>
+#include <QDesktopWidget>
+#include "../tools/ukuipower.h"
+#include <QProcess>
+#include <QMessageBox>
+#include <syslog.h>
+
+extern "C"
+{
+#include <X11/Xatom.h>
+#include <X11/Xlib.h>
+}
+
+#define SESSION_DEFAULT_SETTINGS "org.ukui.session"
+#define SESSION_DEFAULT_SETTINGS_PATH "/org/ukui/desktop/session/"
+#define QT5_UKUI_STYLE "org.ukui.style"
+#define PERIPHERALS_MOUSE "org.ukui.peripherals-mouse"
+#define PERIPHERALS_MOUSE_PATH "/org/ukui/desktop/peripherals/mouse/"
+#define MOUSE_KEY "cursor-size"
+#define MOUSE_THEME "cursor-theme"
+
+#define XSETTINGS_PLUGIN_SCHEMA "org.ukui.SettingsDaemon.plugins.xsettings"
+#define SCALING_FACTOR_KEY "scaling-factor"
+
+#define FONT_RENDERING_SCHEMAS "org.ukui.font-rendering"
+#define FONT_REENDERING_PATH "/org/ukui/desktop/font-rendering/"
+#define DPI_KEY "dpi"
+
+QByteArray typeConver(int i)
+{
+    QString str = QString::number(i);
+    QByteArray byte;
+    byte.append(str);
+    return byte;
+}
+
+void SessionApplication::initialEnvironment()
+{
+    SystemdProvider *sysProvider = new SystemdProvider();
+    if (gsettings_usable) {
+        if (sysProvider->canAction(UkuiPower::PowerHibernate)) {
+            gs->set("canhibernate", true);
+        } else {
+            gs->set("canhibernate", false);
+        }
+
+        // 在打开关机管理界面后通过物理按键的方式关机/重启
+        // 将导致win-key-release键值为true
+        // 造成大部分热键和组合键失效
+        // 所以在登录进来时恢复默认值
+        gs->reset("win-key-release");
+    }
+    delete sysProvider;
+
+    // 检查qt主题是否安装
+    const QByteArray qt_style(QT5_UKUI_STYLE);
+    QByteArray QT_QPA_PLATFORMTHEME;
+    if (QGSettings::isSchemaInstalled(qt_style)) {
+        QT_QPA_PLATFORMTHEME = "ukui";
+    } else {
+        QT_QPA_PLATFORMTHEME = "gtk2";
+    }
+
+    qputenv("XDG_CURRENT_DESKTOP", "UKUI");
+    qputenv("QT_QPA_PLATFORMTHEME", QT_QPA_PLATFORMTHEME);
+    qputenv("GTK_MODULES", "ukuireload-gtk-module");
+    //    qputenv("QT_QPA_PLATFORM", "xcb");
+
+    QString xdg_session_type = qgetenv("XDG_SESSION_TYPE");
+    if (xdg_session_type == "wayland") {
+        QProcess::startDetached(
+            "dbus-update-activation-environment",
+            QStringList() << "--systemd"
+                          << "DISPLAY"
+                          << "QT_QPA_PLATFORM");
+    }
+
+    // restart user's gvfs-daemon.service
+    // QProcess::startDetached("systemctl", QStringList() << "--user" << "restart" << "gvfs-daemon.service");
+
+    // start ukui-session.target
+    QProcess::startDetached(
+        "systemctl",
+        QStringList() << "--user"
+                      << "start"
+                      << "ukui-session.target");
+
+    int cursorSize;
+
+    mouseSettings = new QGSettings(PERIPHERALS_MOUSE);
+    connect(mouseSettings, &QGSettings::changed, this, &SessionApplication::mouseChangeCallback);
+
+    QGSettings *gsetting = new QGSettings(XSETTINGS_PLUGIN_SCHEMA);
+    cursorSize = mouseSettings->get(MOUSE_KEY).toInt() * gsetting->get(SCALING_FACTOR_KEY).toDouble();
+    setKwinMouseSize(cursorSize);
+    delete gsetting;
+}
+
+void SessionApplication::resumeUserDisplayParam()
+{
+    qDebug() << "usd save-param process start";
+    bool isBootInstall = false;
+    QFile file("/proc/cmdline");
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        QTextStream in(&file);
+        QString content = in.readAll();
+        if (content.contains("boot=casper", Qt::CaseSensitive))
+            isBootInstall = true;
+        file.close();
+    } else {
+        qDebug() << "Failed to open file.";
+    }
+    if (!isBootInstall) {
+        QString user_name = qgetenv("USER");
+        QProcess procSaveParam;
+        procSaveParam.start("save-param", QStringList() << "-u" << user_name);
+        if (!procSaveParam.waitForFinished(3000)) {
+            qDebug() << "sync user display param timeout";
+        }
+    }
+}
+
+void SessionApplication::updateIdleDelay()
+{
+    if (gsettings_usable) {
+        const int idle = gs->get("idle-delay").toInt() * 60;
+        if (lastIdleTime == idle) {
+            return;
+        }
+        mIdleWatcher->reset(idle);
+    }
+}
+
+/* 设置光标属性 */
+void setMousePro(int size, QString theme)
+{
+    Display *dpy;
+    QString str = QString("Xcursor.size:\t%2\nXcursor.theme:\t%3\n").arg(size).arg(theme);
+
+    dpy = XOpenDisplay(NULL);
+    XChangeProperty(
+        dpy,
+        RootWindow(dpy, 0),
+        XA_RESOURCE_MANAGER,
+        XA_STRING,
+        8,
+        PropModeReplace,
+        (unsigned char *)str.toLatin1().data(),
+        str.length());
+    XCloseDisplay(dpy);
+}
+
+void SessionApplication::mouseChangeCallback(QString keys)
+{
+    if (keys.compare(MOUSE_KEY) == 0 || keys.compare(MOUSE_THEME) == 0) {
+        QGSettings *gsetting = new QGSettings(XSETTINGS_PLUGIN_SCHEMA);
+        int size = mouseSettings->get(MOUSE_KEY).toInt() * gsetting->get(SCALING_FACTOR_KEY).toDouble();
+        QString theme = mouseSettings->get(MOUSE_THEME).toString();
+        // setMousePro(size, theme);
+        setKwinMouseSize(size);
+        delete gsetting;
+    }
+}
+
+void SessionApplication::setKwinMouseSize(int size)
+{
+    QString filename = QDir::homePath() + "/.config/kcminputrc";
+
+    QSettings *mouseSettings = new QSettings(filename, QSettings::IniFormat);
+    mouseSettings->beginGroup("Mouse");
+    mouseSettings->setValue("cursorSize", size);
+    mouseSettings->endGroup();
+
+    mouseSettings->deleteLater();
+
+    QDBusMessage message = QDBusMessage::createSignal("/KGlobalSettings", "org.kde.KGlobalSettings", "notifyChange");
+
+    QList<QVariant> args;
+    args.append(5); // cursor size change signal
+    args.append(0); // The sceond param unuse..
+    message.setArguments(args);
+
+    QDBusConnection::sessionBus().send(message);
+}
+
+void SessionApplication::registerDBus()
+{
+    QDBusConnection dbus = QDBusConnection::sessionBus();
+    if (!dbus.isConnected()) {
+        qDebug() << "Fatal DBus Error";
+        QProcess *a = new QProcess(this);
+        a->setProcessChannelMode(QProcess::ForwardedChannels);
+        // 这种启动方式是否就是在d-bus服务被杀死的情况下session启动两次的原因
+        a->start(
+            "dbus-launch",
+            QStringList() << "--exit-with-session"
+                          << "ukui-session");
+        a->waitForFinished(-1);
+        if (a->exitCode()) {
+            qWarning() << "exited with code" << a->exitCode();
+        }
+    }
+    m_sessionManagerContext = new SessionManagerDBusContext(ModuleManager::instance());
+
+    if (!dbus.registerService(QStringLiteral("org.gnome.SessionManager"))) {
+        qCritical() << "Can't register org.gnome.SessionManager, there is already a session manager!";
+        QMessageBox msgBox;
+        msgBox.setWindowTitle(QObject::tr("ukui-session"));
+        msgBox.setIcon(QMessageBox::Warning);
+        msgBox.setWindowFlags(Qt::WindowStaysOnTopHint);
+        //    msgBox.setModal(false);
+        msgBox.setText(QObject::tr(
+            "The current user has logged in to the system! Currently, the system does "
+            "not support more than one user to log in at the same time. Click the button below to log out."));
+
+        int re = msgBox.exec();
+        QTimer::singleShot(0, qApp, SLOT(quit()));
+    }
+    if (!dbus.registerObject(("/org/gnome/SessionManager"), m_sessionManagerContext)) {
+        qCritical() << "Can't register object, there is already an object registered at "
+                    << "/org/gnome/SessionManager";
+    }
+
+    // idle-delay固定设置为1，不再被更改
+    lastIdleTime = 1 * 60;
+
+    const QByteArray screensaverID("org.ukui.screensaver");
+    if (QGSettings::isSchemaInstalled(screensaverID) && gsettings_usable) {
+        int idleNum = gs->get("idle-delay").toInt();
+        // 兼容旧机制，避免升级出现异常
+        if (idleNum != 1) {
+            QGSettings *screensaverGs = new QGSettings(screensaverID);
+            screensaverGs->set("idle-delay", idleNum);
+            gs->reset("idle-delay");
+            delete screensaverGs;
+        }
+    }
+
+    mIdleWatcher = new IdleWatcher(lastIdleTime);
+    m_idleDBusWatcher = new IdleDBusAdaptor(mIdleWatcher);
+    if (!dbus.registerObject("/org/gnome/SessionManager/Presence", mIdleWatcher)) {
+        qCritical() << "Cant' register object, there is already an object registered at "
+                    << "org/gnome/SessionManager/Presence";
+    }
+}
+
+void setOomConf()
+{
+    QDBusMessage message = QDBusMessage::createMethodCall(
+        "com.kylin.processStateManage",
+
+        "/com/kylin/processStateManage",
+
+        "com.kylin.processStateManage",
+
+        QStringLiteral("SetOomScore"));
+    QDBusMessage message_child = QDBusMessage::createMethodCall(
+        "com.kylin.processStateManage",
+
+        "/com/kylin/processStateManage",
+
+        "com.kylin.processStateManage",
+
+        QStringLiteral("SetOomScoreChild"));
+
+    QList<QVariant> args;
+
+    args.append(QVariant(-499));
+
+    QList<QVariant> args_child;
+
+    args_child.append(QVariant(0));
+
+    message.setArguments(args);
+    message_child.setArguments(args_child);
+    QDBusPendingReply<int32_t> reply = QDBusConnection::systemBus().call(message);
+    QDBusPendingReply<int32_t> reply_child = QDBusConnection::systemBus().call(message_child);
+    if (!reply.isValid() || !reply_child.isValid()) {
+        qDebug() << "SetOomScore failed!";
+        return;
+    }
+    qDebug() << "replay = " << reply << " ,replay_child = " << reply_child;
+}
+
+SessionApplication::SessionApplication(int &argc, char **argv) : QApplication(argc, argv)
+{
+    // 由wlcom >= 1.3.1.0-0k0.27 实现
+    // if (QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
+    //     resumeUserDisplayParam();
+    // }
+    ModuleManager::instance()->monitorQuickStart();
+    setOomConf();
+
+    // Load ts files
+    const QString locale = QLocale::system().name();
+    QTranslator translator;
+    qDebug() << "local: " << locale;
+    qDebug() << "path: " << QStringLiteral(UKUI_TRANSLATIONS_DIR) + QStringLiteral("/ukui-session-manager");
+    if (translator.load(locale, QStringLiteral(UKUI_TRANSLATIONS_DIR) + QStringLiteral("/ukui-session-manager"))) {
+        this->installTranslator(&translator);
+    } else {
+        qDebug() << "Load translations file failed!";
+    }
+
+    const QByteArray id(SESSION_DEFAULT_SETTINGS);
+    if (QGSettings::isSchemaInstalled(id)) {
+        gsettings_usable = true;
+        gs = new QGSettings(SESSION_DEFAULT_SETTINGS, SESSION_DEFAULT_SETTINGS_PATH, this);
+    } else {
+        qWarning() << "Failed to get default value from gsettings, set gsettings_usable to false!";
+        gsettings_usable = false;
+    }
+
+    initialEnvironment();
+
+    registerDBus();
+    ModuleManager::instance()->init(argc > 1 ? argv[1] : "");
+
+    // Wait until the event loop starts
+    //    QTimer::singleShot(0, this, SLOT(startup()));
+}
+
+SessionApplication::~SessionApplication()
+{
+    delete mIdleWatcher;
+    delete mouseSettings;
+    delete gs;
+    delete m_idleDBusWatcher;
+}
+
+bool SessionApplication::startup()
+{
+    ModuleManager::instance()->startup();
+
+    return true;
+}

@@ -1,0 +1,200 @@
+From: =?utf-8?q?Maxime_B=C3=A9lair?= <maxime.belair@canonical.com>
+Date: Mon, 30 Mar 2026 17:04:34 +0200
+Subject: [PATCH 11/13] utils: add support for iface an label in network rules
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Initial support for two new fields in network rules: interface and
+label. Add tests.
+
+Signed-off-by: Maxime Bélair <maxime.belair@canonical.com>
+(cherry picked from commit 02f59e87d465bc3437616bef6b7a29ce933c58c3)
+Signed-off-by: John Johansen <john.johansen@canonical.com>
+---
+ utils/apparmor/logparser.py            |  1 +
+ utils/apparmor/rule/network.py         | 27 +++++++++++++++------------
+ utils/test/test-network.py             | 15 +++++++++++++++
+ utils/test/test-parser-simple-tests.py | 15 ---------------
+ 4 files changed, 31 insertions(+), 27 deletions(-)
+
+diff --git a/utils/apparmor/logparser.py b/utils/apparmor/logparser.py
+index be66a39..0ff1930 100644
+--- a/utils/apparmor/logparser.py
++++ b/utils/apparmor/logparser.py
+@@ -245,6 +245,7 @@ class ReadLog:
+             ev['peer_addr'] = event.net_foreign_addr
+             ev['addr'] = event.net_local_addr
+             ev['peer_addr'] = event.net_foreign_addr
++            ev['peer'] = event.peer
+         elif event_type == 'unix':
+             ev['accesses'] = event.requested_mask
+             ev['port'] = event.net_local_port or None
+diff --git a/utils/apparmor/rule/network.py b/utils/apparmor/rule/network.py
+index f25c0d5..8e0e00e 100644
+--- a/utils/apparmor/rule/network.py
++++ b/utils/apparmor/rule/network.py
+@@ -16,7 +16,7 @@
+ import re
+ 
+ from apparmor.common import AppArmorBug, AppArmorException
+-from apparmor.regex import RE_PROFILE_NETWORK, strip_parenthesis
++from apparmor.regex import RE_PROFILE_NETWORK, strip_parenthesis, aare
+ from apparmor.rule import BaseRule, BaseRuleset, logprof_value_or_all, parse_modifiers, check_dict_keys, \
+     check_and_split_list, initialize_cond_dict, print_dict_values, tuple_to_dict
+ from apparmor.translations import init_translation
+@@ -57,9 +57,11 @@ network_ipv6 = (
+ 
+ network_port = r'(port\s*=\s*(?P<%s>\d+))[,\s]*'
+ ip_cond = fr'\s*ip\s*=\s*(?P<%s>(({network_ipv4})|({network_ipv6})|none))[,\s]*'
++network_interface = r'(interface\s*=\s*(?P<%s>' + aare + r'))[,\s]*'
++network_label = r'(label\s*=\s*(?P<%s>' + aare + r'))[,\s]*'
+ 
+-RE_LOCAL_EXPR = f'((({ip_cond % "ip"})|({network_port % "port"}))*)'
+-RE_PEER_EXPR = fr'(peer\s*=\s*\(\s*(({ip_cond % "ip_peer"})|({network_port % "port_peer"}))+\s*\))'
++RE_LOCAL_EXPR = f'((({ip_cond % "ip"})|({network_port % "port"})|({network_interface % "interface"})|({network_label % "label"}))*)'
++RE_PEER_EXPR = fr'(peer\s*=\s*\(\s*(({ip_cond % "ip_peer"})|({network_port % "port_peer"})|({network_interface % "interface_peer"})|({network_label % "label_peer"}))+\s*\))'
+ 
+ 
+ RE_NETWORK_DOMAIN = '(' + '|'.join(network_domain_keywords) + ')'
+@@ -102,16 +104,16 @@ class NetworkRule(BaseRule):
+                 accesses = self.ALL
+             else:
+                 accesses = accesses.split()
+-            local_expr = tuple_to_dict(local_expr, ['ip', 'port'])
+-            peer_expr = tuple_to_dict(peer_expr, ['ip', 'port'])
++            local_expr = tuple_to_dict(local_expr, ['ip', 'port', 'interface', 'label'])
++            peer_expr = tuple_to_dict(peer_expr, ['ip', 'port', 'interface', 'label'])
+ 
+         self.accesses, self.all_accesses, unknown_items = check_and_split_list(accesses, access_flags, self.ALL,  type(self).__name__, 'accesses')
+ 
+         if unknown_items:
+             raise AppArmorException(f'Invalid access in Network rule: {unknown_items}')
+ 
+-        self.local_expr = check_dict_keys(local_expr, {'ip', 'port'}, self.ALL)
+-        self.peer_expr = check_dict_keys(peer_expr, {'ip', 'port'}, self.ALL)
++        self.local_expr = check_dict_keys(local_expr, {'ip', 'port', 'interface', 'label'}, self.ALL)
++        self.peer_expr = check_dict_keys(peer_expr, {'ip', 'port', 'interface', 'label'}, self.ALL)
+ 
+         if self.local_expr != self.ALL and 'port' in self.local_expr and int(self.local_expr['port']) > 65535:
+             raise AppArmorException(f'Invalid port: {self.local_expr["port"]}')
+@@ -180,8 +182,8 @@ class NetworkRule(BaseRule):
+             else:
+                 accesses = cls.ALL
+ 
+-            local_expr = initialize_cond_dict(r, ['ip', 'port'], '', cls.ALL)
+-            peer_expr = initialize_cond_dict(r, ['ip', 'port'], '_peer', cls.ALL)
++            local_expr = initialize_cond_dict(r, ['ip', 'port', 'interface', 'label'], '', cls.ALL)
++            peer_expr = initialize_cond_dict(r, ['ip', 'port', 'interface', 'label'], '_peer', cls.ALL)
+ 
+         else:
+             accesses = cls.ALL
+@@ -293,17 +295,18 @@ class NetworkRule(BaseRule):
+             _('Peer'), peer_expr,
+         )
+ 
++    # XXX: interface and peer_interface are not present in kernel log events yet.
+     @staticmethod
+     def hashlog_from_event(hl, ev):
+-        local = (ev['addr'], ev['port'])
+-        peer = (ev['peer_addr'], ev['remote_port'])
++        local = (ev.get('addr'), ev.get('port'), ev.get('interface'), ev.get('label'))
++        peer = (ev.get('peer_addr'), ev.get('remote_port'), ev.get('peer_interface'), ev.get('peer'))
+         hl[ev['accesses']][ev['family']][ev['sock_type']][ev['protocol']][local][peer] = True
+ 
+     @classmethod
+     def from_hashlog(cls, hl):
+         for access, family, sock_type, protocol, local_event, peer_event in BaseRule.generate_rules_from_hashlog(hl, 6):
+             if access and set(access.split()) & non_peer_accesses:
+-                peer_event = (None, None)
++                peer_event = (None, None, None, None)
+             yield cls(access, family, sock_type, local_event, peer_event, log_event=True)
+ 
+ 
+diff --git a/utils/test/test-network.py b/utils/test/test-network.py
+index 9afffe7..d69dd21 100644
+--- a/utils/test/test-network.py
++++ b/utils/test/test-network.py
+@@ -107,6 +107,11 @@ class NetworkTestParse(NetworkTest):
+         ('network peer=(ip=::1, port=22),',         exp(False, False, False, '',           None,                None,   True,  None,       True,  NetworkRule.ALL,                       {"ip": "::1", 'port': '22'})),
+         ('network (connect, rw) stream ip=192.168.122.2 port=22 peer=(ip=192.168.122.3 port=22),',
+                                                     exp(False, False, False, '',           {'connect', 'rw'},   None,   True,  'stream',   False, {'ip': '192.168.122.2', 'port': '22'}, {"ip": "192.168.122.3", 'port': '22'})),  # noqa: E127
++        ('network interface=eth0,',                 exp(False, False, False, '',           None,                None,   True,  None,       True,  {"interface": "eth0"},                 NetworkRule.ALL)),
++        ('network label=foo,',                      exp(False, False, False, '',           None,                None,   True,  None,       True,  {"label": "foo"},                      NetworkRule.ALL)),
++        ('network peer=(label=bar),',               exp(False, False, False, '',           None,                None,   True,  None,       True,  NetworkRule.ALL,                       {"label": "bar"})),
++        ('network interface="eth 0" label="f o",',  exp(False, False, False, '',           None,                None,   True,  None,       True,  {"interface": "eth 0", "label": "f o"}, NetworkRule.ALL)),
++        ('network interface=eth0 peer=(interface=eth1),', exp(False, False, False, '',     None,                None,   True,  None,       True,  {"interface": "eth0"},                 {"interface": "eth1"})),
+     )
+ 
+     def _run_test(self, rawrule, expected):
+@@ -133,6 +138,8 @@ class NetworkTestParseInvalid(NetworkTest):
+         ('network packet peer=(ip=1::),',                   (AppArmorException, True)),  # Only inet[6] domains can be used in conjunction with a peer expression
+         ('priority=a network,',                             (AppArmorException, False)),
+         ('priority=-1042 network,',                         (AppArmorException, True)),
++        ('network interface=,',                             (AppArmorException, True)),
++        ('network label=,',                                 (AppArmorException, True)),
+     )
+ 
+     def _run_test(self, rawrule, expected):
+@@ -162,6 +169,7 @@ class NetworkTestParseFromLog(NetworkTest):
+             'aamode': 'DENIED',
+             'accesses': None,
+             'addr': None,
++            'peer': None,
+             'peer_addr': None,
+             'port': 1234,
+             'remote_port': None,
+@@ -198,6 +206,8 @@ class NetworkFromInit(NetworkTest):
+         (NetworkRule({'bind', 'listen'}, NetworkRule.ALL, 'stream',         {'port': '22'},  NetworkRule.ALL),             exp(False, False, False, '',      {'bind', 'listen'}, None,   True,  'stream',  False, {'port': '22'},  NetworkRule.ALL)),
+         (NetworkRule(NetworkRule.ALL,    NetworkRule.ALL, 'stream',         NetworkRule.ALL, {'port': '22'}),              exp(False, False, False, '',      None,               None,   True,  'stream',  False, NetworkRule.ALL,  {'port': '22'})),
+         (NetworkRule(NetworkRule.ALL,    NetworkRule.ALL, 'stream',         NetworkRule.ALL, {'ip': '::1', 'port': '22'}), exp(False, False, False, '',      None,               None,   True,  'stream',  False, NetworkRule.ALL,  {'ip': '::1', 'port': '22'})),
++        (NetworkRule(NetworkRule.ALL,    NetworkRule.ALL, 'stream',         NetworkRule.ALL, {'interface': 'eth0'}),       exp(False, False, False, '',      None,               None,   True,  'stream',  False, NetworkRule.ALL,  {'interface': 'eth0'})),
++        (NetworkRule(NetworkRule.ALL,    NetworkRule.ALL, 'stream',         {'label': 'foo'}, NetworkRule.ALL),            exp(False, False, False, '',      None,               None,   True,  'stream',  False, {'label': 'foo'}, NetworkRule.ALL)),
+     )
+ 
+     def _run_test(self, obj, expected):
+@@ -300,6 +310,9 @@ class WriteNetworkTestAATest(AATest):
+         (' priority = 0     allow network         tcp      ,# foo bar',       'priority=0 allow network tcp, # foo bar'),
+         (' priority = 43    allow network         tcp      ,# foo bar',       'priority=43 allow network tcp, # foo bar'),
+         (' priority=+123    allow network         tcp      ,# foo bar',       'priority=123 allow network tcp, # foo bar'),
++        ('   network interface=eth0,',                                       'network interface=eth0,'),
++        ('   network label="foo bar",',                                      'network label="foo bar",'),
++        ('   network peer=(label=bar),',                                     'network peer=(label=bar),'),
+ 
+     )
+ 
+@@ -487,6 +500,8 @@ class NetworkLogprofHeaderTest(AATest):
+         ('audit deny network inet,',                        [_('Qualifier'), 'audit deny', _('Accesses'), _('ALL'),      _('Network Family'), 'inet',   _('Socket Type'), _('ALL'), _('Local'), _('ALL'),                    _('Peer'), _('ALL')]),
+         ('network (bind, listen) stream ip=::1 port=22,',   [                              _('Accesses'), 'bind listen', _('Network Family'), _('ALL'), _('Socket Type'), 'stream', _('Local'), {'ip': '::1', 'port': '22'}, _('Peer'), _('ALL')]),  # noqa: E201
+         ('audit deny network inet peer=(ip=::1),',          [_('Qualifier'), 'audit deny', _('Accesses'), _('ALL'),      _('Network Family'), 'inet',   _('Socket Type'), _('ALL'), _('Local'), _('ALL'),                    _('Peer'), {'ip': '::1'}]),
++        ('network interface=eth0,',                         [_('Accesses'), _('ALL'),      _('Network Family'), _('ALL'),   _('Socket Type'), _('ALL'), _('Local'), {'interface': 'eth0'}, _('Peer'), _('ALL')]),
++        ('network peer=(label=foo),',                       [_('Accesses'), _('ALL'),      _('Network Family'), _('ALL'),   _('Socket Type'), _('ALL'), _('Local'), _('ALL'),              _('Peer'), {'label': 'foo'}]),
+     )
+ 
+     def _run_test(self, params, expected):
+diff --git a/utils/test/test-parser-simple-tests.py b/utils/test/test-parser-simple-tests.py
+index c62f712..f2d4638 100644
+--- a/utils/test/test-parser-simple-tests.py
++++ b/utils/test/test-parser-simple-tests.py
+@@ -454,21 +454,6 @@ syntax_failure = (
+     'network/network_ok_17.sd',
+     'network/network_ok_45.sd',
+     'network/network_ok_46.sd',
+-    # network interface
+-    'network/skb/ok_iface_1.sd',
+-    'network/skb/ok_iface_2.sd',
+-    'network/skb/ok_iface_3.sd',
+-    'network/skb/ok_iface_4.sd',
+-    'network/skb/ok_iface_5.sd',
+-    'network/skb/ok_iface_6.sd',
+-    'network/skb/ok_iface_7.sd',
+-    'network/skb/ok_iface_8.sd',
+-    'network/skb/ok_iface_9.sd',
+-    'network/skb/ok_iface_10.sd',
+-    'network/skb/ok_iface_11.sd',
+-    'network/skb/ok_label_1.sd',
+-    'network/skb/ok_label_peer_1.sd',
+-    'network/skb/ok_label_peer_2.sd',
+     'network/skb/ok_setlabel_peer_1.sd',
+ )
+ 

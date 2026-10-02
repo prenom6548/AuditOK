@@ -1,0 +1,6 @@
+#ifndef ISWITCHBUTTON_H
+#define ISWITCHBUTTON_H
+
+
+
+#endif // ISWITCHBUTTON_H

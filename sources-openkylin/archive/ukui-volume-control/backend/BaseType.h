@@ -1,0 +1,61 @@
+#ifndef BASETYPE_H
+#define BASETYPE_H
+
+#include <list>
+#include <memory>
+#include <unordered_map>
+#include <string>
+
+#include "simple_logger/Formatter.h"
+
+namespace UkuiAudioFramwork
+{
+enum class Module
+{
+    Service = 0,
+    Tray,
+    ControlCenter
+};
+
+//
+enum class BackendType
+{
+    PULSEAUDIO = 0,
+    PIPEWIRE,
+    ALSA,
+    JACK,
+    UNKNOWN
+};
+
+enum class VolumeType
+{
+    BASE_VOLUME = 0,
+    BALANCE_VOLUME
+};
+
+enum class NodeType
+{
+    INPUT = 0,
+    OUTPUT,
+    SINK_INPUT,
+    SOURCE_OUTPUT
+};
+
+enum class PaDataType
+{
+    CARD = 0,
+    SINK,
+    SOURCE,
+    SINK_INPUT,
+    SOURCE_OUTPUT,
+    MODULE
+};
+
+typedef struct NodeInfo
+{
+    uint32_t index;
+    uint8_t channels;
+} NodeInfo;
+}
+
+#endif // BASETYPE_H

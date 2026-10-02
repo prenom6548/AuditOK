@@ -1,0 +1,306 @@
+From 757a376cd0e12c19e9fc5772f506431803be717f Mon Sep 17 00:00:00 2001
+From: Colin Watson <cjwatson@debian.org>
+Date: Sun, 9 Feb 2014 16:10:18 +0000
+Subject: Various Debian-specific configuration changes
+
+ssh: Enable ForwardX11Trusted, returning to earlier semantics which cause
+fewer problems with existing setups (http://bugs.debian.org/237021).
+
+ssh: Set 'SendEnv LANG LC_* COLORTERM NO_COLOR' by default
+(http://bugs.debian.org/264024).
+
+ssh: Enable HashKnownHosts by default to try to limit the spread of ssh
+worms.
+
+ssh: Enable GSSAPIAuthentication by default.
+
+ssh: Include /etc/ssh/ssh_config.d/*.conf.
+
+sshd: Enable PAM, disable KbdInteractiveAuthentication, and disable
+PrintMotd.
+
+sshd: Enable X11Forwarding.
+
+sshd: Set 'AcceptEnv LANG LC_* COLORTERM NO_COLOR' by default.
+
+sshd: Change sftp subsystem path to /usr/lib/openssh/sftp-server.
+
+sshd: Include /etc/ssh/sshd_config.d/*.conf.
+
+sshd: Document Debian's defaults for SshdAuthPath and SshdSessionPath.
+
+regress: Run tests with 'UsePAM yes', to match sshd_config.
+
+Document all of this.
+
+Author: Russ Allbery <rra@debian.org>
+Author: Luca Boccassi <bluca@debian.org>
+Forwarded: not-needed
+Last-Update: 2025-04-11
+
+Patch-Name: debian-config.patch
+---
+ readconf.c           |  2 +-
+ regress/test-exec.sh |  1 +
+ ssh.1                | 24 ++++++++++++++++++++++++
+ ssh_config           |  8 +++++++-
+ ssh_config.5         | 26 +++++++++++++++++++++++++-
+ sshd_config          | 18 ++++++++++++------
+ sshd_config.5        | 33 +++++++++++++++++++++++++++++++--
+ 7 files changed, 101 insertions(+), 11 deletions(-)
+
+--- a/readconf.c
++++ b/readconf.c
+@@ -2860,7 +2860,7 @@
+ 	if (options->forward_x11 == -1)
+ 		options->forward_x11 = 0;
+ 	if (options->forward_x11_trusted == -1)
+-		options->forward_x11_trusted = 0;
++		options->forward_x11_trusted = 1;
+ 	if (options->forward_x11_timeout == -1)
+ 		options->forward_x11_timeout = 1200;
+ 	/*
+--- a/regress/test-exec.sh
++++ b/regress/test-exec.sh
+@@ -634,6 +634,7 @@
+ 	SshdSessionPath		$SSHD_SESSION
+ 	SshdAuthPath		$SSHD_AUTH
+ 	PerSourcePenalties	no
++	UsePAM			yes
+ EOF
+ 
+ # This may be necessary if /usr/src and/or /usr/obj are group-writable,
+--- a/ssh.1
++++ b/ssh.1
+@@ -873,6 +873,16 @@
+ .Xr ssh_config 5
+ for more information.
+ .Pp
++(Debian-specific: X11 forwarding is not subjected to X11 SECURITY extension
++restrictions by default, because too many programs currently crash in this
++mode.
++Set the
++.Cm ForwardX11Trusted
++option to
++.Dq no
++to restore the upstream behaviour.
++This may change in future depending on client-side improvements.)
++.Pp
+ .It Fl x
+ Disables X11 forwarding.
+ .Pp
+@@ -881,6 +891,20 @@
+ Trusted X11 forwardings are not subjected to the X11 SECURITY extension
+ controls.
+ .Pp
++(Debian-specific: In the default configuration, this option is equivalent to
++.Fl X ,
++since
++.Cm ForwardX11Trusted
++defaults to
++.Dq yes
++as described above.
++Set the
++.Cm ForwardX11Trusted
++option to
++.Dq no
++to restore the upstream behaviour.
++This may change in future depending on client-side improvements.)
++.Pp
+ .It Fl y
+ Send log information using the
+ .Xr syslog 3
+--- a/ssh_config
++++ b/ssh_config
+@@ -17,9 +17,12 @@
+ # list of available options, their meanings and defaults, please see the
+ # ssh_config(5) man page.
+ 
+-# Host *
++Include /etc/ssh/ssh_config.d/*.conf
++
++Host *
+ #   ForwardAgent no
+ #   ForwardX11 no
++#   ForwardX11Trusted yes
+ #   PasswordAuthentication yes
+ #   HostbasedAuthentication no
+ #   GSSAPIAuthentication no
+@@ -45,3 +48,6 @@
+ #   ProxyCommand ssh -q -W %h:%p gateway.example.com
+ #   RekeyLimit 1G 1h
+ #   UserKnownHostsFile ~/.ssh/known_hosts.d/%k
++    SendEnv LANG LC_* COLORTERM NO_COLOR
++    HashKnownHosts yes
++    GSSAPIAuthentication yes
+--- a/ssh_config.5
++++ b/ssh_config.5
+@@ -71,6 +71,29 @@
+ host-specific declarations should be given near the beginning of the
+ file, and general defaults at the end.
+ .Pp
++Note that the Debian
++.Ic openssh-client
++package sets several options as standard in
++.Pa /etc/ssh/ssh_config
++which are not the default in
++.Xr ssh 1 :
++.Pp
++.Bl -bullet -offset indent -compact
++.It
++.Cm Include /etc/ssh/ssh_config.d/*.conf
++.It
++.Cm SendEnv No LANG LC_* COLORTERM NO_COLOR
++.It
++.Cm HashKnownHosts No yes
++.It
++.Cm GSSAPIAuthentication No yes
++.El
++.Pp
++.Pa /etc/ssh/ssh_config.d/*.conf
++files are included at the start of the system-wide configuration file, so
++options set there will override those in
++.Pa /etc/ssh/ssh_config.
++.Pp
+ The file contains keyword-argument pairs, one per line.
+ Lines starting with
+ .Ql #
+@@ -941,11 +964,12 @@
+ .It Cm ForwardX11Trusted
+ If this option is set to
+ .Cm yes ,
++(the Debian-specific default),
+ remote X11 clients will have full access to the original X11 display.
+ .Pp
+ If this option is set to
+ .Cm no
+-(the default),
++(the upstream default),
+ remote X11 clients will be considered untrusted and prevented
+ from stealing or tampering with data belonging to trusted X11
+ clients.
+--- a/sshd_config
++++ b/sshd_config
+@@ -10,6 +10,20 @@
+ # possible, but leave them commented.  Uncommented options override the
+ # default value.
+ 
++# In general, the first uncommented definition of an option takes precedence.
++# For options that accept multiple values, like 'Port', subsequent definitions
++# are appended to the configuration.
++#
++# Note that the above implies that configuration options from snippets in
++# /etc/ssh/sshd_config.d/*.conf take precedence over those defined in this
++# file. In addition, configuration snippet files are processed in lexical
++# order, so options defined in files with names that sort earlier take
++# precedence.
++#
++# Such configuration snippets may be present in default installations of
++# Ubuntu.
++Include /etc/ssh/sshd_config.d/*.conf
++
+ #Port 22
+ #AddressFamily any
+ #ListenAddress 0.0.0.0
+@@ -57,10 +71,11 @@
+ #PasswordAuthentication yes
+ #PermitEmptyPasswords no
+ 
+-# Change to "no" to disable keyboard-interactive authentication.  Depending on
++# Change to "yes" to enable keyboard-interactive authentication.  Depending on
+ # the system's configuration, this may involve passwords, challenge-response,
+ # one-time passwords or some combination of these and other methods.
+-#KbdInteractiveAuthentication yes
++# Beware issues with some PAM modules and threads.
++KbdInteractiveAuthentication no
+ 
+ # Kerberos options
+ #KerberosAuthentication no
+@@ -83,16 +98,16 @@
+ # If you just want the PAM account and session checks to run without
+ # PAM authentication, then enable this but set PasswordAuthentication
+ # and KbdInteractiveAuthentication to 'no'.
+-#UsePAM no
++UsePAM yes
+ 
+ #AllowAgentForwarding yes
+ #AllowTcpForwarding yes
+ #GatewayPorts no
+-#X11Forwarding no
++X11Forwarding yes
+ #X11DisplayOffset 10
+ #X11UseLocalhost yes
+ #PermitTTY yes
+-#PrintMotd yes
++PrintMotd no
+ #PrintLastLog yes
+ #TCPKeepAlive yes
+ #PermitUserEnvironment no
+@@ -109,8 +124,11 @@
+ # no default banner path
+ #Banner none
+ 
++# Allow client to pass locale and color environment variables
++AcceptEnv LANG LC_* COLORTERM NO_COLOR
++
+ # override default of no subsystems
+-Subsystem	sftp	/usr/libexec/sftp-server
++Subsystem	sftp	/usr/lib/openssh/sftp-server
+ 
+ # Example of overriding settings on a per-user basis
+ #Match User anoncvs
+--- a/sshd_config.5
++++ b/sshd_config.5
+@@ -56,6 +56,35 @@
+ .Pq \&"
+ in order to represent arguments containing spaces.
+ .Pp
++Note that the Debian
++.Ic openssh-server
++package sets several options as standard in
++.Pa /etc/ssh/sshd_config
++which are not the default in
++.Xr sshd 8 :
++.Pp
++.Bl -bullet -offset indent -compact
++.It
++.Cm Include /etc/ssh/sshd_config.d/*.conf
++.It
++.Cm KbdInteractiveAuthentication No no
++.It
++.Cm X11Forwarding No yes
++.It
++.Cm PrintMotd No no
++.It
++.Cm AcceptEnv No LANG LC_* COLORTERM NO_COLOR
++.It
++.Cm Subsystem No sftp /usr/lib/openssh/sftp-server
++.It
++.Cm UsePAM No yes
++.El
++.Pp
++.Pa /etc/ssh/sshd_config.d/*.conf
++files are included at the start of the configuration file, so options set
++there will override those in
++.Pa /etc/ssh/sshd_config.
++.Pp
+ The possible
+ keywords and their meanings are as follows (note that
+ keywords are case-insensitive and arguments are case-sensitive):
+@@ -1889,14 +1918,14 @@
+ .Cm sshd-auth
+ binary that is invoked to complete user authentication.
+ The default is
+-.Pa /usr/libexec/sshd-auth .
++.Pa /usr/lib/openssh/sshd-auth .
+ This option is intended for use by tests.
+ .It Cm SshdSessionPath
+ Overrides the default path to the
+ .Cm sshd-session
+ binary that is invoked to handle each connection.
+ The default is
+-.Pa /usr/libexec/sshd-session .
++.Pa /usr/lib/openssh/sshd-session .
+ This option is intended for use by tests.
+ .It Cm StreamLocalBindMask
+ Sets the octal file creation mode mask

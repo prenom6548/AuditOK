@@ -1,0 +1,85 @@
+From: Sam Hartman <hartmans@debian.org>
+Date: Mon, 11 Sep 2023 14:00:42 -0600
+Subject: lib_security_multiarch_compat
+
+Unqualified module paths should always be looked up in *both* the default
+module dir, *and* the ISA dir.  That's what paths are for.
+
+This lets us have a soft transition to multiarch for modules without having
+to rewrite /etc/pam.d/ files or add ugly symlinks.
+
+Authors: Steve Langasek <vorlon@debian.org>
+
+Upstream status: not ready to be committed - this needs tweaked, we're
+currently abusing the existing variables and inverting their meaning in
+order to get everything installed where we want it and get absolute paths
+the way we want them.
+---
+ libpam/pam_handlers.c | 40 +++++++++++++++++++++++++---------------
+ 1 file changed, 25 insertions(+), 15 deletions(-)
+
+diff --git a/libpam/pam_handlers.c b/libpam/pam_handlers.c
+index 8409f9f..d57198c 100644
+--- a/libpam/pam_handlers.c
++++ b/libpam/pam_handlers.c
+@@ -644,10 +644,30 @@ _pam_load_module(pam_handle_t *pamh, const char *mod_path, int handler_type)
+ 	/* Be pessimistic... */
+ 	success = PAM_ABORT;
+ 
+-	D(("_pam_dlopen(%s)", mod_path));
+-	mod->dl_handle = _pam_dlopen(mod_path);
+-	D(("_pam_dlopen'ed"));
+-	D(("dlopen'ed"));
++	D(("_pam_load_module: _pam_dlopen(%s)", mod_path));
++	if (mod_path[0] == '/') {
++	    mod->dl_handle = _pam_dlopen(mod_path);
++	} else {
++	    char *mod_full_path = NULL;
++	    if (asprintf(&mod_full_path, "%s%s",
++	                 DEFAULT_MODULE_PATH, mod_path) >= 0) {
++		mod->dl_handle = _pam_dlopen(mod_full_path);
++		_pam_drop(mod_full_path);
++	    } else {
++		pam_syslog(pamh, LOG_CRIT, "cannot malloc full mod path");
++	    }
++           if (!mod->dl_handle) {
++               if (asprintf(&mod_full_path, "%s/%s",
++                            _PAM_ISA, mod_path) >= 0) {
++                   mod->dl_handle = _pam_dlopen(mod_full_path);
++                   _pam_drop(mod_full_path);
++               } else {
++                   pam_syslog(pamh, LOG_CRIT, "cannot malloc full mod path");
++               }
++	    }
++	}
++	D(("_pam_load_module: _pam_dlopen'ed"));
++	D(("_pam_load_module: dlopen'ed"));
+ 	if (mod->dl_handle == NULL) {
+ 	    const char *isa = strstr(mod_path, "$ISA");
+ 	    size_t isa_len = strlen("$ISA");
+@@ -713,7 +733,6 @@ static int _pam_add_handler(pam_handle_t *pamh
+     struct handler **handler_p2;
+     struct handlers *the_handlers;
+     const char *sym, *sym2;
+-    char *mod_full_path;
+     servicefn func, func2;
+     int mod_type = PAM_MT_FAULTY_MOD;
+ 
+@@ -725,16 +744,7 @@ static int _pam_add_handler(pam_handle_t *pamh
+ 
+     if ((handler_type == PAM_HT_MODULE || handler_type == PAM_HT_SILENT_MODULE) &&
+ 	mod_path != NULL) {
+-	if (mod_path[0] == '/') {
+-	    mod = _pam_load_module(pamh, mod_path, handler_type);
+-	} else if (asprintf(&mod_full_path, "%s%s",
+-			     DEFAULT_MODULE_PATH, mod_path) >= 0) {
+-	    mod = _pam_load_module(pamh, mod_full_path, handler_type);
+-	    _pam_drop(mod_full_path);
+-	} else {
+-	    pam_syslog(pamh, LOG_CRIT, "cannot malloc full mod path");
+-	    return PAM_ABORT;
+-	}
++	mod = _pam_load_module(pamh, mod_path, handler_type);
+ 
+ 	if (mod == NULL) {
+ 	    /* if we get here with NULL it means allocation error */

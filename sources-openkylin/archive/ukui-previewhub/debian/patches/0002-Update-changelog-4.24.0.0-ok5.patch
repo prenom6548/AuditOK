@@ -1,0 +1,1146 @@
+From: xibowen <xibowen@kylinos.cn>
+Date: Thu, 20 Aug 2026 09:25:46 +0800
+Subject: Update changelog 4.24.0.0-ok5
+
+---
+ CMakeLists.txt                               |  33 ++++++
+ core/components/media-control-bar.cpp        |   3 +
+ core/components/preview-control-bar.cpp      |   8 ++
+ core/components/preview-control-bar.h        |   1 +
+ core/content-preview-page.cpp                |   2 +-
+ core/preview-page-manger.cpp                 |   6 +-
+ core/previewhub_filewatcher.cpp              |   5 +-
+ core/previewpage/image.cpp                   |  79 +++++++++++--
+ core/previewpage/image.h                     |   6 +
+ core/previewpage/pdf.cpp                     |   3 +-
+ core/previewpage/pdf.h                       |   2 +-
+ core/previewpage/pdf2.cpp                    |   3 +-
+ core/previewpage/pdf2.h                      |   2 +-
+ core/previewpage/to-pdf.cpp                  |   4 +-
+ core/previewpage/to-pdf.h                    |   2 +-
+ core/third_party/qpdflib/pdfview/qpdf.css    | 163 +++++++++++++++++++++++++++
+ core/third_party/qpdflib/pdfview/viewer.html |  29 +++++
+ core/third_party/qpdflib/pdfview/viewer.js   |  82 +++++++-------
+ core/third_party/qpdflib/qpdfwidget.cpp      |  17 ++-
+ core/third_party/qpdflib/qpdfwidget.h        |   7 ++
+ include/ukui_previewhub_api.h                |   2 +-
+ src/ukui_previewhub_api.cpp                  |  31 +++++
+ translations/ukui-previewhub_zh_CN.ts        | 101 +++++++++++++++++
+ 23 files changed, 527 insertions(+), 64 deletions(-)
+ create mode 100644 translations/ukui-previewhub_zh_CN.ts
+
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index a9b4e63..997c289 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -63,9 +63,37 @@ set(UKUI_PREVIEWHUB_SOURCES
+     core/previewpage/video.cpp
+     core/components/icon-button.cpp
+     core/components/slider.cpp
++    core/components/preview-control-bar.cpp
++    core/components/media-control-bar.cpp
+     core/resources/resources.qrc
+ )
+ 
++set(UKUI_PREVIEWHUB_TRANSLATIONS
++    translations/ukui-previewhub_zh_CN.ts
++)
++
++find_program(LRELEASE_EXECUTABLE NAMES lrelease REQUIRED)
++foreach(translation_file IN LISTS UKUI_PREVIEWHUB_TRANSLATIONS)
++    get_filename_component(translation_name "${translation_file}" NAME_WE)
++    set(translation_qm
++        "${CMAKE_CURRENT_BINARY_DIR}/translations/${translation_name}.qm")
++    add_custom_command(
++        OUTPUT "${translation_qm}"
++        COMMAND "${CMAKE_COMMAND}" -E make_directory
++            "${CMAKE_CURRENT_BINARY_DIR}/translations"
++        COMMAND "${LRELEASE_EXECUTABLE}"
++            "${CMAKE_CURRENT_SOURCE_DIR}/${translation_file}"
++            -qm "${translation_qm}"
++        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/${translation_file}"
++        VERBATIM
++    )
++    list(APPEND UKUI_PREVIEWHUB_TRANSLATION_QMS "${translation_qm}")
++endforeach()
++
++add_custom_target(ukui-previewhub-translations ALL
++    DEPENDS ${UKUI_PREVIEWHUB_TRANSLATION_QMS}
++)
++
+ if(UKUI_PREVIEWHUB_ENABLE_WEBENGINE_PREVIEW)
+     list(APPEND UKUI_PREVIEWHUB_SOURCES
+         core/libreoffice-runtime.cpp
+@@ -79,6 +107,7 @@ if(UKUI_PREVIEWHUB_ENABLE_WEBENGINE_PREVIEW)
+ endif()
+ 
+ add_library(ukui-previewhub SHARED ${UKUI_PREVIEWHUB_SOURCES})
++add_dependencies(ukui-previewhub ukui-previewhub-translations)
+ 
+ target_include_directories(ukui-previewhub
+     PUBLIC
+@@ -143,3 +172,7 @@ install(FILES
+ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/ukui-previewhub.pc"
+     DESTINATION ${CMAKE_INSTALL_LIBDIR}/pkgconfig
+ )
++
++install(FILES ${UKUI_PREVIEWHUB_TRANSLATION_QMS}
++    DESTINATION ${CMAKE_INSTALL_DATADIR}/ukui-previewhub/translations
++)
+diff --git a/core/components/media-control-bar.cpp b/core/components/media-control-bar.cpp
+index 8aa2124..0a89997 100644
+--- a/core/components/media-control-bar.cpp
++++ b/core/components/media-control-bar.cpp
+@@ -40,6 +40,7 @@ MediaControlBar::MediaControlBar(QWidget *parent)
+     m_play_button = new QPushButton(this);
+     m_play_button->setIcon(mediaIcon(QStyle::SP_MediaPlay));
+     m_play_button->setFixedSize(28, 28);
++    m_play_button->setToolTip(tr("Play"));
+ 
+     connect(m_play_button, &QPushButton::clicked, this, &MediaControlBar::playPauseClicked);
+ 
+@@ -65,6 +66,7 @@ MediaControlBar::MediaControlBar(QWidget *parent)
+     m_mute_button = new QPushButton(this);
+     m_mute_button->setIcon(mediaIcon(QStyle::SP_MediaVolume));
+     m_mute_button->setFixedSize(28, 28);
++    m_mute_button->setToolTip(tr("Volume"));
+     connect(m_mute_button, &QPushButton::clicked, this, [=]() {
+         if (m_volume_popup->isHidden()) {
+             showVolumePopup(true);
+@@ -144,6 +146,7 @@ void MediaControlBar::setPosition(qint64 position) {
+ void MediaControlBar::setPlaying(bool playing) {
+     m_is_playing = playing;
+     m_play_button->setIcon(mediaIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
++    m_play_button->setToolTip(playing ? tr("Pause") : tr("Play"));
+ }
+ 
+ void MediaControlBar::setVolume(int volume) {
+diff --git a/core/components/preview-control-bar.cpp b/core/components/preview-control-bar.cpp
+index 129a1a0..de32bc4 100644
+--- a/core/components/preview-control-bar.cpp
++++ b/core/components/preview-control-bar.cpp
+@@ -127,6 +127,14 @@ void PreviewControlBar::showBar(bool visible)
+     m_opacity_animation->start();
+ }
+ 
++void PreviewControlBar::stop()
++{
++    m_hide_timer->stop();
++    m_opacity_animation->stop();
++    m_bar_visible = false;
++    hide();
++}
++
+ bool PreviewControlBar::eventFilter(QObject *watched, QEvent *event)
+ {
+     if (watched == parentWidget() && event->type() == QEvent::Resize)
+diff --git a/core/components/preview-control-bar.h b/core/components/preview-control-bar.h
+index 2f5c457..7707ef1 100644
+--- a/core/components/preview-control-bar.h
++++ b/core/components/preview-control-bar.h
+@@ -40,6 +40,7 @@ public:
+     void setPreviewWidget(QWidget *previewWidget);
+     void setFloating(bool floating);
+     virtual void showBar(bool visible);
++    void stop();
+ 
+ protected:
+     bool eventFilter(QObject *watched, QEvent *event) override;
+diff --git a/core/content-preview-page.cpp b/core/content-preview-page.cpp
+index 6f5e4a1..c575748 100644
+--- a/core/content-preview-page.cpp
++++ b/core/content-preview-page.cpp
+@@ -72,7 +72,7 @@ void ContentPreviewPage::prepare(const QString &uri) {
+                 [this](const QString &, const QString &newUri) {
+                     this->prepare(newUri);
+                     this->startPreview();
+-                });
++                }, Qt::QueuedConnection);
+         m_watcher->startMonitor();
+     }
+ }
+diff --git a/core/preview-page-manger.cpp b/core/preview-page-manger.cpp
+index 7cd0e07..3d34aa1 100644
+--- a/core/preview-page-manger.cpp
++++ b/core/preview-page-manger.cpp
+@@ -47,9 +47,9 @@ BasePreviewPage *PreviewPageManger::createPage(PreviewType cas) {
+     case PreviewType::Pdf:
+ #ifdef USE_WEBENGINE_PREVIEW
+ #ifdef USE_QTPDF
+-        return new PdfPreviewPage;
++        return new PdfPreviewPage(m_simple_preview);
+ #else
+-        return new Pdf2PreviewPage;
++        return new Pdf2PreviewPage(m_simple_preview);
+ #endif
+ #else
+         return new OtherPreviewPage;
+@@ -59,7 +59,7 @@ BasePreviewPage *PreviewPageManger::createPage(PreviewType cas) {
+ #ifdef USE_OnlyOffice
+         return new DocPreviewPage;
+ #else
+-        return new ToPdfPreviewPage;
++        return new ToPdfPreviewPage(m_simple_preview);
+ #endif
+ #else
+         return new OtherPreviewPage;
+diff --git a/core/previewhub_filewatcher.cpp b/core/previewhub_filewatcher.cpp
+index b8d84fd..40db0c3 100644
+--- a/core/previewhub_filewatcher.cpp
++++ b/core/previewhub_filewatcher.cpp
+@@ -58,13 +58,16 @@ bool PreviewHubFileWatcher::rescanParentForInode()
+                 m_path = fp;
+                 QFileInfo fi(m_path);
+                 m_parent = fi.absolutePath();
+-                emit locationChanged(old, newUri);
+                 m_fs.removePaths(m_fs.files());
+                 if (QFile::exists(m_path))
+                     m_fs.addPath(m_path);
+                 if (!m_parent.isEmpty())
+                     m_fs.addPath(m_parent);
+                 captureInode();
++
++                // A direct-connected receiver may delete this watcher while
++                // handling the rename. Do not access any members after emit.
++                emit locationChanged(old, newUri);
+             }
+             return true;
+         }
+diff --git a/core/previewpage/image.cpp b/core/previewpage/image.cpp
+index 4912819..198a567 100644
+--- a/core/previewpage/image.cpp
++++ b/core/previewpage/image.cpp
+@@ -27,12 +27,14 @@
+ #include <QImage>
+ #include <QMouseEvent>
+ #include <QPainter>
++#include <QTimer>
+ #include <QTransform>
+ #include <QWheelEvent>
+ 
+ namespace {
+ constexpr qreal kZoomStep = 0.05;
+ constexpr qreal kMinimumScale = 0.05;
++constexpr int kZoomUpdateIntervalMs = 16;
+ constexpr int kToolBarWidth = 352;
+ constexpr int kToolButtonSize = 36;
+ }
+@@ -48,8 +50,11 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     this->setMouseTracking(true);
+     m_image_view->setMouseTracking(true);
+     m_image_view->viewport()->setMouseTracking(true);
++    m_image_view->installEventFilter(this);
+     m_image_view->viewport()->installEventFilter(this);
+     m_image_view->setFrameShape(QFrame::NoFrame);
++    m_image_view->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
++    m_image_view->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+     m_image_view->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+     m_image_view->setBackgroundBrush(palette().brush(QPalette::Base));
+ 
+@@ -72,6 +77,7 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     //m_reduce_button->setText("reduce");
+     m_reduce_button->setFixedSize(TOOL_BUTTON);
+     m_reduce_button->setFocusPolicy(Qt::NoFocus);
++    m_reduce_button->setToolTip(tr("Zoom Out"));
+     m_tool_layout->addWidget(m_reduce_button);
+     connect(m_reduce_button, &QPushButton::clicked, this, &ImagePreviewPage::doReduce);
+ 
+@@ -84,6 +90,7 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     //m_enlarge_button->setText("enlarge");
+     m_enlarge_button->setFixedSize(TOOL_BUTTON);
+     m_enlarge_button->setFocusPolicy(Qt::NoFocus);
++    m_enlarge_button->setToolTip(tr("Zoom In"));
+     m_tool_layout->addWidget(m_enlarge_button);
+     connect(m_enlarge_button, &QPushButton::clicked, this, &ImagePreviewPage::doEnlarge);
+ 
+@@ -91,6 +98,7 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     //m_adaptive_button->setText("adaptive");
+     m_adaptive_button->setFixedSize(TOOL_BUTTON);
+     m_adaptive_button->setFocusPolicy(Qt::NoFocus);
++    m_adaptive_button->setToolTip(tr("Fit to Window"));
+     m_tool_layout->addWidget(m_adaptive_button);
+     connect(m_adaptive_button, &QPushButton::clicked, this, &ImagePreviewPage::doAdaptive);
+ 
+@@ -98,6 +106,7 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     //m_horizontal_flip_button->setText("Hfilp");
+     m_horizontal_flip_button->setFixedSize(TOOL_BUTTON);
+     m_horizontal_flip_button->setFocusPolicy(Qt::NoFocus);
++    m_horizontal_flip_button->setToolTip(tr("Flip Horizontally"));
+     m_tool_layout->addWidget(m_horizontal_flip_button);
+     connect(m_horizontal_flip_button, &QPushButton::clicked, this, &ImagePreviewPage::doHorizontalFlip);
+ 
+@@ -105,6 +114,7 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     //m_vertical_flip_button->setText("Vflip");
+     m_vertical_flip_button->setFixedSize(TOOL_BUTTON);
+     m_vertical_flip_button->setFocusPolicy(Qt::NoFocus);
++    m_vertical_flip_button->setToolTip(tr("Flip Vertically"));
+     m_tool_layout->addWidget(m_vertical_flip_button);
+     connect(m_vertical_flip_button, &QPushButton::clicked, this, &ImagePreviewPage::doVerticalFlip);
+ 
+@@ -112,6 +122,7 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     //m_rotate_button->setText("rotate");
+     m_rotate_button->setFixedSize(TOOL_BUTTON);
+     m_rotate_button->setFocusPolicy(Qt::NoFocus);
++    m_rotate_button->setToolTip(tr("Rotate Right"));
+     m_tool_layout->addWidget(m_rotate_button);
+     connect(m_rotate_button, &QPushButton::clicked, this, &ImagePreviewPage::doRotate);
+     m_tool_layout->addStretch();
+@@ -125,12 +136,29 @@ ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
+     base_layout->addWidget(m_image_view);
+     m_tool_bar->setPreviewWidget(m_image_view);
+     m_tool_bar->setFloating(true);
++
++    m_fit_timer = new QTimer(this);
++    m_fit_timer->setSingleShot(true);
++    connect(m_fit_timer, &QTimer::timeout, this, [this]() {
++        updateImageTransform(true);
++    });
++
++    m_zoom_timer = new QTimer(this);
++    m_zoom_timer->setSingleShot(true);
++    m_zoom_timer->setInterval(kZoomUpdateIntervalMs);
++    connect(m_zoom_timer, &QTimer::timeout, this, [this]() {
++        applyImageTransform();
++    });
+ }
+ 
+ ImagePreviewPage::~ImagePreviewPage() {
+ }
+ 
+ void ImagePreviewPage::updateInfo(PreviewHubFileInfo *info) {
++    m_fit_timer->stop();
++    m_zoom_timer->stop();
++    m_image_view->setUpdatesEnabled(true);
++    m_tool_bar->showBar(true);
+     m_is_rotate90 = false;
+     m_scale = 1;
+     m_image_scene->clear();
+@@ -139,10 +167,15 @@ void ImagePreviewPage::updateInfo(PreviewHubFileInfo *info) {
+     m_image_item->setFlag(QGraphicsItem::ItemIsMovable, true);
+     m_image_item->setTransformationMode(Qt::SmoothTransformation);
+     updateSceneRect();
+-    updateImageTransform(true);
++    scheduleImageFit();
+ }
+ 
+ void ImagePreviewPage::cancel() {
++    m_fit_timer->stop();
++    m_zoom_timer->stop();
++    m_is_moveing = false;
++    m_image_view->setUpdatesEnabled(false);
++    m_tool_bar->stop();
+     m_image_scene->clear();
+     m_image_item = nullptr;
+ }
+@@ -190,6 +223,8 @@ void ImagePreviewPage::doVerticalFlip() {
+ void ImagePreviewPage::doRotate() {
+     if (!m_image_item)
+         return;
++    m_fit_timer->stop();
++    m_zoom_timer->stop();
+     QRectF r = m_image_item->boundingRect();
+     m_image_item->setTransform(m_image_item->transform()
+                     .translate(r.width() / 2, r.height() /2)
+@@ -201,18 +236,24 @@ void ImagePreviewPage::doRotate() {
+ }
+ 
+ void ImagePreviewPage::doEnlarge() {
++    if (!m_image_item)
++        return;
+     m_scale += kZoomStep;
+-    applyImageTransform();
++    scheduleImageTransform();
+ }
+ 
+ void ImagePreviewPage::doReduce() {
++    if (!m_image_item)
++        return;
+     m_scale = qMax(kMinimumScale, m_scale - kZoomStep);
+-    applyImageTransform();
++    scheduleImageTransform();
+ }
+ 
+ void ImagePreviewPage::doAdaptive() {
+     if (!m_image_item)
+         return;
++    m_fit_timer->stop();
++    m_zoom_timer->stop();
+     m_scale = 1;
+     m_image_item->resetTransform();
+     m_is_rotate90 = false;
+@@ -224,8 +265,12 @@ bool ImagePreviewPage::eventFilter(QObject *watched, QEvent *event) {
+     if (!m_image_item)
+         return BasePreviewPage::eventFilter(watched, event);
+ 
+-    if (watched == m_image_view->viewport() && event->type() == QEvent::Resize) {
+-        updateImageTransform(true);
++    // The viewport also resizes when a scroll bar appears or disappears.
++    // Re-fitting here feeds that change back into the scroll-bar calculation.
++    // Only an actual QGraphicsView resize needs a new fit scale.
++    if (watched == m_image_view && event->type() == QEvent::Resize) {
++        m_zoom_timer->stop();
++        scheduleImageFit();
+         return BasePreviewPage::eventFilter(watched, event);
+     }
+ 
+@@ -302,7 +347,10 @@ void ImagePreviewPage::updateImageTransform(bool centerImage) {
+     if (!m_image_item || m_image_item->pixmap().isNull())
+         return;
+ 
+-    const QSize viewportSize = m_image_view->viewport()->size();
++    // Keep the fit scale independent from scroll bars that are temporarily
++    // shown while the image is zoomed.  The current viewport is smaller in
++    // that case, while maximumViewportSize() is the eventual fit area.
++    const QSize viewportSize = m_image_view->maximumViewportSize();
+     if (viewportSize.isEmpty())
+         return;
+ 
+@@ -323,14 +371,29 @@ void ImagePreviewPage::applyImageTransform(bool centerImage) {
+     QTransform transform;
+     const qreal scale = m_base_scale * m_scale;
+     transform.scale(scale, scale);
+-    m_image_view->setTransform(transform);
++    if (m_image_view->transform() != transform)
++        m_image_view->setTransform(transform);
+     if (centerImage)
+         m_image_view->centerOn(m_image_item);
+     updateScaleLabel();
+ }
+ 
++void ImagePreviewPage::scheduleImageFit() {
++    if (!m_fit_timer->isActive())
++        m_fit_timer->start();
++}
++
++void ImagePreviewPage::scheduleImageTransform() {
++    if (!m_zoom_timer->isActive())
++        m_zoom_timer->start();
++}
++
+ void ImagePreviewPage::updateScaleLabel() {
+-    m_scale_label->setText(QString::number(qRound(m_base_scale * m_scale * 100)) + "%");
++    const QString text = QString::number(qRound(m_base_scale * m_scale * 100)) + "%";
++    if (m_scale_label->text() != text)
++        m_scale_label->setText(text);
++    if (m_scale_label->toolTip() != text)
++        m_scale_label->setToolTip(text);
+ }
+ 
+ void ImagePreviewPage::updateSceneRect() {
+diff --git a/core/previewpage/image.h b/core/previewpage/image.h
+index 6233a66..645dab1 100644
+--- a/core/previewpage/image.h
++++ b/core/previewpage/image.h
+@@ -32,6 +32,8 @@
+ 
+ #include "components/preview-control-bar.h"
+ 
++class QTimer;
++
+ class ImagePreviewPage : public BasePreviewPage
+ {
+     Q_OBJECT
+@@ -61,10 +63,14 @@ private:
+ 
+     PreviewControlBar *m_tool_bar;
+     QHBoxLayout *m_tool_layout;
++    QTimer *m_fit_timer;
++    QTimer *m_zoom_timer;
+ 
+     void initControlQss();
+     void updateImageTransform(bool centerImage = false);
+     void applyImageTransform(bool centerImage = false);
++    void scheduleImageFit();
++    void scheduleImageTransform();
+     void updateScaleLabel();
+     void updateSceneRect();
+ 
+diff --git a/core/previewpage/pdf.cpp b/core/previewpage/pdf.cpp
+index d8cbcfd..baddbab 100644
+--- a/core/previewpage/pdf.cpp
++++ b/core/previewpage/pdf.cpp
+@@ -36,8 +36,9 @@ void QPdfWidget::resizeEvent(QResizeEvent *event) {
+      qDebug() << event->size() << " " << this->zoomFactor();
+ }
+ */
+-PdfPreviewPage::PdfPreviewPage(QWidget *parent) : BasePreviewPage(parent)
++PdfPreviewPage::PdfPreviewPage(bool simplePreview, QWidget *parent) : BasePreviewPage(parent)
+ {
++    Q_UNUSED(simplePreview)
+ //    QCoreApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
+ //    QCoreApplication::setAttribute(Qt::AA_UseOpenGLES);
+     m_document = new QPdfDocument(this);
+diff --git a/core/previewpage/pdf.h b/core/previewpage/pdf.h
+index 50d9040..67884fb 100644
+--- a/core/previewpage/pdf.h
++++ b/core/previewpage/pdf.h
+@@ -47,7 +47,7 @@ class PdfPreviewPage : public BasePreviewPage
+ {
+     Q_OBJECT
+ public:
+-    explicit PdfPreviewPage(QWidget *parent = nullptr);
++    explicit PdfPreviewPage(bool simplePreview = false, QWidget *parent = nullptr);
+     ~PdfPreviewPage() = default;
+ 
+ private Q_SLOTS:
+diff --git a/core/previewpage/pdf2.cpp b/core/previewpage/pdf2.cpp
+index d676fa3..82454ee 100644
+--- a/core/previewpage/pdf2.cpp
++++ b/core/previewpage/pdf2.cpp
+@@ -22,9 +22,10 @@
+ 
+ #include "previewpage/pdf2.h"
+ 
+-Pdf2PreviewPage::Pdf2PreviewPage(QWidget *parent) : BasePreviewPage(parent)
++Pdf2PreviewPage::Pdf2PreviewPage(bool simplePreview, QWidget *parent) : BasePreviewPage(parent)
+ {
+     m_pdf_widget = new QPdfWidget(this);
++    m_pdf_widget->setSimplePreview(simplePreview);
+     m_pdf_widget->showFullScreen();
+     base_layout->addWidget(m_pdf_widget);
+ }
+diff --git a/core/previewpage/pdf2.h b/core/previewpage/pdf2.h
+index 1ea8b44..1cbc42e 100644
+--- a/core/previewpage/pdf2.h
++++ b/core/previewpage/pdf2.h
+@@ -30,7 +30,7 @@ class Pdf2PreviewPage : public BasePreviewPage
+ {
+     Q_OBJECT
+ public:
+-    explicit Pdf2PreviewPage(QWidget *parent = nullptr);
++    explicit Pdf2PreviewPage(bool simplePreview = false, QWidget *parent = nullptr);
+     ~Pdf2PreviewPage() = default;
+ 
+ private:
+diff --git a/core/previewpage/to-pdf.cpp b/core/previewpage/to-pdf.cpp
+index 65fc240..55ed951 100644
+--- a/core/previewpage/to-pdf.cpp
++++ b/core/previewpage/to-pdf.cpp
+@@ -47,8 +47,8 @@ static QString newestConvertedPdf(const QString &outDir, const QDateTime &starte
+     return QString();
+ }
+ 
+-ToPdfPreviewPage::ToPdfPreviewPage(QWidget *parent):
+-    ToPdfBaseClass(parent),m_proc(nullptr)
++ToPdfPreviewPage::ToPdfPreviewPage(bool simplePreview, QWidget *parent):
++    ToPdfBaseClass(simplePreview, parent),m_proc(nullptr)
+ {
+ 
+ }
+diff --git a/core/previewpage/to-pdf.h b/core/previewpage/to-pdf.h
+index 01be9c6..c23739e 100644
+--- a/core/previewpage/to-pdf.h
++++ b/core/previewpage/to-pdf.h
+@@ -42,7 +42,7 @@ typedef Pdf2PreviewPage ToPdfBaseClass;
+ class ToPdfPreviewPage : public ToPdfBaseClass
+ {
+ public:
+-    explicit ToPdfPreviewPage(QWidget *parent = nullptr);
++    explicit ToPdfPreviewPage(bool simplePreview = false, QWidget *parent = nullptr);
+     ~ToPdfPreviewPage();
+ 
+ private:
+diff --git a/core/third_party/qpdflib/pdfview/qpdf.css b/core/third_party/qpdflib/pdfview/qpdf.css
+index f76427a..6ff9e45 100644
+--- a/core/third_party/qpdflib/pdfview/qpdf.css
++++ b/core/third_party/qpdflib/pdfview/qpdf.css
+@@ -10,3 +10,166 @@
+ #viewerContainer {
+     overflow: auto !important;
+ }
++
++/* ==========================================================================
++   Preview layout: document on the left, thumbnail strip on the right.
++
++   The `dir` attribute is written at runtime by the l10n layer, so every rule
++   that upstream splits into html[dir='ltr'] / html[dir='rtl'] has to be
++   neutralised here for BOTH directions -- otherwise the strip jumps sides
++   depending on the UI language.
++   ========================================================================== */
++
++:root {
++    /* 98px thumbnail (upstream THUMBNAIL_WIDTH) + margins. */
++    --sidebar-width: 132px;
++}
++
++/* No pdf.js toolbar in the preview pane. */
++#topLevelToolbar {
++    display: none !important;
++}
++
++#viewerContainer {
++    top: 0 !important;
++}
++
++/* --- Anchor the sidebar to the right edge, in both text directions --------- */
++
++#sidebarContainer,
++.loadingInProgress #sidebarContainer,
++html[dir='ltr'] #sidebarContainer,
++html[dir='rtl'] #sidebarContainer {
++    top: 0;
++    left: auto;
++    right: calc(-1 * var(--sidebar-width));
++    width: var(--sidebar-width);
++    min-width: var(--sidebar-width);
++    max-width: var(--sidebar-width);
++    border-top: none;
++    transition-property: right;
++}
++
++html[dir='ltr'] #outerContainer.sidebarOpen #sidebarContainer,
++html[dir='rtl'] #outerContainer.sidebarOpen #sidebarContainer {
++    left: auto;
++    right: 0;
++}
++
++/* Document keeps the left edge and yields width on the right instead. */
++html[dir='ltr'] #outerContainer.sidebarOpen #viewerContainer,
++html[dir='rtl'] #outerContainer.sidebarOpen #viewerContainer {
++    left: 0;
++    right: var(--sidebar-width);
++    transition-property: right;
++}
++
++#outerContainer.sidebarOpen #mainContainer {
++    min-width: 0;
++}
++
++/* The Thumbnails/Outline/Attachments switcher stays in the DOM (PDFSidebar
++   binds listeners to those buttons) but is never shown. */
++#toolbarSidebar {
++    display: none !important;
++}
++
++#sidebarContent,
++html[dir='ltr'] #sidebarContent,
++html[dir='rtl'] #sidebarContent {
++    top: 0;
++    left: 0;
++    right: 0;
++    width: 100%;
++    background-color: #f5f5f5;
++    box-shadow: none;
++    border-left: 1px solid rgba(0, 0, 0, 0.12);
++}
++
++/* --- Single centred column of thumbnails ---------------------------------- */
++
++#thumbnailView {
++    width: 100%;
++    padding: 8px 0;
++    box-sizing: border-box;
++    overflow-x: hidden;
++}
++
++#thumbnailView .thumbnail,
++html[dir='ltr'] #thumbnailView .thumbnail,
++html[dir='rtl'] #thumbnailView .thumbnail {
++    float: none;
++    margin: 0 auto 8px auto;
++}
++
++#thumbnailView > a:last-of-type > .thumbnail {
++    margin-bottom: 8px;
++}
++
++.thumbnailSelectionRing {
++    padding: 4px;
++}
++
++/* Upstream selection/hover styling is white-on-dark and would be invisible on
++   the light strip. Restate it for a light background. */
++.thumbnailImage {
++    opacity: 1;
++    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.18);
++}
++
++a:focus > .thumbnail > .thumbnailSelectionRing,
++.thumbnail:hover > .thumbnailSelectionRing {
++    background-color: rgba(0, 0, 0, 0.06);
++    background-image: none;
++    box-shadow: none;
++}
++
++.thumbnail.selected > .thumbnailSelectionRing {
++    background-color: rgba(55, 144, 250, 0.16);
++    background-image: none;
++    box-shadow: none;
++}
++
++.thumbnail.selected > .thumbnailSelectionRing > .thumbnailImage {
++    opacity: 1;
++    box-shadow: 0 0 0 2px #3790fa;
++}
++
++.thumbnail:not([data-loaded]) {
++    border: 1px dashed rgba(0, 0, 0, 0.25);
++}
++
++/* --- Floating thumbnail toggle -------------------------------------------- */
++
++#sidebarToggle {
++    position: absolute;
++    top: 12px;
++    right: 12px;
++    z-index: 101;
++    width: 32px;
++    height: 32px;
++    padding: 0;
++    border: none;
++    border-radius: 6px;
++    cursor: pointer;
++    background-color: rgba(0, 0, 0, 0.45);
++    background-image: url(images/toolbarButton-sidebarToggle.png);
++    background-repeat: no-repeat;
++    background-position: center;
++    opacity: 1;
++    transition: right 200ms ease, background-color 150ms ease;
++}
++
++/* Keep the icon's white glyph legible on the translucent chip. */
++#sidebarToggle > span {
++    display: none;
++}
++
++#sidebarToggle:hover {
++    background-color: rgba(0, 0, 0, 0.65);
++}
++
++/* Ride along with the strip so it is never covered by it. */
++#outerContainer.sidebarOpen #sidebarToggle {
++    right: calc(var(--sidebar-width) + 12px);
++}
+diff --git a/core/third_party/qpdflib/pdfview/viewer.html b/core/third_party/qpdflib/pdfview/viewer.html
+index c76cbe6..9288e22 100644
+--- a/core/third_party/qpdflib/pdfview/viewer.html
++++ b/core/third_party/qpdflib/pdfview/viewer.html
+@@ -47,7 +47,36 @@ See https://github.com/adobe-type-tools/cmap-resources
+   <body tabindex="1" class="loadingInProgress">
+     <div id="outerContainer">
+ 
++      <!-- Thumbnail pane. Sits to the RIGHT of the document via qpdf.css.
++           #toolbarSidebar is hidden by CSS, but the three switcher buttons must
++           stay in the DOM: PDFSidebar binds listeners to them unconditionally. -->
++      <div id="sidebarContainer">
++        <div id="toolbarSidebar">
++          <div class="splitToolbarButton toggled">
++            <button id="viewThumbnail" class="toolbarButton toggled" title="Show Thumbnails" tabindex="2" data-l10n-id="thumbs">
++              <span data-l10n-id="thumbs_label">Thumbnails</span>
++            </button>
++            <button id="viewOutline" class="toolbarButton" title="Show Document Outline (double-click to expand/collapse all items)" tabindex="3" data-l10n-id="document_outline">
++              <span data-l10n-id="document_outline_label">Document Outline</span>
++            </button>
++            <button id="viewAttachments" class="toolbarButton" title="Show Attachments" tabindex="4" data-l10n-id="attachments">
++              <span data-l10n-id="attachments_label">Attachments</span>
++            </button>
++          </div>
++        </div>
++        <div id="sidebarContent">
++          <div id="thumbnailView"></div>
++          <div id="outlineView" class="hidden"></div>
++          <div id="attachmentsView" class="hidden"></div>
++        </div>
++      </div>  <!-- sidebarContainer -->
++
+       <div id="mainContainer">
++        <!-- Floating thumbnail toggle. Deliberately outside #topLevelToolbar,
++             which qpdf.css hides entirely. -->
++        <button id="sidebarToggle" title="Toggle Thumbnails" tabindex="11" data-l10n-id="toggle_sidebar">
++          <span data-l10n-id="toggle_sidebar_label">Toggle Sidebar</span>
++        </button>
+         <div class="findbar hidden doorHanger" id="findbar">
+           <div id="findbarInputContainer">
+             <input id="findInput" class="toolbarField" title="Find" placeholder="Find in document…" tabindex="91" data-l10n-id="find_input">
+diff --git a/core/third_party/qpdflib/pdfview/viewer.js b/core/third_party/qpdflib/pdfview/viewer.js
+index e816e52..6b22aa3 100644
+--- a/core/third_party/qpdflib/pdfview/viewer.js
++++ b/core/third_party/qpdflib/pdfview/viewer.js
+@@ -578,21 +578,13 @@ var PDFViewerApplication = {
+       });
+       pdfRenderingQueue.setViewer(_this2.pdfViewer);
+       pdfLinkService.setViewer(_this2.pdfViewer);
+-      _this2.pdfThumbnailViewer = {
+-        setDocument: function setDocument() {},
+-        setPageLabels: function setPageLabels() {},
+-        cleanup: function cleanup() {},
+-        forceRendering: function forceRendering() {
+-          return false;
+-        },
+-        getThumbnail: function getThumbnail() {
+-          return {
+-            setImage: function setImage() {}
+-          };
+-        },
+-        scrollThumbnailIntoView: function scrollThumbnailIntoView() {},
+-        pagesRotation: 0
+-      };
++      _this2.pdfThumbnailViewer = new _pdf_thumbnail_viewer.PDFThumbnailViewer({
++        container: appConfig.sidebar.thumbnailView,
++        renderingQueue: pdfRenderingQueue,
++        linkService: pdfLinkService,
++        l10n: _this2.l10n
++      });
++      pdfRenderingQueue.setThumbnailViewer(_this2.pdfThumbnailViewer);
+       _this2.pdfHistory = new _pdf_history.PDFHistory({
+         linkService: pdfLinkService,
+         eventBus: eventBus
+@@ -638,24 +630,26 @@ var PDFViewerApplication = {
+         });
+       }
+       _this2.passwordPrompt = new _password_prompt.PasswordPrompt(appConfig.passwordOverlay, _this2.overlayManager, _this2.l10n);
+-      _this2.pdfOutlineViewer = {
+-        reset: function reset() {},
+-        render: function render() {},
+-        toggleOutlineTree: function toggleOutlineTree() {}
+-      };
+-      _this2.pdfAttachmentViewer = {
+-        reset: function reset() {},
+-        render: function render() {}
+-      };
+-      _this2.pdfSidebar = {
+-        reset: function reset() {},
+-        setInitialView: function setInitialView() {},
+-        toggle: function toggle() {},
+-        switchView: function switchView() {},
+-        get isThumbnailViewVisible() {
+-          return false;
+-        }
+-      };
++      _this2.pdfOutlineViewer = new _pdf_outline_viewer.PDFOutlineViewer({
++        container: appConfig.sidebar.outlineView,
++        eventBus: eventBus,
++        linkService: pdfLinkService
++      });
++      _this2.pdfAttachmentViewer = new _pdf_attachment_viewer.PDFAttachmentViewer({
++        container: appConfig.sidebar.attachmentsView,
++        eventBus: eventBus,
++        downloadManager: downloadManager
++      });
++      var sidebarConfig = Object.create(appConfig.sidebar);
++      sidebarConfig.pdfViewer = _this2.pdfViewer;
++      sidebarConfig.pdfThumbnailViewer = _this2.pdfThumbnailViewer;
++      sidebarConfig.pdfOutlineViewer = _this2.pdfOutlineViewer;
++      sidebarConfig.eventBus = eventBus;
++      _this2.pdfSidebar = new _pdf_sidebar.PDFSidebar(sidebarConfig, _this2.l10n);
++      _this2.pdfSidebar.onToggled = _this2.forceRendering.bind(_this2);
++      // Resizer intentionally left null: the strip is fixed-width, and the
++      // upstream drag math assumes a left-anchored sidebar. No call sites rely
++      // on this being non-null.
+       _this2.pdfSidebarResizer = null;
+       resolve(undefined);
+     });
+@@ -1159,6 +1153,10 @@ var PDFViewerApplication = {
+         scrollMode = values.scrollMode,
+         spreadMode = values.spreadMode;
+ 
++    // Preview mode owns the initial sidebar state. This deliberately overrides
++    // pdf.js history so each newly loaded file starts consistently.
++    sidebarView = qpdfSimplePreview ? _pdf_sidebar.SidebarView.NONE : _pdf_sidebar.SidebarView.THUMBS;
++
+     var setRotation = function setRotation(angle) {
+       if ((0, _ui_utils.isValidRotation)(angle)) {
+         _this7.pdfViewer.pagesRotation = angle;
+@@ -1307,7 +1305,9 @@ var PDFViewerApplication = {
+     _boundEvents.windowAfterPrint = function () {
+       eventBus.dispatch('afterprint');
+     };
+-    window.addEventListener('wheel', webViewerWheel);
++    // Scoped to the document area (appConfig.mainContainer is #viewerContainer)
++    // so ctrl+wheel over the thumbnail strip does not zoom the document.
++    this.appConfig.mainContainer.addEventListener('wheel', webViewerWheel);
+     window.addEventListener('click', webViewerClick);
+     window.addEventListener('keydown', webViewerKeyDown);
+     window.addEventListener('resize', _boundEvents.windowResize);
+@@ -1361,7 +1361,7 @@ var PDFViewerApplication = {
+   unbindWindowEvents: function unbindWindowEvents() {
+     var _boundEvents = this._boundEvents;
+ 
+-    window.removeEventListener('wheel', webViewerWheel);
++    this.appConfig.mainContainer.removeEventListener('wheel', webViewerWheel);
+     window.removeEventListener('click', webViewerClick);
+     window.removeEventListener('keydown', webViewerKeyDown);
+     window.removeEventListener('resize', _boundEvents.windowResize);
+@@ -3571,7 +3571,7 @@ var defaultOptions = {
+     kind: OptionKind.VIEWER
+   },
+   sidebarViewOnLoad: {
+-    value: 0,
++    value: 1,
+     kind: OptionKind.VIEWER
+   },
+   textLayerMode: {
+@@ -10164,7 +10164,7 @@ function getDefaultPreferences() {
+     defaultPreferences = Promise.resolve({
+       "showPreviousViewOnLoad": true,
+       "defaultZoomValue": "",
+-      "sidebarViewOnLoad": 0,
++      "sidebarViewOnLoad": 1,
+       "cursorToolOnLoad": 0,
+       "enableWebGL": false,
+       "pdfBugEnabled": false,
+@@ -11490,14 +11490,18 @@ function b64toBlob(b64Data, contentType, sliceSize) {
+     return blob;
+ }
+ 
+-function qpdf_ShowPdfFile(file) {
++var qpdfSimplePreview = false;
++
++function qpdf_ShowPdfFile(file, simplePreview) {
++    qpdfSimplePreview = simplePreview === true;
+     console.log('Loading PDF file ' + file);
+     PDFViewerApplication.open(file).then(function() {
+         qpdfBridge.jsLoaded();
+     });
+ }
+ 
+-function qpdf_ShowPdfFileBase64(b64Data) {
++function qpdf_ShowPdfFileBase64(b64Data, simplePreview) {
++    qpdfSimplePreview = simplePreview === true;
+     var blob = b64toBlob(b64Data);
+     var fileReader = new FileReader();
+ 
+diff --git a/core/third_party/qpdflib/qpdfwidget.cpp b/core/third_party/qpdflib/qpdfwidget.cpp
+index 407f8e8..37fa322 100644
+--- a/core/third_party/qpdflib/qpdfwidget.cpp
++++ b/core/third_party/qpdflib/qpdfwidget.cpp
+@@ -34,6 +34,7 @@ struct QPdfWidgetPrivate
+     bool ready;
+     QByteArray pdfData;
+     QString pdfFile;
++    bool simplePreview;
+ };
+ 
+ QPdfWidget::QPdfWidget(QWidget *pParent)
+@@ -45,6 +46,7 @@ QPdfWidget::QPdfWidget(QWidget *pParent)
+     connect(m->pPdfJsBridge, &PdfJsBridge::loadFinished, this, &QPdfWidget::onLoadFinished);
+     connect(m->pPdfJsBridge, &PdfJsBridge::pdfDocumentloaded, this, &QPdfWidget::onRenderPdfFinished);
+     m->ready = false;
++    m->simplePreview = false;
+ 
+     // Initialize pdf.js viewer
+     QUrl url = QUrl::fromUserInput(cPdfViewerUrl);
+@@ -155,6 +157,11 @@ void QPdfWidget::setToolbarVisible(bool v)
+     m->pPdfJsBridge->setToolbarVisible(v);
+ }
+ 
++void QPdfWidget::setSimplePreview(bool simplePreview)
++{
++    m->simplePreview = simplePreview;
++}
++
+ void QPdfWidget::setFindBarVisible(bool v)
+ {
+     QString script = QString("PDFViewerApplication.findBar.%1()")
+@@ -237,8 +244,9 @@ void QPdfWidget::renderPdfData()
+     }
+ 
+     m->pdfData = m->pdfData.toBase64();
+-    QString script = QString("qpdf_ShowPdfFileBase64('%1')")
+-                        .arg(QString::fromUtf8(m->pdfData));
++    QString script = QString("qpdf_ShowPdfFileBase64('%1', %2)")
++                        .arg(QString::fromUtf8(m->pdfData))
++                        .arg(m->simplePreview ? "true" : "false");
+ 
+     m->pPdfJsBridge->invokeJavaScript(script);
+ 
+@@ -253,8 +261,9 @@ void QPdfWidget::renderPdfFile(const QString &file)
+     }
+ 
+     m->pdfData = m->pdfData.toBase64();
+-    QString script = QString("qpdf_ShowPdfFile('file://%1')")
+-                        .arg(file);
++    QString script = QString("qpdf_ShowPdfFile('file://%1', %2)")
++                        .arg(file)
++                        .arg(m->simplePreview ? "true" : "false");
+ 
+     m->pPdfJsBridge->invokeJavaScript(script);
+ 
+diff --git a/core/third_party/qpdflib/qpdfwidget.h b/core/third_party/qpdflib/qpdfwidget.h
+index 5fba0fc..05077c0 100644
+--- a/core/third_party/qpdflib/qpdfwidget.h
++++ b/core/third_party/qpdflib/qpdfwidget.h
+@@ -135,6 +135,13 @@ public:
+      */
+     void setToolbarVisible(bool v);
+ 
++    /**
++     * @brief Set whether documents start without the thumbnail sidebar.
++     *
++     * The floating sidebar toggle remains available in both preview modes.
++     */
++    void setSimplePreview(bool simplePreview);
++
+     /**
+      * @brief Set find bar visibility.
+      * @param v true to show the find bar, false to hide it.
+diff --git a/include/ukui_previewhub_api.h b/include/ukui_previewhub_api.h
+index 0d723e7..929127c 100644
+--- a/include/ukui_previewhub_api.h
++++ b/include/ukui_previewhub_api.h
+@@ -7,7 +7,7 @@
+ extern "C" {
+ #endif
+ 
+-/** Controls how much image-preview UI is shown. */
++/** Controls the initial presentation of supported preview pages. */
+ typedef enum UkuiPreviewHubPreviewMode {
+     UKUI_PREVIEWHUB_PREVIEW_MODE_SIMPLE = 0,
+     UKUI_PREVIEWHUB_PREVIEW_MODE_COMPLEX = 1
+diff --git a/src/ukui_previewhub_api.cpp b/src/ukui_previewhub_api.cpp
+index d5f14ff..95a924b 100644
+--- a/src/ukui_previewhub_api.cpp
++++ b/src/ukui_previewhub_api.cpp
+@@ -2,7 +2,37 @@
+ 
+ #include "content-preview-page.h"
+ 
++#include <QCoreApplication>
++#include <QLocale>
+ #include <QString>
++#include <QStandardPaths>
++#include <QTranslator>
++
++namespace {
++
++void installPreviewHubTranslator()
++{
++    static bool installed = false;
++    if (installed)
++        return;
++
++    installed = true;
++    const QString fileName = QStringLiteral("ukui-previewhub_") +
++        QLocale::system().name() + QStringLiteral(".qm");
++    const QString path = QStandardPaths::locate(
++        QStandardPaths::GenericDataLocation,
++        QStringLiteral("ukui-previewhub/translations/") + fileName);
++    if (path.isEmpty())
++        return;
++
++    QTranslator *translator = new QTranslator(QCoreApplication::instance());
++    if (translator->load(path))
++        QCoreApplication::installTranslator(translator);
++    else
++        delete translator;
++}
++
++}
+ 
+ extern "C" {
+ 
+@@ -15,6 +45,7 @@ void *ukui_previewhub_preview_widget_create(void *parent_qwidget)
+ void *ukui_previewhub_preview_widget_create_with_mode(
+     void *parent_qwidget, UkuiPreviewHubPreviewMode mode)
+ {
++    installPreviewHubTranslator();
+     QWidget *parent = static_cast<QWidget *>(parent_qwidget);
+     const bool simplePreview = mode == UKUI_PREVIEWHUB_PREVIEW_MODE_SIMPLE;
+     return static_cast<void *>(new ContentPreviewPage(parent, simplePreview));
+diff --git a/translations/ukui-previewhub_zh_CN.ts b/translations/ukui-previewhub_zh_CN.ts
+new file mode 100644
+index 0000000..ef2c48d
+--- /dev/null
++++ b/translations/ukui-previewhub_zh_CN.ts
+@@ -0,0 +1,101 @@
++<?xml version="1.0" encoding="utf-8"?>
++<!DOCTYPE TS>
++<TS version="2.1" language="zh_CN">
++<context>
++    <name>AudioPreviewPage</name>
++    <message>
++        <location filename="../core/previewpage/audio.cpp" line="+169"/>
++        <source>Duration:</source>
++        <translation>时长：</translation>
++    </message>
++</context>
++<context>
++    <name>ContentPreviewPage</name>
++    <message>
++        <location filename="../core/content-preview-page.cpp" line="+40"/>
++        <location line="+62"/>
++        <source>Select the file you want to preview...</source>
++        <translation>请选择要预览的文件…</translation>
++    </message>
++    <message>
++        <location line="-14"/>
++        <source>Cann not preview this file.</source>
++        <translation>无法预览此文件。</translation>
++    </message>
++</context>
++<context>
++    <name>ImagePreviewPage</name>
++    <message>
++        <location filename="../core/previewpage/image.cpp" line="+75"/>
++        <source>Zoom Out</source>
++        <translation>缩小视图</translation>
++    </message>
++    <message>
++        <location line="+13"/>
++        <source>Zoom In</source>
++        <translation>放大视图</translation>
++    </message>
++    <message>
++        <location line="+8"/>
++        <source>Fit to Window</source>
++        <translation>适应窗口</translation>
++    </message>
++    <message>
++        <location line="+8"/>
++        <source>Flip Horizontally</source>
++        <translation>水平镜像</translation>
++    </message>
++    <message>
++        <location line="+8"/>
++        <source>Flip Vertically</source>
++        <translation>垂直镜像</translation>
++    </message>
++    <message>
++        <location line="+8"/>
++        <source>Rotate Right</source>
++        <translation>向右旋转</translation>
++    </message>
++</context>
++<context>
++    <name>MediaControlBar</name>
++    <message>
++        <location filename="../core/components/media-control-bar.cpp" line="+43"/>
++        <location line="+106"/>
++        <source>Play</source>
++        <translation>播放</translation>
++    </message>
++    <message>
++        <location line="-80"/>
++        <source>Volume</source>
++        <translation>音量</translation>
++    </message>
++    <message>
++        <location line="+80"/>
++        <source>Pause</source>
++        <translation>暂停</translation>
++    </message>
++</context>
++<context>
++    <name>OtherPreviewPage</name>
++    <message>
++        <location filename="../core/previewpage/other.cpp" line="+48"/>
++        <source>File Name:</source>
++        <translation>文件名：</translation>
++    </message>
++    <message>
++        <location line="+2"/>
++        <source>File Type:</source>
++        <translation>文件类型：</translation>
++    </message>
++    <message>
++        <location line="+2"/>
++        <source>Time Access:</source>
++        <translation>访问时间：</translation>
++    </message>
++    <message>
++        <location line="+2"/>
++        <source>Time Modified:</source>
++        <translation>修改时间：</translation>
++    </message>
++</context>
++</TS>

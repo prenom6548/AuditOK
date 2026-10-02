@@ -1,0 +1,127 @@
+From: zhouyong <zhouyong01@kylinos.cn>
+Date: Mon, 26 Aug 2024 11:54:23 +0000
+Subject: =?utf-8?b?ITU0IGZpeCDlv6vmjbfplK7nrYnosIPoioLpn7Pph4/msqHmnInmj5A=?=
+ =?utf-8?b?56S66Z+zIE1lcmdlIHB1bGwgcmVxdWVzdCAhNTQgZnJvbSB6aG91eW9uZy9vcGVu?=
+ =?utf-8?b?a3lsaW4vbmlsZQ==?=
+
+---
+ .../ukmedia_custom_class.cpp                       |  7 ++++--
+ .../ukmedia_custom_class.h                         |  1 -
+ .../ukmedia_main_widget.cpp                        | 29 ++++++++++++++++------
+ .../ukmedia_main_widget.h                          |  5 ++--
+ 4 files changed, 30 insertions(+), 12 deletions(-)
+
+diff --git a/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp b/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp
+index 36a39e8..4af835f 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp
+@@ -652,8 +652,11 @@ void AudioSlider::mouseMoveEvent(QMouseEvent *e)
+ void AudioSlider::mouseReleaseEvent(QMouseEvent *e)
+ {
+     isMouseWheel = false;
+-    Q_EMIT silderReleaseSignal();
+-    Q_EMIT blueValueChanged(this->value());
++    if (this->value() != blueValue)
++    {
++        blueValue = this->value();
++        Q_EMIT blueValueChanged(blueValue);
++    }
+ 
+     return KSlider::mouseReleaseEvent(e);
+ }
+diff --git a/ukui-volume-control-applet-qt/ukmedia_custom_class.h b/ukui-volume-control-applet-qt/ukmedia_custom_class.h
+index 402b67d..585aaa8 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_custom_class.h
++++ b/ukui-volume-control-applet-qt/ukmedia_custom_class.h
+@@ -257,7 +257,6 @@ private:
+     int blueValue = 0;
+ 
+ Q_SIGNALS:
+-    void silderReleaseSignal();
+     void blueValueChanged(int value);   //针对蓝牙a2dp模式下滑动条跳动，以10为间隔设置音量
+ 
+ protected:
+diff --git a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+index 9db9bec..50058d8 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+@@ -562,6 +562,14 @@ void UkmediaMainWidget::dealSlot()
+         initOutputListWidgetItem();
+         themeChangeIcons();
+         sendUpdateVolumeSignal(SoundType::SINK, paVolumeToValue(value));
++
++        /* isPlay避免第一次运行同步音量时响起提示音
++         * m_pTimer快捷键等其他方式播放提示音 */
++        if (isPlay && m_pTimer) {
++            m_pTimer->start(100);
++        } else if (!isPlay && !m_pVolumeControl->defaultSinkName.contains("auto_null")) {
++            isPlay = true;
++        }
+     });
+ 
+     connect(m_pVolumeControl,&UkmediaVolumeControl::updateSourceVolume,this,[=](int value){
+@@ -602,13 +610,12 @@ void UkmediaMainWidget::dealSlot()
+ 
+     connect(systemWidget->m_pInputListWidget,SIGNAL(currentRowChanged(int )),this,SLOT(inputListWidgetCurrentRowChangedSlot(int)));
+ 
+-    connect(systemWidget->m_pSystemVolumeSlider,&AudioSlider::silderReleaseSignal,this,[this](){
+-        playAlertSound("audio-volume-change");
+-    });
+-
+-    connect(appWidget->systemVolumeSlider,&AudioSlider::silderReleaseSignal,this,[this](){
+-        playAlertSound("audio-volume-change");
+-    });
++    if (nullptr == m_pTimer) {
++        m_pTimer = new QTimer(this);
++    }
++    m_pTimer->setInterval(100);
++    m_pTimer->setSingleShot(true);
++    connect(m_pTimer, SIGNAL(timeout()), this, SLOT(handleTimeout()));
+ 
+     /*
+      * 完整模式下,应用音量界面，当滑动条值改变时更改系统音量
+@@ -815,6 +822,14 @@ void UkmediaMainWidget::setHeadsetPort(QString str)
+     }
+ }
+ 
++/*
++ * 音量改变提示：策略是停止滑动时，播放提示声
++ */
++void UkmediaMainWidget::handleTimeout()
++{
++    playAlertSound("audio-volume-change");
++}
++
+ //2303侧边栏使用usd声音接口，不再需要此dbus
+ void UkmediaMainWidget::setVolumeSettingValue(int value)
+ {
+diff --git a/ukui-volume-control-applet-qt/ukmedia_main_widget.h b/ukui-volume-control-applet-qt/ukmedia_main_widget.h
+index 00af424..1acc5d2 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_main_widget.h
++++ b/ukui-volume-control-applet-qt/ukmedia_main_widget.h
+@@ -309,6 +309,7 @@ private Q_SLOTS:
+     void jumpControlPanelSlot(); //跳转到控制面板
+ 
+     void setHeadsetPort(QString str); //根据弹出框选择的切换不同的端口
++    void handleTimeout();
+     void advancedSystemSliderChangedSlot(int value); //advancedSystemSlider值改变
+     void systemVolumeSliderChangedSlot(int value);
+ 
+@@ -405,8 +406,7 @@ private:
+     char *m_pInternalspkName;
+     char *m_pInternalmicName;
+ 
+-    bool mouseReleaseState = false; //鼠标释放状态
+-    bool mousePress = false; //鼠标按下状态
++    QTimer *m_pTimer = nullptr;
+     bool shortcutMute = false;
+     bool firstEntry = true;
+ 
+@@ -416,6 +416,7 @@ private:
+     ca_context *caContext;
+     bool firstLoad = true;
+ 
++    bool isPlay = false; //用于避免运行托盘时第一次响起的提示音
+     bool sinkInputMute = false;
+     bool kylinVideoMuteSignal = false;
+     bool kylinVideoVolumeSignal = false;

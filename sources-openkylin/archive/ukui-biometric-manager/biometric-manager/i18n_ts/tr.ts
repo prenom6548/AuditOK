@@ -1,0 +1,1591 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Copyright (C) 2023 KylinSoft Co., Ltd.
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License as published by
+   the Free Software Foundation; either version 3, or (at your option)
+   any later version.
+
+   This program is distributed in the hope that it will be useful,
+   but WITHOUT ANY WARRANTY; without even the implied warranty of
+   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+   GNU General Public License for more details.
+
+   You should have received a copy of the GNU General Public License
+   along with this program; if not, see &lt;http://www.gnu.org/licenses/&gt;.
+ -->
+<!DOCTYPE TS>
+<TS version="2.1" language="tr_TR" sourcelanguage="en_US">
+<context>
+    <name>AboutDialog</name>
+    <message>
+        <location filename="../src/aboutdialog.ui" line="26"/>
+        <source>Dialog</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../src/aboutdialog.ui" line="283"/>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;Noto Sans CJK SC DemiLight&apos;; font-size:11pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot;-qt-paragraph-type:empty; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px; font-family:&apos;Noto Sans CJK SC&apos;;&quot;&gt;&lt;br /&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/aboutdialog.cpp" line="31"/>
+        <location filename="../src/aboutdialog.cpp" line="33"/>
+        <source>Biometric Manager</source>
+        <translation>Biyometrik Yönetici</translation>
+    </message>
+    <message>
+        <location filename="../src/aboutdialog.cpp" line="34"/>
+        <source>Version number: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/aboutdialog.cpp" line="35"/>
+        <location filename="../src/aboutdialog.cpp" line="48"/>
+        <source>         Biometric Manager is a supporting software for managing biometric identification which is developed by Kylin team.  It mainly contains biometirc verification management, biometirc service management, biometric device&apos;s driver management and biometirc features management, etc.All functions of the software are still being perfected. Please look forward to it. </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/aboutdialog.cpp" line="39"/>
+        <source>Service &amp; Support: </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>About</source>
+        <translation type="vanished">Hakkında</translation>
+    </message>
+    <message>
+        <source>Contributor</source>
+        <translation type="vanished">Katkıda Bulunanlar</translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;Cantarell&apos;; font-size:11pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt;&quot;&gt;         Biometric Manager is a supporting software for managing biometric identification which is developed by Kylin team.  It mainly contains biometirc verification management, biometirc service management, biometric device&apos;s driver management and biometirc features management, etc.&lt;/span&gt;&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;&lt;span style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt;&quot;&gt;       &lt;/span&gt;&lt;a name=&quot;textarea-bg-text&quot;&gt;&lt;/a&gt;&lt;span style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt;&quot;&gt;A&lt;/span&gt;&lt;span style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt;&quot;&gt;ll functions of the software are still being perfected. Please look forward to it. &lt;/span&gt;&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="vanished">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;         Biometric Manager, Kylin ekibi tarafından geliştirilen biyometrik tanımlamayı yönetmek için destekleyici bir yazılımdır. Temelde biyometrik doğrulama yönetimi, biyometrik hizmet yönetimi, biyometrik aygıtın sürücü yönetimi ve biyometrik özellik yönetimi vb.&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;        Yazılımın tüm fonksiyonları hala mükemmelleştirilmektedir. Lütfen sabırla bekleyin.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;         Biometric Manager is a supporting software for managing biometric identification which is developed by Kylin team.  It mainly contains biometirc verification management, biometirc service management, biometric device&apos;s driver management and biometirc features management, etc.&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;       &lt;a name=&quot;textarea-bg-text&quot;&gt;&lt;/a&gt;All functions of the software are still being perfected. Please look forward to it. &lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="obsolete">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;         Biometric Manager, Kylin ekibi tarafından geliştirilen biyometrik tanımlamayı yönetmek için destekleyici bir yazılımdır. Temelde biyometrik doğrulama yönetimi, biyometrik hizmet yönetimi, biyometrik aygıtın sürücü yönetimi ve biyometrik özellik yönetimi vb.&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;        Yazılımın tüm fonksiyonları hala mükemmelleştirilmektedir. Lütfen dört gözle bekleyin.&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;         生物识别管理工具是由麒麟团队开发的一款用于管理生物识别的辅助软件。主要功能包括生物识别认证管理、生物识别服务管理、生物识别设备驱动管理以及生物识别特征的管理等功能。&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;        各项功能目前还在不断完善中，敬请期待。&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</source>
+        <translation type="obsolete">&lt;!DOCTYPE HTML PUBLIC &quot;-//W3C//DTD HTML 4.0//EN&quot; &quot;http://www.w3.org/TR/REC-html40/strict.dtd&quot;&gt;
+&lt;html&gt;&lt;head&gt;&lt;meta name=&quot;qrichtext&quot; content=&quot;1&quot; /&gt;&lt;style type=&quot;text/css&quot;&gt;
+p, li { white-space: pre-wrap; }
+&lt;/style&gt;&lt;/head&gt;&lt;body style=&quot; font-family:&apos;Sans Serif&apos;; font-size:9pt; font-weight:400; font-style:normal;&quot;&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;         生物识别管理工具是由麒麟团队开发的一款用于管理生物识别的辅助软件。主要功能包括生物识别认证管理、生物识别服务管理、生物识别设备驱动管理以及生物识别特征的管理等功能。&lt;/p&gt;
+&lt;p style=&quot; margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;&quot;&gt;        各项功能目前还在不断完善中，敬请期待。&lt;/p&gt;&lt;/body&gt;&lt;/html&gt;</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation type="vanished">Kapat</translation>
+    </message>
+</context>
+<context>
+    <name>AttributeWindow</name>
+    <message>
+        <location filename="../src/attributewindow.ui" line="14"/>
+        <source>Dialog</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.ui" line="48"/>
+        <source>Bus Type:</source>
+        <translation type="unfinished">Veriyolu Türü:</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.ui" line="62"/>
+        <source>Storage Type:</source>
+        <translation type="unfinished">Depolama Türü:</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.ui" line="69"/>
+        <source>Identification Type:</source>
+        <translation type="unfinished">Tanımlama Türü:</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.ui" line="83"/>
+        <source>Verify Type:</source>
+        <translation type="unfinished">Doğrulama Türü:</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="42"/>
+        <source>FingerPrint</source>
+        <translation type="unfinished">Parmak İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="44"/>
+        <source>Fingervein</source>
+        <translation type="unfinished">Damar İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="46"/>
+        <source>Iris</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="48"/>
+        <source>Face</source>
+        <translation type="unfinished">Yüz Tanıma</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="50"/>
+        <source>VoicePrint</source>
+        <translation type="unfinished">Ses İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="59"/>
+        <source>Hardware Verification</source>
+        <translation type="unfinished">Donanım Doğrulaması</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="61"/>
+        <source>Software Verification</source>
+        <translation type="unfinished">Yazılım Doğrulaması</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="63"/>
+        <source>Mix Verification</source>
+        <translation type="unfinished">Karışık Doğrulama</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="65"/>
+        <source>Other Verification</source>
+        <translation type="unfinished">Diğer Doğrulama</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="73"/>
+        <source>Device Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="75"/>
+        <source>OS Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="77"/>
+        <source>Mix Storage</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="85"/>
+        <source>Serial</source>
+        <translation type="unfinished">Seri</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="87"/>
+        <source>USB</source>
+        <translation type="unfinished">USB</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="89"/>
+        <source>PCIE</source>
+        <translation type="unfinished">PCIE</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="91"/>
+        <source>Any</source>
+        <translation type="unfinished">Yok</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="93"/>
+        <source>Other</source>
+        <translation type="unfinished">Diğer</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="101"/>
+        <source>Hardware Identification</source>
+        <translation type="unfinished">Donanım Kimliği</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="103"/>
+        <source>Software Identification</source>
+        <translation type="unfinished">Yazılım Kimliği</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="105"/>
+        <source>Mix Identification</source>
+        <translation type="unfinished">Karışık Kimlik</translation>
+    </message>
+    <message>
+        <location filename="../src/attributewindow.cpp" line="107"/>
+        <source>Other Identification</source>
+        <translation type="unfinished">Diğer Kimlik</translation>
+    </message>
+</context>
+<context>
+    <name>ContentPane</name>
+    <message>
+        <location filename="../src/contentpane.ui" line="14"/>
+        <source>Form</source>
+        <translation>Form</translation>
+    </message>
+    <message>
+        <source>...</source>
+        <translation type="vanished">...</translation>
+    </message>
+    <message>
+        <source>Driver Status:</source>
+        <translation type="vanished">Sürücü Durumu:</translation>
+    </message>
+    <message>
+        <source>Device Status:</source>
+        <translation type="vanished">Aygıt Durumu:</translation>
+    </message>
+    <message>
+        <source>Default Device:</source>
+        <translation type="vanished">Varsayılan Aygıt:</translation>
+    </message>
+    <message>
+        <source>Verify Type:</source>
+        <translation type="vanished">Doğrulama Türü:</translation>
+    </message>
+    <message>
+        <source>Clean</source>
+        <translation type="vanished">Temizle</translation>
+    </message>
+    <message>
+        <source>Biometric Type:</source>
+        <translation type="obsolete">Biometrik Türü:</translation>
+    </message>
+    <message>
+        <source>Device Short Name:</source>
+        <translation type="vanished">Aygıtın Kısa Adı:</translation>
+    </message>
+    <message>
+        <source>Device Full Name:</source>
+        <translation type="vanished">Aygıtın Tam Adı:</translation>
+    </message>
+    <message>
+        <source>Bus Type:</source>
+        <translation type="vanished">Veriyolu Türü:</translation>
+    </message>
+    <message>
+        <source>Identification Type:</source>
+        <translation type="vanished">Tanımlama Türü:</translation>
+    </message>
+    <message>
+        <source>Storage Type:</source>
+        <translation type="vanished">Depolama Türü:</translation>
+    </message>
+    <message>
+        <source>Status:</source>
+        <translation type="obsolete">Durum:</translation>
+    </message>
+    <message>
+        <source>Biometric Feature List</source>
+        <translation type="obsolete">Biyometrik Özellik Listesi</translation>
+    </message>
+    <message>
+        <source>Enroll</source>
+        <translation type="vanished">Kaydet</translation>
+    </message>
+    <message>
+        <source>Delete</source>
+        <translation type="vanished">Sil</translation>
+    </message>
+    <message>
+        <source>Verify</source>
+        <translation type="vanished">Doğrula</translation>
+    </message>
+    <message>
+        <source>Search</source>
+        <translation type="vanished">Ara</translation>
+    </message>
+    <message>
+        <source>Clear All</source>
+        <translation type="obsolete">Tümünü Temizle</translation>
+    </message>
+    <message>
+        <source>Feature name</source>
+        <translation type="obsolete">Özellik Adı</translation>
+    </message>
+    <message>
+        <source>index</source>
+        <translation type="obsolete">İndeks</translation>
+    </message>
+    <message>
+        <source>Device is not connected</source>
+        <translation type="obsolete">Cihaz bağlı değil</translation>
+    </message>
+    <message>
+        <source>Device is available</source>
+        <translation type="obsolete">Cihaz mevcut</translation>
+    </message>
+    <message>
+        <source>Opened</source>
+        <translation type="vanished">Açık</translation>
+    </message>
+    <message>
+        <source>Closed</source>
+        <translation type="vanished">Kapalı</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="178"/>
+        <source>Connected</source>
+        <translation>Bağlı</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="178"/>
+        <source>Unconnected</source>
+        <translation>Bağlı Değil</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="295"/>
+        <source>New Feature</source>
+        <translation>Yeni özellik</translation>
+    </message>
+    <message>
+        <source>Please input a name for the feature:</source>
+        <translation type="vanished">Lütfen özellik için bir ad girin:</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="298"/>
+        <source>Rename Feature</source>
+        <translation>Özelliği Yeniden Adlandır</translation>
+    </message>
+    <message>
+        <source>Duplicate feature name</source>
+        <translation type="vanished">Yinelenen özellik adı</translation>
+    </message>
+    <message>
+        <source>Empty feature name</source>
+        <translation type="vanished">Boş özellik adı</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="463"/>
+        <source>Confirm whether clean all the features?</source>
+        <translation>Tüm özellikleri temizlemek istediğinizi onaylayın?</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="464"/>
+        <source>Confirm Clean</source>
+        <translation>Temizlemeyi Onayla</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="467"/>
+        <location filename="../src/contentpane.cpp" line="470"/>
+        <source>Confirm whether delete the features selected?</source>
+        <translation>Seçilen özelliklerin silmek istediğinizi onaylayın?</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="468"/>
+        <source>Confirm Delete</source>
+        <translation>Silmeyi Onayla</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="510"/>
+        <source>Please select the feature you want to delete.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Delete successfully</source>
+        <translation type="vanished">Silme başarılı</translation>
+    </message>
+    <message>
+        <source>The result of delete:</source>
+        <translation type="vanished">Silme sonucu:</translation>
+    </message>
+    <message>
+        <source>Clean Failed: </source>
+        <translation type="vanished">Silme Başarısız: </translation>
+    </message>
+    <message>
+        <source>Clean successfully</source>
+        <translation type="vanished">Silme başarılı</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="810"/>
+        <source>DBus calling error</source>
+        <translation>DBus arama hatası</translation>
+    </message>
+    <message>
+        <source>Delete all selected features successfully</source>
+        <translation type="obsolete">Seçilen tüm özellikleri başarıyla silindi</translation>
+    </message>
+    <message>
+        <source>Delete Result</source>
+        <translation type="obsolete">Silme Sonucu</translation>
+    </message>
+    <message>
+        <source>Clean Successfully</source>
+        <translation type="obsolete">Temizleme Başarılı</translation>
+    </message>
+    <message>
+        <source>Clean Result</source>
+        <translation type="vanished">Temizleme Sonucu</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="733"/>
+        <location filename="../src/contentpane.cpp" line="779"/>
+        <source>Rename Successfully</source>
+        <translation>Yeniden Adlandırma Başarılı</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="795"/>
+        <source>Rename Result</source>
+        <translation>Yeniden Adlandırma Sonucu</translation>
+    </message>
+    <message>
+        <source>Delete Failed</source>
+        <translation type="obsolete">Silme Hatalı</translation>
+    </message>
+    <message>
+        <source>Clean Failed</source>
+        <translation type="obsolete">Temizleme Hatalı</translation>
+    </message>
+    <message>
+        <source>Rename Failed</source>
+        <translation type="obsolete">Yeniden Adlandırma Hatalı</translation>
+    </message>
+    <message>
+        <source>Fingerprint</source>
+        <translation type="obsolete">Parmak İzi</translation>
+    </message>
+    <message>
+        <source>Fingervein</source>
+        <translation type="obsolete">Damar İzi</translation>
+    </message>
+    <message>
+        <source>Iris</source>
+        <translation type="obsolete">虹膜</translation>
+    </message>
+    <message>
+        <source>FingerPrint</source>
+        <translation type="obsolete">Parmak İzi</translation>
+    </message>
+    <message>
+        <source>FingerVein</source>
+        <translation type="obsolete">Damar İzi</translation>
+    </message>
+    <message>
+        <source>Hardware Verification</source>
+        <translation type="obsolete">Donanım Doğrulaması</translation>
+    </message>
+    <message>
+        <source>Software Verification</source>
+        <translation type="obsolete">Yazılım Doğrulaması</translation>
+    </message>
+    <message>
+        <source>Mix Verification</source>
+        <translation type="obsolete">Karışık Doğrulama</translation>
+    </message>
+    <message>
+        <source>Other Verification</source>
+        <translation type="obsolete">Diğer Doğrulama</translation>
+    </message>
+    <message>
+        <source>Serial</source>
+        <translation type="obsolete">Seri</translation>
+    </message>
+    <message>
+        <source>USB</source>
+        <translation type="obsolete">USB</translation>
+    </message>
+    <message>
+        <source>PCIE</source>
+        <translation type="obsolete">PCIE</translation>
+    </message>
+    <message>
+        <source>Device Storage</source>
+        <translation type="obsolete">Cihaz Hafızası</translation>
+    </message>
+    <message>
+        <source>OS Storage</source>
+        <translation type="obsolete">İşletim Sistemi Hafızası</translation>
+    </message>
+    <message>
+        <source>Mix Storage</source>
+        <translation type="obsolete">Karışık Hafıza</translation>
+    </message>
+    <message>
+        <source>Hardware Identification</source>
+        <translation type="obsolete">Donanım Kimliği</translation>
+    </message>
+    <message>
+        <source>Software Identification</source>
+        <translation type="obsolete">Yazılım Kimliği</translation>
+    </message>
+    <message>
+        <source>Mix Identification</source>
+        <translation type="obsolete">Karışık Kimlik</translation>
+    </message>
+    <message>
+        <source>Other Identification</source>
+        <translation type="obsolete">Diğer Kimlik</translation>
+    </message>
+    <message>
+        <source> list</source>
+        <translation type="obsolete">Liste</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="177"/>
+        <source>List</source>
+        <translation>Liste</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="88"/>
+        <location filename="../src/contentpane.cpp" line="470"/>
+        <location filename="../src/contentpane.cpp" line="510"/>
+        <location filename="../src/contentpane.cpp" line="583"/>
+        <location filename="../src/contentpane.cpp" line="786"/>
+        <source>OK</source>
+        <translation type="unfinished">Tamam</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="296"/>
+        <location filename="../src/contentpane.cpp" line="299"/>
+        <source>name:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="299"/>
+        <source>Please input a new</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="374"/>
+        <source>&apos;Face recognition&apos; does not support live body detection, and the verification method is risky. Do you want to continue?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="376"/>
+        <source>Cancel</source>
+        <translation type="unfinished">İptal</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="378"/>
+        <source>Continue</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="583"/>
+        <source>Fail to delete! </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Please input a feature name</source>
+        <translation type="obsolete">Lütfen bir özellik adı girin</translation>
+    </message>
+    <message>
+        <source>Feature Rename</source>
+        <translation type="obsolete">Özellik Yeniden Adlandırma</translation>
+    </message>
+    <message>
+        <source>Please input a new name for the feature:</source>
+        <translation type="vanished">Lütfen özellik için yeni bir ad girin:</translation>
+    </message>
+    <message>
+        <source>Permission is required. Please authenticate yourself to continue</source>
+        <translation type="obsolete">İzin gerekli. Lütfen devam etmek için kendinizi doğrulayın</translation>
+    </message>
+    <message>
+        <source>Enroll successfully</source>
+        <translation type="obsolete">Kaydetme başarılı</translation>
+    </message>
+    <message>
+        <source>D-Bus calling error</source>
+        <translation type="obsolete">D-Bus arama hatası</translation>
+    </message>
+    <message>
+        <source>Failed to enroll</source>
+        <translation type="obsolete">Kayıt yapılamadı</translation>
+    </message>
+    <message>
+        <source>Device encounters an error</source>
+        <translation type="obsolete">Cihaz bir hatayla karşılaşıyor</translation>
+    </message>
+    <message>
+        <source>Operation timeout</source>
+        <translation type="obsolete">Operasyon süresi doldu</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="818"/>
+        <source>Device is busy</source>
+        <translation>Aygıt meşgul</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="822"/>
+        <source>No such device</source>
+        <translation>Böyle bir cihaz yok</translation>
+    </message>
+    <message>
+        <location filename="../src/contentpane.cpp" line="826"/>
+        <source>Permission denied</source>
+        <translation>İzin reddedildi</translation>
+    </message>
+    <message>
+        <source>Search Result</source>
+        <translation type="obsolete">Arama sonuçları</translation>
+    </message>
+    <message>
+        <source>Failed to get notify message</source>
+        <translation type="obsolete">Bildirim mesajı alınamadı</translation>
+    </message>
+    <message>
+        <source>In progress, please wait...</source>
+        <translation type="obsolete">Devam ediyor, lütfen bekleyin ...</translation>
+    </message>
+    <message>
+        <source>Match successfully</source>
+        <translation type="obsolete">Eşleşme başarılı</translation>
+    </message>
+    <message>
+        <source>Not Match</source>
+        <translation type="obsolete">Eşleşmedi</translation>
+    </message>
+    <message>
+        <source>Failed to match</source>
+        <translation type="obsolete">Eşleştirilemedi</translation>
+    </message>
+    <message>
+        <source>Found the matching features:</source>
+        <translation type="obsolete">Eşleşen özellikleri bulundu:</translation>
+    </message>
+    <message>
+        <source>Found the matching features:
+</source>
+        <translation type="obsolete">Eşleşen özellikleri bulundu:</translation>
+    </message>
+    <message>
+        <source>Found the matching features: 
+</source>
+        <translation type="obsolete">Eşleşen özellikleri bulundu:</translation>
+    </message>
+    <message>
+        <source>Found the matching features name: </source>
+        <translation type="obsolete">Eşleşen özellik isimleri bulundu:</translation>
+    </message>
+    <message>
+        <source>No matching features Found</source>
+        <translation type="obsolete">Eşleşen özellikleri bulunmadı</translation>
+    </message>
+    <message>
+        <source>Found! Username: %1, Feature name: %2</source>
+        <translation type="obsolete">Bulundu! Kullanıcı adı:%1, Özellik adı:%2</translation>
+    </message>
+    <message>
+        <source>Not Found</source>
+        <translation type="obsolete">Bulunamadı</translation>
+    </message>
+</context>
+<context>
+    <name>EnumToString</name>
+    <message>
+        <location filename="../src/customtype.cpp" line="101"/>
+        <source>FingerPrint</source>
+        <translation>Parmak İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="103"/>
+        <source>Fingervein</source>
+        <translation>Damar İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="105"/>
+        <source>Iris</source>
+        <translation>Göz</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="107"/>
+        <source>Face</source>
+        <translation>Yüz Tanıma</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="109"/>
+        <source>VoicePrint</source>
+        <translation>Ses İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="117"/>
+        <source>Hardware Verification</source>
+        <translation>Donanım Doğrulaması</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="119"/>
+        <source>Software Verification</source>
+        <translation>Yazılım Doğrulaması</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="121"/>
+        <source>Mix Verification</source>
+        <translation>Karışık Doğrulama</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="123"/>
+        <source>Other Verification</source>
+        <translation>Diğer Doğrulama</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="131"/>
+        <source>Device Storage</source>
+        <translation>Cihaz Belleği</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="133"/>
+        <source>OS Storage</source>
+        <translation>İşletim Sistemi Belleği</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="135"/>
+        <source>Mix Storage</source>
+        <translation>Karışık Bellek</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="143"/>
+        <source>Serial</source>
+        <translation>Seri</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="145"/>
+        <source>USB</source>
+        <translation>USB</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="147"/>
+        <source>PCIE</source>
+        <translation>PCIE</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="149"/>
+        <source>Any</source>
+        <translation>Yok</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="151"/>
+        <source>Other</source>
+        <translation>Diğer</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="159"/>
+        <source>Hardware Identification</source>
+        <translation>Donanım Kimliği</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="161"/>
+        <source>Software Identification</source>
+        <translation>Yazılım Kimliği</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="163"/>
+        <source>Mix Identification</source>
+        <translation>Karışık Kimlik</translation>
+    </message>
+    <message>
+        <location filename="../src/customtype.cpp" line="165"/>
+        <source>Other Identification</source>
+        <translation>Diğer Kimlik</translation>
+    </message>
+</context>
+<context>
+    <name>InputDialog</name>
+    <message>
+        <location filename="../src/inputdialog.ui" line="14"/>
+        <source>Dialog</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../src/inputdialog.ui" line="260"/>
+        <source>Cancel</source>
+        <translation type="unfinished">İptal</translation>
+    </message>
+    <message>
+        <location filename="../src/inputdialog.ui" line="273"/>
+        <source>OK</source>
+        <translation>Tamam</translation>
+    </message>
+    <message>
+        <location filename="../src/inputdialog.cpp" line="46"/>
+        <source>Close</source>
+        <translation type="unfinished">Kapat</translation>
+    </message>
+    <message>
+        <location filename="../src/inputdialog.cpp" line="52"/>
+        <source>feature name is too long</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/inputdialog.cpp" line="54"/>
+        <source>Duplicate feature name</source>
+        <translation type="unfinished">Yinelenen özellik adı</translation>
+    </message>
+    <message>
+        <location filename="../src/inputdialog.cpp" line="56"/>
+        <source>Please do not use spaces as the beginning or end of the feature name</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/inputdialog.cpp" line="58"/>
+        <source>Empty feature name</source>
+        <translation type="unfinished">Boş özellik adı</translation>
+    </message>
+</context>
+<context>
+    <name>MainWindow</name>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="317"/>
+        <location filename="../src/mainwindow.cpp" line="576"/>
+        <source>Biometric Manager</source>
+        <translation type="unfinished">生物特征管理工具</translation>
+    </message>
+    <message>
+        <source>Icon</source>
+        <translation type="obsolete">Simge</translation>
+    </message>
+    <message>
+        <source>Dashboard</source>
+        <translation type="obsolete">主面板</translation>
+    </message>
+    <message>
+        <source>Authentication Management</source>
+        <translation type="obsolete">认证管理</translation>
+    </message>
+    <message>
+        <source>Biometric Authentication Status:</source>
+        <translation type="obsolete">生物识别认证状态：</translation>
+    </message>
+    <message>
+        <source>Biometric Authentication can take over system authentication processes which include Login, Screensaver, sudo/su and Polkit.</source>
+        <translation type="obsolete">Biyometrik Kimlik Doğrulama, Oturum Açma, Ekran Koruyucu, sudo / su ve Polkit gibi sistem kimlik doğrulama işlemlerini üstlenebilir.</translation>
+    </message>
+    <message>
+        <source>Biometric authentication is enabled only when the biometric identification is opened, existing available devices are turned on and the user has enrolled the feature.</source>
+        <translation type="obsolete">Biyometrik kimlik doğrulama yalnızca biyometrik tanımlama açıldığında, mevcut kullanılabilir aygıtlar açıldığında ve kullanıcı özelliği kaydettiğinde etkinleştirilir.</translation>
+    </message>
+    <message>
+        <source>Device Driver Management</source>
+        <translation type="obsolete">Aygıt Sürücü Yönetimi</translation>
+    </message>
+    <message>
+        <source>Fingerprint Devices Driver</source>
+        <translation type="obsolete">Parmakizi Aygıtı Sürücüsü</translation>
+    </message>
+    <message>
+        <source>Fingervein Devices Driver</source>
+        <translation type="obsolete">Damarizi Aygıtı Sürücüsü</translation>
+    </message>
+    <message>
+        <source>Iris Devices Driver</source>
+        <translation type="obsolete">Göz Aygıtı Sürücüsü</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1557"/>
+        <location filename="../src/mainwindow.ui" line="1890"/>
+        <location filename="../src/mainwindow.ui" line="2220"/>
+        <location filename="../src/mainwindow.ui" line="2550"/>
+        <location filename="../src/mainwindow.ui" line="2880"/>
+        <source>Device Management</source>
+        <translation type="unfinished">Aygıt Yönetimi</translation>
+    </message>
+    <message>
+        <source>Fingerprint Devices</source>
+        <translation type="obsolete">Parmak İzi Aygıtı</translation>
+    </message>
+    <message>
+        <source>Fingervein Devices</source>
+        <translation type="obsolete">Damarizi Aygıtı</translation>
+    </message>
+    <message>
+        <source>Iris Devices</source>
+        <translation type="obsolete">Göz Aygıtı</translation>
+    </message>
+    <message>
+        <source>Fingerprint</source>
+        <translation type="obsolete">Parmakizi</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="20"/>
+        <source>BiometricManager</source>
+        <translation>Biyometrik Yönetici</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="704"/>
+        <location filename="../src/mainwindow.ui" line="734"/>
+        <source>TextLabel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="885"/>
+        <source>Permisions</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="255"/>
+        <location filename="../src/mainwindow.ui" line="955"/>
+        <location filename="../src/mainwindow.cpp" line="318"/>
+        <location filename="../src/mainwindow.cpp" line="418"/>
+        <source>Biometric</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="158"/>
+        <source>After this function is enabled, it can be used for system authentication, including login, screen lock, system authorization, and Polkit.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1038"/>
+        <source>Biometrics will be used to:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1079"/>
+        <source>Login system</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1149"/>
+        <source>Unlock the lock screen</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1222"/>
+        <source>System authorization</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1359"/>
+        <source>Seletct Device</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1502"/>
+        <source>Fingerprint recognition is not available. No device supporting this feature was detected.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1656"/>
+        <source>Face Recognition </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1698"/>
+        <location filename="../src/mainwindow.ui" line="2031"/>
+        <location filename="../src/mainwindow.ui" line="2361"/>
+        <location filename="../src/mainwindow.ui" line="2691"/>
+        <source>Select Device</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1838"/>
+        <source>Face recognition is not available. No device supporting this feature was detected.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="2168"/>
+        <source>Fingervein recognition is not available. No device supporting this feature was detected.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="2319"/>
+        <source>Iris Recognition</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="2498"/>
+        <source>Iric recognition is not available. No device supporting this feature was detected.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="2649"/>
+        <source>Voiceprint</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="2828"/>
+        <source>Voiceprint recognition is not available. No device supporting this feature was detected.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="153"/>
+        <source>Biometirc Manager</source>
+        <translation>Biyometrik Yönetici</translation>
+    </message>
+    <message>
+        <source>UserName</source>
+        <translation type="vanished">Kullanıcı Adı</translation>
+    </message>
+    <message>
+        <source>DashBoard</source>
+        <translation type="vanished">Gösterge Paneli</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="315"/>
+        <location filename="../src/mainwindow.ui" line="1317"/>
+        <location filename="../src/mainwindow.cpp" line="422"/>
+        <location filename="../src/mainwindow.cpp" line="1230"/>
+        <source>FingerPrint</source>
+        <translation>Parmak İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="191"/>
+        <location filename="../src/mainwindow.cpp" line="414"/>
+        <source>Device&amp;Permission</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="224"/>
+        <location filename="../src/mainwindow.cpp" line="415"/>
+        <source>Permissions</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="285"/>
+        <location filename="../src/mainwindow.cpp" line="421"/>
+        <source>Password Setting</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="365"/>
+        <location filename="../src/mainwindow.cpp" line="426"/>
+        <location filename="../src/mainwindow.cpp" line="1230"/>
+        <source>FingerVein</source>
+        <translation>Damar İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="340"/>
+        <location filename="../src/mainwindow.cpp" line="424"/>
+        <location filename="../src/mainwindow.cpp" line="1230"/>
+        <source>Face</source>
+        <translation type="unfinished">Yüz Tanıma</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="188"/>
+        <location filename="../src/mainwindow.cpp" line="351"/>
+        <location filename="../src/mainwindow.cpp" line="542"/>
+        <source>Maximize</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="362"/>
+        <source>Options</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="415"/>
+        <location filename="../src/mainwindow.cpp" line="430"/>
+        <location filename="../src/mainwindow.cpp" line="1231"/>
+        <source>VoicePrint</source>
+        <translation>Ses İzi</translation>
+    </message>
+    <message>
+        <source>System components are certified using biometrics</source>
+        <translation type="vanished">Sistem bileşenleri biyometri kullanılarak onaylanmıştır</translation>
+    </message>
+    <message>
+        <source>Biometric Verification Status:</source>
+        <translation type="obsolete">生物识别状态：</translation>
+    </message>
+    <message>
+        <source>Closed</source>
+        <translation type="vanished">Kapalı</translation>
+    </message>
+    <message>
+        <source>Note</source>
+        <translation type="vanished">Not</translation>
+    </message>
+    <message>
+        <source>     Devices Type</source>
+        <translation type="obsolete">    Aygıt Türü</translation>
+    </message>
+    <message>
+        <source>     All Devices</source>
+        <translation type="obsolete">Tüm Aygıtlar</translation>
+    </message>
+    <message>
+        <source>Driver Not Found</source>
+        <translation type="vanished">Sürücü Bulunamadı</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="1989"/>
+        <source>Fingervein</source>
+        <translation type="unfinished">Damar İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.ui" line="390"/>
+        <location filename="../src/mainwindow.cpp" line="428"/>
+        <location filename="../src/mainwindow.cpp" line="1231"/>
+        <source>Iris</source>
+        <translation>Göz</translation>
+    </message>
+    <message>
+        <source>Fatal Error</source>
+        <translation type="vanished">Ölümcül Hata</translation>
+    </message>
+    <message>
+        <source>the biometric-authentication service was not started</source>
+        <translation type="obsolete">biyometrik kimlik doğrulama hizmeti başlatılmadı</translation>
+    </message>
+    <message>
+        <source>API version is not compatible</source>
+        <translation type="obsolete">API sürümü uyumlu değil</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="573"/>
+        <source>About</source>
+        <translation>Hakkında</translation>
+    </message>
+    <message>
+        <source>Opened</source>
+        <translation type="vanished">Açık</translation>
+    </message>
+    <message>
+        <source>Biometric Authentication can take over system authentication processes which include Login, LockScreen, sudo/su and Polkit</source>
+        <translation type="vanished">Biyometrik Kimlik Doğrulama, Oturum Açma, Kilit Ekranı, sudo / su ve Polkit gibi sistem kimlik doğrulama süreçlerini devralabilir</translation>
+    </message>
+    <message>
+        <source>There is no any available biometric device or no features enrolled currently.</source>
+        <translation type="vanished">Mevcut biyometrik cihaz yok veya şu anda kayıtlı özellik yok.</translation>
+    </message>
+    <message>
+        <source>Process of using biometrics 1.Confirm that the device is connected 2.Set the connected device as the default 3. The biometric status is to be turned on. 4.Finally enter the fingerprint</source>
+        <translation type="vanished">Biyometri kullanma süreci 1.Cihazın bağlı olduğundan emin olun 2.Bağlı cihazı varsayılan olarak ayarlayın 3. Biyometrik durum açılacaktır. 4. Parmak izi girin</translation>
+    </message>
+    <message>
+        <source>Device Name</source>
+        <translation type="vanished">Aygıt Adı</translation>
+    </message>
+    <message>
+        <source>Device Status</source>
+        <translation type="vanished">Aygıt Durumu</translation>
+    </message>
+    <message>
+        <source>Driver Status</source>
+        <translation type="vanished">Sürücü Durumu</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1399"/>
+        <source>Default</source>
+        <translation>Varsayılan</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1601"/>
+        <location filename="../src/mainwindow.cpp" line="1647"/>
+        <location filename="../src/mainwindow.cpp" line="1651"/>
+        <source>OK</source>
+        <translation type="unfinished">Tamam</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1646"/>
+        <source>The service has restarted.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1650"/>
+        <source>Service restart failure.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1849"/>
+        <source>Connected</source>
+        <translation>Bağlandı</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1861"/>
+        <source>Unconnected</source>
+        <translation>Bağlı Değil</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1865"/>
+        <source>disable</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>The Service is stopped</source>
+        <translation type="vanished">Hizmet Durdu</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1399"/>
+        <source>Status</source>
+        <translation type="unfinished">Durum</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="320"/>
+        <source>Select Device Type</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="193"/>
+        <location filename="../src/mainwindow.cpp" line="546"/>
+        <source>Restore</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="343"/>
+        <source>Minimize</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="370"/>
+        <source>Close</source>
+        <translation type="unfinished">Kapat</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="586"/>
+        <source>Exit</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="591"/>
+        <source>Help</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="951"/>
+        <location filename="../src/mainwindow.cpp" line="1499"/>
+        <source>(default) </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1399"/>
+        <source>Name</source>
+        <translation type="unfinished">İsim</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1399"/>
+        <source>Driver</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="1600"/>
+        <source>Fail to change device status</source>
+        <translation>Cihaz durumu değiştirilemedi</translation>
+    </message>
+    <message>
+        <location filename="../src/mainwindow.cpp" line="568"/>
+        <source>Restart Service</source>
+        <translation>Servisi yeniden başlat</translation>
+    </message>
+    <message>
+        <source>  Restart immediately  </source>
+        <translation type="obsolete">Hemen yeniden başlat</translation>
+    </message>
+    <message>
+        <source>  Restart later  </source>
+        <translation type="obsolete">Sonra yeniden başlat</translation>
+    </message>
+    <message>
+        <source>The configuration has been modified. Restart the service immediately to make it effecitve?</source>
+        <translation type="obsolete">Yapılandırma değiştirildi. Etkili hale getirmek için hizmeti hemen yeniden başlat?</translation>
+    </message>
+    <message>
+        <source>Error</source>
+        <translation type="obsolete">Hata</translation>
+    </message>
+    <message>
+        <source>Device is not connected</source>
+        <translation type="obsolete">Cihaz bağlı değil</translation>
+    </message>
+    <message>
+        <source>Warnning</source>
+        <translation type="vanished">Uyarı</translation>
+    </message>
+    <message>
+        <source>There is no available device or no features enrolled</source>
+        <translation type="vanished">Kullanılabilir cihaz yok veya kayıtlı özellik yok</translation>
+    </message>
+</context>
+<context>
+    <name>MessageDialog</name>
+    <message>
+        <location filename="../src/messagedialog.ui" line="26"/>
+        <source>Dialog</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../src/messagedialog.ui" line="215"/>
+        <source>OK</source>
+        <translation>Tamam</translation>
+    </message>
+    <message>
+        <location filename="../src/messagedialog.ui" line="231"/>
+        <source>Cancel</source>
+        <translation>İptal</translation>
+    </message>
+</context>
+<context>
+    <name>PromptDialog</name>
+    <message>
+        <location filename="../src/promptdialog.ui" line="26"/>
+        <source>Current Progress</source>
+        <translation>Mevcut İlerleme</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.ui" line="311"/>
+        <source>Continue</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.ui" line="324"/>
+        <location filename="../src/promptdialog.cpp" line="816"/>
+        <source>Finish</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Ok</source>
+        <translation type="obsolete">Tamam</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="120"/>
+        <location filename="../src/promptdialog.cpp" line="271"/>
+        <location filename="../src/promptdialog.cpp" line="687"/>
+        <source>Cancel</source>
+        <translation type="unfinished">İptal</translation>
+    </message>
+    <message>
+        <source>Operations are in progress. Please wait...</source>
+        <translation type="obsolete">İşlemler devam ediyor. Lütfen bekleyin..</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="173"/>
+        <location filename="../src/promptdialog.cpp" line="174"/>
+        <source>Enroll</source>
+        <translation>Kaydet</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="177"/>
+        <source>Verify</source>
+        <translation>Doğrula</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="180"/>
+        <source>Search</source>
+        <translation>Ara</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="549"/>
+        <source>In progress, please wait...</source>
+        <translation>Devam ediyor, lütfen bekleyin ...</translation>
+    </message>
+    <message>
+        <source>Index</source>
+        <translation type="vanished">İndeks</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="73"/>
+        <source>Close</source>
+        <translation type="unfinished">Kapat</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="173"/>
+        <source>feature</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="312"/>
+        <source>UserName</source>
+        <translation>Kullanıcı Adı</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="312"/>
+        <location filename="../src/promptdialog.cpp" line="314"/>
+        <source>FeatureName</source>
+        <translation>Özellik Adı</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="312"/>
+        <location filename="../src/promptdialog.cpp" line="314"/>
+        <source>Serial number</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="378"/>
+        <source>Permission is required.
+Please authenticate yourself to continue</source>
+        <translation>İzin gerekli.
+Lütfen devam etmek için kendinizi doğrulayın</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="410"/>
+        <source>Enroll successfully</source>
+        <translation>Başarılı kayıt</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="452"/>
+        <source>Verify successfully</source>
+        <translation>Doğrulama başarılı</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="456"/>
+        <source>Not Match</source>
+        <translation>Eşleşmedi</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="498"/>
+        <source>Search Result</source>
+        <translation>Arama sonuçları</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="515"/>
+        <source>No matching features Found</source>
+        <translation>Eşleşen özellik bulunamadı</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="711"/>
+        <source>Keep looking straight at the camera.</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="729"/>
+        <source>D-Bus calling error</source>
+        <translation>D-Bus arama hatası</translation>
+    </message>
+    <message>
+        <source>Device encounters an error</source>
+        <translation type="obsolete">Cihaz bir hatayla karşılaştı</translation>
+    </message>
+    <message>
+        <source>Operation timeout</source>
+        <translation type="obsolete">İşlem süresi doldu</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="753"/>
+        <source>Device is busy</source>
+        <translation>Aygıt meşgul</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="759"/>
+        <source>No such device</source>
+        <translation>Böyle bir cihaz yok</translation>
+    </message>
+    <message>
+        <source>Permission denied</source>
+        <translation type="vanished">İzin reddedildi</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="784"/>
+        <source>Failed to enroll</source>
+        <translation>Kayıt yapılamadı</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="788"/>
+        <source>Failed to match</source>
+        <translation>Eşleştirilemedi</translation>
+    </message>
+    <message>
+        <location filename="../src/promptdialog.cpp" line="791"/>
+        <source>Not Found</source>
+        <translation>Bulunamadı</translation>
+    </message>
+    <message>
+        <source>&lt;font size=&apos;2&apos;&gt;the window will be closed after two second&lt;/font&gt;</source>
+        <translation type="vanished">&lt;font size=&apos;2&apos;&gt;pencere iki saniye sonra kapanacak&lt;/font&gt;</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <location filename="../src/main.cpp" line="53"/>
+        <source>Username</source>
+        <translation>Kullanıcı Adı</translation>
+    </message>
+    <message>
+        <source>Fatal Error</source>
+        <translation type="vanished">Ölümcül Hata</translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="165"/>
+        <source>the biometric-authentication service was not started</source>
+        <translation>biyometrik kimlik doğrulama hizmeti başlatılmadı</translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="166"/>
+        <location filename="../src/main.cpp" line="176"/>
+        <source>OK</source>
+        <translation type="unfinished">Tamam</translation>
+    </message>
+    <message>
+        <location filename="../src/main.cpp" line="175"/>
+        <source>API version is not compatible</source>
+        <translation>API sürümü uyumlu değil</translation>
+    </message>
+    <message>
+        <source>FingerPrint</source>
+        <translation type="obsolete">Parmak İzi</translation>
+    </message>
+    <message>
+        <source>FingerVein</source>
+        <translation type="obsolete">Damar İzi</translation>
+    </message>
+    <message>
+        <source>Iris</source>
+        <translation type="obsolete">Göz</translation>
+    </message>
+</context>
+<context>
+    <name>TreeModel</name>
+    <message>
+        <source>FingerPrint</source>
+        <translation type="obsolete">Parmak İzi</translation>
+    </message>
+    <message>
+        <source>FingerVein</source>
+        <translation type="obsolete">Damar İzi</translation>
+    </message>
+    <message>
+        <source>Iris</source>
+        <translation type="obsolete">Göz</translation>
+    </message>
+    <message>
+        <source>Face</source>
+        <translation type="obsolete">Yüz Tanıma</translation>
+    </message>
+    <message>
+        <source>VoicePrint</source>
+        <translation type="obsolete">Ses İzi</translation>
+    </message>
+    <message>
+        <location filename="../src/treemodel.cpp" line="30"/>
+        <source>Name</source>
+        <translation>İsim</translation>
+    </message>
+    <message>
+        <location filename="../src/treemodel.cpp" line="32"/>
+        <location filename="../src/treemodel.cpp" line="34"/>
+        <source>index</source>
+        <translation>İndeks</translation>
+    </message>
+    <message>
+        <location filename="../src/treemodel.cpp" line="32"/>
+        <source>username</source>
+        <translation>Kullanıcı Adı</translation>
+    </message>
+    <message>
+        <source>Empty feature name</source>
+        <translation type="obsolete">Boş özellik adı</translation>
+    </message>
+    <message>
+        <source>Duplicate feature name</source>
+        <translation type="obsolete">Yinelenen özellik adı</translation>
+    </message>
+</context>
+</TS>

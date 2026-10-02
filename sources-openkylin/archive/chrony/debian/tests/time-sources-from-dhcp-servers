@@ -1,0 +1,44 @@
+#!/bin/sh
+# Ensure that NTP servers obtained from DHCP are made available to chronyd and
+# that they are removed when releasing the DHCP lease.
+
+set -e
+
+prepare_iface() {
+    modprobe dummy
+    ip link add name dummy0 type dummy
+    ip address add 192.168.1.1/24 dev dummy0
+    ip link set dev dummy0 up
+}
+
+dhcpd_config() {
+cat <<EOF > /etc/dhcp/dhcpd.conf
+default-lease-time 600;
+max-lease-time 7200;
+authorative;
+
+subnet 192.168.1.0 netmask 255.255.255.0 {
+    option subnet-mask              255.255.255.0;
+    option broadcast-address        192.168.1.255;
+    option ntp-servers              192.168.1.50;
+    range 192.168.1.42 192.168.1.100;
+}
+EOF
+
+sed -i '/INTERFACESv4=/s/".*"/"dummy0"/' /etc/default/isc-dhcp-server
+}
+
+chk_time_src() {
+    chronyc -n sources | grep -q -F '192.168.1.50'
+}
+
+printf "Preparing the dummy network interface and dhcpd configuration…\n"
+if prepare_iface && dhcpd_config; then
+    systemctl restart isc-dhcp-server && dhclient dummy0 && printf "Done!\n\n"
+fi
+
+printf "Check if the NTP server is made available to chronyd…\n"
+chk_time_src && printf "SUCCESS!\n\n"
+
+printf "Release the current lease and check if the NTP server has been correctly removed…\n"
+dhclient -r dummy0 > /dev/null 2>&1 && ! chk_time_src && printf "SUCCESS!\n\n"

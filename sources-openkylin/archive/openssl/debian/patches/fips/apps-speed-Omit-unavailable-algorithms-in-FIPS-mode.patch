@@ -1,0 +1,130 @@
+From: Chris Coulson <chris.coulson@canonical.com>
+Date: Thu, 21 Apr 2022 13:11:18 +0100
+Subject: apps/speed: Omit unavailable algorithms in FIPS mode
+
+Forwarded: no
+Applied-Upstream: no
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/openssl/+bug/2056593
+---
+ apps/speed.c | 66 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 66 insertions(+)
+
+diff --git a/apps/speed.c b/apps/speed.c
+index a8d7cb14f579..a3115d979232 100644
+--- a/apps/speed.c
++++ b/apps/speed.c
+@@ -2116,6 +2116,9 @@ int speed_main(int argc, char **argv)
+     OPENSSL_assert(strcmp(sm2_choices[SM2_NUM - 1].name, "curveSM2") == 0);
+ #endif
+ 
++    if (EVP_default_properties_is_fips_enabled(app_get0_libctx()))
++        evp_mac_mdname = "sha1";
++
+     prog = opt_init(argc, argv, speed_options);
+     while ((o = opt_next()) != OPT_EOF) {
+         switch (o) {
+@@ -2389,6 +2392,8 @@ int speed_main(int argc, char **argv)
+         if (strcmp(algo, "des") == 0) {
+             doit[D_CBC_DES] = doit[D_EDE3_DES] = 1;
+             algo_found = 1;
++            if (EVP_default_properties_is_fips_enabled(app_get0_libctx()))
++                doit[D_CBC_DES] = 0;
+         }
+         if (strcmp(algo, "sha") == 0) {
+             doit[D_SHA1] = doit[D_SHA256] = doit[D_SHA512] = 1;
+@@ -2402,6 +2407,8 @@ int speed_main(int argc, char **argv)
+             if (algo[sizeof("rsa") - 1] == '\0') {
+                 memset(rsa_doit, 1, sizeof(rsa_doit));
+                 algo_found = 1;
++                if (EVP_default_properties_is_fips_enabled(app_get0_libctx()))
++                    rsa_doit[R_RSA_512] = rsa_doit[R_RSA_1024] = 0;
+             }
+             if (opt_found(algo, rsa_choices, &i)) {
+                 rsa_doit[i] = 1;
+@@ -2425,6 +2432,10 @@ int speed_main(int argc, char **argv)
+             if (algo[sizeof("dsa") - 1] == '\0') {
+                 memset(dsa_doit, 1, sizeof(dsa_doit));
+                 algo_found = 1;
++                /* R_DSA_512 and R_DSA_1024 should be disabled in FIPS mode,
++                 * but actually, none of the DSA benchmarks work because the
++                 * compiled-in keys fail the necessary checks. Just return an
++                 * error if the DSA benchmarks are invoked explicitly. */
+             }
+             if (opt_found(algo, dsa_choices, &i)) {
+                 dsa_doit[i] = 2;
+@@ -2444,6 +2455,18 @@ int speed_main(int argc, char **argv)
+             if (algo[sizeof("ecdsa") - 1] == '\0') {
+                 memset(ecdsa_doit, 1, sizeof(ecdsa_doit));
+                 algo_found = 1;
++                if (EVP_default_properties_is_fips_enabled(app_get0_libctx())) {
++                    ecdsa_doit[R_EC_P160] = ecdsa_doit[R_EC_P192] = 0;
++#ifndef OPENSSL_NO_EC2M
++                    ecdsa_doit[R_EC_K163] = ecdsa_doit[R_EC_B163] = 0;
++#endif
++                    ecdsa_doit[R_EC_BRP256R1] =
++                        ecdsa_doit[R_EC_BRP256T1] =
++                        ecdsa_doit[R_EC_BRP384R1] =
++                        ecdsa_doit[R_EC_BRP384T1] =
++                        ecdsa_doit[R_EC_BRP512R1] =
++                        ecdsa_doit[R_EC_BRP512T1] = 0;
++                }
+             }
+             if (opt_found(algo, ecdsa_choices, &i)) {
+                 ecdsa_doit[i] = 2;
+@@ -2454,6 +2477,18 @@ int speed_main(int argc, char **argv)
+             if (algo[sizeof("ecdh") - 1] == '\0') {
+                 memset(ecdh_doit, 1, sizeof(ecdh_doit));
+                 algo_found = 1;
++                if (EVP_default_properties_is_fips_enabled(app_get0_libctx())) {
++                    ecdh_doit[R_EC_P160] = ecdh_doit[R_EC_P192] = 0;
++#ifndef OPENSSL_NO_EC2M
++                    ecdh_doit[R_EC_K163] = ecdh_doit[R_EC_B163] = 0;
++#endif
++                    ecdh_doit[R_EC_BRP256R1] =
++                        ecdh_doit[R_EC_BRP256T1] =
++                        ecdh_doit[R_EC_BRP384R1] =
++                        ecdh_doit[R_EC_BRP384T1] =
++                        ecdh_doit[R_EC_BRP512R1] =
++                        ecdh_doit[R_EC_BRP512T1] = 0;
++                }
+             }
+             if (opt_found(algo, ecdh_choices, &i)) {
+                 ecdh_doit[i] = 2;
+@@ -2671,6 +2706,37 @@ int speed_main(int argc, char **argv)
+         do_kems = 1;
+         memset(sigs_doit, 1, sizeof(sigs_doit));
+         do_sigs = 1;
++        if (EVP_default_properties_is_fips_enabled(app_get0_libctx())) {
++            rsa_doit[R_RSA_512] = rsa_doit[R_RSA_1024] = 0;
++
++            memset(dsa_doit, 0, sizeof(dsa_doit));
++
++            ecdsa_doit[R_EC_P160] = ecdsa_doit[R_EC_P192] = 0;
++#ifndef OPENSSL_NO_EC2M
++            ecdsa_doit[R_EC_K163] = ecdsa_doit[R_EC_B163] = 0;
++#endif
++            ecdsa_doit[R_EC_BRP256R1] =
++                ecdsa_doit[R_EC_BRP256T1] =
++                ecdsa_doit[R_EC_BRP384R1] =
++                ecdsa_doit[R_EC_BRP384T1] =
++                ecdsa_doit[R_EC_BRP512R1] =
++                ecdsa_doit[R_EC_BRP512T1] = 0;
++
++            ecdh_doit[R_EC_P160] = ecdh_doit[R_EC_P192] = 0;
++#ifndef OPENSSL_NO_EC2M
++            ecdh_doit[R_EC_K163] = ecdh_doit[R_EC_B163] = 0;
++#endif
++            ecdh_doit[R_EC_BRP256R1] =
++                ecdh_doit[R_EC_BRP256T1] =
++                ecdh_doit[R_EC_BRP384R1] =
++                ecdh_doit[R_EC_BRP384T1] =
++                ecdh_doit[R_EC_BRP512R1] =
++                ecdh_doit[R_EC_BRP512T1] = 0;
++
++#ifndef OPENSSL_NO_SM2
++            memset(sm2_doit, 0, sizeof(sm2_doit));
++#endif
++        }
+     }
+     for (i = 0; i < ALGOR_NUM; i++)
+         if (doit[i])

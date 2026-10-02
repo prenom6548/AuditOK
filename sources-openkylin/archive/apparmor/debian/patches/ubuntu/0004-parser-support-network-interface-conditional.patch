@@ -1,0 +1,1411 @@
+From: John Johansen <john.johansen@canonical.com>
+Date: Tue, 6 Jan 2026 05:09:19 -0800
+Subject: [PATCH 4/5] parser: support network interface conditional
+
+This adds support for a network interface conditional in inet and inet6
+mediation.
+
+Signed-off-by: John Johansen <john.johansen@canonical.com>
+---
+ parser/apparmor.d.pod                              | 627 +++++++++++++++------
+ parser/network.cc                                  | 137 ++++-
+ parser/network.h                                   |  19 +-
+ parser/parser.h                                    |   2 +
+ parser/parser_common.c                             |   2 +
+ parser/parser_main.c                               |   6 +
+ parser/parser_regex.c                              |   4 +
+ parser/tst/simple_tests/network/skb/bad_attr_1.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_1.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_10.sd |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_11.sd |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_2.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_3.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_4.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_5.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_6.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_7.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_8.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_iface_9.sd  |   7 +
+ parser/tst/simple_tests/network/skb/ok_label_1.sd  |   7 +
+ .../simple_tests/network/skb/ok_label_peer_1.sd    |   7 +
+ .../simple_tests/network/skb/ok_label_peer_2.sd    |  13 +
+ .../simple_tests/network/skb/ok_setlabel_peer_1.sd |  10 +
+ utils/test/test-parser-simple-tests.py             |  16 +
+ 24 files changed, 745 insertions(+), 189 deletions(-)
+ create mode 100644 parser/tst/simple_tests/network/skb/bad_attr_1.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_1.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_10.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_11.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_2.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_3.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_4.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_5.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_6.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_7.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_8.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_iface_9.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_label_1.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_label_peer_1.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_label_peer_2.sd
+ create mode 100644 parser/tst/simple_tests/network/skb/ok_setlabel_peer_1.sd
+
+diff --git a/parser/apparmor.d.pod b/parser/apparmor.d.pod
+index b575588..38e77fd 100644
+--- a/parser/apparmor.d.pod
++++ b/parser/apparmor.d.pod
+@@ -215,10 +215,10 @@ B<TYPE> = ( 'stream' | 'dgram' | 'seqpacket' |  'rdm' | 'raw' | 'packet' )
+ 
+ B<PROTOCOL> = ( 'tcp' | 'udp' | 'icmp' )
+ 
+-B<NETWORK LOCAL EXPR> = ( I<NETWORK IP COND> | I<NETWORK PORT COND> )*
++B<NETWORK LOCAL EXPR> = ( I<NETWORK IP COND> | I<NETWORK PORT COND> | I<INTERFACE COND> | I<LABEL_COND> | I<LABEL ASSIGN> )*
+   Each cond can appear at most once.
+ 
+-B<NETWORK PEER EXPR> = 'peer' '=' '(' ( I<NETWORK IP COND> | I<NETWORK PORT COND> )+ ')'
++B<NETWORK PEER EXPR> = 'peer' '=' '(' ( I<NETWORK IP COND> | I<NETWORK PORT COND> )+ | I<LABEL COND> | I<LABEL ASSIGN> ')'
+   Each cond can appear at most once.
+ 
+ B<NETWORK IP COND> = 'ip' '=' ( 'none' | I<NETWORK IPV4> | I<NETWORK IPV6> )
+@@ -231,6 +231,12 @@ B<NETWORK IPV6> = IPv6, represented by eight groups of four hexadecimal numbers
+ 
+ B<NETWORK PORT> = 16-bit number ranging from 0 to 65535
+ 
++B<INTERFACE COND> = 'interface' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
++
++B<LABEL COND> = 'label' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
++
++B<LABEL ASSIGN> = 'label' ':=' I<LABEL NAME>
++
+ B<MOUNT RULE> = ( I<MOUNT> | I<REMOUNT> | I<UMOUNT> )
+ 
+ B<MOUNT> = [ I<QUALIFIERS> ] 'mount' [ I<MOUNT CONDITIONS> ] [ I<SOURCE FILEGLOB> ] [ '-E<gt>' [ I<MOUNTPOINT FILEGLOB> ]
+@@ -253,7 +259,7 @@ B<MOUNT FLAGS> = ( 'ro' | 'rw' | 'nosuid' | 'suid' | 'nodev' | 'dev' | 'noexec'
+ 
+ B<MOUNT EXPRESSION> = ( I<ALPHANUMERIC> | I<AARE> ) ...
+ 
+-B<MQUEUE_RULE> = [ I<QUALIFIERS> ] 'mqueue' [ I<MQUEUE ACCESS PERMISSIONS> ] [ I<MQUEUE TYPE> ] [ I<MQUEUE LABEL> ] [ I<MQUEUE NAME> ]
++B<MQUEUE_RULE> = [ I<QUALIFIERS> ] 'mqueue' [ I<MQUEUE ACCESS PERMISSIONS> ] [ I<MQUEUE TYPE> ] [ I<LABEL_COND> ] [ I<MQUEUE NAME> ]
+ 
+ B<MQUEUE ACCESS PERMISSIONS> = I<MQUEUE ACCESS> | I<MQUEUE ACCESS LIST>
+ 
+@@ -263,20 +269,16 @@ B<MQUEUE ACCESS> = ( 'r' | 'w' | 'rw' | 'read' | 'write' | 'create' | 'open' | '
+ 
+ B<MQUEUE TYPE> = 'type' '=' ( 'posix' | 'sysv' )
+ 
+-B<MQUEUE LABEL> = 'label' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
+-
+ B<MQUEUE NAME> = I<AARE>
+ 
+ B<USERNS RULE> = [ I<QUALIFIERS> ] 'userns' [ I<USERNS ACCESS PERMISSIONS> ]
+ 
+ B<USERNS ACCESS PERMISSIONS> = ( 'create' )
+ 
+-B<IO_URING RULE> = [ I<QUALIFIERS> ] 'io_uring' [ I<IO_URING ACCESS PERMISSIONS> [ I<IO_URING LABEL> ]
++B<IO_URING RULE> = [ I<QUALIFIERS> ] 'io_uring' [ I<IO_URING ACCESS PERMISSIONS> [ I<LABEL COND> ]
+ 
+ B<IO_URING ACCESS PERMISSIONS> = ( 'sqpoll' | 'override_creds' )
+ 
+-B<IO_URING LABEL> = 'label' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
+-
+ B<PIVOT ROOT RULE> = [ I<QUALIFIERS> ] pivot_root [ oldroot=I<OLD PUT FILEGLOB> ] [ I<NEW ROOT FILEGLOB> ] [ '-E<gt>' I<PROFILE NAME> ]
+ 
+ B<SOURCE FILEGLOB> = I<FILEGLOB>
+@@ -331,12 +333,10 @@ B<DBUS INTERFACE> = 'interface' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
+ 
+ B<DBUS MEMBER> = 'member' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
+ 
+-B<DBUS PEER> = 'peer' '=' '(' [ I<DBUS NAME> ] [ I<DBUS LABEL> ] ')'
++B<DBUS PEER> = 'peer' '=' '(' [ I<DBUS NAME> ] [ I<LABEL COND> ] ')'
+ 
+ B<DBUS NAME> = 'name' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
+ 
+-B<DBUS LABEL> = 'label' '=' '(' '"' I<AARE> '"' | I<AARE> ')'
+-
+ B<DBUS ACCESS LIST> = Comma separated list of I<DBUS ACCESS>
+ 
+ B<DBUS ACCESS> = ( 'send' | 'receive' | 'bind' | 'eavesdrop' | 'r' | 'read' | 'w' | 'write' | 'rw' )
+@@ -358,7 +358,7 @@ B<TYPE COND> = 'type' '='  ( I<AARE> | '(' ( '"' I<AARE> '"' | I<AARE> )+ ')' )
+ 
+ B<PROTO COND> = 'protocol' '='  ( I<AARE> | '(' ( '"' I<AARE> '"' | I<AARE> )+ ')' )
+ 
+-B<UNIX LOCAL EXPR> = ( I<UNIX ADDRESS COND> | I<UNIX LABEL COND> | I<UNIX ATTR COND> | I<UNIX OPT COND> )*
++B<UNIX LOCAL EXPR> = ( I<UNIX ADDRESS COND> | I<LABEL COND> | I<UNIX ATTR COND> | I<UNIX OPT COND> )*
+   Each cond can appear at most once.
+ 
+ B<UNIX PEER EXPR> = 'peer' '=' ( I<UNIX ADDRESS COND> | I<UNIX LABEL COND> )+
+@@ -366,8 +366,6 @@ B<UNIX PEER EXPR> = 'peer' '=' ( I<UNIX ADDRESS COND> | I<UNIX LABEL COND> )+
+ 
+ B<UNIX ADDRESS COND> 'addr' '=' ( I<AARE> | '(' '"' I<AARE> '"' | I<AARE> ')' )
+ 
+-B<UNIX LABEL COND> 'label' '=' ( I<AARE> | '(' '"' I<AARE> '"' | I<AARE> ')' )
+-
+ B<UNIX ATTR COND> 'attr' '=' ( I<AARE> | '(' '"' I<AARE> '"' | I<AARE> ')' )
+ 
+ B<UNIX OPT COND> 'opt' '=' ( I<AARE> | '(' '"' I<AARE> '"' | I<AARE> ')' )
+@@ -1203,6 +1201,460 @@ addresses, ports, and port ranges.
+  network ip=127.0.0.1 port=8080 peer=(ip=10.139.15.23 port=8081),
+  network ip=127.0.0.1 port=8080-8084,
+ 
++=head4 Network Interface Restrictions
++
++If kernel support is enabled, it is possible to restrict network
++access based on the interface that communication can be sent or received
++on by specifying the I<interface=> conditional.
++eg.
++
++  network inet interface=eth0 port=8080,
++
++The interface conditional is limited to mediating the acceptance of
++connections, and the sending, and receiving of data. If a rule does
++not specify the interface conditional, it does not restrict the
++interface that can be used.
++
++The sending side of the interface conditional makes use of packet
++labeling. Currently this is limited to the use of the SecMark. The
++use of the SecMark has several complications and limitations, which
++are discussed in the Limitations, and SecMark sections.
++
++The receiving task can also mediate the interface that a packet
++arrives on. Packet labeling is not needed for inbound interface
++mediation. This means that interface mediation of in bound
++connections, and messages has fewer limitations than outbound
++mediation.
++
++=head5 Limitations of the Interface conditional
++
++There are several restrictions around interface mediation. For the
++interface conditional to function AppArmor must be compiled with
++support for SecMarks, NetFilter, and the kernel AppArmor module must
++also support the mediation. If any of these conditions are not met
++then the network interface rule will be downgraded, or ignored. The
++rule downgrade can be turned into a compile time error using Werror.
++
++It is possible for the above limitations to be met and for AppArmor to
++still not enforce outbound interface mediation. The SecMark interface
++supports only a single LSM, if another LSM claims the interface before
++AppArmor during boot, AppArmor will not be able to enforce the
++outbound interface conditional.
++
++=head6 Socket Address Family Restrictions
++
++The interface conditional is limited to the inet, and inet6 address
++families, and currently only uses the SecMark label, this means the
++packet label is limited to use on host and is not carried across
++the network.
++
++=head6 Profile Flags and Rule Prefix Moodifier Limitations
++
++=over 8
++
++=item B<audit>: The audit profile flag may not trigger unless the profile
++contains rules assigning the profile label, or matching an interface.
++The audit prefix on a rule with the interface conditional does not
++have this limitation.
++
++=item B<complain>: The complain profile flag may not trigger unless the
++profile contains rules assigning the profile label, or matching the
++interface.  The complain prefix on a rule with the interface
++conditional does not have this limitation.
++
++=item B<prompt>: The interface conditional is incompatible with the prompt rule
++prefix, and the prompt flag will not trigger for interface failures.
++
++=item B<kill>: The interface conditional is incompatible with the kill rule
++prefix, and profile flag for inbound packets.
++
++=item B<halt>: The interface conditional is incompatible with the halt rule
++prefix, and profile flag for inbound packets.
++
++=back
++
++=head6 Interaction with Firewalls
++
++The outbound interface conditional interacts with and potentially
++conflicts with explicit firewall packet labeling that uses the
++SecMark. This is because the interface conditional uses the label on
++the outbound packet to mediate which interface the packet is allowed
++to be sent to.
++
++Explicitly setting the label via a firewall rule can change the label
++on the packet and potentially cause the interface conditional to not
++be applied, or even cause the wrong interface mediation to be
++applied.
++
++Where possible, when multiple labels are specified, AppArmor will assign
++a label stack to the packet ensuring the interface conditional is
++applied, and if it can't do that it will raise a policy compilation
++error.
++
++See the SecMark section for information on how the interface
++restrictions interact with NetFilter and firewall rules.
++
++=head6 Additional Information for Firewalls
++
++The interface mediation may be done via SecMark packet labeling in the
++NetFilter B<LOCAL_OUTPUT> hook. If it is done via SecMark, any other
++firewall rule run before the AppArmor hook in the B<LOCAL_OUTPUT>
++hook may result in interface mediation not working correctly.
++
++Interface mediation is done in the B<LOCAL_OUTPUT> netfilter
++hook, and is subject to any changes a previous hook may have done to
++packet routing information. That is to say it is possible that some
++firewall rule type applications could interfere with AppArmor
++interface mediation.
++
++
++=head4 Label Match Conditional
++
++The label match conditional allows specifying the label that a received
++packet is allowed to have, or in the case of socket based operations
++the label that the socket has. The label match is performed by matching
++the specified label pattern against the SecMark (or any other future
++supported type of label) on the packet, or in the case of socket
++operations the label on the socket.
++
++The local label match conditional is the conditional used for socket
++label matching.
++
++    network label=foo,
++
++The peer label match conditional is the conditional used when matching
++in coming network packet labels.
++
++    network receive peer=(label=foo),
++    network inet peer=(label=httpd),
++    network ip=127.0.0.1 peer=(label=httpd),
++
++The label on a socket is set by the confinement of the task that
++opened the socket, and is potentially extended if the socket is passed
++to other tasks with different confinement.
++
++The label on a packet (currently just the SecMark) can be set by an
++AppArmor rule (interface or explicit assignment), or by system
++firewalls like iptables. For the purposes of network packet label
++matching if a packet does not have a label (SecMark) it will be
++associated with the special label of I<unlabeled>.
++
++=head5 Notes on label matching
++
++AppArmor will only do packet label matching when profiles have
++explicit rules supporting it. Otherwise AppArmor will short circuit
++label match mediation, reducing the overhead.
++
++For packet label matching, the socket label is used as a proxy for the
++receiving task. Generally this does not affect mediation however, if a
++socket is shared between tasks with different confinement, what is
++allowed will be the intersection of what is allowed by all profiles in
++the socket label.
++
++This is because AppArmor does not control which task will receive the
++packet, and so it can only allow what is allowed by all tasks that
++could potentially receive the packet.
++
++Similarly, unless the interface match conditional is used or an
++explicit label assignment rule is used, AppArmor does not set the label
++on packets to avoid any overhead when it is not necessary.
++
++
++=head4 Specifying Socket and Packet Labeling
++
++AppArmor by default will label sockets with the creating tasks
++confinement. This labeling may be extended to a label stack when the
++socket is shared between tasks of different confinement.
++
++AppArmor by default does not label network packets, as that can have
++performance implications, and it is not always needed. Instead AppArmor
++tries to be smart about packet labeling on applying and matching labels
++when needed to support the specified rules.
++
++=head5 Implicit packet labeling
++
++Some rules will result in a packet being given the label of the
++sending task. Eg. the interface conditional will implicitly label
++outgoing packets with the tasks confinement (note: in some cases the
++sockets label may be used as a proxy).
++
++Implicitly labeling packets works if you are only considering AppArmor
++network rules. However if the admin would like to also be able to
++control packets based on AppAmor labeling at the firewall then
++implicit labeling controls are not sufficient, and explicit labeling
++must be used.
++
++=head5 Explicit labeling
++
++AppArmor allows specifying an explit label for both the socket and
++the packet, using the assignment conditional.
++
++=head6 explicit socket labeling
++
++For the socket it the local assignment conditional is used.
++
++    network label:=@{profile_name},
++
++In this case the use of @{profile_name} is equivalent to the implicit
++labeling that AppArmor already does.
++
++=head6 explicit packet labeling
++
++For packet labels the peer assignment condition is used.
++
++    network send inet peer=(label:=@{profile_name}),
++
++In this case the label set is the same label that implied labeling set
++except that it will be set on every network packet, not just the ones
++implied by the interface conditional.
++
++Explicit labeling can interact with and conflict with implied
++labeling so current AppArmor only supports setting the explicit label
++to the same label that implied labeling would provide, thus avoiding
++the conflict.
++
++There are plans to extend explicit labeling to allow specifying
++any label but that is not available yet.
++
++=head5 kernel socket labeling
++
++Packets sent by the kernel may either have the type of I<kernel_t> or
++I<unlabeled> dependent on whether AppArmor is configured to label
++kernel packets or not.
++
++If labeling of kernel packets is enabled, AppArmor will label all
++kernel packets. This can have a small impact on network performance so,
++for those systems that need it, kernel socket labeling can be disabled.
++
++=head4 SecMark, NetFilter, and Firewalls
++
++When AppArmor profiles are attached to processes the network rules can
++be thought of as an application level firewall, handling network
++traffic in the context of the application. System level firewalling is
++generally left to existing firewalls that admins are already familiar
++with.
++
++However the AppArmor application firewall can and will interact with
++the system firewall, and it is important to understand how and where
++this interaction can occur.
++
++In Linux, firewalls are built on top of the kernel's NetFilter
++subsystem which provides five different hook points to manage the flow
++of packets in the system: PRE_ROUTING, LOCAL_IN, FORWARD, LOCAL_OUT,
++and POST_ROUTING. In addition it provides some fields for the
++firewall, network, and security subsystems to store data on the packet
++as it traverses through the system.
++
++   +-------------------------Loop Back<------------------------+
++   |                                                           |
++   v                                                           ^
++  Dev -->PRE_ROUTING--->[ROUTE]--->FWD-------->POST_ROTUING--> Dev
++         |               |         |      ^       |
++         Conntrack       |       Mangle   |       Mangle
++         Mangle          |       Filter   |       NAT (Src)
++         NAT (Dst)       |                |       Conntrack
++         (QDisc)         |             [ROUTE]    AppArmor Interface
++                         |                |       AppArmor Label Match
++                         V                |
++        Conntrack----LOCAL_IN         LOCAL OUT---AppArmor SecMark
++        Mangle           |                ^       Conntrack
++        AppArmor SecMark |                |       Mangle
++                         |                |       NAT (Dst)
++                         v                |       Filter
++               apparmor_sock_rcv_skb      |
++             apparmor_inet_conn_request   |
++                         |                |
++                         |                |
++                         v                ^
++                      Process          Process
++
++AppArmor uses SecMark, and ConnSecMark, to pass state information
++with the packet as it is passed through the system. In addition it
++uses several of the hook points to make mediation decisions.
++
++
++The interface conditional does not allow explicitly setting the
++SecMark. Instead it is set based on the confining label of the
++sending task. More specifically, in a stacking situation it's set based
++on the subset of profiles in the label with matching interface
++conditionals. It may be possible to set the SecMark explicitly in the
++future but it is not supported at this time.
++
++AppArmor does not currently support explicitly specifying a SecMark
++match conditional (label=) match at this time either. Though that
++ability will be made available in a future patch.
++
++However firewalls are free to match the SecMark if AppArmor sets it.
++
++AppArmor's SecMark support has several restrictions, and limitations.
++AppArmor must be built with SecMark support enabled, and it shares the
++SecMark with all other LSMs on the system, as such AppArmor must be
++able to claim the SecMark interface on boot. This means AppArmor must
++be in the B<LSM=> security module list before any other LSM that may
++try to claim the interface.
++
++AppArmor netfilter hooks are executed with a SELINUX_FISRT priority,
++so they will be executed before most firewall rules. However it
++is possible to create hooks filters that will compete with and
++may fire before the AppArmor code.
++
++AppArmor will set the secmark to the subject label in the B<LOCAL_OUTPUT>
++hook. It will filter interfaces based on the secmark in the B<POST_ROUTING>
++and security_sock_rcv_skb hook (roughly that same as LOCAL_INPUT for
++firewalls.
++
++=head3 Medidation of the unix family
++
++See B<Unix socket rules> for both socket and fs based unix socket
++mediation.
++
++=head2 Unix socket rules
++
++AppArmor supports fine grained mediation of unix domain abstract and
++anonymous sockets. Unix domain sockets with file system paths are
++mediated via file access rules.
++
++Abstract unix domain sockets is a nonportable Linux extension of unix
++domain sockets, see unix(7) for more information.
++
++=head3 Unix socket address paths
++
++The sun_path component (aka the socket address) of a unix domain socket is
++specified by the
++
++  addr=
++
++conditional. If an address conditional is not specified as part of
++a rule then the rule matches both abstract and anonymous sockets.
++
++In AppArmor the address of an abstract unix domain socket begins with
++the I<@> character, similar to how they are reported (as paths) by
++netstat -x. The address then follows and may contain pattern matching
++and any characters including the null character. In AppArmor null
++characters must be specified by using an escape sequence I<\000> or
++I<\x00>. The pattern matching is the same as is used by file path matching
++so * will not match I</> even though it has no special meaning with
++in an abstract socket name. Eg.
++
++  unix addr=@*,
++
++Autobound unix domain sockets have a unix sun_path assigned to them
++by the kernel, as such specifying a policy based address is not possible.
++The autobinding of sockets can be controlled by specifying the special
++I<auto> keyword. Eg.
++
++  unix addr=auto,
++
++To indicate that the rule only applies to auto binding of unix domain
++sockets. It is important to note this only applies to the I<bind>
++permission as once the socket is bound to an address it is
++indistinguishable from a socket that have an addr bound with a
++specified name. When the I<auto> keyword is used with other permissions
++or as part of a peer addr it will be replaced with a pattern that
++can match an autobound socket. Eg. For some kernels
++
++  unix rw addr=auto,
++
++is transformed to
++
++  unix rw addr=@[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9],
++
++It is important to note, this pattern may match abstract sockets that
++were not autobound but have an addr that fits what is generated by
++the kernel when autobinding a socket.
++
++Anonymous unix domain sockets have no sun_path associated with the socket
++address, however it can be specified with the special I<none> keyword to
++indicate the rule only applies to anonymous unix domain sockets. Eg.
++
++  unix addr=none,
++
++If the address component of a rule is not specified then the rule applies
++to autobind, abstract and anonymous sockets.
++
++=head3 Unix socket permissions
++
++Unix domain socket rules are accumulated so that the granted unix
++socket permissions are the union of all the listed unix rule permissions.
++
++Unix domain socket rules are broad and general and become more restrictive
++as further information is specified. Policy may be specified down to
++the socket address (aka sun_path) and label level. The content of the
++communication is not examined.
++
++Unix socket rule permissions are implied when a rule does not explicitly
++state an access list. By default if a rule does not have an access list
++all permissions that are compatible with the specified set of local
++and peer conditionals are implied.
++
++The create, bind, listen, shutdown, getattr, setattr, getopt, and setopt
++permissions are local socket permissions. They are only applied to the local
++socket and can't be specified in rules that have a peer component. The accept
++permission applies to the combination of a local and peer socket. The connect,
++send, and receive permissions are peer socket permissions.
++
++Only the peer socket permissions will be applied to rules that don't specify
++permissions and contain a peer component.
++
++=head3 Example Unix domain socket rules:
++
++  # Allow all permissions to unix sockets
++  unix,
++
++  # Explicitly allow all unix permissions
++  unix (create, listen, accept, connect, send, receive, getattr, setattr, setopt, getopt),
++
++  # Explicitly deny unix socket access
++  deny unix,
++
++  # Allow create and use of abstract and anonymous sockets for profile_name
++  unix peer=(label=@{profile_name}),
++
++  # Allow receiving via unix sockets from unconfined
++  unix (receive) peer=(label=unconfined),
++
++  # Allow getattr and shutdown on anonymous sockets
++  unix (getattr, shutdown) addr=none,
++
++  # Allow SOCK_STREAM connect, receive and send on an abstract socket @bar
++  # with peer running under profile '/foo'
++  unix (connect, receive, send) type=stream peer=(label=/foo,addr="@bar"),
++
++  # Allow accepting connections from and receiving from peer running under
++  # profile '/bar' on abstract socket '@foo'
++  unix (accept, receive) addr=@foo peer=(label=/bar),
++
++=head3 Abstract unix domain sockets autobind
++
++Abstract unix domain sockets can autobind to an address. The autobind
++address is a unique 5 digit string of decimal numbers, eg. @00001. There
++is nothing that prevents a task from manually binding to addresses with a
++similar pattern so it is impossible to reliably identify autobind addresses
++from a regular address.
++
++=head3 Interaction of network rules and fine grained unix domain socket rules
++
++The coarse grained networking rules can be used to control unix domain
++sockets as well. When fine grained unix domain socket mediation is available
++the coarse grained network rule is mapped into the equivalent unix socket
++rule.
++
++E.G.
++
++    network unix,  =>  unix,
++
++    network unix stream,   =>  unix stream,
++
++Fine grained mediation rules however can not be losslessly converted back
++to the coarse grained network rule; e.g.
++
++   unix bind addr=@example,
++
++Has no exact match under coarse grained network rules, the closest match is
++the much wider permission rule of
++
++   network unix,
++
+ =head2 Mount Rules
+ 
+ AppArmor supports mount mediation and allows specifying filesystem types and
+@@ -1704,153 +2156,6 @@ Example AppArmor DBus rules:
+     # Allow and audit all eavesdropping
+     audit dbus eavesdrop,
+ 
+-=head2 Unix socket rules
+-
+-AppArmor supports fine grained mediation of unix domain abstract and
+-anonymous sockets. Unix domain sockets with file system paths are
+-mediated via file access rules.
+-
+-Abstract unix domain sockets is a nonportable Linux extension of unix
+-domain sockets, see unix(7) for more information.
+-
+-=head3 Unix socket address paths
+-
+-The sun_path component (aka the socket address) of a unix domain socket is
+-specified by the
+-
+-  addr=
+-
+-conditional. If an address conditional is not specified as part of
+-a rule then the rule matches both abstract and anonymous sockets.
+-
+-In AppArmor the address of an abstract unix domain socket begins with
+-the I<@> character, similar to how they are reported (as paths) by
+-netstat -x. The address then follows and may contain pattern matching
+-and any characters including the null character. In AppArmor null
+-characters must be specified by using an escape sequence I<\000> or
+-I<\x00>. The pattern matching is the same as is used by file path matching
+-so * will not match I</> even though it has no special meaning with
+-in an abstract socket name. Eg.
+-
+-  unix addr=@*,
+-
+-Autobound unix domain sockets have a unix sun_path assigned to them
+-by the kernel, as such specifying a policy based address is not possible.
+-The autobinding of sockets can be controlled by specifying the special
+-I<auto> keyword. Eg.
+-
+-  unix addr=auto,
+-
+-To indicate that the rule only applies to auto binding of unix domain
+-sockets. It is important to note this only applies to the I<bind>
+-permission as once the socket is bound to an address it is
+-indistinguishable from a socket that have an addr bound with a
+-specified name. When the I<auto> keyword is used with other permissions
+-or as part of a peer addr it will be replaced with a pattern that
+-can match an autobound socket. Eg. For some kernels
+-
+-  unix rw addr=auto,
+-
+-is transformed to
+-
+-  unix rw addr=@[a-f0-9][a-f0-9][a-f0-9][a-f0-9][a-f0-9],
+-
+-It is important to note, this pattern may match abstract sockets that
+-were not autobound but have an addr that fits what is generated by
+-the kernel when autobinding a socket.
+-
+-Anonymous unix domain sockets have no sun_path associated with the socket
+-address, however it can be specified with the special I<none> keyword to
+-indicate the rule only applies to anonymous unix domain sockets. Eg.
+-
+-  unix addr=none,
+-
+-If the address component of a rule is not specified then the rule applies
+-to autobind, abstract and anonymous sockets.
+-
+-=head3 Unix socket permissions
+-
+-Unix domain socket rules are accumulated so that the granted unix
+-socket permissions are the union of all the listed unix rule permissions.
+-
+-Unix domain socket rules are broad and general and become more restrictive
+-as further information is specified. Policy may be specified down to
+-the socket address (aka sun_path) and label level. The content of the
+-communication is not examined.
+-
+-Unix socket rule permissions are implied when a rule does not explicitly
+-state an access list. By default if a rule does not have an access list
+-all permissions that are compatible with the specified set of local
+-and peer conditionals are implied.
+-
+-The create, bind, listen, shutdown, getattr, setattr, getopt, and setopt
+-permissions are local socket permissions. They are only applied to the local
+-socket and can't be specified in rules that have a peer component. The accept
+-permission applies to the combination of a local and peer socket. The connect,
+-send, and receive permissions are peer socket permissions.
+-
+-Only the peer socket permissions will be applied to rules that don't specify
+-permissions and contain a peer component.
+-
+-=head3 Example Unix domain socket rules:
+-
+-  # Allow all permissions to unix sockets
+-  unix,
+-
+-  # Explicitly allow all unix permissions
+-  unix (create, listen, accept, connect, send, receive, getattr, setattr, setopt, getopt),
+-
+-  # Explicitly deny unix socket access
+-  deny unix,
+-
+-  # Allow create and use of abstract and anonymous sockets for profile_name
+-  unix peer=(label=@{profile_name}),
+-
+-  # Allow receiving via unix sockets from unconfined
+-  unix (receive) peer=(label=unconfined),
+-
+-  # Allow getattr and shutdown on anonymous sockets
+-  unix (getattr, shutdown) addr=none,
+-
+-  # Allow SOCK_STREAM connect, receive and send on an abstract socket @bar
+-  # with peer running under profile '/foo'
+-  unix (connect, receive, send) type=stream peer=(label=/foo,addr="@bar"),
+-
+-  # Allow accepting connections from and receiving from peer running under
+-  # profile '/bar' on abstract socket '@foo'
+-  unix (accept, receive) addr=@foo peer=(label=/bar),
+-
+-=head3 Abstract unix domain sockets autobind
+-
+-Abstract unix domain sockets can autobind to an address. The autobind
+-address is a unique 5 digit string of decimal numbers, eg. @00001. There
+-is nothing that prevents a task from manually binding to addresses with a
+-similar pattern so it is impossible to reliably identify autobind addresses
+-from a regular address.
+-
+-=head3 Interaction of network rules and fine grained unix domain socket rules
+-
+-The coarse grained networking rules can be used to control unix domain
+-sockets as well. When fine grained unix domain socket mediation is available
+-the coarse grained network rule is mapped into the equivalent unix socket
+-rule.
+-
+-E.G.
+-
+-    network unix,  =>  unix,
+-
+-    network unix stream,   =>  unix stream,
+-
+-Fine grained mediation rules however can not be losslessly converted back
+-to the coarse grained network rule; e.g.
+-
+-   unix bind addr=@example,
+-
+-Has no exact match under coarse grained network rules, the closest match is
+-the much wider permission rule of
+-
+-   network unix,
+-
+ =head2 change_profile rules
+ 
+ AppArmor supports self directed profile transitions via the change_profile
+diff --git a/parser/network.cc b/parser/network.cc
+index b3faa76..ba2c906 100644
+--- a/parser/network.cc
++++ b/parser/network.cc
+@@ -399,15 +399,42 @@ bool network_rule::parse_address(ip_conds &entry)
+ 	return parse_ip(entry.sip, &entry.ip);
+ }
+ 
++bool network_rule::parse_iface(ip_conds &entry)
++{
++	std::string buf;
++	pattern_t ptype;
++	int pos;
++
++	if (!entry.iface)
++		yyerror("internal error. null iface passed to parse_iface");
++
++	ptype = convert_aaregex_to_pcre(entry.iface, 0, glob_default, buf, &pos);
++	if (ptype == ePatternInvalid)
++		return false;
++
++	/* atm just discard buf, this is just so we can detect conversion
++	 * error in the front-end. Ideally would store but that is more work atm
++	 */
++	return true;
++}
++
++
+ void network_rule::move_conditionals(struct cond_entry *conds, ip_conds &ip_cond)
+ {
+ 	struct cond_entry *cond_ent;
+ 
+ 	list_for_each(conds, cond_ent) {
+-		/* for now allow only '=' */
+-		if (cond_ent->comp != cond_comp::EQ)
+-			yyerror("only \"=\" allowed in conditions of network rules\n");
+-		if (strcmp(cond_ent->name, "ip") == 0) {
++		if (strcmp(cond_ent->name, "label") == 0) {
++			move_conditional_value("network", &ip_cond.label_match, cond_ent);
++			if (cond_ent->comp == cond_comp::SET)
++				ip_cond.set_label = true;
++			else if (cond_ent->comp == cond_comp::EQ)
++				ip_cond.set_label = false;
++			else
++				yyerror("unsupported operator in label conditional of network rules\n");
++		} else if (cond_ent->comp != cond_comp::EQ) { /* next conds only allow '=' */
++			yyerror("unsupported operator used in conditions of network rules\n");
++		} else if (strcmp(cond_ent->name, "ip") == 0) {
+ 			move_conditional_value("network", &ip_cond.sip, cond_ent);
+ 			if (!parse_address(ip_cond))
+ 				yyerror("network invalid ip='%s'\n", ip_cond.sip);
+@@ -415,6 +442,10 @@ void network_rule::move_conditionals(struct cond_entry *conds, ip_conds &ip_cond
+ 			move_conditional_value("network", &ip_cond.sport, cond_ent);
+ 			if (!parse_port(ip_cond))
+ 				yyerror("network invalid port='%s'\n", ip_cond.sport);
++		} else if (strcmp(cond_ent->name, "interface") == 0) {
++			move_conditional_value("network", &ip_cond.iface, cond_ent);
++			if (!parse_iface(ip_cond))
++				yyerror("network invalid interface='%s'\n", ip_cond.iface);
+ 		} else {
+ 			yyerror("invalid network rule conditional \"%s\"\n",
+ 				cond_ent->name);
+@@ -434,7 +465,7 @@ void network_rule::set_netperm(unsigned int family, unsigned int type, unsigned
+ 
+ network_rule::network_rule(perm32_t perms_p, struct cond_entry *conds,
+ 			   struct cond_entry *peer_conds):
+-	dedup_perms_rule_t(features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8), label(NULL)
++	dedup_perms_rule_t(features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8)
+ {
+ 	size_t family_index, i;
+ 
+@@ -475,7 +506,7 @@ network_rule::network_rule(perm32_t perms_p, struct cond_entry *conds,
+ network_rule::network_rule(perm32_t perms_p, const char *family, const char *type,
+ 			   const char *protocol, struct cond_entry *conds,
+ 			   struct cond_entry *peer_conds):
+-	dedup_perms_rule_t(features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8), label(NULL)
++	dedup_perms_rule_t(features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8)
+ {
+ 	const struct network_tuple *mapping = NULL;
+ 
+@@ -526,7 +557,7 @@ network_rule::network_rule(perm32_t perms_p, const char *family, const char *typ
+ }
+ 
+ network_rule::network_rule(perm32_t perms_p, unsigned int family, unsigned int type):
+-	dedup_perms_rule_t(features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8), label(NULL)
++	dedup_perms_rule_t(features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8)
+ {
+ 	network_map[family].push_back({ family, type, 0xFFFFFFFF });
+ 	set_netperm(family, type, 0xFFFFFFFF);
+@@ -643,6 +674,29 @@ std::string gen_port_cond(uint16_t port)
+ 	return oss.str();
+ }
+ 
++std::string gen_iface_cond(const char *iface)
++{
++	std::string buf;
++	pattern_t ptype;
++	std::ostringstream oss;
++	if (iface) {
++		int pos;
++		oss << "\\x00";
++		ptype = convert_aaregex_to_pcre(iface, 0, glob_default, buf, &pos);
++		if (ptype == ePatternInvalid)
++			throw std::runtime_error("Invalid iface conditional");
++		oss << buf;
++	} else {
++		/* match any iface */
++		oss << ".*";
++	}
++
++	/* separator */
++	//???oss << "\\x00"
++	
++	return oss.str();
++}
++
+ std::list<std::ostringstream> gen_all_ip_options(std::ostringstream &oss) {
+ 
+ 	std::list<std::ostringstream> all_streams;
+@@ -681,7 +735,8 @@ std::list<std::ostringstream> copy_streams_list(std::list<std::ostringstream> &s
+ 	return streams_copy;
+ }
+ 
+-bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &streams, ip_conds &entry, bool is_peer, uint16_t port, bool is_port, bool is_cmd)
++bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &streams, ip_conds &entry,
++				bool is_peer, uint16_t port, bool is_port, bool is_cmd, bool is_iface)
+ {
+ 	std::string buf;
+ 	perm32_t cond_perms;
+@@ -720,7 +775,7 @@ bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &st
+ 	}
+ 
+ 	cond_perms = map_perms(perms);
+-	if (!is_cmd && (label || is_peer))
++	if (!is_cmd && (entry.label_match || is_peer || (is_iface && entry.iface)))
+ 		cond_perms = AA_COMPAT_CONT_MATCH;
+ 
+ 	for (auto &oss : streams) {
+@@ -734,7 +789,28 @@ bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &st
+ 						 parseopts))
+ 			return false;
+ 
+-		if (label || is_peer) {
++		/* only output for secmark rule rules */
++		if (is_iface && (entry.label_match || is_peer)) {
++			if (!entry.iface)
++				oss << default_match_pattern; /* iface not specified */
++			else
++				oss << gen_iface_cond(entry.iface);
++
++			oss << "\\x00"; /* null transition */
++
++			buf = oss.str();
++
++			perm32_t ifperms = cond_perms;
++			if (perms & AA_MAY_SEND)
++				ifperms |= AA_SET_LABEL;
++			if (!prof.policy.rules->add_rule(buf.c_str(), priority,
++							 rule_mode, ifperms,
++							 dedup_perms_rule_t::audit == AUDIT_FORCE ? map_perms(perms) : 0,
++							 parseopts))
++				return false;
++		}
++		
++		if (entry.label_match || is_peer) {
+ 			if (!is_peer)
+ 				cond_perms = map_perms(perms);
+ 
+@@ -752,10 +828,10 @@ bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &st
+ 	return true;
+ }
+ 
+-bool network_rule::gen_net_rule(Profile &prof, u16 family, unsigned int type_mask, unsigned int protocol) {
++bool network_rule::gen_net_rule(Profile &prof, unsigned int netclass, u16 family, unsigned int type_mask, unsigned int protocol, bool skb) {
+ 	std::ostringstream buffer;
+ 	std::string buf;
+-	unsigned int netclass = features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8;
++	bool is_iface = skb && features_supports_ifacev9_skb && (local.iface || peer.iface);
+ 
+ 	buffer << "\\x" << std::setfill('0') << std::setw(2) << std::hex << netclass;
+ 	buffer << "\\x" << std::setfill('0') << std::setw(2) << std::hex << ((family & 0xff00) >> 8);
+@@ -803,7 +879,9 @@ bool network_rule::gen_net_rule(Profile &prof, u16 family, unsigned int type_mas
+ 			cmd_buffer << buffer.str();
+ 			streams.push_back(std::move(cmd_buffer));
+ 
+-			if (!gen_ip_conds(prof, streams, peer, true, peer_port, peer.is_port, false))
++			if (!gen_ip_conds(prof, streams, peer,
++					  true, peer_port, peer.is_port,
++					  false, is_iface))
+ 				return false;
+ 
+ 			for (auto &oss : streams) {
+@@ -820,7 +898,9 @@ bool network_rule::gen_net_rule(Profile &prof, u16 family, unsigned int type_mas
+ 					localstreams.push_back(std::move(local_buffer));
+ 				}
+ 
+-				if (!gen_ip_conds(prof, localstreams, local, false, local_port, local.is_port, true))
++				if (!gen_ip_conds(prof, localstreams, local,
++						  false, local_port, local.is_port,
++						  true, is_iface))
+ 					return false;
+ 			}
+ 		}
+@@ -833,7 +913,8 @@ bool network_rule::gen_net_rule(Profile &prof, u16 family, unsigned int type_mas
+ 
+ 		common_buffer << buffer.str();
+ 		streams.push_back(std::move(common_buffer));
+-		if (!gen_ip_conds(prof, streams, local, false, local_port, local.is_port, false))
++		/* skb is always false for AA_NET_LISTEN and AA_NET_OPT, and therefore so is is_iface */
++		if (!gen_ip_conds(prof, streams, local, false, local_port, local.is_port, false, false))
+ 			return false;
+ 
+ 		if (perms & AA_NET_LISTEN) {
+@@ -883,6 +964,8 @@ int network_rule::gen_policy_re(Profile &prof)
+ {
+ 	std::ostringstream buffer;
+ 	std::string buf;
++	unsigned int netclass = features_supports_networkv9 ? AA_CLASS_NETV9 : AA_CLASS_NETV8;
++	bool skb = features_supports_networkv9_skb;
+ 
+ 	if (!(features_supports_networkv8 || features_supports_networkv9)) {
+ 		warn_once(prof.name);
+@@ -895,14 +978,23 @@ int network_rule::gen_policy_re(Profile &prof)
+ 		unsigned int protocol = perm.second.second;
+ 
+ 		if (type > 0xffff) {
+-			if (!gen_net_rule(prof, family, type, protocol))
++			if (!gen_net_rule(prof, netclass, family,
++					  type, protocol, false))
++				goto fail;
++
++			if (skb && !gen_net_rule(prof, AA_CLASS_NETV9_SKB, family,
++						 type, protocol, skb))
+ 				goto fail;
+ 		} else {
+ 			int t;
+ 			/* generate rules for types that are set */
+ 			for (t = 0; t < 16; t++) {
+ 				if (type & (1 << t)) {
+-					if (!gen_net_rule(prof, family, t, protocol))
++					if (!gen_net_rule(prof, netclass, family,
++							  t, protocol, false))
++						goto fail;
++					if (skb && !gen_net_rule(prof, AA_CLASS_NETV9_SKB, family,
++								 t, protocol, skb))
+ 						goto fail;
+ 				}
+ 			}
+@@ -979,6 +1071,12 @@ static int cmp_ip_conds(ip_conds const &lhs, ip_conds const &rhs)
+ 	if (res)
+ 		return res;
+ 	res = null_strcmp(lhs.sport, rhs.sport);
++	if (res)
++		return res;
++	res = null_strcmp(lhs.iface, rhs.iface);
++	if (res)
++		return res;
++	res = null_strcmp(lhs.label_match, rhs.label_match);
+ 	if (res)
+ 		return res;
+ 	return lhs.is_none - rhs.is_none;
+@@ -1023,8 +1121,5 @@ int network_rule::cmp(rule_t const &rhs) const
+ 	res = cmp_ip_conds(local, nrhs.local);
+ 	if (res)
+ 		return res;
+-	res = cmp_ip_conds(peer, nrhs.peer);
+-	if (res)
+-		return res;
+-	return null_strcmp(label, nrhs.label);
++	return cmp_ip_conds(peer, nrhs.peer);
+ };
+diff --git a/parser/network.h b/parser/network.h
+index ee673db..4f429d9 100644
+--- a/parser/network.h
++++ b/parser/network.h
+@@ -62,12 +62,13 @@
+ #define AA_NET_GETOPT		0x02000000
+ 
+ #define AA_CONT_MATCH		0x08000000
++#define AA_SET_LABEL		0x80000000
+ 
+ #define AA_VALID_NET_PERMS (AA_NET_SEND | AA_NET_RECEIVE | AA_NET_CREATE | \
+ 			    AA_NET_SHUTDOWN | AA_NET_CONNECT | \
+ 			    AA_NET_SETATTR | AA_NET_GETATTR | AA_NET_BIND | \
+ 			    AA_NET_ACCEPT | AA_NET_LISTEN | AA_NET_SETOPT | \
+-			    AA_NET_GETOPT | AA_CONT_MATCH)
++			    AA_NET_GETOPT | AA_SET_LABEL | AA_CONT_MATCH)
+ #define AA_LOCAL_NET_PERMS (AA_NET_CREATE | AA_NET_SHUTDOWN | AA_NET_SETATTR |\
+ 			    AA_NET_GETATTR | AA_NET_BIND | AA_NET_ACCEPT |    \
+ 			    AA_NET_LISTEN | AA_NET_SETOPT | AA_NET_GETOPT)
+@@ -126,7 +127,10 @@ class ip_conds {
+ public:
+ 	char *sip = NULL;
+ 	char *sport = NULL;
++	char *iface = NULL;
++	char *label_match = NULL;
+ 
++	bool set_label = false; /* unused while label_match is ununsed */
+ 	bool is_ip = false;
+ 	bool is_port = false;
+ 
+@@ -142,6 +146,8 @@ public:
+ 			free(sip);
+ 		if (sport)
+ 			free(sport);
++		if (iface)
++			free(iface);
+ 	}
+ };
+ 
+@@ -153,14 +159,12 @@ public:
+ 
+ 	ip_conds peer;
+ 	ip_conds local;
+-	char *label;
+-
+-	bool has_local_conds(void) { return local.sip || local.sport; }
++	bool has_local_conds(void) { return local.sip || local.sport || local.iface || local.label_match; }
+ 	bool has_peer_conds(void) { return peer.sip || peer.sport; }
+ 	/* empty constructor used only for the profile to access
+ 	 * static elements to maintain compatibility with
+ 	 * AA_CLASS_NET */
+-	network_rule(): dedup_perms_rule_t(AA_CLASS_NETV8), label(NULL) { }
++	network_rule(): dedup_perms_rule_t(AA_CLASS_NETV8) { }
+ 	network_rule(perm32_t perms_p, struct cond_entry *conds,
+ 		     struct cond_entry *peer_conds);
+ 	network_rule(perm32_t perms_p, const char *family, const char *type,
+@@ -189,12 +193,13 @@ public:
+ 		}
+ 	};
+ 
+-	bool gen_ip_conds(Profile &prof, std::list<std::ostringstream> &streams, ip_conds &entry, bool is_peer, uint16_t port, bool is_port, bool is_cmd);
+-	bool gen_net_rule(Profile &prof, u16 family, unsigned int type_mask, unsigned int protocol);
++	bool gen_ip_conds(Profile &prof, std::list<std::ostringstream> &streams, ip_conds &entry, bool is_peer, uint16_t port, bool is_port, bool is_cmd, bool is_iface);
++	bool gen_net_rule(Profile &prof, unsigned int netclass, u16 family, unsigned int type_mask, unsigned int protocol, bool skb);
+ 	void set_netperm(unsigned int family, unsigned int type, unsigned int protocol);
+ 	void update_compat_net(void);
+ 	bool parse_address(ip_conds &entry);
+ 	bool parse_port(ip_conds &entry);
++	bool parse_iface(ip_conds &entry);
+ 
+ 	// update TODO: in equality.sh when priority is a valid prefix
+ 	bool valid_prefix(const prefixes &p, const char *&error) override {
+diff --git a/parser/parser.h b/parser/parser.h
+index 3ee405f..8faacd3 100644
+--- a/parser/parser.h
++++ b/parser/parser.h
+@@ -347,6 +347,8 @@ extern int features_supports_networkv8;
+ extern bool features_supports_networkv9;
+ extern bool features_supports_inetv8;
+ extern bool features_supports_inetv9;
++extern bool features_supports_networkv9_skb;
++extern bool features_supports_ifacev9_skb;
+ extern int features_supports_identity_names;
+ extern int kernel_supports_policydb;
+ extern int kernel_supports_diff_encode;
+diff --git a/parser/parser_common.c b/parser/parser_common.c
+index 76d6797..0a79382 100644
+--- a/parser/parser_common.c
++++ b/parser/parser_common.c
+@@ -73,6 +73,8 @@ int features_supports_networkv8 = 0;	/* kernel supports 4.17 network rules */
+ bool features_supports_networkv9 = 0;	/* kernel supports v9 network rules */
+ bool features_supports_inetv8 = 0; 	/* kernel supports inet network rules */
+ bool features_supports_inetv9 = 0; 	/* kernel supports inet network rules */
++bool features_supports_networkv9_skb = 0; /* kernel supports v9 skb network rules */
++bool features_supports_ifacev9_skb = 0; /* kernel supports iface network rules */
+ bool features_supports_unixv7 = 0;	/* kernel supports unix socket rules */
+ bool features_supports_unixv9 = 0;	/* kernel supports v9 unix */
+ int kernel_supports_policydb = 0;	/* kernel supports new policydb */
+diff --git a/parser/parser_main.c b/parser/parser_main.c
+index dea062b..88191e4 100644
+--- a/parser/parser_main.c
++++ b/parser/parser_main.c
+@@ -1030,6 +1030,12 @@ void set_supported_features()
+ 	features_supports_networkv9 = features_intersect(kernel_features,
+ 							 policy_features,
+ 							 "network_v9");
++	features_supports_networkv9_skb = features_intersect(kernel_features,
++							     policy_features,
++							     "network_v9_skb");
++	features_supports_ifacev9_skb = features_intersect(kernel_features,
++							   policy_features,
++							   "network_v9_skb/iface");
+ 	features_supports_inetv8 = features_intersect(kernel_features,
+ 						      policy_features,
+ 						      "network_v8/af_inet");
+diff --git a/parser/parser_regex.c b/parser/parser_regex.c
+index b63c12a..cb7e6e5 100644
+--- a/parser/parser_regex.c
++++ b/parser/parser_regex.c
+@@ -1058,6 +1058,7 @@ static const char *mediates_ptrace =  CLASS_STR(AA_CLASS_PTRACE);
+ static const char *mediates_socket_net = CLASS_STR(AA_CLASS_NET);	// socket af_family type
+ static const char *mediates_netv8 = CLASS_STR(AA_CLASS_NETV8);		// address on inet
+ static const char *mediates_netv9 = CLASS_STR(AA_CLASS_NETV9);
++static const char *mediates_netv9_skb = CLASS_STR(AA_CLASS_NETV9_SKB);
+ static const char *mediates_net_unixv7 = CLASS_SUB_STR(AA_CLASS_NET, AF_UNIX);
+ static const char *mediates_net_unixv9 = CLASS_SUB_STR(AA_CLASS_NETV9, AF_UNIX);
+ static const char *mediates_ns = CLASS_STR(AA_CLASS_NS);
+@@ -1131,6 +1132,9 @@ int process_profile_policydb(Profile *prof)
+ 		if (features_supports_networkv8 &&
+ 		    !prof->policy.rules->add_rule(mediates_netv8, mediates_priority, RULE_ALLOW, AA_MAY_READ, 0, parseopts))
+ 			goto out;
++		if (features_supports_networkv9_skb &&
++		    !prof->policy.rules->add_rule(mediates_netv9_skb, mediates_priority, RULE_ALLOW, AA_MAY_READ, 0, parseopts))
++			goto out;
+ 		/* v9 requires net and unix to be done together to avoid
+ 		 * the problem that happend with v7/v8 unix/net
+ 		 */
+diff --git a/parser/tst/simple_tests/network/skb/bad_attr_1.sd b/parser/tst/simple_tests/network/skb/bad_attr_1.sd
+new file mode 100644
+index 0000000..de891c6
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/bad_attr_1.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network getattr w/peer modifier
++#=EXRESULT FAIL
++
++profile a_profile {
++  network getattr peer=(ip=127.0.0.1),
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_1.sd b/parser/tst/simple_tests/network/skb/ok_iface_1.sd
+new file mode 100644
+index 0000000..3d51018
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_1.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network receive interface=localhost ,
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_10.sd b/parser/tst/simple_tests/network/skb/ok_iface_10.sd
+new file mode 100644
+index 0000000..97bb8d5
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_10.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network inet tcp interface="local*" ip=127.0.0.1 port=21,
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_11.sd b/parser/tst/simple_tests/network/skb/ok_iface_11.sd
+new file mode 100644
+index 0000000..61b1fd0
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_11.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network inet tcp interface="local*" peer=(ip=127.0.0.1 port=21),
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_2.sd b/parser/tst/simple_tests/network/skb/ok_iface_2.sd
+new file mode 100644
+index 0000000..4166e6c
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_2.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network receive interface="localhost",
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_3.sd b/parser/tst/simple_tests/network/skb/ok_iface_3.sd
+new file mode 100644
+index 0000000..ad7318c
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_3.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network receive interface="local*",
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_4.sd b/parser/tst/simple_tests/network/skb/ok_iface_4.sd
+new file mode 100644
+index 0000000..43c2a6d
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_4.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network send interface=localhost ,
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_5.sd b/parser/tst/simple_tests/network/skb/ok_iface_5.sd
+new file mode 100644
+index 0000000..f32acae
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_5.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network send interface="localhost",
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_6.sd b/parser/tst/simple_tests/network/skb/ok_iface_6.sd
+new file mode 100644
+index 0000000..93a6a7c
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_6.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network send interface="local*",
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_7.sd b/parser/tst/simple_tests/network/skb/ok_iface_7.sd
+new file mode 100644
+index 0000000..ca1aafc
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_7.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network send ip=127.0.0.1 port=21 interface="local*",
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_8.sd b/parser/tst/simple_tests/network/skb/ok_iface_8.sd
+new file mode 100644
+index 0000000..ecb2be9
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_8.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network send ip=127.0.0.1 interface="local*" port=21,
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_iface_9.sd b/parser/tst/simple_tests/network/skb/ok_iface_9.sd
+new file mode 100644
+index 0000000..8b3d2b4
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_iface_9.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network iface test
++#=EXRESULT PASS
++
++profile a_profile {
++  network interface="local*" ip=127.0.0.1 port=21,
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_label_1.sd b/parser/tst/simple_tests/network/skb/ok_label_1.sd
+new file mode 100644
+index 0000000..50f2335
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_label_1.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network label match on socket
++#=EXRESULT PASS
++
++profile a_profile {
++  network label=foo,
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_label_peer_1.sd b/parser/tst/simple_tests/network/skb/ok_label_peer_1.sd
+new file mode 100644
+index 0000000..128dd10
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_label_peer_1.sd
+@@ -0,0 +1,7 @@
++#
++#=DESCRIPTION simple network peer label on packet match
++#=EXRESULT PASS
++
++profile a_profile {
++  network receive peer=(label=foo),
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_label_peer_2.sd b/parser/tst/simple_tests/network/skb/ok_label_peer_2.sd
+new file mode 100644
+index 0000000..7cac964
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_label_peer_2.sd
+@@ -0,0 +1,13 @@
++#
++#=DESCRIPTION simple network peer label on skb out match, this does nothing should we fail?
++#=EXRESULT PASS
++
++# this does nothing, can not match on peer label when sending, as packet is unlabeled
++# could detect and fail, or silently pass.
++# Note:
++#    network peer=(label=foo),
++#  would pass because of the receive case
++#
++profile a_profile {
++  network send peer=(label=foo),
++}
+diff --git a/parser/tst/simple_tests/network/skb/ok_setlabel_peer_1.sd b/parser/tst/simple_tests/network/skb/ok_setlabel_peer_1.sd
+new file mode 100644
+index 0000000..19a27d4
+--- /dev/null
++++ b/parser/tst/simple_tests/network/skb/ok_setlabel_peer_1.sd
+@@ -0,0 +1,10 @@
++#
++#=DESCRIPTION simple network set label going to peer
++#=EXRESULT PASS
++
++profile a_profile {
++  # The only sending label supported in the first iteration is the profile name
++  # internally it is represented as the send label permission without the
++  # assignment field being set.
++  network send  peer=(label:=@{profile_name}),
++}
+diff --git a/utils/test/test-parser-simple-tests.py b/utils/test/test-parser-simple-tests.py
+index b5d4c91..c62f712 100644
+--- a/utils/test/test-parser-simple-tests.py
++++ b/utils/test/test-parser-simple-tests.py
+@@ -454,6 +454,22 @@ syntax_failure = (
+     'network/network_ok_17.sd',
+     'network/network_ok_45.sd',
+     'network/network_ok_46.sd',
++    # network interface
++    'network/skb/ok_iface_1.sd',
++    'network/skb/ok_iface_2.sd',
++    'network/skb/ok_iface_3.sd',
++    'network/skb/ok_iface_4.sd',
++    'network/skb/ok_iface_5.sd',
++    'network/skb/ok_iface_6.sd',
++    'network/skb/ok_iface_7.sd',
++    'network/skb/ok_iface_8.sd',
++    'network/skb/ok_iface_9.sd',
++    'network/skb/ok_iface_10.sd',
++    'network/skb/ok_iface_11.sd',
++    'network/skb/ok_label_1.sd',
++    'network/skb/ok_label_peer_1.sd',
++    'network/skb/ok_label_peer_2.sd',
++    'network/skb/ok_setlabel_peer_1.sd',
+ )
+ 
+ 

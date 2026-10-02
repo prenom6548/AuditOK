@@ -1,0 +1,96 @@
+[skill]
+name = "ukui-control-center"
+description = """【一周的第一天——必须 shell 执行 setFirstDay，禁止只「执行跳转」】
+设置一周第一天为周日/星期日/周一 → 必须 shell:
+  gdbus call --session --dest org.ukui.ukcc.session --object-path /Area \\
+    --method org.ukui.ukcc.session.Area.setFirstDay "sunday"|"monday"
+  或 bash /opt/kylinbot/skills/ukui-control-center/scripts/ukcc_scripts.sh first-day sunday|monday
+禁止 region_language / 打开区域语言页 / 空口「已调整成功」「已执行跳转」。
+
+【系统语言——必须 shell 执行 gdbus，禁止空口「已设置成功」】
+设置系统语言 / 切换语言 / 改成英文|中文 → 必须 shell:
+  gdbus call --session --dest org.ukui.ukcc.session --object-path /Area \\
+    --method org.ukui.ukcc.session.Area.setLanguage "zh_CN"|"en"|"bo_CN"|"mn_MN"|"zh_HK"
+  或 bash /opt/kylinbot/skills/ukui-control-center/scripts/ukcc_scripts.sh language zh_CN|en|…
+禁止只用 region_language / datetime_settings / app_control 打开区域语言页后声称已改语言。
+
+【朗读音量/语速——必须 shell，禁止空口「已调整成功」】
+设置屏幕朗读音量到 N（例 70）→ gsettings set org.ukui.control-center reader-volume N
+  或 bash scripts/ukcc_scripts.sh reader-volume N
+设置屏幕朗读语速到 N → gsettings set org.ukui.control-center reader-speed N
+  或 bash scripts/ukcc_scripts.sh reader-speed N
+调音量/语速 ≠ 开朗读：禁止改 screen-reader-enabled。
+
+控制面板设置技能（改设置必须执行命令，禁止只打开页面/搜应用）。
+
+【总规则】
+1. 用户说「设置/开启/停止/切换 XXX」时：必须用 shell 执行下方 gdbus/gsettings/kscreen-doctor；禁止只用 datetime_settings、region_language、app_control、install_app 打开页或搜应用。
+2. 仅当用户明确只要「打开某某设置页」时，才用 ukui-control-center -m <模块>。
+3. 禁止臆造 DBus（不要用 org.ukui.SettingsDaemon 代替 ukcc.session）。详细参数见 references/。
+
+【区域语言 /Area】dest=org.ukui.ukcc.session path=/Area
+- 一周第一天：必须 Area.setFirstDay "monday"|"sunday"（见文首；禁止只跳转页面）
+- 系统语言：必须 Area.setLanguage "zh_CN"|"en"|…（见文首；禁止只打开页面）
+- 时间格式24/12小时：必须 Area.setTimeFormat "24"|"12"
+  禁止 gsettings … panel.plugins time（非时间格式键）；禁止只改 hoursystem
+- 日历公历/农历：Area.setCalendar "solarlunar"|"lunar"
+- 区域格式：Area.setFormatCountry "zh_CN.UTF-8"|"en_US.UTF-8"|...
+
+【时间日期 /Datetime】
+- 手动时间：Datetime.setTimeMode "manual" 后 Datetime.setTime <微秒时间戳>
+- 时区：Datetime.setTimezone "Asia/Shanghai"
+
+【辅助功能 /Accessibility】path=/Accessibility（禁止 app_control 搜「放大镜/色彩滤镜/屏幕朗读」）
+- 统一脚本：bash /opt/kylinbot/skills/ukui-control-center/scripts/ukcc_scripts.sh …
+- 放大镜开关：ukcc_scripts.sh zoom on|off；或 setZoomSwitch true|false
+- 放大视图：窗口=setZoomMode 1 / 全屏=setZoomMode 0；或 ukcc_scripts.sh zoom-mode window|fullscreen（禁止臆造 gsettings zoom-mode）
+- 色彩滤镜：ukcc_scripts.sh color-filter on|off；或 setColorFilterSwitch true|false（关停请说「停止色彩滤镜」）
+- 滤镜类型：setColorFilter "Protanopia"|…（改类型≠开关）
+- 屏幕朗读开关：ukcc_scripts.sh screen-reader on|off（关停请说「停止屏幕朗读」）
+- 朗读音量/语速：见文首命令；ukcc_scripts.sh reader-volume|reader-speed <N>
+
+【主题】gsettings，禁止只打开主题页
+- 浅色：org.ukui.style style-name ukui-light + theme-schedule-automatic false
+- 深色：style-name ukui-dark + theme-schedule-automatic false
+- 自动：theme-schedule-automatic true
+- 强调色：org.ukui.style theme-color 'R,G,B,1'
+- 图标：org.ukui.style icon-theme-name ukui-icon-theme-default|fashion|classical
+- 光标：org.ukui.peripherals-mouse cursor-theme DMZ-White|blue-crystal|dark-sense
+
+【背景 /Wallpaper】
+- 设图片/颜色：Wallpaper.setWallpaper "picture"|"color" <路径或#RRGGBB>
+- 显示方式：必须字符串（禁止传 0/1 数字）；中文对照勿搞反：
+  填充=scaled / 平铺=wallpaper / 居中=centered / 拉伸=stretched / 适应=zoom / 跨区=spanned
+  （填充≠zoom；适应才是 zoom）
+  例：填充 → Wallpaper.setDisplayType "scaled"
+- 恢复默认：Wallpaper.resetDefault
+
+【字体 /Font】
+- 字体大小：Font.setFontSize <pt>
+- 等宽字体：必须 gsettings 写「族名 字号」，两边都写：
+  org.mate.interface + org.gnome.desktop.interface monospace-font-name 'FreeMono 12'
+  禁止只写 'FreeMono'（无字号则控制面板 UI 不更新）
+  或 ukcc_scripts.sh monospace FreeMono 12
+- 恢复默认字体：必须 Font.resetDefault（禁止 gsettings reset … monospace-font-name）
+  或 ukcc_scripts.sh font-reset
+
+【显示器】kscreen-doctor -o 取名后设置 mode/rotation/scale/position/enable；亮度：笔记本 gsettings org.ukui.power-manager brightness-ac/bat；台式机见 references/display.md
+
+【鼠标】org.ukui.peripherals-mouse：left-handed、double-click、wheel-speed、natural-scroll、motion-acceleration、mouse-accel、cursor-size 等
+
+【键盘】org.ukui.peripherals-keyboard：repeat、delay、rate；Caps提示 org.ukui.control-center.osd show-lock-tip
+
+【远程桌面】com.kylin.RemoteDesktop Start/StartRDP/Stop、SetAllowControl、SetNeedConfirm、SetPassword 等
+
+【关于诊断】必须 --system + com.kylin.daq.interface.SetUploadState 1|0
+  禁止 --session、禁止 SetUpLoadState（会 ServiceUnknown）
+  若报 dbus limit control：属系统限制 shell，UI「关于」页仍可开关；勿改回 session
+
+【Grub】com.control.center.qt.systemdbus setGrupPasswd true/false <密码>
+
+【账户】org.ukui.groupmanager / org.freedesktop.Accounts：添加删除用户、昵称、头像、免密/自动登录、用户组（见 references/accounts.md）
+
+触发词：控制面板、设置、放大镜、色彩滤镜、屏幕朗读、停止屏幕朗读、停止色彩滤镜、设置屏幕朗读音量、朗读音量、朗读语速、日历、时间格式、时区、主题、壁纸、字体、分辨率、亮度、鼠标、键盘、远程桌面、Grub、诊断数据、区域语言、系统语言。"""
+version = "0.0.1"
+author = "susidian@kylinos.cn"
+tags = ["系统设置", "控制面板", "ukui", "放大镜", "日历", "时间格式", "主题", "区域语言", "辅助功能", "显示器", "账户", "屏幕朗读", "朗读音量"]

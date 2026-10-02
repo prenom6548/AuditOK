@@ -1,0 +1,88 @@
+From: hanpinlong <hanpinlong@kylinos.cn>
+Date: Tue, 10 Dec 2024 06:15:05 +0000
+Subject: =?utf-8?b?ITI5IOS/ruWkjWZyb210aGVtZeiOt+WPluepuuWbvuagh+WQjuS4jQ==?=
+ =?utf-8?b?5YaN6I635Y+W55qE6Zeu6aKYIE1lcmdlIHB1bGwgcmVxdWVzdCAhMjkgZnJvbSBo?=
+ =?utf-8?b?YW5waW5sb25nL3RlbXAxMjEw?=
+
+---
+ src/gui/image/qicon.cpp       | 17 +++++++++++++++++
+ src/gui/image/qiconloader.cpp | 14 +++++++++++++-
+ src/gui/image/qiconloader_p.h |  3 +++
+ 3 files changed, 33 insertions(+), 1 deletion(-)
+
+diff --git a/src/gui/image/qicon.cpp b/src/gui/image/qicon.cpp
+index 91f3fbd..80c79ab 100644
+--- a/src/gui/image/qicon.cpp
++++ b/src/gui/image/qicon.cpp
+@@ -1312,8 +1312,25 @@ QIcon QIcon::fromTheme(const QString &name)
+         QIconEngine * const engine = (platformTheme && !hasUserTheme) ? platformTheme->createIconEngine(name)
+                                                    : new QIconLoaderEngine(name);
+         QIcon *cachedIcon  = new QIcon(engine);
++        #if 0
+         icon = *cachedIcon;
+         qtIconCache()->insert(name, cachedIcon);
++        #else
++        // if (!cachedIcon->isNull() && !cachedIcon->availableSizes().isEmpty()) {
++        if (
++            name.isEmpty()||
++            // name == QString::fromUtf8("ukui-shared-lib") ||
++            // name == QString::fromUtf8("ukui-shared-lib-symbolic") ||
++            // name == QString::fromUtf8("application-x-shared-library") ||
++            // name == QString::fromUtf8("application-x-shared-library-symbolic") ||   //若无法加载so库图标，可将该四行取消注释
++            (!cachedIcon->isNull() && !cachedIcon->availableSizes().isEmpty())) {            
++            qtIconCache()->insert(name, cachedIcon);
++            icon = *cachedIcon;
++        }
++        else
++            delete cachedIcon;
++
++        #endif
+     }
+ 
+     return icon;
+diff --git a/src/gui/image/qiconloader.cpp b/src/gui/image/qiconloader.cpp
+index ac7a686..7bf724c 100644
+--- a/src/gui/image/qiconloader.cpp
++++ b/src/gui/image/qiconloader.cpp
+@@ -341,7 +341,12 @@ QVector<const char *> QIconCacheGtkReader::lookup(const QStringRef &name)
+ }
+ 
+ QIconTheme::QIconTheme(const QString &themeName)
+-        : m_valid(false)
++#ifndef NO_WORKAROUND_ICON_CACHE
++    : m_valid(false),
++      m_themeName(themeName)
++#else
++    : m_valid(false)
++#endif
+ {
+     QFile themeIndex;
+ 
+@@ -435,6 +440,13 @@ QThemeIconInfo QIconLoader::findIconHelper(const QString &themeName,
+     visited << themeName;
+ 
+     QIconTheme &theme = themeList[themeName];
++#ifndef NO_WORKAROUND_ICON_CACHE
++    if (theme.m_themeName == fallbackThemeName()) {
++        QIconTheme tmpTheme = QIconTheme(themeName);
++        if (tmpTheme.isValid())
++            theme = tmpTheme;
++    }
++#endif    
+     if (!theme.isValid()) {
+         theme = QIconTheme(themeName);
+         if (!theme.isValid())
+diff --git a/src/gui/image/qiconloader_p.h b/src/gui/image/qiconloader_p.h
+index fac18b5..41d5113 100644
+--- a/src/gui/image/qiconloader_p.h
++++ b/src/gui/image/qiconloader_p.h
+@@ -166,6 +166,9 @@ private:
+     bool m_valid;
+ public:
+     QVector<QSharedPointer<QIconCacheGtkReader>> m_gtkCaches;
++#ifndef NO_WORKAROUND_ICON_CACHE
++    QString m_themeName;
++#endif    
+ };
+ 
+ class Q_GUI_EXPORT QIconLoader

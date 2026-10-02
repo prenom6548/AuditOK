@@ -1,0 +1,52 @@
+#!/bin/sh
+set -eu
+
+# Check that the dbus-daemon package provides its intended command-line
+# interface.
+#
+# dbus-daemon implies installation of dbus-bin, so we can rely on having
+# dbus-send and dbus-uuidgen.
+#
+# We indirectly test that dbus-daemon --session works, by running
+# dbus-run-session.
+
+export LC_ALL=C.UTF-8
+fail=
+
+# dbus-daemon.deb provides a machine ID
+uuid="$(dbus-uuidgen --get)"
+echo "uuid: $uuid"
+set -x
+test -n "$uuid" || fail=yes
+# The machine ID consists of 32 lower-case hex digits (and the file
+# also has a newline)
+test "$uuid" = "$(perl -pe 'print "wrong: " unless /\A[a-z0-9]{32}\n\z/' /var/lib/dbus/machine-id)" || fail=yes
+set +x
+
+# dbus-daemon.deb provides a working dbus-run-session in the PATH
+dbus-run-session -- \
+dbus-send \
+    --session \
+    --dest=org.freedesktop.DBus \
+    --type=method_call \
+    --print-reply \
+    /org/freedesktop/DBus \
+    org.freedesktop.DBus.Properties.GetAll \
+    string:org.freedesktop.DBus
+
+# dbus-daemon.deb provides a working dbus-daemon in the PATH
+output="$(dbus-daemon --help 2>&1 || :)"
+echo "$output"
+
+case "$output" in
+    (dbus-daemon\ *--session*--system*)
+        ;;
+    (*)
+        echo "Unexpected output from dbus-daemon" >&2
+        fail=yes
+        ;;
+esac
+
+test -z "$fail"
+
+# vim:set sw=4 sts=4 et:

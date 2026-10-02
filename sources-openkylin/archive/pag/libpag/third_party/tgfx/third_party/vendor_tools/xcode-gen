@@ -1,0 +1,92 @@
+#!/usr/bin/env node
+const path = require("path");
+const Utils = require('./lib/Utils');
+const XCode = require('./lib/XCode');
+const CommandLine = require('./lib/CommandLine');
+
+const KnownPlatforms = ["mac", "ios", "simulator"];
+const KnownArchs = ["x64", "arm64"];
+
+const optionDeclarations = [
+    {
+        name: "source",
+        shortName: "s",
+        type: "string",
+        description: "Specify the root of the cmake project. Default is the current working directory."
+    },
+    {
+        name: "output",
+        shortName: "o",
+        type: "string",
+        description: "Specify the output path of the generated project. Default is the current working directory."
+    },
+    {
+        name: "platform",
+        shortName: "p",
+        type: "string",
+        description: "Specify the platform to generate. Supported platforms: [\"mac\", \"ios\", \"simulator\"]."
+    },
+    {
+        name: "arch",
+        shortName: "a",
+        type: "string",
+        description: "Specify the arch of the generated project. Supported arches: [\"x64\", \"arm64\"]."
+    },
+    {
+        name: "workspace",
+        shortName: "w",
+        type: "boolean",
+        description: "Generate an additional *.xcworkspace for the existing xcode project in the output directory."
+    },
+    {
+        name: "help",
+        shortName: "h",
+        type: "boolean",
+        description: "Print help message."
+    }
+];
+
+function printHelp(cmd) {
+    let output = "";
+    output += "Syntax:   " + cmd + " sourcePath [options] [-Dcmake_variable=value]... [-Dcmake_variable=value]\n";
+    output += "Examples: " + cmd + " ../ -p mac -DTGFX_USE_WEBP_ENCODE=ON\n";
+    output += "Examples: " + cmd + " ../ -p simulator -a arm64\n";
+    output += CommandLine.printOptions(optionDeclarations);
+    Utils.log(output);
+}
+
+
+let args = process.argv;
+let cmd = "node " + path.basename(args[1]);
+args = args.slice(2);
+let cmakeArgs = [];
+let cmdArgs = [];
+for (let arg of args) {
+    if (arg.indexOf("-D") === 0) {
+        cmakeArgs.push(arg);
+    } else {
+        cmdArgs.push(arg);
+    }
+}
+let options = CommandLine.parse(cmdArgs, optionDeclarations, KnownPlatforms, KnownArchs);
+options.cmakeArgs = cmakeArgs;
+if (!options.source) {
+    if (options.targets && options.targets.length === 1) {
+        options.source = options.targets[0];
+        delete options.targets;
+    } else {
+        options.source = process.cwd();
+    }
+}
+if (!options.output) {
+    options.output = process.cwd();
+}
+if (options.help) {
+    printHelp(cmd);
+    if (options.errors.length > 0) {
+        process.exit(1);
+    }
+    return;
+}
+
+XCode.Generate(options);

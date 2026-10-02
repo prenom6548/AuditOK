@@ -1,0 +1,230 @@
+#!/bin/bash
+
+BACKUP_FLAG=backup
+RESTORE_FLAG=restore
+
+# 把这个文件放在 /usr/share/initramfs-tools/scripts/local-bottom/ 目录下。
+# 权限为 0755，在自动更新initrd时，这个脚本就被放到initrd中了，例如，
+# update-initramfs -u
+# 更新后，这个脚本将在initrd 运行到 local-bottom 阶段时自动执行。
+# 此时根分区已经挂载到了${rootmnt}下，可以直接访问该分区的文件。
+
+
+
+# PREREQ指定需要在什么脚本之后执行（同目录下的），也就是指定该脚本的依赖，以确定执行顺序。
+# 如果没有依赖，就可以是空字符串。 
+PREREQ=""
+
+prereqs()
+{
+	echo "$PREREQ"
+}
+
+case $1 in
+	prereqs)
+		prereqs
+		exit 0
+		;;
+esac
+
+# 上述部分是initramfs脚本的固定格式，不用动它。
+# 除非有依赖，才需要改 PREREQ 的值。
+
+display_result()
+{
+        if [ $RET -eq 200 ]; then
+                plymouth message --text="Can't find /etc/.bootinfo."
+                sleep 3
+		reboot
+        elif [ $RET -eq 201 ]; then
+                plymouth message --text="Can't open /etc/.bootinfo."
+                sleep 3
+		reboot
+        elif [ $RET -eq 202 ]; then
+                plymouth message --text="/etc/.bootinfo is not correct."
+                sleep 3
+		reboot
+        elif [ $RET -eq 100 ]; then
+                plymouth message --text="The backup disk space is not enough, please delete unnecessary backups."
+                sleep 3
+		reboot
+        elif [ $RET -eq 101 ]; then
+                plymouth message --text="The backup disk should be /backup"
+                sleep 3
+		reboot
+        elif [ $RET -eq 300 ]; then
+                plymouth message --text="There are not any good backups，and you can't restore the system."
+                sleep 3
+		reboot
+        elif [ $RET -eq 301 ]; then
+                plymouth message --text="There is not the backup directory of your selection, and you can't restore it."
+                sleep 3
+		reboot
+        elif [ $RET -eq 302 ]; then
+                plymouth message --text="The restore process can't be started."
+                sleep 3
+		reboot
+        elif [ $RET -eq 303 ]; then
+                plymouth message --text="Failed to restore the system, please redo it."
+                sleep 3
+		reboot
+        elif [ $RET -eq 401 ]; then
+                plymouth message --text="The mount process for backup disk can't be started."
+                sleep 3
+		reboot
+        elif [ $RET -eq 402 ]; then
+                plymouth message --text="Failed to wait for the process for backup disk."
+                sleep 3
+		reboot
+        elif [ $RET -eq 403 ]; then
+                plymouth message --text="The backup disk does not exist or it is not mounted."
+                sleep 3
+		reboot
+        elif [ $RET -eq 501 ]; then
+                plymouth message --text="Can't start the backup process."
+                sleep 3
+		reboot
+        elif [ $RET -eq 502 ]; then
+                plymouth message --text="Failed to backup the system."
+                sleep 3
+		reboot
+        elif [ $RET -eq 700 ]; then
+                plymouth message --text="The usage of mount_fstab is not correct."
+                sleep 3
+		reboot
+        elif [ $RET -eq 701 ]; then
+                plymouth message --text="Failed to backup the system because there is not /etc/fstab."
+                sleep 3
+		reboot
+        elif [ $RET -eq 702 ]; then
+                plymouth message --text="Can't to open /etc/fstab."
+                sleep 3
+		reboot
+        fi
+}
+
+# 需要先指定BACKUP_FLAG，例如设置为 BACKUP_FLAG=backup，那么内核参数就可以选择下述两种方式的一种了
+# 1. backup  只要有backup，就表示需要备份
+# 2. backup=0 或者 backup=1 0表示不用备份，1表示需要备份。
+# 当然，还可以选择别的字符串做关键字，但一定要指定BACKUP_FLAG内容。
+#BACKUP_FLAG=
+NEED_BACKUP=
+NEED_RESTORE=
+# 针对 BACKUP_FLAG 为简单字符串（非键值对）的情况，可以这样获取内核参数。
+for x in $(cat /proc/cmdline); do
+	if [ "$x" = "$BACKUP_FLAG" ]; then
+		NEED_BACKUP=y
+	fi
+done
+
+for x in $(cat /proc/cmdline); do
+	if [ "$x" = "$RESTORE_FLAG" ]; then
+		NEED_RESTORE=y
+	fi
+done
+
+# 然后就可以根据 $NEED_BACKUP 来进行操作了。
+
+# 如果没有发现需要备份的标记，直接退出脚本，继续启动系统。
+
+if [ "$NEED_BACKUP" = "y" ]; then
+	mkdir /backup
+	#useless: . /scripts/backup  #就是本目录下的backup
+	#useless: mount_fstab  #定义在backup脚本中
+	
+	#如果没有${rootmnt}/etc/fstab，则系统坏了，只能还原而不能备份.
+	if [ ! -e ${rootmnt}/etc/fstab ]; then
+		plymouth message --text="The system has been destroyed and can not be backuped."
+		sleep 3
+		reboot
+		exit 0
+	fi
+	if [ ! -e ${rootmnt}/etc/.bootinfo ]; then
+		plymouth message --text="The system has been destroyed and you can restore it in the next version."
+		sleep 3
+		reboot
+		exit 0
+	fi
+
+	mount_fstab_efi ${rootmnt} mount
+	#plymouth message --text="正在备份系统"
+	plymouth message --text="Backuping the system, please wait for a moment."
+	backup-auto-efi --autobackup ${rootmnt} /backup
+
+	RET=$?
+	display_result $RET
+
+	#plymouth message --text="系统备份完成"
+	plymouth message --text="The system has been backuped."
+	#mount_fstab ${rootmnt} umount #because root 
+	sleep 3
+	reboot
+	exit 0
+fi
+
+if [ "$NEED_RESTORE" = "y" ]; then
+	#如果没有${rootmnt}/etc/fstab，则系统坏了，应该能还原，但需要在下一个版本中支持。
+	if [ ! -e ${rootmnt}/etc/fstab ]; then
+		plymouth message --text="The system has been destroyed and you can restore it in the next version."
+		sleep 3
+		reboot
+		exit 0
+	fi
+	if [ ! -e ${rootmnt}/etc/.bootinfo ]; then
+		plymouth message --text="The system has been destroyed and you can restore it in the next version."
+		sleep 3
+		reboot
+		exit 0
+	fi
+
+	mount_fstab_efi ${rootmnt} mount
+	mkdir /backup
+	#plymouth message --text="正在还原系统"
+	plymouth message --text="Restoring the system, please wait for a moment."
+	mount -o remount,rw ${rootmnt}
+	#. /scripts/backup
+	backup-auto-efi --autorestore ${rootmnt} /backup
+
+	RET=$?
+	display_result $RET
+
+	if [ ! -e ${rootmnt}/proc ]; then
+	    mkdir ${rootmnt}/proc
+	fi
+
+	if [ ! -e ${rootmnt}/sys ]; then
+	    mkdir ${rootmnt}/sys
+	fi
+
+	if [ ! -e ${rootmnt}/dev ]; then
+	    mkdir ${rootmnt}/dev
+	fi
+
+	if [ ! -e ${rootmnt}/run ]; then
+	    mkdir ${rootmnt}/run
+	fi
+
+	if [ ! -e ${rootmnt}/backup ]; then
+	    mkdir ${rootmnt}/backup
+	fi
+
+	#plymouth message --text="系统还原完成"
+	plymouth message --text="The system has been restored."
+	#/scripts/mount_fstab ${rootmnt} umount #because root 
+	sleep 3
+	reboot
+	exit 0
+fi
+
+# 否则
+# TODO 执行备份操作
+
+# 此时根分区已经挂载在 ${rootmnt} 处了，直接使用 ${rootmnt} 就可以了。
+# 例如查看lsb-release文件
+# cat ${rootmnt}/etc/lsb-release
+# 如果想要根据 UUID 或 LABEL 来确定分区，还可以执行blkid命令。例如，
+# /sbin/blkid -U <UUID>   该命令返回UUID对应的分区设备
+# /sbin/blkid -L <LABEL>  该命令返回LABEL对应的分区设备
+# 如果需要安装一些命令，需要写一个initramfs的hook脚本。
+
+exit 0

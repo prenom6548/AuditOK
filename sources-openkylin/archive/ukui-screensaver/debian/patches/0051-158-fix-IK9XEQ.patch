@@ -1,0 +1,333 @@
+From: =?utf-8?b?5p2o5pWP?= <yangmin@kylinos.cn>
+Date: Mon, 24 Aug 2026 08:38:39 +0000
+Subject: =?utf-8?b?ITE1OCBmaXg6I0lLOVhFUSDjgJDlsY/kv53jgJHpgJrov4fnrYnlvoU=?=
+ =?utf-8?b?6K6+572u5pe26Ze06L+b5YWl5bGP5L+d77yM5bGP5L+d55WM6Z2i5Lya6Zeq6YCA?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Merge pull request !158 from 杨敏/openkylin/huanghe
+---
+ src/lock-backend/dbusupperinterface.cpp |   5 +-
+ src/lock-backend/sessionwatcher.cpp     |  24 +++--
+ src/lock-backend/switchuserutils.cpp    | 182 +++++++++++++++++++++++++++++++-
+ src/lock-backend/switchuserutils.h      |  13 +++
+ src/widgets/fullbackgroundwidget.cpp    |   4 -
+ 5 files changed, 214 insertions(+), 14 deletions(-)
+
+diff --git a/src/lock-backend/dbusupperinterface.cpp b/src/lock-backend/dbusupperinterface.cpp
+index 38dbc7b..49226b7 100644
+--- a/src/lock-backend/dbusupperinterface.cpp
++++ b/src/lock-backend/dbusupperinterface.cpp
+@@ -1757,9 +1757,12 @@ int DbusUpperInterface::switchToUser(const QJsonObject &objInfo)
+             if (!desUdii.strSeatPath.isEmpty()) {
+                 strSwitchSeatPath = desUdii.strSeatPath;
+             }
++            if (strSwitchSeatPath.isEmpty()) {
++                strSwitchSeatPath = SwitchUserUtils::ResolveDisplayManagerSeatPath();
++            }
+ 
+             if (strSwitchSeatPath.isEmpty()) {
+-                qWarning() << "switch user: switch seat path invalid!";
++                qWarning() << "switch user: switch seat path invalid, skip Session/Seat switch logic";
+                 nRet = 1;
+             } else {
+                 nRet = SwitchUserUtils::SwitchToUserSession(strSwitchSeatPath, desUdii);
+diff --git a/src/lock-backend/sessionwatcher.cpp b/src/lock-backend/sessionwatcher.cpp
+index ae1454e..e69ab32 100644
+--- a/src/lock-backend/sessionwatcher.cpp
++++ b/src/lock-backend/sessionwatcher.cpp
+@@ -23,13 +23,14 @@
+ #include "../../src/common/definetypes.h"
+ #include "../../src/common/utils.h"
+ #include "../../src/dbusifs/freedesktophelper.h"
++#include "switchuserutils.h"
+ 
+ #define GSETTINGS_SCHEMA_SCREENSAVER "org.ukui.screensaver"
+ 
+ SessionWatcher::SessionWatcher(QSharedPointer<GSettingsHelper> helper, QObject *parent)
+     : QObject(parent), m_gsettingsHelper(helper)
+ {
+-    sessionPath = qgetenv("XDG_SESSION_PATH");
++    sessionPath = SwitchUserUtils::ResolveDisplayManagerSessionPath();
+ 
+     // defaultFontSize = getDefaultFontSize();
+     defaultFontSize = 10;
+@@ -47,13 +48,17 @@ SessionWatcher::SessionWatcher(QSharedPointer<GSettingsHelper> helper, QObject *
+             &SessionWatcher::onSessionDbusActiveChanged);
+     }
+ 
+-    QDBusInterface *displayManagerInterface
+-        = new QDBusInterface(DM_DBUS_SERVICE, DM_DBUS_PATH, DM_DBUS_INTERFACE, QDBusConnection::systemBus(), this);
+-    connect(
+-        displayManagerInterface,
+-        SIGNAL(SessionRemoved(QDBusObjectPath)),
+-        this,
+-        SLOT(onSessionRemoved(QDBusObjectPath)));
++    if (!sessionPath.isEmpty()) {
++        QDBusInterface *displayManagerInterface
++            = new QDBusInterface(DM_DBUS_SERVICE, DM_DBUS_PATH, DM_DBUS_INTERFACE, QDBusConnection::systemBus(), this);
++        connect(
++            displayManagerInterface,
++            SIGNAL(SessionRemoved(QDBusObjectPath)),
++            this,
++            SLOT(onSessionRemoved(QDBusObjectPath)));
++    } else {
++        qWarning() << "XDG_SESSION_PATH unresolved, skip DisplayManager SessionRemoved handling";
++    }
+ 
+     connect(
+         m_gsettingsHelper.get(),
+@@ -160,6 +165,9 @@ void SessionWatcher::onStatusChanged(unsigned int status)
+ 
+ void SessionWatcher::onSessionRemoved(const QDBusObjectPath &objectPath)
+ {
++    // 无法解析当前 session 路径时不处理 SessionRemoved
++    if (sessionPath.isEmpty())
++        return;
+     // 如果session注销了，则结束进程
+     if (objectPath.path() == sessionPath)
+         exit(0);
+diff --git a/src/lock-backend/switchuserutils.cpp b/src/lock-backend/switchuserutils.cpp
+index caa6510..c777481 100644
+--- a/src/lock-backend/switchuserutils.cpp
++++ b/src/lock-backend/switchuserutils.cpp
+@@ -33,6 +33,126 @@
+ #include <QString>
+ #include <QTimer>
+ #include "../../src/common/global_utils.h"
++#include "../../src/common/definetypes.h"
++
++namespace {
++
++#define SYSTEMD_SERVICE "org.freedesktop.login1"
++#define SYSTEMD_PATH "/org/freedesktop/login1"
++#define SYSTEMD_INTERFACE "org.freedesktop.login1.Manager"
++#define SYSTEMD_SESSION_INTERFACE "org.freedesktop.login1.Session"
++
++QString currentUserName()
++{
++    const QByteArray user = qgetenv("USER");
++    if (!user.isEmpty())
++        return QString::fromLocal8Bit(user);
++    struct passwd *pw = getpwuid(getuid());
++    if (pw && pw->pw_name)
++        return QString::fromLocal8Bit(pw->pw_name);
++    return QString();
++}
++
++QList<QDBusObjectPath> displayManagerObjectPaths(const QString &property)
++{
++    QDBusInterface dmProps(
++        QLatin1String(DM_DBUS_SERVICE),
++        QLatin1String(DM_DBUS_PATH),
++        QLatin1String(FD_PROPERTIES_INTERFACE),
++        QDBusConnection::systemBus());
++    // Seats/Sessions: ao
++    QDBusReply<QDBusVariant> reply = dmProps.call("Get", DM_DBUS_SERVICE, property);
++    if (!reply.isValid()) {
++        qWarning() << "Unable to get DisplayManager" << property << reply.error();
++        return {};
++    }
++    return qdbus_cast<QList<QDBusObjectPath>>(reply.value().variant());
++}
++
++QString matchSeatPathById(const QList<QDBusObjectPath> &seats, const QString &seatId)
++{
++    if (seatId.isEmpty())
++        return QString();
++    for (const QDBusObjectPath &seatPath : seats) {
++        const QString leaf = seatPath.path().section(QLatin1Char('/'), -1);
++        if (leaf.compare(seatId, Qt::CaseInsensitive) == 0)
++            return seatPath.path();
++    }
++    return QString();
++}
++
++/*
++ * ukui-session is often started as a systemd --user service (e.g. kylin-wlcom.service).
++ * That process belongs to the logind manager session, which has an empty Seat, and
++ * does not inherit XDG_SEAT_PATH. GetSession("auto") is therefore the wrong source.
++ */
++QString logindSeatIdForCurrentProcess()
++{
++    QDBusInterface loginMgr(
++        QLatin1String(SYSTEMD_SERVICE),
++        QLatin1String(SYSTEMD_PATH),
++        QLatin1String(SYSTEMD_INTERFACE),
++        QDBusConnection::systemBus());
++    if (!loginMgr.isValid())
++        return QString();
++
++    QDBusReply<QDBusObjectPath> byAuto = loginMgr.call("GetSession", QStringLiteral("auto"));
++    if (!byAuto.isValid()) {
++        qDebug() << "GetSession(auto) failed:" << byAuto.error();
++        return QString();
++    }
++
++    QDBusInterface props(
++        QLatin1String(SYSTEMD_SERVICE),
++        byAuto.value().path(),
++        QLatin1String(FD_PROPERTIES_INTERFACE),
++        QDBusConnection::systemBus());
++    QDBusReply<QDBusVariant> seatVar = props.call("Get", SYSTEMD_SESSION_INTERFACE, "Seat");
++    if (!seatVar.isValid()) {
++        qDebug() << "get Session.Seat failed:" << seatVar.error();
++        return QString();
++    }
++    // Session.Seat: (so)
++    const QDBusArgument arg = qvariant_cast<QDBusArgument>(seatVar.value().variant());
++    QString seatId;
++    QDBusObjectPath seatPath;
++    arg.beginStructure();
++    arg >> seatId >> seatPath;
++    arg.endStructure();
++    return seatId;
++}
++
++QString seatPathFromDisplayManagerSessions(const QString &userName)
++{
++    if (userName.isEmpty())
++        return QString();
++
++    const QList<QDBusObjectPath> sessions = displayManagerObjectPaths(QStringLiteral("Sessions"));
++    for (const QDBusObjectPath &sessionPath : sessions) {
++        QDBusInterface sessionProps(
++            QLatin1String(DM_DBUS_SERVICE),
++            sessionPath.path(),
++            QLatin1String(FD_PROPERTIES_INTERFACE),
++            QDBusConnection::systemBus());
++        QDBusReply<QDBusVariant> nameVar
++            = sessionProps.call("Get", DM_SESSION_INTERFACE, QStringLiteral("UserName"));
++        if (!nameVar.isValid())
++            continue;
++        if (nameVar.value().variant().toString() != userName)
++            continue;
++
++        QDBusReply<QDBusVariant> seatVar
++            = sessionProps.call("Get", DM_SESSION_INTERFACE, QStringLiteral("Seat"));
++        if (!seatVar.isValid())
++            continue;
++        // Session.Seat: o
++        const QString seatPath = qdbus_cast<QDBusObjectPath>(seatVar.value().variant()).path();
++        if (!seatPath.isEmpty())
++            return seatPath;
++    }
++    return QString();
++}
++} // namespace
+ 
+ SwitchUserUtils::SwitchUserUtils() {}
+ 
+@@ -328,7 +448,7 @@ bool SwitchUserUtils::CanSwitchUser()
+     if (nCanSwitch != -1) {
+         return (bool)(nCanSwitch);
+     }
+-    QString strSeatPath = qgetenv("XDG_SEAT_PATH");
++    QString strSeatPath = ResolveDisplayManagerSeatPath();
+     if (!strSeatPath.isEmpty()) {
+         qDebug() << "SeatPath:" << strSeatPath;
+         QDBusInterface dmService(DM_DBUS_SERVICE, strSeatPath, FD_PROPERTIES_INTERFACE, QDBusConnection::systemBus());
+@@ -359,3 +479,63 @@ bool SwitchUserUtils::CanSwitchUser()
+     }
+     return false;
+ }
++
++QString SwitchUserUtils::ResolveDisplayManagerSeatPath()
++{
++    const QByteArray envPath = qgetenv("XDG_SEAT_PATH");
++    if (!envPath.isEmpty()) {
++        return envPath;
++    }
++    const QList<QDBusObjectPath> seats = displayManagerObjectPaths(QStringLiteral("Seats"));
++
++    QString seatId = QString::fromLocal8Bit(qgetenv("XDG_SEAT"));
++    if (seatId.isEmpty())
++        seatId = logindSeatIdForCurrentProcess();
++    const QString matched = matchSeatPathById(seats, seatId);
++    if (!matched.isEmpty())
++        return matched;
++
++    const QString fromSession = seatPathFromDisplayManagerSessions(currentUserName());
++    if (!fromSession.isEmpty()) {
++        qDebug() << "resolved DisplayManager seat from session:" << fromSession;
++        return fromSession;
++    }
++
++    if (seats.size() == 1) {
++        qDebug() << "using the only DisplayManager seat" << seats.first().path();
++        return seats.first().path();
++    }
++
++    if (!seats.isEmpty()) {
++        qWarning() << "ambiguous DisplayManager seats, using" << seats.first().path();
++        return seats.first().path();
++    }
++
++    qWarning() << "no DisplayManager seat available";
++    return QString();
++}
++
++QString SwitchUserUtils::ResolveDisplayManagerSessionPath()
++{
++    const QByteArray envPath = qgetenv("XDG_SESSION_PATH");
++    if (!envPath.isEmpty())
++        return QString::fromLocal8Bit(envPath);
++
++    /* Seat 都解析不到时，不再做 Session 匹配/监听 */
++    const QString seatPath = ResolveDisplayManagerSeatPath();
++    if (seatPath.isEmpty())
++        return QString();
++
++    const QString userName = GetCurUserName();
++    if (userName.isEmpty())
++        return QString();
++
++    const UserDisplayIfInfo info = GetUserUDII(userName);
++    if (!info.strSessionPath.isEmpty()
++        && (info.strSeatPath.isEmpty()
++            || QString::compare(info.strSeatPath, seatPath, Qt::CaseInsensitive) == 0)) {
++        return info.strSessionPath;
++    }
++
++    return QString();
++}
+diff --git a/src/lock-backend/switchuserutils.h b/src/lock-backend/switchuserutils.h
+index f88d44a..3f3c1a2 100644
+--- a/src/lock-backend/switchuserutils.h
++++ b/src/lock-backend/switchuserutils.h
+@@ -84,6 +84,19 @@ public:
+      * @return bool true：允许，否则不允许
+      */
+     static bool CanSwitchUser();
++
++    /**
++     * @brief 解析 DisplayManager Seat 对象路径。
++     * 优先 XDG_SEAT_PATH；否则从 logind 取 seat 再匹配 DisplayManager.Seats。
++     */
++    static QString ResolveDisplayManagerSeatPath();
++
++    /**
++     * @brief 解析 DisplayManager Session 对象路径。
++     * 优先 XDG_SESSION_PATH；否则按当前用户与 seat 匹配。
++     * 无法解析时返回空（调用方应跳过 SessionRemoved 等逻辑）。
++     */
++    static QString ResolveDisplayManagerSessionPath();
+ };
+ 
+ #endif // SWITCHUSERUTILS_H
+diff --git a/src/widgets/fullbackgroundwidget.cpp b/src/widgets/fullbackgroundwidget.cpp
+index 6e64dcd..39cf556 100644
+--- a/src/widgets/fullbackgroundwidget.cpp
++++ b/src/widgets/fullbackgroundwidget.cpp
+@@ -327,10 +327,6 @@ void FullBackgroundWidget::initConnections()
+         qDebug() << "resized:" << desktop->geometry();
+         this->scheduleDesktopResized();
+     });
+-    connect(desktop, &QDesktopWidget::workAreaResized, this, [&, this, desktop]() {
+-        qDebug() << "workAreaResized:" << desktop->geometry();
+-        this->scheduleDesktopResized();
+-    });
+     connect(desktop, &QDesktopWidget::primaryScreenChanged, this, [&, this, desktop]() {
+         qDebug() << "primaryScreenChanged:" << desktop->geometry();
+         this->scheduleDesktopResized();

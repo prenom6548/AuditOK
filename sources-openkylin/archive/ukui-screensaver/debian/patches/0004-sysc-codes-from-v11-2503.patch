@@ -1,0 +1,1812 @@
+From: yangmin100 <yangmin@kylinos.cn>
+Date: Fri, 3 Jan 2025 14:42:13 +0800
+Subject: sysc codes from v11-2503
+
+---
+ src/common/configuration.cpp            |  24 -------
+ src/common/configuration.h              |   3 -
+ src/common/utils.cpp                    |   3 +
+ src/dbusifs/kglobalaccelhelper.cpp      |  13 ++--
+ src/dbusifs/uniauthservice.cpp          | 123 +++++++++++++++++++++++++++++++-
+ src/dbusifs/uniauthservice.h            |  93 +++++++++++++++++++++++-
+ src/lock-backend/bioauthenticate.cpp    |  31 ++++----
+ src/lock-backend/bioauthenticate.h      |   1 -
+ src/lock-backend/dbusupperinterface.cpp |  44 ++++++++----
+ src/lock-backend/dbusupperinterface.h   |   2 +-
+ src/lock-backend/lightdmhelper.cpp      |  24 +++++--
+ src/lock-backend/main.cpp               |   3 +
+ src/lock-backend/switchuserutils.cpp    |   9 +++
+ src/lock-dialog/backenddbushelper.cpp   |   3 +-
+ src/lock-dialog/backenddbushelper.h     |   2 +-
+ src/lock-dialog/lockdialogmodel.cpp     |   2 +-
+ src/lock-dialog/lockdialogmodel.h       |   2 +-
+ src/lock-dialog/main.cpp                |  30 +++++---
+ src/screensaver/main.cpp                |   3 +
+ src/screensaver/scconfiguration.cpp     |   9 ++-
+ src/screensaver/screensaver.cpp         |  47 ++++++------
+ src/widgets/authdialog.cpp              |  14 ++--
+ src/widgets/authdialog.h                |   3 +-
+ src/widgets/blockwidget.cpp             |  41 +++++++++--
+ src/widgets/blockwidget.h               |   1 +
+ src/widgets/fullbackgroundwidget.cpp    |  41 +++++++----
+ src/widgets/lockwidget.cpp              | 120 +++++++++++++++++++++----------
+ src/widgets/lockwidget.h                |   9 ++-
+ src/widgets/loginoptionswidget.cpp      |  27 ++++---
+ src/widgets/loginoptionswidget.h        |   3 +-
+ src/widgets/mpriswidget.cpp             |  18 ++++-
+ src/widgets/mpriswidget.h               |   7 ++
+ src/widgets/powerlistwidget.cpp         |  18 +++++
+ src/widgets/powerlistwidget.h           |   3 +
+ src/widgets/screensaverwidget.cpp       |   2 +-
+ 35 files changed, 586 insertions(+), 192 deletions(-)
+
+diff --git a/src/common/configuration.cpp b/src/common/configuration.cpp
+index 85a80d9..9db84f7 100644
+--- a/src/common/configuration.cpp
++++ b/src/common/configuration.cpp
+@@ -90,30 +90,6 @@ bool Configuration::hasValue(const QString &key)
+     return value;
+ }
+ 
+-QString Configuration::getLastLoginUser()
+-{
+-    recordSettings->beginGroup("Greeter");
+-    QString lastLoginUser = recordSettings->value("lastLoginUser").toString();
+-    recordSettings->endGroup();
+-    return lastLoginUser;
+-}
+-
+-void Configuration::saveLastLoginUser(const QString &userRealName)
+-{
+-    recordSettings->beginGroup("Greeter");
+-    recordSettings->setValue("lastLoginUser", userRealName);
+-    recordSettings->endGroup();
+-    recordSettings->sync();
+-}
+-
+-void Configuration::saveLastLoginUser1(const QString &userRealName)
+-{
+-    recordSettings->beginGroup("Greeter");
+-    recordSettings->setValue("lastLoginUser1", userRealName);
+-    recordSettings->endGroup();
+-    recordSettings->sync();
+-}
+-
+ bool Configuration::getLastNumLock()
+ {
+     recordSettings->beginGroup("Greeter");
+diff --git a/src/common/configuration.h b/src/common/configuration.h
+index dc01545..ba9142e 100644
+--- a/src/common/configuration.h
++++ b/src/common/configuration.h
+@@ -38,9 +38,6 @@ public:
+     bool hasValue(const QString &);
+ 
+     void getCurrentUser(const QString userName);
+-    QString getLastLoginUser();
+-    void saveLastLoginUser(const QString &);
+-    void saveLastLoginUser1(const QString &);
+     bool getLastNumLock();
+     void saveLastNumLock(bool value);
+     int getRootBackgroundOption(QString userName);
+diff --git a/src/common/utils.cpp b/src/common/utils.cpp
+index 22ddf60..c7641c7 100644
+--- a/src/common/utils.cpp
++++ b/src/common/utils.cpp
+@@ -108,6 +108,9 @@ bool checkCapsLockState()
+         }
+     }
+ 
++    if (QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
++        return false;
++    }
+     bool capsState = false;
+     unsigned int n;
+     XkbGetIndicatorState(QX11Info::display(), XkbUseCoreKbd, &n);
+diff --git a/src/dbusifs/kglobalaccelhelper.cpp b/src/dbusifs/kglobalaccelhelper.cpp
+index 1094cc6..070b404 100644
+--- a/src/dbusifs/kglobalaccelhelper.cpp
++++ b/src/dbusifs/kglobalaccelhelper.cpp
+@@ -36,10 +36,15 @@ KglobalAccelHelper::~KglobalAccelHelper() {}
+ 
+ bool KglobalAccelHelper::blockShortcut(bool val)
+ {
+-    QDBusMessage result = m_kglobalInterface->call("blockGlobalShortcuts", val);
+-    if (result.type() == QDBusMessage::ErrorMessage) {
+-        qWarning() << "blockShortcut error:" << result.errorMessage();
++    qDebug()<<"m_kglobalInterface isvalid:"<<m_kglobalInterface->isValid();
++    if (m_kglobalInterface->isValid()) {
++        QDBusMessage result = m_kglobalInterface->call("blockGlobalShortcuts", val);
++        if (result.type() == QDBusMessage::ErrorMessage) {
++            qWarning() << "blockShortcut error:" << result.errorMessage();
++            return false;
++        }
++        return true;
++    } else {
+         return false;
+     }
+-    return true;
+ }
+diff --git a/src/dbusifs/uniauthservice.cpp b/src/dbusifs/uniauthservice.cpp
+index 90b165b..1657b24 100644
+--- a/src/dbusifs/uniauthservice.cpp
++++ b/src/dbusifs/uniauthservice.cpp
+@@ -21,11 +21,38 @@
+ #include "definetypes.h"
+ #include "freedesktophelper.h"
+ 
++/* For the type WillLoginUserInfo */
++QDBusArgument &operator<<(QDBusArgument &argument, const WillLoginUserInfo &willLoginUserInfo)
++{
++    argument.beginStructure();
++    argument << willLoginUserInfo.strUserName << willLoginUserInfo.isOneKeyLogin;
++    argument.endStructure();
++    return argument;
++}
++
++const QDBusArgument &operator>>(const QDBusArgument &argument, WillLoginUserInfo &willLoginUserInfo)
++{
++    argument.beginStructure();
++    argument >> willLoginUserInfo.strUserName >> willLoginUserInfo.isOneKeyLogin;
++    argument.endStructure();
++    return argument;
++}
++
++QDebug operator<<(QDebug stream, const WillLoginUserInfo &willLoginUserInfo)
++{
++    stream << "WillLogUser [" << willLoginUserInfo.strUserName << willLoginUserInfo.isOneKeyLogin << "]";
++    return stream;
++}
++
++UniAuthService *UniAuthService::m_instance = nullptr;
++UniAuthService::MemCollector UniAuthService::m_memCollector;
+ UniAuthService::UniAuthService(QObject *parent)
+     : QDBusAbstractInterface(
+         UNIAUTH_DBUS_SERVICE, UNIAUTH_DBUS_PATH, UNIAUTH_DBUS_INTERFACE, QDBusConnection::systemBus(), parent)
+     , m_isActivatable(false)
+ {
++    qRegisterMetaType<WillLoginUserInfo>("WillLoginUserInfo");
++    qDBusRegisterMetaType<WillLoginUserInfo>();
+     setTimeout(2147483647);
+     FreedesktopHelper *systemFdHelper = new FreedesktopHelper(false);
+     if (systemFdHelper) {
+@@ -36,6 +63,14 @@ UniAuthService::UniAuthService(QObject *parent)
+     }
+ }
+ 
++UniAuthService *UniAuthService::instance(QObject *parent)
++{
++    if (!m_instance) {
++        m_instance = new UniAuthService(parent);
++    }
++    return m_instance;
++}
++
+ // 设置默认设备
+ void UniAuthService::setDefaultDevice(int bioDevType, QString deviceName)
+ {
+@@ -78,7 +113,7 @@ QStringList UniAuthService::getAllDefaultDevice(QString userName)
+     return listDefDevices;
+ }
+ 
+-//生物特征开关接口
++// 生物特征开关接口
+ bool UniAuthService::getBioAuthStatus(QString userName, int bioAuthType)
+ {
+     QDBusMessage bioResult = call(QStringLiteral("getBioAuthStatus"), userName, bioAuthType);
+@@ -236,3 +271,89 @@ int UniAuthService::getFTimeoutTimes()
+         return 1;
+     }
+ }
++
++void UniAuthService::SwitchToUser(QString strUserName)
++{
++    QDBusReply<int> reply = call(QStringLiteral("SwitchToUser"), strUserName);
++    if (!reply.isValid()) {
++        qWarning() << "SwitchToUser error:" << reply.error();
++        return;
++    }
++    return;
++}
++
++void UniAuthService::SwitchToGreeterUser(QString strUserName)
++{
++    QDBusReply<int> reply = call(QStringLiteral("SwitchToGreeterUser"), strUserName);
++    if (!reply.isValid()) {
++        qWarning() << "SwitchToGreeterUser error:" << reply.error();
++        return;
++    }
++    return;
++}
++
++WillLoginUserInfo UniAuthService::getWillSwitchUser()
++{
++    WillLoginUserInfo willLoginUserInfo;
++    QDBusMessage result = call(QStringLiteral("getWillSwitchUser"));
++    if (result.type() == QDBusMessage::ErrorMessage) {
++        qWarning() << "getWillSwitchUser error:" << result.errorMessage();
++        return willLoginUserInfo;
++    }
++    if (result.arguments().size() > 0) {
++        QDBusArgument argInfo = result.arguments().at(0).value<QDBusArgument>();
++        argInfo >> willLoginUserInfo;
++    }
++    qDebug() << "getUserInfo:" << willLoginUserInfo;
++    return willLoginUserInfo;
++}
++
++bool UniAuthService::isUserNameValid(QString strUserName)
++{
++    struct passwd *userInfo = nullptr;
++    userInfo = getpwnam(strUserName.toLatin1().data());
++    if (userInfo) {
++        return true;
++    }
++    return false;
++}
++
++int UniAuthService::SaveLastLoginUser(QString strUserName)
++{
++    QDBusReply<int> reply = call(QStringLiteral("SaveLastLoginUser"), strUserName);
++    if (!reply.isValid()) {
++        qWarning() << "SaveLastLoginUser error:" << reply.error();
++        return -1;
++    }
++    return reply.value();
++}
++
++QString UniAuthService::GetLastLoginUser()
++{
++    QDBusReply<QString> reply = call(QStringLiteral("GetLastLoginUser"));
++    if (!reply.isValid()) {
++        qWarning() << "GetLastLoginUser error:" << reply.error();
++        return QString("");
++    }
++    return reply.value();
++}
++
++int UniAuthService::SaveQuickLoginUser(QString strUserName)
++{
++    QDBusReply<int> reply = call(QStringLiteral("SaveQuickLoginUser"), strUserName);
++    if (!reply.isValid()) {
++        qWarning() << "SaveQuickLoginUser error:" << reply.error();
++        return -1;
++    }
++    return reply.value();
++}
++
++QString UniAuthService::GetQuickLoginUser()
++{
++    QDBusReply<QString> reply = call(QStringLiteral("GetQuickLoginUser"));
++    if (!reply.isValid()) {
++        qWarning() << "GetQuickLoginUser error:" << reply.error();
++        return QString("");
++    }
++    return reply.value();
++}
+diff --git a/src/dbusifs/uniauthservice.h b/src/dbusifs/uniauthservice.h
+index ef7d1c0..2599c95 100644
+--- a/src/dbusifs/uniauthservice.h
++++ b/src/dbusifs/uniauthservice.h
+@@ -32,12 +32,36 @@ enum authEnableType
+     ENABLETYPE_LOGIN,   // 暂保留
+ };
+ 
++/**
++ * @brief 用户信息
++ */
++struct WillLoginUserInfo
++{
++    QString strUserName = "";
++    bool isOneKeyLogin = false;
++};
++
++QDBusArgument &operator <<(QDBusArgument &arg, const WillLoginUserInfo &willLoginUserInfo);
++const QDBusArgument &operator >>(const QDBusArgument &arg, WillLoginUserInfo &willLoginUserInfo);
++QDebug operator <<(QDebug stream, const WillLoginUserInfo &willLoginUserInfo);
++
++Q_DECLARE_METATYPE(WillLoginUserInfo)
++
+ class UniAuthService : public QDBusAbstractInterface
+ {
+     Q_OBJECT
+-public:
++private:
+     explicit UniAuthService(QObject *parent = nullptr);
+ 
++public:
++    /**
++     * @brief 单实例
++     *
++     * @param parent 父指针
++     * @return UniAuthService 单实例对象指针
++     */
++    static UniAuthService *instance(QObject *parent = nullptr);
++
+ public Q_SLOTS:
+     // 设置默认设备
+     void setDefaultDevice(int bioDevType, QString deviceName);
+@@ -64,6 +88,53 @@ public Q_SLOTS:
+     bool getHiddenSwitchButton();
+     // 获取人脸超时停用次数
+     int getFTimeoutTimes();
++    /**
++     * @brief 用户名是否有效
++     *
++     * @param strUserName 用户名
++     * @return bool true 有效，否则 无效
++     */
++    bool isUserNameValid(QString strUserName);
++    /**
++     * @brief 一键切换并登录用户
++     *
++     * @param strUserName 用户名
++     */
++    void SwitchToUser(QString strUserName);
++    /**
++     * @brief 切换到登录用户
++     *
++     * @param strUserName 用户名
++     */
++    void SwitchToGreeterUser(QString strUserName);
++    /**
++     * @brief 将要登录的用户信息
++     *
++     * @return WillLoginUserInfo 用户信息
++     */
++    WillLoginUserInfo getWillSwitchUser();
++    /**
++     * @brief SaveLastLoginUser 记录上一次登录成功的用户
++     * @param strUserName 用户名
++     * @return 0 成功，其他失败
++     */
++    int SaveLastLoginUser(QString strUserName);
++    /**
++     * @brief GetLastLoginUser 获取上一次登录的用户
++     * @return 用户名
++     */
++    QString GetLastLoginUser();
++    /**
++     * @brief SaveQuickLoginUser 保存下次快速登录的用户
++     * @param strUserName 用户名
++     * @return 0 成功，其他失败
++     */
++    int SaveQuickLoginUser(QString strUserName);
++    /**
++     * @brief GetQuickLoginUser 获取快速登录的用户名
++     * @return 用户名
++     */
++    QString GetQuickLoginUser();
+ 
+ public:
+     bool isActivatable();
+@@ -73,6 +144,26 @@ Q_SIGNALS:
+     void defaultDeviceChanged(QString userName, int bioDevType, QString deviceName);
+     //开关状态改变
+     void bioAuthStatusChanged(QString userName, int type, bool status);
++    /**
++     * @brief 将要登录的用户名改变
++     *
++     * @param strUserName 新用户名（需对空串异常处理）
++     * @param isOneKeyLogin 是否需要一键登录
++     */
++    void userChanged(WillLoginUserInfo willLoginUser);
++
++private:
++    class MemCollector{
++    public:
++        ~MemCollector(){
++            if (UniAuthService::instance()) {
++                delete UniAuthService::instance();
++                UniAuthService::m_instance = nullptr;
++            }
++        }
++    };
++    static UniAuthService *m_instance; /** 统一认证配置服务单实例指针 */
++    static MemCollector m_memCollector;
+ 
+ private:
+     bool m_isActivatable;
+diff --git a/src/lock-backend/bioauthenticate.cpp b/src/lock-backend/bioauthenticate.cpp
+index e072f56..93f1804 100644
+--- a/src/lock-backend/bioauthenticate.cpp
++++ b/src/lock-backend/bioauthenticate.cpp
+@@ -24,14 +24,11 @@
+ #include "giodbus.h"
+ 
+ BioAuthenticate::BioAuthenticate(QObject *parent)
+-    : QObject(parent)
+-    , m_systemFdHelper(new FreedesktopHelper(false, this))
+-    , m_uniauthService(new UniAuthService(this))
+-    , m_bioTimer(nullptr)
++    : QObject(parent), m_systemFdHelper(new FreedesktopHelper(false, this)), m_bioTimer(nullptr)
+ {
+     m_bioauthState = BIOAUTH_IDLE;
+     m_deviceInfo.id = -1;
+-    m_maxFailedTimes = m_uniauthService->getMaxFailedTimes();
++    m_maxFailedTimes = UniAuthService::instance()->getMaxFailedTimes();
+     m_listPriority.clear();
+     m_listPriority.push_back(BioT_Face);
+     m_listPriority.push_back(BioT_FingerPrint);
+@@ -130,9 +127,9 @@ void BioAuthenticate::onServiceStatusChanged(const QString &strService, bool bAc
+ bool BioAuthenticate::getBioAuthEnable(QString strUserName, int nType)
+ {
+     bool isEnable = false;
+-    isEnable = m_uniauthService->getBioAuthStatus(strUserName, ENABLETYPE_BIO);
++    isEnable = UniAuthService::instance()->getBioAuthStatus(strUserName, ENABLETYPE_BIO);
+     if (isEnable) {
+-        isEnable = m_uniauthService->getBioAuthStatus(strUserName, nType);
++        isEnable = UniAuthService::instance()->getBioAuthStatus(strUserName, nType);
+     }
+     return isEnable;
+ }
+@@ -157,9 +154,9 @@ void BioAuthenticate::checkAvailableBioInfo(int nUid)
+     if (pwdInfo) {
+         int nAuthType = (pwdInfo->pw_name == getenv("USER")) ? ENABLETYPE_SAVER : ENABLETYPE_GREETER;
+         bool isAuthEnable = getBioAuthEnable(pwdInfo->pw_name, nAuthType);
+-        bool isQRCodeEnable = m_uniauthService->getQRCodeEnable();
++        bool isQRCodeEnable = UniAuthService::instance()->getQRCodeEnable();
+         DeviceList deviceList = m_biometricHelper->GetDevList();
+-        QStringList listDefDevices = m_uniauthService->getAllDefaultDevice(pwdInfo->pw_name);
++        QStringList listDefDevices = UniAuthService::instance()->getAllDefaultDevice(pwdInfo->pw_name);
+         qDebug() << "BeginGetFeature------!";
+         FeatureMap mapFeatures = m_biometricHelper->GetUserFeatures(nUid);
+         qDebug() << nUid << ",count:" << mapFeatures.size();
+@@ -212,7 +209,7 @@ void BioAuthenticate::onBioDeviceChanged(int drvid, int action, int devNum)
+     Q_UNUSED(devNum);
+     switch (action) {
+         case ACTION_ATTACHED: {
+-            //插入设备后，需要更新设备列表
++            // 插入设备后，需要更新设备列表
+             clearBioData();
+             QMap<int, DeviceMap>::iterator itUserDev = m_mapDevices.begin();
+             for (; itUserDev != m_mapDevices.end(); itUserDev++) {
+@@ -375,11 +372,11 @@ void BioAuthenticate::onIdentifyComplete(QDBusPendingCallWatcher *watcher)
+     } else if (result == DBUS_RESULT_NOTMATCH) { // 特征识别不匹配
+         qDebug() << "Identify failed";
+         onBioAuthComplete(false, 2);
+-    } else if (result == DBUS_RESULT_ERROR) { //识别发生错误
++    } else if (result == DBUS_RESULT_ERROR) { // 识别发生错误
+         StatusReslut ret = m_biometricHelper->UpdateStatus(m_deviceInfo.id);
+         qDebug() << "StatusReslut:" << ret.result << "," << ret.enable << "," << ret.devNum << "," << ret.devStatus
+                  << "," << ret.opsStatus << "," << ret.notifyMessageId;
+-        //识别操作超时 304/404 认证超时；8 网络错误；
++        // 识别操作超时 304/404 认证超时；8 网络错误；
+         if (ret.result == 0) {
+             if (ret.opsStatus == OPS_IDENTIFY_TIMEOUT || ret.opsStatus == OPS_VERIFY_TIMEOUT
+                 || ret.opsStatus == 8) { // 304认证超时， 8网络异常
+@@ -460,7 +457,7 @@ void BioAuthenticate::onBioAuthComplete(bool isSuccess, int nError)
+             startBioAuth(10000);
+         } else if (m_deviceInfo.deviceType == LOGINOPT_TYPE_FACE && nError == 1) {
+             m_fTimeoutTimes += 1;
+-            if (m_fTimeoutTimes == m_uniauthService->getFTimeoutTimes()) {
++            if (m_fTimeoutTimes == UniAuthService::instance()->getFTimeoutTimes()) {
+                 m_fTimeoutTimes = 0;
+                 nError = 6;
+             } else {
+@@ -524,8 +521,8 @@ void BioAuthenticate::startBioAuth(unsigned uTimeout)
+ QString BioAuthenticate::getDefaultDevice(int nUid, QString strUserName, int bioType)
+ {
+     QString defaultDeviceName = "";
+-    if (m_uniauthService && m_uniauthService->isActivatable()) {
+-        QString strDeviceName = m_uniauthService->getDefaultDevice(strUserName, bioType);
++    if (UniAuthService::instance()->isActivatable()) {
++        QString strDeviceName = UniAuthService::instance()->getDefaultDevice(strUserName, bioType);
+         if (!strDeviceName.isEmpty()) {
+             DeviceInfoPtr pDeviceInfo = findDeviceByName(nUid, strDeviceName);
+             if (pDeviceInfo) {
+@@ -539,9 +536,9 @@ QString BioAuthenticate::getDefaultDevice(int nUid, QString strUserName, int bio
+ QString BioAuthenticate::getDefaultDevice(int nUid, QString strUserName)
+ {
+     QString defaultDeviceName = "";
+-    if (m_uniauthService && m_uniauthService->isActivatable()) {
++    if (UniAuthService::instance()->isActivatable()) {
+         for (auto bioType : m_listPriority) {
+-            QString strDeviceName = m_uniauthService->getDefaultDevice(strUserName, bioType);
++            QString strDeviceName = UniAuthService::instance()->getDefaultDevice(strUserName, bioType);
+             if (!strDeviceName.isEmpty()) {
+                 DeviceInfoPtr pDeviceInfo = findDeviceByName(nUid, strDeviceName);
+                 if (pDeviceInfo) {
+diff --git a/src/lock-backend/bioauthenticate.h b/src/lock-backend/bioauthenticate.h
+index 9f7378b..c26e533 100644
+--- a/src/lock-backend/bioauthenticate.h
++++ b/src/lock-backend/bioauthenticate.h
+@@ -82,7 +82,6 @@ private:
+     BiometricHelper *m_biometricHelper = nullptr;
+     FreedesktopHelper *m_systemFdHelper = nullptr;
+     QMap<int, DeviceMap> m_mapDevices; // 用户可用的设备
+-    UniAuthService *m_uniauthService = nullptr;
+     DeviceInfo m_deviceInfo;
+     BIOAUTH_STATE m_bioauthState;
+     int m_fdFrame = -1;
+diff --git a/src/lock-backend/dbusupperinterface.cpp b/src/lock-backend/dbusupperinterface.cpp
+index 217bdf9..db209a7 100644
+--- a/src/lock-backend/dbusupperinterface.cpp
++++ b/src/lock-backend/dbusupperinterface.cpp
+@@ -43,6 +43,7 @@
+ #include "kglobalaccelhelper.h"
+ #include "personalizeddata.h"
+ #include "libinputswitchevent.h"
++#include "uniauthservice.h"
+ 
+ #define CONFIG_FILE "/usr/share/ukui-greeter/ukui-greeter.conf"
+ 
+@@ -306,7 +307,7 @@ void DbusUpperInterface::SessionTools()
+         message = QDBusMessage::createSignal(SS_DBUS_PATH, SS_DBUS_INTERFACE, "SecondRunParam");
+         message << "CmdSessionTools";
+         QDBusConnection::sessionBus().send(message);
+-        emitLockState(true);
++        emitLockState(false, true);
+         return;
+     }
+     m_bLockState = false;
+@@ -314,7 +315,7 @@ void DbusUpperInterface::SessionTools()
+     qDebug() << cmd;
+ 
+     m_procLockDialog.start(cmd);
+-    emitLockState(true);
++    emitLockState(false, true);
+ }
+ 
+ void DbusUpperInterface::AppBlockWindow(QString actionType)
+@@ -345,7 +346,7 @@ void DbusUpperInterface::AppBlockWindow(QString actionType)
+         else
+             return;
+         QDBusConnection::sessionBus().send(message);
+-        emitLockState(false);
++        emitLockState(false, true);
+         return;
+     }
+     if (actionType != "Restart" && actionType != "Shutdown" && actionType != "Suspend" && actionType != "Hibernate"
+@@ -357,7 +358,7 @@ void DbusUpperInterface::AppBlockWindow(QString actionType)
+     qDebug() << cmd;
+ 
+     m_procLockDialog.start(cmd);
+-    emitLockState(false);
++    emitLockState(false, true);
+ }
+ 
+ void DbusUpperInterface::MultiUserBlockWindow(QString actionType)
+@@ -372,7 +373,7 @@ void DbusUpperInterface::MultiUserBlockWindow(QString actionType)
+         else
+             return;
+         QDBusConnection::sessionBus().send(message);
+-        emitLockState(false);
++        emitLockState(false, true);
+         return;
+     }
+     if (actionType != "Restart" && actionType != "Shutdown")
+@@ -383,7 +384,7 @@ void DbusUpperInterface::MultiUserBlockWindow(QString actionType)
+     qDebug() << cmd;
+ 
+     m_procLockDialog.start(cmd);
+-    emitLockState(false);
++    emitLockState(false, true);
+ }
+ 
+ void DbusUpperInterface::Suspend()
+@@ -624,23 +625,25 @@ bool DbusUpperInterface::checkScreenDialogRunning()
+     return isRunning;
+ }
+ 
+-void DbusUpperInterface::emitLockState(bool val)
++void DbusUpperInterface::emitLockState(bool val, bool isSessionTools)
+ {
+     qDebug() << "emitLockState state = " << val;
+ 
+     if (val != m_bBlockShortcutState) {
+         m_kglobalHelper->blockShortcut(val);
+         m_bBlockShortcutState = val;
+-        qDebug() << " block all shortcut " << "blockShortcut states = " << m_bBlockShortcutState;
++        qDebug() << " block all shortcut "
++                 << "blockShortcut states = " << m_bBlockShortcutState;
+     }
+ 
+     QDBusMessage message;
+-    if (val) {
++    if (val && !isSessionTools) {
+         message = QDBusMessage::createSignal(SS_DBUS_PATH, SS_DBUS_INTERFACE, "lock");
+-    } else {
++        QDBusConnection::sessionBus().send(message);
++    } else if (!val && !isSessionTools) {
+         message = QDBusMessage::createSignal(SS_DBUS_PATH, SS_DBUS_INTERFACE, "unlock");
++        QDBusConnection::sessionBus().send(message);
+     }
+-    QDBusConnection::sessionBus().send(message);
+ }
+ 
+ QString DbusUpperInterface::GetInformation(QString strJson)
+@@ -1091,8 +1094,18 @@ QString DbusUpperInterface::GetDefaultAuthUser()
+         strUserName = getenv("USER");
+     } else {
+         // 获取lightdm传过来的被选中的用户
+-        QString selectedUser = m_lightDmHelper->selectUserHint();
+-        if (!selectedUser.isEmpty()) {
++        WillLoginUserInfo willSwitchUser = UniAuthService::instance()->getWillSwitchUser();
++        QString selectedUser = "";
++        if (willSwitchUser.strUserName.isEmpty()
++            || !UniAuthService::instance()->isUserNameValid(willSwitchUser.strUserName)) {
++            qDebug() << "WillSwitchUser is NULL or invalid:" << willSwitchUser.strUserName;
++            selectedUser = m_lightDmHelper->selectUserHint();
++        }
++        UniAuthService::instance()->SwitchToGreeterUser("");
++        if (!willSwitchUser.strUserName.isEmpty()) {
++            strUserName = willSwitchUser.strUserName;
++            qDebug() << "WillSwitchUser:" << strUserName;
++        } else if (!selectedUser.isEmpty()) {
+             qDebug() << "SelectUserHint: " << selectedUser;
+             if (m_lightDmHelper->findUserByName(selectedUser)) {
+                 strUserName = selectedUser;
+@@ -1108,7 +1121,7 @@ QString DbusUpperInterface::GetDefaultAuthUser()
+         } else if (m_lightDmHelper->getUsersInfo().count() == 1) { // 如果只有一个用户,默认选中
+             strUserName = m_lightDmHelper->getUsersInfo()[0]->name();
+         } else {
+-            QString lastLoginUser = m_config->getLastLoginUser();
++            QString lastLoginUser = UniAuthService::instance()->GetLastLoginUser();
+             if (m_lightDmHelper->findUserByName(lastLoginUser)) {
+                 strUserName = lastLoginUser;
+             } else {
+@@ -2624,9 +2637,10 @@ bool DbusUpperInterface::lockStateChanged(const QJsonObject &objInfo)
+ {
+     int nRet = -1;
+     bool state = objInfo.value("Content").toBool();
++    bool isSessionTools = objInfo.value("SessionTools").toBool();
+     if (lockState != state) {
+         lockState = state;
+-        emitLockState(state);
++        emitLockState(state, isSessionTools);
+     }
+     return lockState;
+ }
+diff --git a/src/lock-backend/dbusupperinterface.h b/src/lock-backend/dbusupperinterface.h
+index 67302bb..2797db9 100644
+--- a/src/lock-backend/dbusupperinterface.h
++++ b/src/lock-backend/dbusupperinterface.h
+@@ -68,7 +68,7 @@ public:
+ 
+ public:
+     bool checkScreenDialogRunning();
+-    void emitLockState(bool val);
++    void emitLockState(bool val, bool isSessionTools = false);
+     void LockStartupMode();
+     /**
+      * @brief 获取黑色屏保状态（沿用）
+diff --git a/src/lock-backend/lightdmhelper.cpp b/src/lock-backend/lightdmhelper.cpp
+index 8444de5..c599ac8 100644
+--- a/src/lock-backend/lightdmhelper.cpp
++++ b/src/lock-backend/lightdmhelper.cpp
+@@ -20,13 +20,19 @@
+ #include <QLightDM/Greeter>
+ #include <QFileInfo>
+ #include "securityuser.h"
++#include "global_utils.h"
+ #include <pwd.h>
+ #include "proxymodel.h"
+ #include "accountshelper.h"
+ #include "definetypes.h"
++#include "uniauthservice.h"
+ #include <QDBusArgument>
+ #include <QDBusMessage>
+ #include <QVariantMap>
++#ifdef WITHKYSEC
++#include <kysec/libkysec.h>
++#include <kysec/status.h>
++#endif
+ 
+ LightDMHelper::LightDMHelper(AccountsHelper *accountHelper, Configuration *config, QObject *parent)
+     : QLightDM::Greeter(parent)
+@@ -39,7 +45,7 @@ LightDMHelper::LightDMHelper(AccountsHelper *accountHelper, Configuration *confi
+     , m_mapUsers(new QMap<QString, UserInfoPtr>())
+     , m_dbusIfsLDM(nullptr)
+ {
+-    //连接到lightdm
++    // 连接到lightdm
+     if (!connectToDaemonSync()) {
+         qDebug() << "connect to Daemon failed";
+         exit(1);
+@@ -66,6 +72,9 @@ void LightDMHelper::initData()
+         m_isShowManualLogin = true;
+     }
+     updateUsersInfo();
++    if (isGreeterMode() && UniAuthService::instance()) {
++        UniAuthService::instance()->SaveQuickLoginUser("");
++    }
+ }
+ 
+ bool LightDMHelper::setSession(const QString &session)
+@@ -109,9 +118,16 @@ int LightDMHelper::getLoginUserCount()
+ void LightDMHelper::startSession()
+ {
+     if (isAuthenticated()) {
+-        if (m_configuration) {
+-            m_configuration->saveLastLoginUser(m_strCurUserName);
+-            m_configuration->saveLastLoginUser1(m_strCurUserName);
++        if (UniAuthService::instance()) {
++            UniAuthService::instance()->SaveLastLoginUser(m_strCurUserName);
++// 三权分立不保存秒级登录用户信息
++#ifdef WITHKYSEC
++            if (kysec_is_disabled() || !kysec_get_3adm_status()) {
++#endif
++                UniAuthService::instance()->SaveQuickLoginUser(m_strCurUserName);
++#ifdef WITHKYSEC
++            }
++#endif
+         }
+         Q_EMIT authenticationSucess(m_strCurUserName);
+     }
+diff --git a/src/lock-backend/main.cpp b/src/lock-backend/main.cpp
+index 27916bc..cd35943 100644
+--- a/src/lock-backend/main.cpp
++++ b/src/lock-backend/main.cpp
+@@ -24,6 +24,7 @@
+ #include <signal.h>
+ #include <unistd.h>
+ #include <sys/wait.h>
++#include <sys/prctl.h>
+ #include <stdio.h>
+ #include <ukui-log4qt.h>
+ #include "qtsinglecoreapplication.h"
+@@ -51,6 +52,8 @@ int main(int argc, char *argv[])
+         return 0;
+     }
+     qInfo()<<"ukui screensaver backend Started!!";
++    // 会话管理器退出时，锁屏后端也退出
++    prctl(PR_SET_PDEATHSIG, SIGKILL);
+     //命令行参数解析
+     QCommandLineParser parser;
+     parser.setApplicationDescription(QCoreApplication::translate("main", "Backend for the ukui ScreenSaver."));
+diff --git a/src/lock-backend/switchuserutils.cpp b/src/lock-backend/switchuserutils.cpp
+index 27d7de1..7dc55f9 100644
+--- a/src/lock-backend/switchuserutils.cpp
++++ b/src/lock-backend/switchuserutils.cpp
+@@ -277,11 +277,20 @@ int SwitchUserUtils::SwitchToUserSession(QString seatPath, UserDisplayIfInfo &to
+         return 0;
+     } else if (!toUDII.strUserName.isEmpty()) {
+         if (!isGreeterMode()) {
++            // 切换到免密登录用户会直接登录桌面，需要先展示“登录”按钮
++#if 0
+             QDBusMessage result = ifaceDM.call("SwitchToUser", toUDII.strUserName, toUDII.strSessionPath);
+             if (result.type() == QDBusMessage::ErrorMessage) {
+                 qWarning() << "SwitchUser SwitchToUser failed:" << result.errorMessage();
+                 return 2;
+             }
++#else
++            QDBusMessage result = ifaceDM.call("SwitchToGreeter");
++            if (result.type() == QDBusMessage::ErrorMessage) {
++                qWarning() << "SwitchUser SwitchToGreeter failed:" << result.errorMessage();
++                return 2;
++            }
++#endif
+         } else {
+             return 4;
+         }
+diff --git a/src/lock-dialog/backenddbushelper.cpp b/src/lock-dialog/backenddbushelper.cpp
+index 16c655b..eb6ff0e 100644
+--- a/src/lock-dialog/backenddbushelper.cpp
++++ b/src/lock-dialog/backenddbushelper.cpp
+@@ -358,11 +358,12 @@ bool BackendDbusHelper::setCurrentSession(QString strSession)
+     return true;
+ }
+ 
+-bool BackendDbusHelper::lockStateChanged(bool isVisible)
++bool BackendDbusHelper::lockStateChanged(bool isVisible, bool isSessionTools)
+ {
+     QJsonObject jsonCmd;
+     jsonCmd["CmdId"] = LOCK_CMD_ID_LOCK_STATE_CHANGED;
+     jsonCmd["Content"] = isVisible;
++    jsonCmd["SessionTools"] = isSessionTools;
+     QDBusPendingReply<int> reply = SetInformation(QString(QJsonDocument(jsonCmd).toJson()));
+     if (reply.isError()) {
+         qWarning() << "lockStateChanged error: " << reply.error().message();
+diff --git a/src/lock-dialog/backenddbushelper.h b/src/lock-dialog/backenddbushelper.h
+index 3bac8b9..426ab68 100644
+--- a/src/lock-dialog/backenddbushelper.h
++++ b/src/lock-dialog/backenddbushelper.h
+@@ -148,7 +148,7 @@ public Q_SLOTS:
+     bool setCurrentUser(QString strUserName);
+     int switchToUser(QString strUserName);
+     bool setCurrentSession(QString strSession);
+-    bool lockStateChanged(bool isVisible);
++    bool lockStateChanged(bool isVisible, bool isSessionTools);
+     void startSession();
+ 
+     void pamAuthenticate(QString strUserName);
+diff --git a/src/lock-dialog/lockdialogmodel.cpp b/src/lock-dialog/lockdialogmodel.cpp
+index 3802e38..e0bcf16 100644
+--- a/src/lock-dialog/lockdialogmodel.cpp
++++ b/src/lock-dialog/lockdialogmodel.cpp
+@@ -29,7 +29,7 @@
+ #include <pwd.h>
+ 
+ LockDialogModel::LockDialogModel(QObject *parent)
+-    : QObject(parent), m_isUseWayland(QGuiApplication::platformName().startsWith("wayland", Qt::CaseInsensitive))
++    : QObject(parent), m_isUseWayland(QString(qgetenv("XDG_SESSION_TYPE")) == "wayland")
+ {
+ }
+ 
+diff --git a/src/lock-dialog/lockdialogmodel.h b/src/lock-dialog/lockdialogmodel.h
+index 72abc20..8db3e16 100644
+--- a/src/lock-dialog/lockdialogmodel.h
++++ b/src/lock-dialog/lockdialogmodel.h
+@@ -512,7 +512,7 @@ Q_SIGNALS:
+ 
+     void agreementInfoChanged();
+ 
+-    void lockStateChanged(bool isVisible);
++    void lockStateChanged(bool isVisible, bool isSessionTools);
+ 
+     void lidstateChanged(const QString &lidstate);
+ 
+diff --git a/src/lock-dialog/main.cpp b/src/lock-dialog/main.cpp
+index 06064be..2e75af6 100644
+--- a/src/lock-dialog/main.cpp
++++ b/src/lock-dialog/main.cpp
+@@ -54,10 +54,6 @@ int main(int argc, char *argv[])
+     initUkuiLog4qt("ukui-screensaver-dialog");
+     // 重启或关机时不被session关掉
+     qunsetenv("SESSION_MANAGER");
+-    if (!isGreeterMode()) {
+-        // 试用模式不起锁屏
+-        checkIslivecd();
+-    }
+ 
+     qputenv("QT_QPA_PLATFORMTHEME", QByteArray("ukui"));
+ 
+@@ -74,8 +70,9 @@ int main(int argc, char *argv[])
+     LockDialogModel *lockDialogModel = new LockDialogModel();
+     LockDialogPerformer *performer = new LockDialogPerformer(lockDialogModel);
+ 
+-    if (isGreeterMode())
++    if (isGreeterMode() && !lockDialogModel->isUseWayland()) {
+         DisplayService::instance(lockDialogModel)->setCurUserName(lockDialogModel->defaultUserName());
++    }
+ 
+     QString strDisplay = "";
+     if (QString(qgetenv("XDG_SESSION_TYPE")) == "wayland") {
+@@ -85,6 +82,20 @@ int main(int argc, char *argv[])
+     }
+     QString id = QString("ukui-screensaver-dialog" + strDisplay);
+     QtSingleApplication app(id, argc, argv);
++
++    LockDialogModel::CommandLineArgs cmdArgs;
++    if (!lockDialogModel->parseCmdArguments(app.arguments(), cmdArgs)) {
++        return 0;
++    }
++
++    if (!isGreeterMode()) {
++	// 需要判断参数是否是session-tools
++        if (!cmdArgs.isSessionTools) {
++            // 试用模式不起锁屏
++            checkIslivecd();
++        }
++    }
++
+     if (app.isRunning()) {
+         QString strArguments = QApplication::arguments().join(",");
+         app.sendMessage(strArguments);
+@@ -93,7 +104,9 @@ int main(int argc, char *argv[])
+         qInfo() << "ukui screensaver dialog is running!";
+         return EXIT_SUCCESS;
+     }
+-    setCursorCenter();
++    if (!lockDialogModel->isUseWayland()) {
++        setCursorCenter();
++    }
+     // 加载插件实例
+     PluginsLoader *pluginsLoader = &PluginsLoader::instance();
+     pluginsLoader->start(QThread::HighestPriority);
+@@ -125,11 +138,6 @@ int main(int argc, char *argv[])
+         loopTemp->exec();
+     }
+ 
+-    LockDialogModel::CommandLineArgs cmdArgs;
+-
+-    if (!lockDialogModel->parseCmdArguments(app.arguments(), cmdArgs)) {
+-        return 0;
+-    }
+     QObject::connect(
+         &app, SIGNAL(messageReceived(const QString &)), lockDialogModel, SLOT(onRunningMessage(const QString &)));
+ 
+diff --git a/src/screensaver/main.cpp b/src/screensaver/main.cpp
+index 4190ec5..6b04da1 100644
+--- a/src/screensaver/main.cpp
++++ b/src/screensaver/main.cpp
+@@ -31,6 +31,7 @@
+ #include <sys/prctl.h>
+ #include <signal.h>
+ #include <syslog.h>
++#include <ukui-log4qt.h>
+ 
+ #define WORKING_DIRECTORY "/usr/share/ukui-screensaver"
+ bool bControlFlg = false;//是否控制面板窗口
+@@ -42,6 +43,8 @@ int main(int argc, char *argv[])
+     QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
+ #endif
+     QApplication a(argc, argv);
++
++    initUkuiLog4qt("ukui-screensaver-default");
+ /*
+     prctl(PR_SET_PDEATHSIG, SIGHUP);
+     //加载翻译文件
+diff --git a/src/screensaver/scconfiguration.cpp b/src/screensaver/scconfiguration.cpp
+index e2c2f91..105045a 100644
+--- a/src/screensaver/scconfiguration.cpp
++++ b/src/screensaver/scconfiguration.cpp
+@@ -114,10 +114,15 @@ void SCConfiguration::onConfigurationChanged(QString key, QVariant value)
+ QString SCConfiguration::getDefaultBackground()
+ {
+     QString backgroundFile = m_helperBackendDbus->getLockScreenConf(KEY_BACKGROUND).toString();
+-    if (ispicture(backgroundFile))
++    if (ispicture(backgroundFile)) {
+         return backgroundFile;
+-    else
++    } else {
++        QString default_background_path = "/usr/share/backgrounds/1-warty-final-ubuntukylin.jpg";
++        if (ispicture(default_background_path)) {
++            return default_background_path;
++        }
+         return DEFAULT_BACKGROUND_PATH;
++    }
+ }
+ 
+ int SCConfiguration::getTimeType()
+diff --git a/src/screensaver/screensaver.cpp b/src/screensaver/screensaver.cpp
+index 71e2f0a..ace6b38 100644
+--- a/src/screensaver/screensaver.cpp
++++ b/src/screensaver/screensaver.cpp
+@@ -370,7 +370,7 @@ bool Screensaver::eventFilter(QObject *obj, QEvent *event)
+         }
+     }
+ #endif
+-    return false;
++    return QWidget::eventFilter(obj, event);
+ }
+ 
+ void Screensaver::paintEvent(QPaintEvent *event)
+@@ -539,23 +539,25 @@ void Screensaver::resizeEvent(QResizeEvent * /*event*/)
+         if (flag == 0) {
+             QList<QLabel *> labelList = this->findChildren<QLabel *>();
+             for (int i = 0; i < labelList.count(); i++) {
+-                int fontsize = labelList.at(i)->font().pixelSize();
+-                int fontpt = labelList.at(i)->font().pointSize();
+-                if (fontsize > 0) {
++                if (labelList.at(i) != myPreviewLabel) {
++                    int fontsize = labelList.at(i)->font().pixelSize();
++                    int fontpt = labelList.at(i)->font().pointSize();
++                    if (fontsize > 0) {
+ #ifdef USE_INTEL
+-                    const QString SheetStyle = QString("font-size:%1px;").arg(fontsize / 3);
++                        const QString SheetStyle = QString("font-size:%1px;").arg(fontsize / 3);
+ #else
+-                    const QString SheetStyle = QString("font-size:%1px;").arg(fontsize / 4);
++                        const QString SheetStyle = QString("font-size:%1px;").arg(fontsize / 4);
+ #endif
+-                    labelList.at(i)->setStyleSheet(SheetStyle);
+-                } else {
+-                    QFont font = labelList.at(i)->font();
++                        labelList.at(i)->setStyleSheet(SheetStyle);
++                    } else {
++                        QFont font = labelList.at(i)->font();
+ #ifdef USE_INTEL
+-                    font.setPointSize(fontpt / 3);
++                        font.setPointSize(fontpt / 3);
+ #else
+-                    font.setPointSize(fontpt / 4);
++                        font.setPointSize(fontpt / 4);
+ #endif
+-                    labelList.at(i)->setFont(font);
++                        labelList.at(i)->setFont(font);
++                    }
+                 }
+             }
+             QList<QWidget *> childList = timeLayout->findChildren<QWidget *>();
+@@ -882,6 +884,17 @@ void Screensaver::initUI()
+             }
+         }
+     }
++    // V11上在窗口关闭时会收到一个leaveEvent(),控制面板关闭的时候new这个label，会导致控制面板关闭卡顿。
++    if (!myPreviewLabel) {
++        myPreviewLabel = new QLabel(this);
++        myPreviewLabel->setFixedHeight(30);
++        myPreviewLabel->setMinimumWidth(54);
++
++        // 设置样式
++        myPreviewLabel->setStyleSheet("background-color: rgb(38,38,38); border-radius: 0px; color:white;");
++        myPreviewLabel->setAlignment(Qt::AlignCenter);
++        myPreviewLabel->hide();
++    }
+ #endif
+ }
+ 
+@@ -1136,16 +1149,6 @@ void Screensaver::setRandomText()
+ 
+ void Screensaver::setPreviewText(bool bVisible)
+ {
+-    if (!myPreviewLabel) {
+-        myPreviewLabel = new QLabel(this);
+-        myPreviewLabel->setFixedHeight(30);
+-        myPreviewLabel->setMinimumWidth(54);
+-
+-        // 设置样式
+-        myPreviewLabel->setStyleSheet("background-color: rgb(38,38,38); border-radius: 0px; color:white;");
+-        myPreviewLabel->setAlignment(Qt::AlignCenter);
+-    }
+-
+     myPreviewLabel->setText(m_strPreViewTrans);
+     myPreviewLabel->adjustSize();
+ 
+diff --git a/src/widgets/authdialog.cpp b/src/widgets/authdialog.cpp
+index 4a2b002..62c9b77 100644
+--- a/src/widgets/authdialog.cpp
++++ b/src/widgets/authdialog.cpp
+@@ -55,7 +55,6 @@ AuthDialog::AuthDialog(LockDialogModel *model, UserInfoPtr userInfo, QWidget *pa
+     , m_isLockingFlg(false)
+     , m_isInputPasswd(false)
+     , m_curUserInfo(userInfo)
+-    , m_uniauthService(new UniAuthService(this))
+     , m_pSecurityQuestionAnswer(new SecurityQuestionAnswer(this))
+ {
+     initUI();
+@@ -950,8 +949,8 @@ void AuthDialog::onFirstLoginIdentifyComplete(QDBusPendingCallWatcher *watcher)
+         struct passwd *pwd;
+         pwd = getpwuid(authUid);
+         if (pwd && pwd->pw_name) {
+-            if (m_uniauthService && m_uniauthService->isActivatable()) {
+-                bool isEnable = m_uniauthService->getBioAuthStatus(pwd->pw_name, ENABLETYPE_BIO);
++            if (UniAuthService::instance()->isActivatable()) {
++                bool isEnable = UniAuthService::instance()->getBioAuthStatus(pwd->pw_name, ENABLETYPE_BIO);
+                 if (isEnable == false)
+                     return;
+             }
+@@ -1499,7 +1498,7 @@ void AuthDialog::performBiometricAuth()
+     if (!m_biometricProxy) {
+         waitBiometricServiceStatus();
+         m_biometricProxy = new BiometricHelper(this);
+-        maxFailedTimes = m_uniauthService->getMaxFailedTimes();
++        maxFailedTimes = UniAuthService::instance()->getMaxFailedTimes();
+     }
+ 
+     // 服务没启动，或者打开DBus连接出错
+@@ -1613,8 +1612,7 @@ void AuthDialog::initBiometricWidget()
+     } else {
+         QHBoxLayout *optsLayout = new QHBoxLayout(m_widgetLoginOpts);
+         optsLayout->setContentsMargins(0, 0, 0, 0);
+-        m_loginOpts
+-            = new LoginOptionsWidget(m_biometricProxy, m_curUserInfo->uid(), m_uniauthService, m_widgetLoginOpts);
++        m_loginOpts = new LoginOptionsWidget(m_biometricProxy, m_curUserInfo->uid(), m_widgetLoginOpts);
+         optsLayout->addWidget(m_loginOpts);
+         connect(m_loginOpts, &LoginOptionsWidget::authComplete, this, &AuthDialog::onBiometricAuthComplete);
+         connect(m_loginOpts, &LoginOptionsWidget::optionSelected, this, &AuthDialog::onDeviceChanged);
+@@ -1910,7 +1908,7 @@ void AuthDialog::onBiometricAuthComplete(bool result, int nStatus)
+                 startBioAuth(10000);
+             } else if (m_uCurLoginOptType == LOGINOPT_TYPE_FACE && nStatus == 1) {
+                 m_fTimeoutTimes += 1;
+-                if (m_fTimeoutTimes == m_uniauthService->getFTimeoutTimes()) {
++                if (m_fTimeoutTimes == UniAuthService::instance()->getFTimeoutTimes()) {
+                     m_fRetryButton->show();
+                     m_labelFace->hide();
+                     setLoginTypeTip(
+@@ -1987,7 +1985,7 @@ void AuthDialog::onBiometricDbusChanged(bool bActive)
+             qDebug() << "OnDelay init biometric!!";
+             if (!m_biometricProxy) {
+                 m_biometricProxy = new BiometricHelper(this);
+-                maxFailedTimes = m_uniauthService->getMaxFailedTimes();
++                maxFailedTimes = UniAuthService::instance()->getMaxFailedTimes();
+             }
+ 
+             // 服务没启动，或者打开DBus连接出错
+diff --git a/src/widgets/authdialog.h b/src/widgets/authdialog.h
+index 603ea8b..2b25f86 100644
+--- a/src/widgets/authdialog.h
++++ b/src/widgets/authdialog.h
+@@ -26,7 +26,6 @@
+ #include "biodefines.h"
+ #include "loginoptionswidget.h"
+ #include "pluginsloader.h"
+-#include "statusbutton.h"
+ #include <QDateTime>
+ 
+ class QLabel;
+@@ -35,6 +34,7 @@ class QPushButton;
+ class IconEdit;
+ class LockDialogModel;
+ class BioButtonListWidget;
++class StatuButton;
+ class QTimer;
+ class SecurityQuestionAnswer;
+ 
+@@ -283,7 +283,6 @@ private:
+ 
+     QPixmap m_waitingPixmap;
+     QTimer *w_timer = nullptr;
+-    UniAuthService *m_uniauthService = nullptr;
+     bool isLoadingUkey = false;
+     bool isPowerup = false;
+     QDBusInterface *bioService = nullptr;
+diff --git a/src/widgets/blockwidget.cpp b/src/widgets/blockwidget.cpp
+index 1a3afc0..99a6284 100644
+--- a/src/widgets/blockwidget.cpp
++++ b/src/widgets/blockwidget.cpp
+@@ -137,8 +137,20 @@ void BlockWidget::setTips(const QString tips)
+     m_tipLabel->show();
+     m_listView->hide();
+     m_tipLabel->setText(tips);
+-    m_cancelButton->setText(tr("Cancel"));
+-    m_confirmButton->setText(tr("Confrim"));
++    QString cancelStrEText = getElidedText(font(), m_cancelButton->width() - m_cancelButton->contentsMargins().left() - m_cancelButton->contentsMargins().right(), tr("Cancel"));
++    if (cancelStrEText == tr("Cancel")) {
++        m_cancelButton->setText(tr("Cancel"));
++    } else if (cancelStrEText != tr("Cancel")) {
++        m_cancelButton->setText(cancelStrEText);
++        m_cancelButton->setToolTip(tr("Cancel"));
++    }
++    QString strEText = getElidedText(font(), m_confirmButton->width() - m_confirmButton->contentsMargins().left() - m_confirmButton->contentsMargins().right(), tr("Confrim"));
++    if (strEText == tr("Confrim")) {
++        m_confirmButton->setText(tr("Confrim"));
++    } else if (strEText != tr("Confrim")) {
++        m_confirmButton->setText(strEText);
++        m_confirmButton->setToolTip(tr("Confrim"));
++    }
+ }
+ 
+ void BlockWidget::setMsgTips(int type)
+@@ -236,8 +248,20 @@ void BlockWidget::setWarning(QStringList list, int type)
+                                   "QPushButton:pressed {background: rgba(255, 255, 255, 0.3);border-radius: 24px;}");
+     sysFont.setPointSize((16 + m_curFontSize) * m_ptToPx);
+     m_cancelButton->setFont(sysFont);
+-    m_cancelButton->setText(tr("Cancel"));
+-    m_confirmButton->setText(tr("Confrim"));
++    QString cancelStrEText = getElidedText(font(), m_cancelButton->width() - m_cancelButton->contentsMargins().left() - m_cancelButton->contentsMargins().right(), tr("Cancel"));
++    if (cancelStrEText == tr("Cancel")) {
++        m_cancelButton->setText(tr("Cancel"));
++    } else if (cancelStrEText != tr("Cancel")) {
++        m_cancelButton->setText(cancelStrEText);
++        m_cancelButton->setToolTip(tr("Cancel"));
++    }
++    QString strEText = getElidedText(font(), m_confirmButton->width() - m_confirmButton->contentsMargins().left() - m_confirmButton->contentsMargins().right(), tr("Confrim"));
++    if (strEText == tr("Confrim")) {
++        m_confirmButton->setText(tr("Confrim"));
++    } else if (strEText != tr("Confrim")) {
++        m_confirmButton->setText(strEText);
++        m_confirmButton->setToolTip(tr("Confrim"));
++    }
+ }
+ 
+ QString BlockWidget::getHibited_tr_lowcase(int type)
+@@ -255,3 +279,12 @@ QString BlockWidget::getHibited_tr_lowcase(int type)
+     return "";
+ }
+ 
++QString BlockWidget::getElidedText(QFont font, int width, QString strInfo)
++{
++    QFontMetrics fontMetrics(font);
++    //如果当前字体下，字符串长度大于指定宽度
++    if (fontMetrics.width(strInfo) > width) {
++        strInfo = QFontMetrics(font).elidedText(strInfo, Qt::ElideRight, width);
++    }
++    return strInfo;
++}
+diff --git a/src/widgets/blockwidget.h b/src/widgets/blockwidget.h
+index 748758a..fdd139b 100644
+--- a/src/widgets/blockwidget.h
++++ b/src/widgets/blockwidget.h
+@@ -48,6 +48,7 @@ public:
+ 
+ private:
+     void initUi();
++    QString getElidedText(QFont font, int width, QString strInfo);
+ 
+ private Q_SLOTS:
+     void onFontSizeChanged(double fontSize);
+diff --git a/src/widgets/fullbackgroundwidget.cpp b/src/widgets/fullbackgroundwidget.cpp
+index a124348..b59017a 100644
+--- a/src/widgets/fullbackgroundwidget.cpp
++++ b/src/widgets/fullbackgroundwidget.cpp
+@@ -50,6 +50,10 @@
+ #include "configuration.h"
+ #include <windowmanager/windowmanager.h>
+ using namespace kdk;
++#ifdef WITHKYSEC
++#include <kysec/libkysec.h>
++#include <kysec/status.h>
++#endif
+ 
+ FullBackgroundWidget::FullBackgroundWidget(LockDialogModel *model, QWidget *parent)
+     : QWidget(parent), m_modelLockDialog(model)
+@@ -143,7 +147,7 @@ void FullBackgroundWidget::initUI()
+     setWindowFlags(Qt::FramelessWindowHint | Qt::X11BypassWindowManagerHint);
+ 
+     // 登录模式下监听屏幕插拔
+-    if (isGreeterMode() && QString(qgetenv("XDG_SESSION_TYPE")) != "wayland") {
++    if (isGreeterMode() && !m_modelLockDialog->isUseWayland()) {
+         XRRQueryExtension(QX11Info::display(), &m_RREventBase, &m_RRErrorBase);
+         XRRSelectInput(QX11Info::display(), QX11Info::appRootWindow(), RRScreenChangeNotifyMask);
+         QtConcurrent::run([=]() { RRScreenChangeEvent(true); });
+@@ -297,7 +301,7 @@ void FullBackgroundWidget::onSecondRunParam(const QString &str)
+ void FullBackgroundWidget::onShowBlankScreensaver(int nDelay, bool isHasLock)
+ {
+     qDebug() << "onShowBlankScreensaver:" << nDelay << "," << isHasLock;
+-    Q_EMIT m_modelLockDialog->lockStateChanged(true);
++    Q_EMIT m_modelLockDialog->lockStateChanged(true, false);
+ 
+     if (isHasLock) {
+         screenStatus = (ScreenStatus)(screenStatus | SCREEN_SAVER | SCREEN_LOCK);
+@@ -348,7 +352,7 @@ void FullBackgroundWidget::onShowLock(bool isStartup)
+     m_isStartupMode = isStartup;
+     show();
+     Q_EMIT m_modelLockDialog->setCurrentUser(m_modelLockDialog->defaultUserName());
+-    Q_EMIT m_modelLockDialog->lockStateChanged(true);
++    Q_EMIT m_modelLockDialog->lockStateChanged(true, false);
+     if (m_lockWidget && !m_lockWidget->isHidden())
+         m_lockWidget->show();
+ }
+@@ -364,7 +368,7 @@ void FullBackgroundWidget::onShowSwitchUserLock()
+     screenStatus = (ScreenStatus)(screenStatus | SCREEN_LOCK);
+     show();
+     Q_EMIT m_modelLockDialog->setCurrentUser(m_modelLockDialog->defaultUserName());
+-    Q_EMIT m_modelLockDialog->lockStateChanged(true);
++    Q_EMIT m_modelLockDialog->lockStateChanged(true, false);
+     if (m_lockWidget && !m_lockWidget->isHidden()) {
+         m_lockWidget->show();
+         m_lockWidget->onShowUserListWidget(true);
+@@ -377,7 +381,7 @@ void FullBackgroundWidget::onShowSessionTools()
+     m_isSessionTools = true;
+     show();
+     Q_EMIT m_modelLockDialog->setCurrentUser(m_modelLockDialog->defaultUserName());
+-    Q_EMIT m_modelLockDialog->lockStateChanged(true);
++    Q_EMIT m_modelLockDialog->lockStateChanged(true, true);
+     if (m_lockWidget && !m_lockWidget->isHidden())
+         m_lockWidget->onShowPowerListWidget(true);
+ }
+@@ -395,7 +399,7 @@ void FullBackgroundWidget::onShowAppBlockWindow(int actionType)
+         if (m_lockWidget && !m_lockWidget->isHidden())
+             screenStatus = (ScreenStatus)(screenStatus | SCREEN_LOCK);
+         Q_EMIT m_modelLockDialog->setCurrentUser(m_modelLockDialog->defaultUserName());
+-        Q_EMIT m_modelLockDialog->lockStateChanged(true);
++        Q_EMIT m_modelLockDialog->lockStateChanged(true, true);
+         m_isSessionTools = true;
+         if (m_lockWidget && !m_lockWidget->isHidden())
+             m_lockWidget->onShowInhibitWarning(lockcheck, actionType, true);
+@@ -409,7 +413,7 @@ void FullBackgroundWidget::onShowMultiUsersBlockWindows(int actionType)
+     show();
+     if (m_lockWidget && !m_lockWidget->isHidden())
+         Q_EMIT m_modelLockDialog->setCurrentUser(m_modelLockDialog->defaultUserName());
+-    Q_EMIT m_modelLockDialog->lockStateChanged(true);
++    Q_EMIT m_modelLockDialog->lockStateChanged(true, true);
+     if (m_lockWidget && !m_lockWidget->isHidden())
+         m_lockWidget->onMulUsersLogined(actionType, true);
+ }
+@@ -418,7 +422,7 @@ void FullBackgroundWidget::onShowSessionIdle()
+ {
+     onShowScreensaver();
+     delayLockScreen();
+-    Q_EMIT m_modelLockDialog->lockStateChanged(true);
++    Q_EMIT m_modelLockDialog->lockStateChanged(true, true);
+ }
+ 
+ void FullBackgroundWidget::onShowLockScreensaver()
+@@ -460,7 +464,7 @@ void FullBackgroundWidget::onShowScreensaver()
+         }
+     }
+     show();
+-    Q_EMIT m_modelLockDialog->lockStateChanged(true);
++    Q_EMIT m_modelLockDialog->lockStateChanged(true, false);
+ }
+ 
+ void FullBackgroundWidget::onClearScreensaver()
+@@ -469,6 +473,8 @@ void FullBackgroundWidget::onClearScreensaver()
+ 
+     for (auto widget : widgetXScreensaverList) {
+         widget->close();
++        delete widget;
++        widget = nullptr;
+     }
+     widgetXScreensaverList.clear();
+ 
+@@ -515,7 +521,7 @@ void FullBackgroundWidget::onLockScreenTimeout()
+ void FullBackgroundWidget::onCloseScreensaver()
+ {
+     hide();
+-    Q_EMIT m_modelLockDialog->lockStateChanged(false);
++    Q_EMIT m_modelLockDialog->lockStateChanged(false, false);
+     stopDelayLockScreen();
+     screenStatus = UNDEFINED;
+     m_isBlank = false;
+@@ -798,7 +804,7 @@ bool FullBackgroundWidget::nativeEventFilter(const QByteArray &eventType, void *
+         qDebug() << "---------------------XCB_KEY_RELEASE:" << xc->detail;
+         onGlobalKeyRelease(xc->detail);
+     } else if (responseType == m_RREventBase + RRScreenChangeNotify) {
+-        if (isGreeterMode() && QString(qgetenv("XDG_SESSION_TYPE")) != "wayland") {
++        if (isGreeterMode() && !m_modelLockDialog->isUseWayland()) {
+             RRScreenChangeEvent(false);
+         }
+     }
+@@ -807,13 +813,24 @@ bool FullBackgroundWidget::nativeEventFilter(const QByteArray &eventType, void *
+ 
+ void FullBackgroundWidget::onCurUserChanged(const QString &strUserName)
+ {
+-    if (isGreeterMode())
++    if (isGreeterMode() && !m_modelLockDialog->isUseWayland())
+         DisplayService::instance(m_modelLockDialog)->setCurUserName(strUserName);
+ }
+ 
+ void FullBackgroundWidget::onAuthSucceed(QString strUserName)
+ {
+     if (getenv("USER") == strUserName) {
++        if (UniAuthService::instance()) {
++            UniAuthService::instance()->SaveLastLoginUser(strUserName);
++// 三权分立不保存秒级登录用户信息
++#ifdef WITHKYSEC
++            if (kysec_is_disabled() || !kysec_get_3adm_status()) {
++#endif
++                UniAuthService::instance()->SaveQuickLoginUser(strUserName);
++#ifdef WITHKYSEC
++            }
++#endif
++        }
+         onCloseScreensaver();
+     } else {
+         if (m_lockWidget) {
+diff --git a/src/widgets/lockwidget.cpp b/src/widgets/lockwidget.cpp
+index 1adb9a1..8c3b318 100644
+--- a/src/widgets/lockwidget.cpp
++++ b/src/widgets/lockwidget.cpp
+@@ -207,18 +207,6 @@ bool LockWidget::exitSubWidget(bool isForScreensaver, bool hideVirkeyboard)
+ 
+ void LockWidget::paintEvent(QPaintEvent *event)
+ {
+-    QPainter painter(this);
+-    painter.drawPixmap(this->geometry(), background);
+-    QPainterPath path;
+-    painter.setOpacity(0.25);
+-    painter.setRenderHint(QPainter::Antialiasing); // 反锯齿;
+-    painter.setClipping(true);
+-    painter.setPen(Qt::transparent);
+-    path.addRect(this->rect());
+-    path.setFillRule(Qt::WindingFill);
+-    painter.setBrush(QColor("#000000"));
+-    painter.setPen(Qt::transparent);
+-    painter.drawPath(path);
+     return QWidget::paintEvent(event);
+ }
+ 
+@@ -385,6 +373,7 @@ void LockWidget::initUI()
+ 
+ void LockWidget::initConnections()
+ {
++    connect(UniAuthService::instance(), &UniAuthService::userChanged, this, &LockWidget::onServiceUserChanged);
+     connect(m_modelLockDialog, &LockDialogModel::usersInfoChanged, this, &LockWidget::onUsersInfoChanged);
+     connect(m_modelLockDialog, &LockDialogModel::currentUserChanged, this, &LockWidget::onCurUserChanged);
+     connect(m_modelLockDialog, &LockDialogModel::currentSessionChanged, this, &LockWidget::onSessionChanged);
+@@ -424,6 +413,7 @@ void LockWidget::initUserWidget()
+         m_userListWidget->updateWidgetSize();
+         m_userListWidget->hide();
+         connect(m_userListWidget, &UserListWidget::userSelected, m_modelLockDialog, [=](QString strUserName) {
++            exitSubWidget(false, false);
+             SwitchToUser(strUserName);
+         });
+         connect(m_userListWidget, &UserListWidget::widgetSizeChanged, m_modelLockDialog, [=]() {
+@@ -466,6 +456,11 @@ void LockWidget::initPowerWidget()
+     connect(m_powerListWidget, &PowerListWidget::suspendClicked, this, &LockWidget::onSuspendClicked);
+     connect(m_powerListWidget, &PowerListWidget::itemClicked, this, &LockWidget::onPowerItemClicked);
+     connect(m_powerListWidget, &PowerListWidget::switchuserClicked, this, &LockWidget::onSwitchuserClicked);
++    connect(m_powerListWidget, &PowerListWidget::powerWidgetClicked, this, [=] {
++        exitSubWidget();
++        Q_EMIT sessionToolsExit();
++        m_isSessionTools = false;
++    });
+     //    m_powerListWidget->clearFocus();
+ }
+ 
+@@ -1287,6 +1282,8 @@ void LockWidget::onShowPowerListWidget(bool issessionTools)
+     } else {
+         m_powerListWidget->hide();
+         authDialog->inhibitShow(false);
++        //bug#292889 头像加载缓慢问题，需要调用一次update或repaint来刷新
++        authDialog->update();
+         authDialog->setFocus();
+         if (m_isShowResetPasswdBtn) {
+             m_pResetPwdBtn->show();
+@@ -1556,12 +1553,22 @@ void LockWidget::onSessionActiveChanged(bool isActive)
+     if (isActive) {
+         if (m_timerChkActive && m_timerChkActive->isActive()) {
+             m_timerChkActive->stop();
++        }
++        if (m_modelLockDialog && m_modelLockDialog->isUseWayland()) {
++            QTimer::singleShot(500, this, [&, this]() {
++                if (this->isHidden()) {
++                    this->show();
++                    update();
++                }
++                startAuth();
++            });
++        } else {
+             if (this->isHidden()) {
+                 this->show();
+                 update();
+             }
++            startAuth();
+         }
+-        startAuth();
+     }
+ }
+ 
+@@ -1595,37 +1602,76 @@ void LockWidget::onAuthDialogBottomPosChanged(int nPosY)
+     }
+ }
+ 
+-void LockWidget::SwitchToUser(QString strUserName)
++void LockWidget::onServiceUserChanged(WillLoginUserInfo willSwitchUser)
++{
++    if (!isGreeterMode() || willSwitchUser.strUserName.isEmpty()) {
++        if (isCurUserSelf(willSwitchUser.strUserName)) { // 锁屏且是当前用户则清空不处理
++            UniAuthService::instance()->SwitchToGreeterUser("");
++        }
++        return;
++    }
++    static QString strLastUserName = "";
++    static quint64 llLastChangeTick = 0;
++
++    // 清空 willSwitchUser
++    UniAuthService::instance()->SwitchToGreeterUser("");
++
++    quint64 curChangeTick = QDateTime::currentDateTime().currentMSecsSinceEpoch();
++    if (willSwitchUser.strUserName == strLastUserName && curChangeTick - llLastChangeTick <= 2000) {
++        qDebug() << "onServiceUserChanged same name and time short:" << willSwitchUser.strUserName << ","
++                 << curChangeTick - llLastChangeTick;
++        return;
++    }
++    strLastUserName = willSwitchUser.strUserName;
++    llLastChangeTick = curChangeTick;
++
++    if (willSwitchUser.strUserName.isEmpty()
++        || !UniAuthService::instance()->isUserNameValid(willSwitchUser.strUserName)) {
++        qDebug() << "WillSwitchUser is NULL or invalid:" << willSwitchUser.strUserName;
++        return;
++    }
++    qDebug() << "willSwitchUser:" << willSwitchUser;
++    SwitchToUser(willSwitchUser.strUserName, true);
++}
++
++void LockWidget::SwitchToUser(QString strUserName, bool isSwitchInCurPage /* = false*/)
+ {
+     if (m_modelLockDialog) {
+-        int nSwitchRet = Q_EMIT m_modelLockDialog->switchToUser(strUserName);
+-        if (nSwitchRet != 0) {
++        if (isSwitchInCurPage) {
+             Q_EMIT m_modelLockDialog->setCurrentUser(strUserName);
+         } else {
+-            //            if(authDialog) {
+-            //                authDialog->stopAuth();
+-            //            }
+-            if (!isCurUserSelf(strUserName) && !isHidden()) {
+-                this->hide();
+-                update();
+-                if (!m_timerChkActive) {
+-                    m_timerChkActive = new QTimer(this);
+-                    m_timerChkActive->setInterval(10 * 1000);
+-                    connect(m_timerChkActive, &QTimer::timeout, this, [&, this]() {
+-                        if (this->isHidden()) {
+-                            this->show();
++            UniAuthService::instance()->SwitchToGreeterUser(strUserName);
++            int nSwitchRet = Q_EMIT m_modelLockDialog->switchToUser(strUserName);
++            if (nSwitchRet != 0) {
++                UniAuthService::instance()->SwitchToGreeterUser("");
++                Q_EMIT m_modelLockDialog->setCurrentUser(strUserName);
++            } else {
++                //            if(authDialog) {
++                //                authDialog->stopAuth();
++                //            }
++                if (!isCurUserSelf(strUserName) && !isHidden()) {
++                    this->hide();
++                    update();
++                    if (!m_timerChkActive) {
++                        m_timerChkActive = new QTimer(this);
++                        m_timerChkActive->setInterval(10 * 1000);
++                        connect(m_timerChkActive, &QTimer::timeout, this, [&, this]() {
++                            if (this->isHidden() && m_modelLockDialog->sessionActive()) {
++                                this->show();
++                            }
++                            m_timerChkActive->stop();
++                        });
++                    } else {
++                        if (m_timerChkActive->isActive()) {
++                            m_timerChkActive->stop();
+                         }
+-                        m_timerChkActive->stop();
+-                    });
+-                } else {
+-                    if (m_timerChkActive->isActive()) {
+-                        m_timerChkActive->stop();
+                     }
++                    m_timerChkActive->start();
++                    stopAuth();
++                } else {
++                    UniAuthService::instance()->SwitchToGreeterUser("");
++                    Q_EMIT m_modelLockDialog->setCurrentUser(strUserName);
+                 }
+-                m_timerChkActive->start();
+-                stopAuth();
+-            } else {
+-                Q_EMIT m_modelLockDialog->setCurrentUser(strUserName);
+             }
+         }
+     }
+diff --git a/src/widgets/lockwidget.h b/src/widgets/lockwidget.h
+index 8095ccf..f794bd5 100644
+--- a/src/widgets/lockwidget.h
++++ b/src/widgets/lockwidget.h
+@@ -24,6 +24,7 @@
+ #include "userinfo.h"
+ #include "mediacontrolwidget.h"
+ #include "securityquestionanswer.h"
++#include "uniauthservice.h"
+ 
+ class QListWidgetItem;
+ class MyListWidget;
+@@ -112,7 +113,7 @@ private:
+ 
+     void updateBottomButton();
+ 
+-    void SwitchToUser(QString strUserName);
++    void SwitchToUser(QString strUserName, bool isSwitchInCurPage = false);
+ 
+     void refreshTranslate();
+ 
+@@ -190,6 +191,12 @@ private Q_SLOTS:
+ 
+     void onAuthDialogBottomPosChanged(int nPosY);
+ 
++    /**
++     * @brief onServiceUserChanged 登录服务用户切换
++     * @param willLoginUserInfo 新用户信息
++     */
++    void onServiceUserChanged(WillLoginUserInfo willLoginUserInfo);
++
+     void onShowResetPasswdBtn();
+ 
+     void onShowResetPwdWidget();
+diff --git a/src/widgets/loginoptionswidget.cpp b/src/widgets/loginoptionswidget.cpp
+index 1ffde12..105a532 100644
+--- a/src/widgets/loginoptionswidget.cpp
++++ b/src/widgets/loginoptionswidget.cpp
+@@ -43,9 +43,8 @@
+ #include <QJsonArray>
+ #include <QJsonParseError>
+ 
+-LoginOptionsWidget::LoginOptionsWidget(
+-    BiometricHelper *bioHelper, int uid, UniAuthService *uniauthService, QWidget *parent)
+-    : QWidget(parent), m_biomericProxy(bioHelper), m_uid(uid), m_uniauthService(uniauthService)
++LoginOptionsWidget::LoginOptionsWidget(BiometricHelper *bioHelper, int uid, QWidget *parent)
++    : QWidget(parent), m_biomericProxy(bioHelper), m_uid(uid)
+ {
+     m_listPriority.clear();
+     m_listPriority.push_back(BioT_Face);
+@@ -894,12 +893,12 @@ QPixmap LoginOptionsWidget::drawSymbolicColoredPixmap(QPixmap &source, QString c
+ bool LoginOptionsWidget::getBioAuthEnable(int nType)
+ {
+     bool isEnable = false;
+-    if (m_uniauthService && m_uniauthService->isActivatable()) {
++    if (UniAuthService::instance()->isActivatable()) {
+         struct passwd *pwInfo = getpwuid(m_uid);
+         if (pwInfo) {
+-            isEnable = m_uniauthService->getBioAuthStatus(pwInfo->pw_name, ENABLETYPE_BIO);
++            isEnable = UniAuthService::instance()->getBioAuthStatus(pwInfo->pw_name, ENABLETYPE_BIO);
+             if (isEnable) {
+-                isEnable = m_uniauthService->getBioAuthStatus(pwInfo->pw_name, nType);
++                isEnable = UniAuthService::instance()->getBioAuthStatus(pwInfo->pw_name, nType);
+             }
+             return isEnable;
+         } else {
+@@ -912,8 +911,8 @@ bool LoginOptionsWidget::getBioAuthEnable(int nType)
+ 
+ bool LoginOptionsWidget::getQRCodeEnable()
+ {
+-    if (m_uniauthService && m_uniauthService->isActivatable()) {
+-        return m_uniauthService->getQRCodeEnable();
++    if (UniAuthService::instance()->isActivatable()) {
++        return UniAuthService::instance()->getQRCodeEnable();
+     } else {
+         return true;
+     }
+@@ -921,9 +920,9 @@ bool LoginOptionsWidget::getQRCodeEnable()
+ 
+ QString LoginOptionsWidget::getDefaultDevice(QString strUserName, int bioType)
+ {
+-    if (m_uniauthService && m_uniauthService->isActivatable()) {
++    if (UniAuthService::instance()->isActivatable()) {
+         QString defaultDeviceName = "";
+-        QString strDeviceName = m_uniauthService->getDefaultDevice(strUserName, bioType);
++        QString strDeviceName = UniAuthService::instance()->getDefaultDevice(strUserName, bioType);
+         if (!strDeviceName.isEmpty()) {
+             DeviceInfoPtr pDeviceInfo = findDeviceByName(strDeviceName);
+             if (pDeviceInfo) {
+@@ -938,13 +937,13 @@ QString LoginOptionsWidget::getDefaultDevice(QString strUserName, int bioType)
+ 
+ QString LoginOptionsWidget::getDefaultDevice(QString strUserName)
+ {
+-    if (m_uniauthService && m_uniauthService->isActivatable()) {
++    if (UniAuthService::instance()->isActivatable()) {
+         QString defaultDeviceName = "";
+         for (auto bioType : m_listPriority) {
+             if (bioType == UniT_Remote) {
+                 continue;
+             }
+-            QString strDeviceName = m_uniauthService->getDefaultDevice(strUserName, bioType);
++            QString strDeviceName = UniAuthService::instance()->getDefaultDevice(strUserName, bioType);
+             if (!strDeviceName.isEmpty()) {
+                 DeviceInfoPtr pDeviceInfo = findDeviceByName(strDeviceName);
+                 if (pDeviceInfo) {
+@@ -962,10 +961,10 @@ QString LoginOptionsWidget::getDefaultDevice(QString strUserName)
+ QStringList LoginOptionsWidget::getAllDefDevices()
+ {
+     QStringList listDefDevices;
+-    if (m_uniauthService && m_uniauthService->isActivatable()) {
++    if (UniAuthService::instance()->isActivatable()) {
+         struct passwd *pwdInfo = getpwuid(m_uid);
+         if (pwdInfo) {
+-            listDefDevices = m_uniauthService->getAllDefaultDevice(pwdInfo->pw_name);
++            listDefDevices = UniAuthService::instance()->getAllDefaultDevice(pwdInfo->pw_name);
+         }
+     } else {
+         QString defaultDeviceName;
+diff --git a/src/widgets/loginoptionswidget.h b/src/widgets/loginoptionswidget.h
+index 3b8f6f7..7a15874 100644
+--- a/src/widgets/loginoptionswidget.h
++++ b/src/widgets/loginoptionswidget.h
+@@ -42,7 +42,7 @@ class LoginOptionsWidget : public QWidget
+     Q_OBJECT
+ public:
+     explicit LoginOptionsWidget(
+-        BiometricHelper *bioHelper, int uid, UniAuthService *uniauthService, QWidget *parent = nullptr);
++        BiometricHelper *bioHelper, int uid, QWidget *parent = nullptr);
+     virtual ~LoginOptionsWidget();
+ 
+     bool getCurLoginOpt(int &nLoginOptType, int &nDrvId);
+@@ -164,7 +164,6 @@ private:
+ 
+     // ToolTip
+     QStringList nameList;
+-    UniAuthService *m_uniauthService = nullptr;
+     QList<int> m_listPriority;
+ 
+     bool isShowUkey = false;
+diff --git a/src/widgets/mpriswidget.cpp b/src/widgets/mpriswidget.cpp
+index 630a374..4bca3c5 100644
+--- a/src/widgets/mpriswidget.cpp
++++ b/src/widgets/mpriswidget.cpp
+@@ -165,6 +165,7 @@ void MPRISWidget::onLostMediaPath(const QString &strPath)
+             m_mprisDbusClient->deleteLater();
+             m_mprisDbusClient = nullptr;
+         }
++
+         m_strMediaPlayerPath.clear();
+         Q_EMIT statusChanged(false);
+     }
+@@ -209,8 +210,23 @@ void MPRISWidget::onMetadataChanged()
+ {
+     if (!m_mprisDbusClient)
+         return;
++    delayMetadataUpdate();
++}
+ 
+-    if (m_nPlayState == -1) {
++void MPRISWidget::delayMetadataUpdate(int nTimeout /* = 1000*/)
++{
++    if (!m_timerDelayUpdate) {
++        m_timerDelayUpdate = new QTimer(this);
++        m_timerDelayUpdate->setSingleShot(true);
++        connect(m_timerDelayUpdate, &QTimer::timeout, this, &MPRISWidget::onDelayMetadataUpdate);
++    }
++    m_timerDelayUpdate->setInterval(nTimeout);
++    m_timerDelayUpdate->start();
++}
++
++void MPRISWidget::onDelayMetadataUpdate()
++{
++    if (m_nPlayState == -1) { // 停止播放状态
+         m_labelName->setText(tr("Unknown"));
+         m_labelArtist->setText(tr("Unknown"));
+         m_labelAlbum->setPixmap(PixmapToRound(m_pixmapAlbumDefault, 12, 0, 12, 0));
+diff --git a/src/widgets/mpriswidget.h b/src/widgets/mpriswidget.h
+index b2d0d6f..4f018a4 100644
+--- a/src/widgets/mpriswidget.h
++++ b/src/widgets/mpriswidget.h
+@@ -11,6 +11,7 @@
+ #include <QVBoxLayout>
+ #include <QDBusConnectionInterface>
+ #include <QVariantMap>
++#include <QTimer>
+ #include "klabel.h"
+ 
+ class MPRISWidget : public QFrame
+@@ -35,6 +36,8 @@ public Q_SLOTS:
+     void onCanControlChanged();
+     void updateFont(QString strFont, double fontSizeF);
+ 
++    void onDelayMetadataUpdate();
++
+ Q_SIGNALS:
+     void statusChanged(bool isValid);
+ 
+@@ -45,6 +48,8 @@ private:
+     void initUI();
+     void initConnections();
+ 
++    void delayMetadataUpdate(int nTimeout = 1000);
++
+ private:
+     QDBusConnectionInterface *m_mprisMonitor = nullptr;
+     MPRISDBusClient *m_mprisDbusClient = nullptr;
+@@ -66,6 +71,8 @@ private:
+     QPushButton *m_btnPrev = nullptr;
+     QPushButton *m_btnPlayPause = nullptr;
+     QPushButton *m_btnNext = nullptr;
++
++    QTimer *m_timerDelayUpdate = nullptr;
+ };
+ 
+ #endif // MPRISWIDGET_H
+diff --git a/src/widgets/powerlistwidget.cpp b/src/widgets/powerlistwidget.cpp
+index 029f4fd..4a5f03c 100644
+--- a/src/widgets/powerlistwidget.cpp
++++ b/src/widgets/powerlistwidget.cpp
+@@ -51,6 +51,24 @@ bool PowerListWidget::eventFilter(QObject *obj, QEvent *event)
+     return MyListWidget::eventFilter(obj, event);
+ }
+ 
++void PowerListWidget::mouseReleaseEvent(QMouseEvent *event)
++{
++    QPoint mousePos = event->pos();
++    QList<PowerItemWidget*> itemList = this->findChildren<PowerItemWidget*>();
++    for (PowerItemWidget* item : itemList)
++    {
++        if (item->geometry().contains(mousePos))
++        {
++            //  如果是点击的功能按钮，不发信号，防止点击锁屏按钮时不进入锁屏
++            return QListWidget::mouseReleaseEvent(event);;
++        }
++    }
++    //  只有点击空白处，才需要发送信号
++    qDebug() << "Mouse press on list widget";
++    Q_EMIT powerWidgetClicked();
++    return QListWidget::mouseReleaseEvent(event);
++}
++
+ void PowerListWidget::setPowerType(int type)
+ {
+     m_powerType = type;
+diff --git a/src/widgets/powerlistwidget.h b/src/widgets/powerlistwidget.h
+index 5c272fb..51ed795 100644
+--- a/src/widgets/powerlistwidget.h
++++ b/src/widgets/powerlistwidget.h
+@@ -211,6 +211,7 @@ public:
+ protected:
+     bool eventFilter(QObject *obj, QEvent *event);
+     void changeEvent(QEvent *event);
++    void mouseReleaseEvent(QMouseEvent *event) override;
+ 
+ Q_SIGNALS:
+     void mulUsersLogined(int inhibitType, bool iscommand);
+@@ -219,6 +220,8 @@ Q_SIGNALS:
+     void suspendClicked();
+     void switchuserClicked();
+     void sureShutDown(int inhibitType, bool iscommand);
++    void powerWidgetClicked();  /*发送电源管理鼠标点击信号，在eventfilter中点击listwidget的空白处，
++                                      收不到鼠标点击事件，只有在mouseReleaseEvent中能过滤到*/
+ 
+ public Q_SLOTS:
+     void onUpdateListInfo();
+diff --git a/src/widgets/screensaverwidget.cpp b/src/widgets/screensaverwidget.cpp
+index e9190bb..cc9b494 100644
+--- a/src/widgets/screensaverwidget.cpp
++++ b/src/widgets/screensaverwidget.cpp
+@@ -32,7 +32,7 @@ ScreenSaverWidget::ScreenSaverWidget(ScreenSaver *screensaver, QWidget *parent)
+     : QWidget(parent), timer(nullptr), screensaver(screensaver), closing(false)
+ {
+     qDebug() << "ScreenSaverWidget::ScreenSaverWidget";
+-    setAttribute(Qt::WA_DeleteOnClose);
++    // setAttribute(Qt::WA_DeleteOnClose);
+     setMouseTracking(true);
+     setFocus();
+     this->installEventFilter(this);

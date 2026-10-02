@@ -1,0 +1,219 @@
+From: =?utf-8?b?Ik1hcmNvIFRyZXZpc2FuIChUcmV2acOxbyki?= <mail@3v1n0.net>
+Date: Thu, 19 Feb 2026 07:30:00 +0100
+Subject: snap: Use per-sub-app permissions ID for better granularity
+
+When a snap sub-app has a different app name than the snap instance
+name, use "snap.<instance>_<appname>" as the permissions ID instead of
+the plain "snap.<instance>".
+
+For the main cases (where the app name matches the snap instance
+name), the existing "snap.<instance>" ID is preserved, keeping full
+backward compatibility and avoiding permission churn for existing users.
+
+Sub-apps that previously fell back to snap-level permissions will no
+longer share them, which is intentional: each sub-app should own its
+permissions independently.
+
+The logic is applied consistently in both the snap metadata parser
+and the desktop-file based permissions-ID lookup.
+
+Although the files permissions are still shared, because of snapd
+limitation.
+
+A new SNAP_SUB_APP test fixture to verify the sub-app code path
+explicitly.
+
+See: https://github.com/flatpak/xdg-desktop-portal/pull/798
+
+Origin: https://github.com/flatpak/xdg-desktop-portal/pull/1764
+---
+ document-portal/permission-db.c | 11 ++++++++++-
+ src/xdp-app-info-snap.c         | 16 +++++++++++++++-
+ tests/conftest.py               | 13 ++++++++++++-
+ tests/test_background.py        |  6 +++++-
+ tests/test_dynamiclauncher.py   | 12 ++++++++++--
+ tests/xdp_utils.py              |  9 ++++++---
+ 6 files changed, 58 insertions(+), 9 deletions(-)
+
+diff --git a/document-portal/permission-db.c b/document-portal/permission-db.c
+index 221378b..00e793e 100644
+--- a/document-portal/permission-db.c
++++ b/document-portal/permission-db.c
+@@ -1280,13 +1280,22 @@ permissions_id_for_app_id (const char *app_id)
+   if (g_desktop_app_info_has_key (app_info, "X-SnapInstanceName"))
+     {
+       g_autofree char *snap_instance_name = NULL;
++      g_autofree char *snap_app_name = NULL;
+ 
+       g_debug ("App ID for %s is provided by snap desktop ID", desktop_id);
+ 
+       snap_instance_name = g_desktop_app_info_get_string (app_info,
+                                                           "X-SnapInstanceName");
+       g_return_val_if_fail (snap_instance_name != NULL, g_strdup (app_id));
+-      return g_strconcat ("snap.", snap_instance_name, NULL);
++
++      snap_app_name = g_desktop_app_info_get_string (app_info, "X-SnapAppName");
++      if (snap_app_name && g_str_equal (snap_instance_name, snap_app_name))
++        {
++          /* We optimize the main case so that the old permissions are preserved. */
++          return g_strconcat ("snap.", snap_instance_name, NULL);
++        }
++
++      return g_strconcat ("snap.", snap_instance_name, "_", snap_app_name, NULL);
+     }
+ 
+   return g_strdup (app_id);
+diff --git a/src/xdp-app-info-snap.c b/src/xdp-app-info-snap.c
+index 4250b9d..c0a1eb5 100644
+--- a/src/xdp-app-info-snap.c
++++ b/src/xdp-app-info-snap.c
+@@ -31,6 +31,7 @@
+ 
+ #define SNAP_METADATA_GROUP_INFO "Snap Info"
+ #define SNAP_METADATA_KEY_INSTANCE_NAME "InstanceName"
++#define SNAP_METADATA_KEY_APP_NAME "AppName"
+ #define SNAP_METADATA_KEY_DESKTOP_FILE "DesktopFile"
+ #define SNAP_METADATA_KEY_NETWORK "HasNetworkStatus"
+ 
+@@ -242,6 +243,7 @@ parse_snap_metadata (GKeyFile         *metadata,
+                      GError          **error)
+ {
+   g_autofree char *snap_name = NULL;
++  g_autofree char *snap_app_name = NULL;
+   g_autofree char *app_id = NULL;
+   g_autofree char *permissions_id = NULL;
+   g_autofree char *desktop_id = NULL;
+@@ -255,7 +257,19 @@ parse_snap_metadata (GKeyFile         *metadata,
+   if (snap_name == NULL)
+     return FALSE;
+ 
+-  permissions_id = g_strconcat ("snap.", snap_name, NULL);
++  snap_app_name = g_key_file_get_string (metadata,
++                                         SNAP_METADATA_GROUP_INFO,
++                                         SNAP_METADATA_KEY_APP_NAME,
++                                         NULL);
++
++  if (snap_app_name == NULL || g_str_equal (snap_app_name, snap_name))
++    {
++      permissions_id = g_strconcat ("snap.", snap_name, NULL);
++    }
++  else
++    {
++      permissions_id = g_strconcat ("snap.", snap_name, "_", snap_app_name, NULL);
++    }
+ 
+   desktop_id = g_key_file_get_string (metadata,
+                                       SNAP_METADATA_GROUP_INFO,
+diff --git a/tests/conftest.py b/tests/conftest.py
+index 7466618..b29d4a7 100644
+--- a/tests/conftest.py
++++ b/tests/conftest.py
+@@ -121,7 +121,10 @@ def xdp_mocked_executables(xdp_app_info: xdp.AppInfo) -> list[xdp.ExecutableMock
+     exe = None
+     if xdp_app_info.kind == xdp.AppInfoKind.FLATPAK:
+         exe = "flatpak"
+-    elif xdp_app_info.kind == xdp.AppInfoKind.SNAP:
++    elif (
++        xdp_app_info.kind == xdp.AppInfoKind.SNAP
++        or xdp_app_info.kind == xdp.AppInfoKind.SNAP_SUB_APP
++    ):
+         exe = "snap"
+     else:
+         return []
+@@ -462,6 +465,7 @@ def xdp_overwrite_env() -> dict[str, str]:
+         xdp.AppInfoKind.HOST,
+         xdp.AppInfoKind.FLATPAK,
+         xdp.AppInfoKind.SNAP,
++        xdp.AppInfoKind.SNAP_SUB_APP,
+         xdp.AppInfoKind.LINYAPS,
+     ]
+ )
+@@ -487,6 +491,13 @@ def xdp_app_info(request) -> xdp.AppInfo:
+         )
+ 
+     if app_info_kind == xdp.AppInfoKind.SNAP:
++        return xdp.AppInfo.new_snap(
++            common_id=app_id,
++            snap_name="test",
++            app_name="test",
++        )
++
++    if app_info_kind == xdp.AppInfoKind.SNAP_SUB_APP:
+         return xdp.AppInfo.new_snap(
+             common_id=app_id,
+             snap_name="example",
+diff --git a/tests/test_background.py b/tests/test_background.py
+index c5b8473..30bf4d9 100644
+--- a/tests/test_background.py
++++ b/tests/test_background.py
+@@ -89,7 +89,11 @@ class TestBackground:
+         assert response.results["background"]
+ 
+         # Unsupported on snap and linyaps
+-        if xdp_app_info.kind in {xdp.AppInfoKind.SNAP, xdp.AppInfoKind.LINYAPS}:
++        if xdp_app_info.kind in {
++            xdp.AppInfoKind.SNAP,
++            xdp.AppInfoKind.SNAP_SUB_APP,
++            xdp.AppInfoKind.LINYAPS,
++        }:
+             assert not response.results["autostart"]
+             return
+ 
+diff --git a/tests/test_dynamiclauncher.py b/tests/test_dynamiclauncher.py
+index b077922..c2641fc 100644
+--- a/tests/test_dynamiclauncher.py
++++ b/tests/test_dynamiclauncher.py
+@@ -94,9 +94,17 @@ class TestDynamicLauncher:
+         except dbus.exceptions.DBusException as e:
+             # Unsupported on snap and linyaps
+             assert e.get_dbus_name() == "org.freedesktop.portal.Error.InvalidArgument"
+-            assert xdp_app_info.kind in {xdp.AppInfoKind.SNAP, xdp.AppInfoKind.LINYAPS}
++            assert xdp_app_info.kind in {
++                xdp.AppInfoKind.SNAP,
++                xdp.AppInfoKind.SNAP_SUB_APP,
++                xdp.AppInfoKind.LINYAPS,
++            }
+             return
+-        assert xdp_app_info.kind not in {xdp.AppInfoKind.SNAP, xdp.AppInfoKind.LINYAPS}
++        assert xdp_app_info.kind not in {
++            xdp.AppInfoKind.SNAP,
++            xdp.AppInfoKind.SNAP_SUB_APP,
++            xdp.AppInfoKind.LINYAPS,
++        }
+ 
+         file = Path(os.environ["XDG_DATA_HOME"]) / "applications" / desktop_file_name
+         assert file.exists()
+diff --git a/tests/xdp_utils.py b/tests/xdp_utils.py
+index 120c13b..4966b53 100644
+--- a/tests/xdp_utils.py
++++ b/tests/xdp_utils.py
+@@ -247,7 +247,8 @@ class AppInfoKind(Enum):
+     HOST = 1
+     FLATPAK = 2
+     SNAP = 3
+-    LINYAPS = 4
++    SNAP_SUB_APP = 4
++    LINYAPS = 5
+ 
+ 
+ @dataclass
+@@ -392,7 +393,9 @@ enumerable-devices={usb_queries}
+         kind = AppInfoKind.SNAP
+         app_id = f"{snap_name}_{app_name}"
+         desktop_file = f"{app_id}.desktop"
+-        permissions_id = f"snap.{snap_name}"
++        permissions_id = f"snap.{snap_name}" + (
++            f"_{app_name}" if app_name != snap_name else ""
++        )
+         env = {
+             "XDG_DESKTOP_PORTAL_TEST_APP_INFO_KIND": "snap",
+         }
+@@ -402,7 +405,7 @@ enumerable-devices={usb_queries}
+             desktop_entry_str = f"""
+ [Desktop Entry]
+ Version=1.0
+-Name=Example Snap App
++Name=Example Snap App ({app_name})
+ Exec=true %u
+ Type=Application
+ X-SnapInstanceName={snap_name}

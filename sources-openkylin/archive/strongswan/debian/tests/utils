@@ -1,0 +1,61 @@
+wait_container_ready() {
+    local container="${1}"
+    local -i limit=300 # seconds
+    local -i i=0
+    while /bin/true; do
+        ip=$(lxc list "${container}" -c 4 --format=compact | tail -1 | awk '{print $1}')
+        if [ -n "${ip}" ]; then
+            break
+        fi
+        i=$((i+1))
+        if [ ${i} -ge ${limit} ]; then
+            return 1
+        fi
+        sleep 1s
+        echo -n "."
+    done
+    while ! nc -z "${ip}" 22; do
+        echo -n "."
+        i=$((i+1))
+        if [ ${i} -ge ${limit} ]; then
+            return 1
+        fi
+        sleep 1s
+    done
+    # cloud-init might still be doing things...
+    # this call blocks, so wrap it in its own little timeout
+    # Give it ${limit} seconds too
+    output=$(lxc exec "${container}" -- timeout --verbose ${limit} cloud-init status --wait) || {
+        result=$?
+        echo "cloud-init status --wait failed on container ${container}"
+        echo "${output}"
+        return ${result}
+    }
+    echo
+}
+
+get_test_dependencies() {
+    local test_name="${1}"
+    shift
+    local exclusions="$*"
+    # Get test dependencies which we need to install in the containers
+    # we will create:
+    # -s: show Depends field
+    # -n: omit field name in output
+    # -X: do an exact match, instead of substring
+    # -F Tests: apply regexp to Tests field
+    depends=$(grep-dctrl -s Depends -n -F Tests -X "${test_name}" debian/tests/control | tr -d ,)
+    [ -n "${depends}" ] || {
+        echo "Failed to obtain list of dependencies for this test"
+        return 1
+    }
+    # remove exclusions, if any
+    for p in ${depends}; do
+        if echo "${exclusions}" | grep -qwF "${p}"; then
+            continue
+        else
+            echo "${p}"
+        fi
+    done
+}
+

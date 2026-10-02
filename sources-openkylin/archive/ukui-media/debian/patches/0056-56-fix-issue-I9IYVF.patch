@@ -1,0 +1,249 @@
+From: ctfcc <2361134695@qq.com>
+Date: Thu, 19 Sep 2024 08:33:07 +0000
+Subject: !56 fix issue I9IYVF Merge pull request !56 from
+ ctfcc/openkylin/nile
+
+---
+ .../ukmedia_application_volume_widget.cpp          | 20 ++++++----------
+ .../ukmedia_application_volume_widget.h            |  4 ++++
+ .../ukmedia_main_widget.cpp                        | 28 +++++++++++++++-------
+ .../ukmedia_main_widget.h                          | 12 ++++++----
+ .../ukmedia_system_volume_widget.cpp               | 22 +++++++----------
+ .../ukmedia_system_volume_widget.h                 |  4 ++++
+ 6 files changed, 50 insertions(+), 40 deletions(-)
+
+diff --git a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp
+index e1b8260..5083055 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp
+@@ -27,15 +27,8 @@ ApplicationVolumeWidget::ApplicationVolumeWidget(QWidget *parent) : QWidget (par
+     connect(qApp, &QApplication::paletteChanged, this, &ApplicationVolumeWidget::onPaletteChanged);
+ 
+     app_volume_list = new QStringList;
+-    char *envStr = getenv("LANGUAGE");
+     //系统音量label
+     systemVolumeLabel = new QLabel(tr("System Volume"),this);
+-    if (strcmp(envStr, "ug_CN") == 0 || strcmp(envStr, "kk_KZ") == 0 || strcmp(envStr, "ky_KG") == 0) {
+-        systemVolumeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+-    }
+-    else {
+-        systemVolumeLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+-    }
+     QWidget *systemVolumeLabelWidget = new QWidget(this);
+     systemVolumeLabelWidget->setFixedSize(412,29);
+     systemVolumeLabel->setFixedSize(372,29);
+@@ -46,12 +39,6 @@ ApplicationVolumeWidget::ApplicationVolumeWidget(QWidget *parent) : QWidget (par
+ 
+     //应用label
+     applicationLabel = new QLabel(tr("Application Volume"),this);
+-    if (strcmp(envStr, "ug_CN") == 0 || strcmp(envStr, "kk_KZ") == 0 || strcmp(envStr, "ky_KG") == 0) {
+-        applicationLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+-    }
+-    else {
+-        applicationLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+-    }
+     QWidget *applicationLabelWidget = new QWidget(this);
+     applicationLabelWidget->setFixedSize(412,29);
+     applicationLabel->setFixedSize(372,29);
+@@ -189,6 +176,13 @@ void ApplicationVolumeWidget::deleteBlueRecordStream()
+     delete audio;
+ }
+ 
++void ApplicationVolumeWidget::setLabelAlignment(Qt::Alignment alignment)
++{
++    systemVolumeLabel->setAlignment(alignment);
++    applicationLabel->setAlignment(alignment);
++    systemVolumeDisplayLabel->setAlignment(alignment);
++}
++
+ void ApplicationVolumeWidget::onPaletteChanged(){
+     QPalette palette = applicationLabel->palette();
+     QColor color = palette.color(QPalette::PlaceholderText);
+diff --git a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h
+index 44a7a4b..612a22d 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h
++++ b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h
+@@ -37,6 +37,10 @@ public:
+     void deleteBlueRecordStream();
+     friend class DeviceSwitchWidget;
+     friend class UkmediaMainWidget;
++
++private:
++    void setLabelAlignment(Qt::Alignment alignment);
++
+ private:
+     QLabel *applicationLabel;
+     QLabel *systemVolumeLabel;
+diff --git a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+index 50058d8..2416a55 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+@@ -79,6 +79,7 @@ UkmediaMainWidget::UkmediaMainWidget(QMainWindow *parent) : QMainWindow(parent)
+     initStrings();
+     //初始化界面
+     initWidget();
++    initLabelAlignment();
+     //初始化托盘图标
+     initSystemTrayIcon();
+     //Dbus注册
+@@ -771,7 +772,12 @@ void UkmediaMainWidget::initStrings()
+     const static QString s_login1SessionInterface = QStringLiteral("org.freedesktop.login1.Session");
+     const static QString s_login1ActiveProperty = QStringLiteral("Active");
+     const static QString s_dbusPropertiesInterface = QStringLiteral("org.freedesktop.DBus.Properties");
++    const static char *s_language = "LANGUAGE";
+ 
++    /* 维吾尔语 ug_CN
++     * 哈萨克语 kk_KZ
++     * 柯尔克孜语 ky_KG */
++    m_languageEnvStr = getenv(s_language);
+     m_sessionControllerName = s_login1Name;
+     m_sessionControllerService = s_login1Service;
+     m_sessionControllerPath = s_login1Path;
+@@ -782,6 +788,14 @@ void UkmediaMainWidget::initStrings()
+     m_sessionControllerPropertiesInterface = s_dbusPropertiesInterface;
+ }
+ 
++void UkmediaMainWidget::initLabelAlignment()
++{
++    // 哈维柯语言环境下默认做了label右对齐方式处理，因此只需要在其他语言环境下对这些label做左居中对齐方式处理即可
++    if ("ug_CN" != m_languageEnvStr || "kk_KZ" != m_languageEnvStr || "ky_KG" != m_languageEnvStr) {
++        systemWidget->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
++        appWidget->setLabelAlignment(Qt::AlignLeft | Qt::AlignVCenter);
++    }
++}
+ 
+ /*
+  *  当检测到4段式3.5mm耳机插入时(声卡包含headsetmic端口)
+@@ -1323,11 +1337,7 @@ QRect UkmediaMainWidget::caculatePosition()
+     {
+     case PanelPosition::Top:
+     {
+-        char *envStr = getenv("LANGUAGE");
+-        /* 维吾尔语 ug_CN
+-         * 哈萨克语 kk_KZ
+-         * 柯尔克孜语 ky_KG */
+-        if (strcmp(envStr, "ug_CN") == 0 || strcmp(envStr, "kk_KZ") == 0 || strcmp(envStr, "ky_KG") == 0) {
++        if ("ug_CN" == m_languageEnvStr || "kk_KZ" == m_languageEnvStr || "ky_KG" == m_languageEnvStr) {
+             x = margin;
+             y = availableGeo.y() + m_panelSize + margin;
+         }
+@@ -1340,8 +1350,7 @@ QRect UkmediaMainWidget::caculatePosition()
+         break;
+     case PanelPosition::Bottom:
+     {
+-        char *envStr = getenv("LANGUAGE");
+-        if (strcmp(envStr, "ug_CN") == 0 || strcmp(envStr, "kk_KZ") == 0 || strcmp(envStr, "ky_KG") == 0) {
++        if ("ug_CN" == m_languageEnvStr || "kk_KZ" == m_languageEnvStr || "ky_KG" == m_languageEnvStr) {
+             x = margin;
+             y = availableGeo.y() + availableGeo.height() - m_panelSize - this->height() - margin;
+         }
+@@ -1687,7 +1696,10 @@ void UkmediaMainWidget::initSubApplicationWidget(QString pAppIcon)
+     subAppwidget->setFixedSize(412,48);
+     appWidget->appVolumeLabel->setText("0%");
+     appWidget->appVolumeLabel->setFixedSize(52,48);
+-    appWidget->appVolumeLabel->setAlignment((strstr(getenv("LANGUAGE"),"kk_KZ") ? Qt::AlignLeft : Qt::AlignRight) | Qt::AlignVCenter);
++
++    if ("ug_CN" != m_languageEnvStr || "kk_KZ" != m_languageEnvStr || "ky_KG" != m_languageEnvStr) {
++        appWidget->appVolumeLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
++    }
+     appSliderLayout->addWidget(appWidget->appIconBtn);
+     appSliderLayout->addSpacing(12);
+     appSliderLayout->addWidget(appWidget->appSlider);
+diff --git a/ukui-volume-control-applet-qt/ukmedia_main_widget.h b/ukui-volume-control-applet-qt/ukmedia_main_widget.h
+index 1acc5d2..1178aa8 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_main_widget.h
++++ b/ukui-volume-control-applet-qt/ukmedia_main_widget.h
+@@ -170,12 +170,13 @@ public:
+     };
+ 
+     void UkmediaDbusRegister(); //注册Dbus信号
+-    void initSystemTrayIcon(); //初始化系统托盘
+-    void initWidget(); //初始化弹出框
+-    void initVolumeLed();//初始化静音灯
+-    void initGsettings(); //初始化gsetting
++    void initSystemTrayIcon();  //初始化系统托盘
++    void initWidget();          //初始化弹出框
++    void initVolumeLed();       //初始化静音灯
++    void initGsettings();       //初始化gsetting
+     void initStrings();
+-    void initSystemVolume(); //初始化系统音量
++    void initLabelAlignment();  //初始化label对齐方式
++    void initSystemVolume();    //初始化系统音量
+     void myLine(QFrame *volumeLine,QFrame *volumeSettingLine);//添加分隔线
+     void dealSlot(); //处理槽函数
+     void systemTrayMenuInit(); //初始化右键菜单
+@@ -424,6 +425,7 @@ private:
+     bool isLoadEchoCancel = false;
+     int outputListWidgetRow = -1;
+ 
++    QString m_languageEnvStr;
+     QString m_sessionControllerName;
+     QString m_sessionPath;
+     QString m_sessionControllerService ;
+diff --git a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp
+index 74ec63a..515fa5b 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp
+@@ -66,19 +66,12 @@ UkmediaSystemVolumeWidget::UkmediaSystemVolumeWidget(QWidget *parent) : QWidget(
+ 
+     m_pSystemVolumeSliderLabel = new QLabel(m_pSysSliderWidget);
+     m_pSystemVolumeSliderLabel->setText("0%");
+-    m_pSystemVolumeSliderLabel->setAlignment((strstr(getenv("LANGUAGE"),"kk_KZ") ? Qt::AlignLeft : Qt::AlignRight) | Qt::AlignVCenter);
+     m_pSystemVolumeSliderLabel->setFixedSize(52,48);
+ 
+     //音量label布局
+     m_pSystemVolumeLabel = new QLabel(this);
+     m_pSystemVolumeLabel->setText(tr("Volume"));
+-    char *envStr = getenv("LANGUAGE");
+-    if (strcmp(envStr, "ug_CN") == 0 || strcmp(envStr, "kk_KZ") == 0 || strcmp(envStr, "ky_KG") == 0) {
+-        m_pSystemVolumeLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+-    }
+-    else {
+-        m_pSystemVolumeLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+-    }
++
+     m_pSystemVolumeLabel->setFixedSize(372,29);//防止字体显示不全
+     QWidget *systemVolumeLabelWidget = new QWidget(this);
+     systemVolumeLabelWidget->setFixedSize(412,29);
+@@ -90,12 +83,6 @@ UkmediaSystemVolumeWidget::UkmediaSystemVolumeWidget(QWidget *parent) : QWidget(
+     //输出label布局
+     m_pOutputLabel = new QLabel(this);
+     m_pOutputLabel->setText(tr("Output"));
+-    if (strcmp(envStr, "ug_CN") == 0 || strcmp(envStr, "kk_KZ") == 0 || strcmp(envStr, "ky_KG") == 0) {
+-        m_pOutputLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+-    }
+-    else {
+-        m_pOutputLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+-    }
+     m_pOutputLabel->setFixedSize(372,29);
+     QWidget *outputLabelWidget = new QWidget(this);
+     outputLabelWidget->setFixedSize(412,29);
+@@ -149,6 +136,13 @@ UkmediaSystemVolumeWidget::UkmediaSystemVolumeWidget(QWidget *parent) : QWidget(
+     this->setFixedSize(420,436);
+ }
+ 
++void UkmediaSystemVolumeWidget::setLabelAlignment(Qt::Alignment alignment)
++{
++    m_pOutputLabel->setAlignment(alignment);
++    m_pSystemVolumeLabel->setAlignment(alignment);
++    m_pSystemVolumeSliderLabel->setAlignment(alignment);
++}
++
+ void UkmediaSystemVolumeWidget::onPaletteChanged(){
+     QPalette palette = m_pSystemVolumeLabel->palette();
+     QColor color = palette.color(QPalette::PlaceholderText);
+diff --git a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h
+index 5810a28..32d2802 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h
++++ b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h
+@@ -32,6 +32,10 @@ class UkmediaSystemVolumeWidget : public QWidget
+ public:
+     explicit UkmediaSystemVolumeWidget(QWidget *parent = nullptr);
+     friend class UkmediaMainWidget;
++
++private:
++    void setLabelAlignment(Qt::Alignment alignment);
++
+ Q_SIGNALS:
+ 
+ private:

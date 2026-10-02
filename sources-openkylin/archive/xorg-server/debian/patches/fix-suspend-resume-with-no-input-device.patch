@@ -1,0 +1,42 @@
+From: Ubuntu X-SWAT <ubuntu-x@lists.ubuntu.com>
+Date: Mon, 20 Apr 2026 02:51:11 +0000
+Subject: x86/logind fix suspend/resume when there are no input devices
+
+Bug: https://gitlab.freedesktop.org/xorg/xserver/-/issues/1387
+Applied-Upstream: https://gitlab.freedesktop.org/xorg/xserver/-/merge_requests/986?commit_id=cf7bda184213de6bab1923274a064f9e29ac2db4
+Last-Update: 2024-02-23
+
+Make sure info->active and info->vt_active are false after
+dropping drm master.
+Normally, this is done when pausing the first input device, so it
+breaks when there are no input device at all.
+Last-Update: 2024-02-23
+---
+ hw/xfree86/os-support/linux/systemd-logind.c | 6 +++++-
+ 1 file changed, 5 insertions(+), 1 deletion(-)
+
+diff --git a/hw/xfree86/os-support/linux/systemd-logind.c b/hw/xfree86/os-support/linux/systemd-logind.c
+index dbb00cd..d97e92f 100644
+--- a/hw/xfree86/os-support/linux/systemd-logind.c
++++ b/hw/xfree86/os-support/linux/systemd-logind.c
+@@ -310,15 +310,19 @@ cleanup:
+  */
+ void systemd_logind_drop_master(void)
+ {
++    struct systemd_logind_info *info = &logind_info;
+     int i;
++    /* Our VT_PROCESS usage guarantees we've already given up the vt */
++    info->active = info->vt_active = FALSE;
+     for (i = 0; i < xf86_num_platform_devices; i++) {
+         if (xf86_platform_devices[i].flags & XF86_PDEV_SERVER_FD) {
+             dbus_int32_t major, minor;
+-            struct systemd_logind_info *info = &logind_info;
+ 
+             xf86_platform_devices[i].flags |= XF86_PDEV_PAUSED;
+             major = xf86_platform_odev_attributes(i)->major;
+             minor = xf86_platform_odev_attributes(i)->minor;
++            LogMessage(X_INFO, "systemd-logind: drop master for %u:%u\n",
++               major, minor);
+             systemd_logind_ack_pause(info, minor, major);
+         }
+     }

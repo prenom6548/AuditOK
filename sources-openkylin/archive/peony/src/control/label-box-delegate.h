@@ -1,0 +1,47 @@
+/*
+ * Peony-Qt
+ *
+ * Copyright (C) 2020, Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: MeihongHe <hemeihong@kylinos.cn>
+ *
+ */
+
+#ifndef LABELBOXDELEGATE_H
+#define LABELBOXDELEGATE_H
+
+#include <QStyledItemDelegate>
+
+class FileLabelModel;
+class LabelBoxDelegate : public QStyledItemDelegate
+{
+    Q_OBJECT
+public:
+    explicit LabelBoxDelegate(QObject *parent = nullptr);
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index);
+
+    QWidget* createEditor(QWidget *parent, const QStyleOptionViewItem &option, const QModelIndex &index) const override;
+    void setEditorData(QWidget *editor, const QModelIndex &index) const override;
+    void setModelData(QWidget *editor, QAbstractItemModel *model, const QModelIndex &index) const override;
+    void destroyEditor(QWidget *editor, const QModelIndex &index) const override;
+    FileLabelModel* getSourceModel(const QAbstractItemModel* model) const;
+    QModelIndex mapToSourceIndex(const QModelIndex& proxyIndex) const;
+Q_SIGNALS:
+
+};
+
+#endif // LABELBOXDELEGATE_H

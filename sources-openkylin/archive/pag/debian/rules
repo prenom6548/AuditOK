@@ -1,0 +1,31 @@
+#!/usr/bin/make -f
+
+export LC_ALL=C.UTF-8
+export DH_VERBOSE = 1
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,-z,now
+
+DEB_HOST_ARCH ?= $(shell dpkg-architecture -qDEB_HOST_ARCH)
+
+# GCC 15+ no longer implicitly includes <cstdint> via other standard headers.
+# Force-include it globally to fix uint8_t/int64_t build errors without patching third-party sources.
+CSTDINT_FIX = -include cstdint
+
+ifeq ($(DEB_HOST_ARCH),arm64)
+export DEB_CXXFLAGS_MAINT_APPEND = -DHWY_DISABLED_TARGETS=HWY_ALL_SVE $(CSTDINT_FIX)
+else ifeq ($(DEB_HOST_ARCH),sw_64)
+export DEB_CXXFLAGS_MAINT_APPEND = -DHWY_BROKEN_EMU128=0 -DHWY_COMPILE_ONLY_EMU128 $(CSTDINT_FIX)
+else
+export DEB_CXXFLAGS_MAINT_APPEND = $(CSTDINT_FIX)
+endif
+
+%:
+	dh $@ --buildsystem=cmake
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DBUILD_SHARED_LIBS=ON \
+		-DPAG_USE_FFAVC=ON
+
+execute_before_dh_install:
+	chmod -x debian/*.install

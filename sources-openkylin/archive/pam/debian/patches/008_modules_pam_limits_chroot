@@ -1,0 +1,130 @@
+From: Sam Hartman <hartmans@debian.org>
+Date: Mon, 11 Sep 2023 14:00:42 -0600
+Subject: _modules_pam_limits_chroot
+
+===================================================================
+---
+ modules/pam_limits/limits.conf       |  2 ++
+ modules/pam_limits/limits.conf.5.xml |  6 ++++++
+ modules/pam_limits/pam_limits.c      | 26 ++++++++++++++++++++++----
+ 3 files changed, 30 insertions(+), 4 deletions(-)
+
+diff --git a/modules/pam_limits/limits.conf b/modules/pam_limits/limits.conf
+index c6b058a..6b3865c 100644
+--- a/modules/pam_limits/limits.conf
++++ b/modules/pam_limits/limits.conf
+@@ -49,6 +49,7 @@
+ #        - msgqueue - max memory used by POSIX message queues (bytes)
+ #        - nice - max nice priority allowed to raise to values: [-20, 19]
+ #        - rtprio - max realtime priority
++#        - chroot - change root to directory (Debian-specific)
+ #
+ #<domain>      <type>  <item>         <value>
+ #
+@@ -60,6 +61,7 @@
+ #@faculty        soft    nproc           20
+ #@faculty        hard    nproc           50
+ #ftp             hard    nproc           0
++#ftp             -       chroot          /ftp
+ #@student        -       maxlogins       4
+ 
+ # End of file
+diff --git a/modules/pam_limits/limits.conf.5.xml b/modules/pam_limits/limits.conf.5.xml
+index 803cb4e..348758a 100644
+--- a/modules/pam_limits/limits.conf.5.xml
++++ b/modules/pam_limits/limits.conf.5.xml
+@@ -271,6 +271,12 @@
+                   (Linux 2.6.12 and higher)</para>
+               </listitem>
+             </varlistentry>
++            <varlistentry>
++              <term><option>chroot</option></term>
++              <listitem>
++                <para>the directory to chroot the user to</para>
++              </listitem>
++            </varlistentry>
+           </variablelist>
+         </listitem>
+       </varlistentry>
+diff --git a/modules/pam_limits/pam_limits.c b/modules/pam_limits/pam_limits.c
+index 3ea7508..83b2e56 100644
+--- a/modules/pam_limits/pam_limits.c
++++ b/modules/pam_limits/pam_limits.c
+@@ -108,6 +108,7 @@ struct pam_limit_s {
+ 			      specific user or to count all logins */
+     int priority;	 /* the priority to run user process with */
+     int nonewprivs;	/* whether to prctl(PR_SET_NO_NEW_PRIVS) */
++    char chroot_dir[8092]; /* directory to chroot into */
+     struct user_limits_struct limits[RLIM_NLIMITS];
+     const char *conf_file;
+     int utmp_after_pam_call;
+@@ -116,9 +117,9 @@ struct pam_limit_s {
+ 
+ #define LIMIT_LOGIN (RLIM_NLIMITS+1)
+ #define LIMIT_NUMSYSLOGINS (RLIM_NLIMITS+2)
+-
+ #define LIMIT_PRI (RLIM_NLIMITS+3)
+ #define LIMIT_NONEWPRIVS (RLIM_NLIMITS+4)
++#define LIMIT_CHROOT (RLIM_NLIMITS+5)
+ 
+ #define LIMIT_SOFT  1
+ #define LIMIT_HARD  2
+@@ -645,6 +646,8 @@ static int init_limits(pam_handle_t *pamh, struct pam_limit_s *pl, int ctrl)
+     pl->login_limit_def = LIMITS_DEF_NONE;
+     pl->login_group = NULL;
+ 
++    pl->chroot_dir[0] = '\0';
++    
+     return retval;
+ }
+ 
+@@ -755,6 +758,8 @@ process_limit (const pam_handle_t *pamh, int source, const char *lim_type,
+ 	limit_item = LIMIT_PRI;
+     } else if (strcmp(lim_item, "nonewprivs") == 0) {
+ 	limit_item = LIMIT_NONEWPRIVS;
++    } else if (strcmp(lim_item, "chroot") == 0) {
++        limit_item = LIMIT_CHROOT;
+     } else {
+         pam_syslog(pamh, LOG_DEBUG, "unknown limit item '%s'", lim_item);
+         return;
+@@ -804,9 +809,9 @@ process_limit (const pam_handle_t *pamh, int source, const char *lim_type,
+ 			pam_syslog(pamh, LOG_DEBUG,
+ 				   "wrong limit value '%s' for limit type '%s'",
+ 				   lim_value, lim_type);
+-            return;
++			return;
+ 		}
+-	} else {
++	} else if (limit_item != LIMIT_CHROOT) {
+ #ifdef __USE_FILE_OFFSET64
+ 		rlimit_value = strtoull (lim_value, &endptr, 10);
+ #else
+@@ -881,7 +886,11 @@ process_limit (const pam_handle_t *pamh, int source, const char *lim_type,
+ 	break;
+     }
+ 
+-    if ( (limit_item != LIMIT_LOGIN)
++    if (limit_item == LIMIT_CHROOT) {
++	strncpy(pl->chroot_dir, value_orig, sizeof(pl->chroot_dir)-1);
++        pl->chroot_dir[sizeof(pl->chroot_dir)-1]='\0';
++    }
++    else if ( (limit_item != LIMIT_LOGIN)
+ 	 && (limit_item != LIMIT_NUMSYSLOGINS)
+ 	 && (limit_item != LIMIT_PRI)
+ 	 && (limit_item != LIMIT_NONEWPRIVS) ) {
+@@ -1299,6 +1308,15 @@ static int setup_limits(pam_handle_t *pamh,
+ #endif
+     }
+ 
++    if (!retval && pl->chroot_dir[0]) {
++	i = chdir(pl->chroot_dir);
++	if (i == 0)
++	    i = chroot(pl->chroot_dir);
++	if (i == 0)
++	    i = chdir("/");
++	if (i != 0)
++	    retval = LIMIT_ERR;
++    }
+     return retval;
+ }
+ 

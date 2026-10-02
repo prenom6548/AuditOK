@@ -1,0 +1,40 @@
+#!/bin/bash
+pending_commit=$(ostree admin status | grep "pending" | awk '{print $2}')
+checkout_commit=$(ostree admin status | grep "pending" | cut -d'.' -f1 | awk '{print $2}')
+
+ostree --subpath=/var/lib/dpkg/plugins checkout $checkout_commit /tmp/plugins
+
+echo "Detected pending commit: $pending_commit"
+echo "Detected checkout_commit: $checkout_commit"
+
+SOURCE_DIR="/tmp/plugins"
+TARGET_DIR="/ostree/pkgs/ovl-${pending_commit}/var-ovl/var-upper/lib/dpkg/plugins"
+
+FILES_TO_COPY=("spro.so" "ksaf_label.so")
+
+# 目标需含 .../lib/dpkg/plugins；不存在则创建（含中间目录）
+if [ ! -d "$TARGET_DIR" ]; then
+  mkdir -p "$TARGET_DIR" || {
+    echo "Error: cannot create target directory: $TARGET_DIR" >&2
+  }
+  echo "Created target directory: $TARGET_DIR"
+fi
+
+for file in "${FILES_TO_COPY[@]}"; do
+    src_file="${SOURCE_DIR}/${file}"
+    dst_file="${TARGET_DIR}/${file}"
+
+    if [ -f "$src_file" ]; then
+        cp -f "$src_file" "$dst_file"
+        if [ $? -eq 0 ]; then
+            echo "Successfully copied: $src_file -> $dst_file"
+            md5sum "$dst_file"
+        else
+            echo "Error: Failed to copy $src_file"
+        fi
+    else
+        echo "Warning: Source file not found: $src_file"
+    fi
+done
+
+echo "Update kysec plugins completed."

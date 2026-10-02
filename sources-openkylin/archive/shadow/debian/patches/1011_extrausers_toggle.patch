@@ -1,0 +1,160 @@
+From: Hector Cao <hector.cao@canonical.com>
+Date: Tue, 16 Jul 2024 19:40:08 +0200
+Subject: [PATCH] extrausers support toogle
+
+---
+ lib/defines.h  | 16 ++++++++++++++++
+ src/groupadd.c | 22 ++++++++++++++++++++++
+ src/useradd.c  | 23 +++++++++++++++++++++++
+ 3 files changed, 61 insertions(+)
+
+diff --git a/lib/defines.h b/lib/defines.h
+index 5aa03f6..6247afe 100644
+--- a/lib/defines.h
++++ b/lib/defines.h
+@@ -164,6 +164,22 @@
+ #define EXTRAUSERS_SHADOW_FILE "/var/lib/extrausers/shadow"
+ #endif
+ 
++#ifndef EXTRAUSERS_GROUP_FILE
++#define EXTRAUSERS_GROUP_FILE "/var/lib/extrausers/group"
++#endif
++
++#ifndef EXTRAUSERS_SHADOWGROUP_FILE
++#define EXTRAUSERS_SHADOWGROUP_FILE "/var/lib/extrausers/gshadow"
++#endif
++
++#ifndef EXTRAUSERS_SUBUID_FILE
++#define EXTRAUSERS_SUBUID_FILE "/var/lib/extrausers/subuid"
++#endif
++
++#ifndef EXTRAUSERS_SUBGID_FILE
++#define EXTRAUSERS_SUBGID_FILE "/var/lib/extrausers/subgid"
++#endif
++
+ #ifndef SUBUID_FILE
+ #define SUBUID_FILE "/etc/subuid"
+ #endif
+diff --git a/src/groupadd.c b/src/groupadd.c
+index a0d5ade..19f625f 100644
+--- a/src/groupadd.c
++++ b/src/groupadd.c
+@@ -91,6 +91,12 @@ static void process_flags (int argc, char **argv);
+ static void check_flags (void);
+ static void check_perms (void);
+ 
++#ifndef EXTRAUSERS_OPT
++#define EXTRAUSERS_OPT 100000
++#endif
++
++static bool use_extrausers = false;
++
+ /*
+  * usage - display usage message and exit
+  */
+@@ -116,6 +122,7 @@ usage (int status)
+ 	(void) fputs (_("  -R, --root CHROOT_DIR         directory to chroot into\n"), usageout);
+ 	(void) fputs (_("  -P, --prefix PREFIX_DIR       directory prefix\n"), usageout);
+ 	(void) fputs (_("  -U, --users USERS             list of user members of this group\n"), usageout);
++	(void) fputs (_("      --extrausers              Use the extra users database\n"), usageout);
+ 	(void) fputs ("\n", usageout);
+ 	exit (status);
+ }
+@@ -398,12 +405,16 @@ static void process_flags (int argc, char **argv)
+ 		{"root",       required_argument, NULL, 'R'},
+ 		{"prefix",     required_argument, NULL, 'P'},
+ 		{"users",      required_argument, NULL, 'U'},
++		{"extrausers", no_argument,       NULL, EXTRAUSERS_OPT},
+ 		{NULL, 0, NULL, '\0'}
+ 	};
+ 
+ 	while ((c = getopt_long (argc, argv, "fg:hK:op:rR:P:U:",
+ 		                 long_options, NULL)) != -1) {
+ 		switch (c) {
++		case EXTRAUSERS_OPT:
++			use_extrausers = true;
++			break;
+ 		case 'f':
+ 			/*
+ 			 * "force" - do nothing, just exit(0), if the
+@@ -617,7 +628,18 @@ int main (int argc, char **argv)
+ 		exit(1);
+ 	}
+ 
++    if (use_extrausers) {
++		fprintf (stderr, "ENTER EXTRAUSERS_GROUP_FILE");
++        gr_setdbname (EXTRAUSERS_GROUP_FILE);
++		fprintf (stderr, "EXIT EXTRAUSERS_GROUP_FILE");
++    }
++
+ #ifdef SHADOWGRP
++    if (use_extrausers) {
++		fprintf (stderr, "ENTER EXTRAUSERS_SHADOWGROUP_FILE");
++        sgr_setdbname (EXTRAUSERS_SHADOWGROUP_FILE);
++		fprintf (stderr, "EXIT EXTRAUSERS_SHADOWGROUP_FILE");
++    }
+ 	is_shadow_grp = sgr_file_present ();
+ #endif
+ 
+diff --git a/src/useradd.c b/src/useradd.c
+index 0653d1d..4ec66ef 100644
+--- a/src/useradd.c
++++ b/src/useradd.c
+@@ -153,6 +153,12 @@ static bool do_grp_update = false;	/* group files need to be updated */
+ 
+ extern int allow_bad_names;
+ 
++#ifndef EXTRAUSERS_OPT
++#define EXTRAUSERS_OPT 100000
++#endif
++
++static bool use_extrausers = false;
++
+ static bool
+     bflg = false,		/* new default root of home directory */
+     cflg = false,		/* comment (GECOS) field for new account */
+@@ -921,6 +927,7 @@ static void usage (int status)
+ 	(void) fputs (_("  -Z, --selinux-user SEUSER     use a specific SEUSER for the SELinux user mapping\n"), usageout);
+ 	(void) fputs (_("      --selinux-range SERANGE   use a specific MLS range for the SELinux user mapping\n"), usageout);
+ #endif				/* WITH_SELINUX */
++	(void) fputs (_("      --extrausers              Use the extra users database\n"), usageout);
+ 	(void) fputs ("\n", usageout);
+ 	exit (status);
+ }
+@@ -1173,6 +1180,7 @@ static void process_flags (int argc, char **argv)
+ 			{"selinux-user",   required_argument, NULL, 'Z'},
+ 			{"selinux-range",  required_argument, NULL, 202},
+ #endif				/* WITH_SELINUX */
++			{"extrausers",     no_argument,       NULL, EXTRAUSERS_OPT},
+ 			{NULL, 0, NULL, '\0'}
+ 		};
+ 		while ((c = getopt_long (argc, argv,
+@@ -1186,6 +1194,9 @@ static void process_flags (int argc, char **argv)
+ 					 "",
+ 		                         long_options, NULL)) != -1) {
+ 			switch (c) {
++			case EXTRAUSERS_OPT:
++                use_extrausers = true;
++                break;
+ 			case 'b':
+ 				if (   ( !VALID (optarg) )
+ 				    || ( optarg[0] != '/' )) {
+@@ -2555,6 +2566,18 @@ int main (int argc, char **argv)
+ 		}
+ 	}
+ 
++    if (use_extrausers) {
++        pw_setdbname (EXTRAUSERS_PASSWD_FILE);
++        spw_setdbname (EXTRAUSERS_SHADOW_FILE);
++        gr_setdbname (EXTRAUSERS_GROUP_FILE);
++        /* TODO expose this information in other tools */
++        sub_uid_setdbname(EXTRAUSERS_SUBUID_FILE);
++        sub_gid_setdbname(EXTRAUSERS_SUBGID_FILE);
++#ifdef SHADOWGRP
++        sgr_setdbname (EXTRAUSERS_SHADOWGROUP_FILE);
++#endif
++    }
++
+ 	/*
+ 	 * Do the hard stuff:
+ 	 * - open the files,

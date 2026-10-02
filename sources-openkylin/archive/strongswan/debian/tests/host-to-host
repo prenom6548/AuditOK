@@ -1,0 +1,401 @@
+#!/bin/bash
+
+# host to host setup from https://docs.strongswan.org/docs/5.9/config/quickstart.html
+
+set -e
+set -o pipefail
+
+# exit early if not on Ubuntu
+if [ "$(lsb_release --short --id)" != "Ubuntu" ]; then
+    echo "This test only runs on Ubuntu, skipping."
+    exit 77
+fi
+
+cleanup() {
+    if [ $? -ne 0 ]; then
+        set +e
+        echo "Something failed, gathering debug info"
+        echo
+        echo "Installed strongswan packages:"
+        dpkg -l | grep -E "(strongswan|charon)"
+        echo
+        echo "loaded kernel modules:"
+        lsmod
+        echo
+        echo "journal logs from host:"
+        journalctl --no-pager -u strongswan.service || :
+        echo
+        echo "LXD details:"
+        lxc network list
+        lxc list
+        echo
+        for container in $(lxc list -f compact -c ns | grep -F RUNNING | awk '{print $1}'); do
+            echo "journal logs from container ${container}"
+            lxc exec "${container}" -- journalctl -u strongswan.service --no-pager || :
+            echo
+            echo "strongswan data from container ${container}"
+            for cmd in stats list-certs list-conns list-pols list-sas; do
+                echo "${cmd}:"
+                lxc exec "${container}" -- swanctl --${cmd} || :
+                echo
+            done
+        done
+    fi
+    set +e
+    rm -rf "${WORKDIR}"
+    for container in "${PEERS[@]}"; do
+        lxc delete --force "${container}" > /dev/null 2>&1 || :
+    done
+}
+
+trap cleanup EXIT
+
+WORKDIR=$(mktemp -d)
+PEERS=("moon" "sun")
+declare -A REMOTE
+REMOTE["moon"]="sun"
+REMOTE["sun"]="moon"
+PUBKEY_ALGO="ed25519"
+TESTNAME=$(basename "${0}")
+
+# ca
+CA_KEY_FILE="${WORKDIR}/strongswanKey.pem"
+REQ_FILE="${WORKDIR}/req.pem" # can be reused for multiple reqs
+CA_CERT_FILE="${WORKDIR}/strongswanCert.pem"
+
+source debian/tests/utils
+
+check_pol() {
+    #root@moon:~# swanctl --list-pols
+    #moon-sun/moon-sun, TUNNEL
+    #  local:  10.38.71.14/32
+    #  remote: 10.38.71.194/32
+    local me="${1}"
+    local pol="${2}"
+    local -i failures=0
+    local tunnel
+    local ip
+    local policy_ip
+
+    echo "Checking policy for:"
+    echo -n "  we have a tunnel: "
+    if echo "${pol}" | head -n 1 | grep -qF TUNNEL; then
+        echo "OK"
+    else
+        echo "FAIL"
+        failures=$((failures+1))
+    fi
+
+    # moon-sun/moon-sun, TUNNEL -> tunnel = moon-sun
+    tunnel=$(echo "${pol}" | head -n 1 | cut -d , -f 1)
+    echo -n "  tunnel matches local-remote: "
+    if echo "${tunnel}" | grep -qE "^${me}-${REMOTE[${me}]}/${me}-${REMOTE[${me}]}"; then
+        echo "OK"
+    else
+        echo "FAIL (tunnel=${tunnel})"
+        failures=$((failures+1))
+    fi
+
+    echo -n "  local IP matches local peer: "
+    ip=$(lxc exec "${me}" -- dig +short "${me}.lxd")/32
+    policy_ip=$(echo "${pol}" | sed -n -r "s,^[[:blank:]]+local:[[:blank:]]+([0-9.]+/32),\1,p")
+    if [ "${ip}" = "${policy_ip}" ]; then
+        echo "OK"
+    else
+        echo "FAIL: local ip ${ip} != policy local ip ${policy_ip}"
+        failures=$((failures+1))
+    fi
+
+    echo -n "  remote IP matches remote peer: "
+    ip=$(lxc exec "${me}" -- dig +short "${REMOTE[${me}]}.lxd")/32
+    policy_ip=$(echo "${pol}" | sed -n -r "s,^[[:blank:]]+remote:[[:blank:]]+([0-9.]+/32),\1,p")
+    if [ "${ip}" = "${policy_ip}" ]; then
+        echo "OK"
+    else
+        echo "FAIL: local ip ${ip} != policy local ip ${policy_ip}"
+        failures=$((failures+1))
+    fi
+
+    return ${failures}
+}
+
+check_sa() {
+    local -i failures=0
+    local me="${1}"
+    local sa="${2}"
+    local name=""
+    local sa_ip
+
+    # SAs look like this:
+    # moon-sun: #1, ESTABLISHED, IKEv2, f1bdc688a5078946_i* bf6e1559c5a87ab9_r
+    #   local  'C=CH, O=strongswan, CN=moon.strongswan.org' @ 10.84.128.22[4500]
+    #   remote 'C=CH, O=strongswan, CN=sun.strongswan.org' @ 10.84.128.191[4500]
+    #   AES_CBC-128/HMAC_SHA2_256_128/PRF_HMAC_SHA2_256/CURVE_25519
+    #   established 11s ago, rekeying in 14147s
+    #   moon-sun: #2, reqid 1, INSTALLED, TUNNEL, ESP:AES_GCM_16-128
+    #     installed 11s ago, rekeying in 3285s, expires in 3949s
+    #     in  c3bcdf8d,    168 bytes,     2 packets,     0s ago
+    #     out caf49378,    168 bytes,     2 packets,     0s ago
+    #     local  10.84.128.22/32
+    #     remote 10.84.128.191/32
+
+    echo "Checking SA for:"
+
+    echo -n "  established SA: "
+    if echo "${sa}" | grep -qE "^[[:alnum:]]+-[[:alnum:]]+:.*ESTABLISHED"; then
+        echo "OK"
+    else
+        echo "FAIL"
+        failures=$((failures+1))
+    fi
+
+    # parse the connection name from the first line: $local-$remote: #1,....
+    name=$(echo "${sa}" | head -n 1 | sed -r "s/^([[:alnum:]]+)-[[:alnum:]]+:.*/\1/")
+    echo -n "  local DN matches CN=${name}.strongswan.org: "
+    if echo "${sa}" | grep -qE "^[[:blank:]]*local.*CN=${name}\.strongswan\.org"; then
+        echo "OK"
+    else
+        echo "FAIL"
+        failures=$((failures+1))
+    fi
+
+    # parse the connection name from the first line: $local-$remote: #1,....
+    name=$(echo "${sa}" | head -n 1 | sed -r "s/^[[:alnum:]]+-([[:alnum:]]+):.*/\1/")
+    echo -n "  remote DN matches CN=${name}.strongswan.org: "
+    if echo "${sa}" | grep -qE "^[[:blank:]]*remote.*CN=${name}\.strongswan\.org"; then
+        echo "OK"
+    else
+        echo "FAIL"
+        failures=$((failures+1))
+    fi
+
+    echo -n "  local IP matches local peer: "
+    ip=$(lxc exec "${me}" -- dig +short "${me}.lxd")/32
+    sa_ip=$(echo "${sa}" | sed -n -r "s,^[[:blank:]]+local[[:blank:]]+([0-9.]+/32),\1,p")
+    if [ "${ip}" = "${sa_ip}" ]; then
+        echo "OK"
+    else
+        echo "FAIL: local ip ${ip} != SA local ip ${sa_ip}"
+        failures=$((failures+1))
+    fi
+
+    echo -n "  remote IP matches remote peer: "
+    ip=$(lxc exec "${me}" -- dig +short "${REMOTE[${me}]}.lxd")/32
+    sa_ip=$(echo "${sa}" | sed -n -r "s,^[[:blank:]]+remote[[:blank:]]+([0-9.]+/32),\1,p")
+    if [ "${ip}" = "${sa_ip}" ]; then
+        echo "OK"
+    else
+        echo "FAIL: remote ip ${ip} != SA remote ip ${sa_ip}"
+        failures=$((failures+1))
+    fi
+
+    # TODO: check for cipher, if it matches the algo used in the pubkey
+    # TODO: check for traffic, should not be zero
+
+    return ${failures}
+}
+
+_setup_peer() {
+    local peer="${1}"
+    local algo="${2}"
+    local key_file="${WORKDIR}/${peer}Key.pem"
+    local cert_file="${WORKDIR}/${peer}Cert.pem"
+
+    pki --gen --type "${algo}" --outform pem > "${key_file}"
+
+    pki --req --type priv --in "${key_file}" \
+        --dn "C=CH, O=strongswan, CN=${peer}.strongswan.org" \
+        --san "${peer}.strongswan.org" --outform pem > "${REQ_FILE}"
+
+    pki --issue --cacert "${CA_CERT_FILE}" --cakey "${CA_KEY_FILE}" \
+        --type pkcs10 --in "${REQ_FILE}" --serial 01 --lifetime 5 \
+        --outform pem --flag serverAuth > "${cert_file}"
+}
+
+_setup_lxd() {
+    lxd init --auto
+    network=$(lxc network list --format=compact | grep -E "bridge.*YES.*CREATED" | awk '{print $1}')
+    lxc network set "${network:-lxdbr0}" ipv6.address=none
+    if [ -n "${http_proxy}" ]; then
+        lxc config set core.proxy_http "${http_proxy}"
+    fi
+    if [ -n "${https_proxy}" ]; then
+        lxc config set core.proxy_https "${https_proxy}"
+    fi
+    if [ -n "${noproxy}" ]; then
+        lxc config set core.proxy_ignore_hosts "${noproxy}"
+    fi
+}
+
+_setup_host_containers() {
+    local release
+    local ip
+    local -i result=0
+    local -a deps
+
+    release=$(lsb_release -cs)
+    readarray -t deps < <(get_test_dependencies "${TESTNAME}" snapd dctrl-tools)
+
+    for container in "${PEERS[@]}"; do
+        echo "Launching container ${container} with release ${release}"
+        lxc launch "ubuntu-daily:${release}" "${container}" -c security.nesting=true -q
+        echo -en "Waiting for container ${container} to be ready "
+        wait_container_ready "${container}"
+
+        echo "Copying over /etc/apt to container ${container}"
+        lxc exec "${container}" -- rm -rf /etc/apt
+        lxc exec "${container}" -- mkdir -p /etc/apt
+        tar -cC /etc/apt . | lxc exec "${container}" -- tar -xC /etc/apt
+
+        echo "Installing deps in container ${container} (${deps[*]})"
+        output=$(lxc exec "${container}" -- apt-get update -q) || {
+            result=$?
+            echo "apt-get update failed in container ${container}"
+            echo "${output}"
+            return ${result}
+        }
+        output=$(lxc exec "${container}" --env DEBIAN_FRONTEND=noninteractive -- apt-get dist-upgrade -q -y) || {
+            result=$?
+            echo "apt-get dist-upgrade failed in container ${container}"
+            echo "${output}"
+            return ${result}
+        }
+        output=$(lxc exec "${container}" --env DEBIAN_FRONTEND=noninteractive -- apt-get install -q -y "${deps[@]}") || {
+            result=$?
+            echo "apt-get install ${deps[*]} failed in container ${container}"
+            echo "${output}"
+            return ${result}
+        }
+        echo "Done for container ${container}"
+    done
+}
+
+_setup_host_containers_certs() {
+    for container in "${PEERS[@]}"; do
+        echo "Copying ${CA_CERT_FILE} to container ${container}"
+        lxc file push "${CA_CERT_FILE}" "${container}/etc/swanctl/x509ca/"
+
+        echo "Copying ${container} cert and key"
+        lxc file push "${WORKDIR}/${container}Key.pem" "${container}/etc/swanctl/private/"
+        lxc file push "${WORKDIR}/${container}Cert.pem" "${container}/etc/swanctl/x509/"
+    done
+}
+
+_setup_host_containers_strongswan() {
+    local config
+
+    config=$(mktemp)
+
+    for peer in "${PEERS[@]}"; do
+        conn_name="${peer}-${REMOTE[${peer}]}"
+        cat > "${config}" <<EOF
+connections {
+    ${conn_name} {
+        remote_addrs = ${REMOTE[${peer}]}.lxd
+        local {
+            auth=pubkey
+            certs = ${peer}Cert.pem
+        }
+        remote {
+            auth = pubkey
+            id = "C=CH, O=strongswan, CN=${REMOTE[${peer}]}.strongswan.org"
+        }
+        children {
+            ${conn_name} {
+                start_action = trap
+            }
+        }
+    }
+}
+EOF
+        lxc file push "${config}" "${peer}/etc/swanctl/conf.d/${conn_name}.conf"
+        echo "Loading creds in container ${peer}"
+        lxc exec "${peer}" -- swanctl --load-creds
+        echo "Loading connections in container ${peer}"
+        lxc exec "${peer}" -- swanctl --load-conns
+    done
+}
+
+setup() {
+    local algo=${1:-ed25519}
+    echo "Creating a CA"
+    echo
+    echo "Generating private key for CA"
+    pki --gen --type "${algo}" --outform pem > "${CA_KEY_FILE}"
+
+    echo "Generating self-signed certificate for CA"
+    pki \
+        --self --ca --lifetime 10 --in "${CA_KEY_FILE}" \
+        --dn "C=CH, O=strongSwan, CN=strongSwan Root CA" \
+        --outform pem > "${CA_CERT_FILE}"
+    echo "Here is the CA cert:"
+    pki --print --in "${CA_CERT_FILE}"
+
+    for peer in "${PEERS[@]}"; do
+        echo "Generating key and certificate for peer ${peer}"
+        _setup_peer "${peer}" "${algo}"
+    done
+
+    echo "Setting up host LXD"
+    _setup_lxd
+
+    echo "Creating host containers"
+    _setup_host_containers
+
+    echo "Copy certificates to containers"
+    _setup_host_containers_certs
+
+    echo "Configuring strongswan in containers"
+    _setup_host_containers_strongswan
+}
+
+test_ping() {
+    for peer in "${PEERS[@]}"; do
+        echo "Generating traffic from ${peer} to ${REMOTE[${peer}]}"
+        # first ping to establish the tunnel always fails
+        lxc exec "${peer}" -- ping -c 2 -W 3 "${REMOTE[${peer}]}.lxd" > /dev/null 2>&1 || :
+        # this one must work
+        lxc exec "${peer}" -- ping -c 4 -W 3 "${REMOTE[${peer}]}.lxd"
+        echo
+    done
+}
+
+test_sa() {
+    for peer in "${PEERS[@]}"; do
+        sa=$(lxc exec "${peer}" -- swanctl --list-sas)
+        echo "This is the ${peer} SA:"
+        if [ -z "${sa}" ]; then
+            echo "FAILED: SA is empty (swanctl --list-sas)"
+            return 1
+        fi
+        echo "${sa}"
+        echo
+        check_sa "${peer}" "${sa}"
+        echo
+    done
+}
+
+test_pol() {
+    for peer in "${PEERS[@]}"; do
+        pol=$(lxc exec "${peer}" -- swanctl --list-pols)
+        echo "This is the ${peer} policy:"
+        if [ -z "${pol}" ]; then
+            echo "FAILED: pol is empty (swanctl --list-pols)"
+            return 1
+        fi
+        echo "${pol}"
+        echo
+        check_pol "${peer}" "${pol}"
+        echo
+    done
+}
+
+
+# the lxd deb package last existed in focal, so we install the snap
+snap list lxd > /dev/null 2>&1 || snap install lxd
+
+setup "${PUBKEY_ALGO}"
+
+test_ping
+test_sa
+test_pol

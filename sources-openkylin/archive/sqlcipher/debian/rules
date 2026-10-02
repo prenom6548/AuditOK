@@ -1,0 +1,70 @@
+#!/usr/bin/make -f
+#-*- makefile -*-
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all abi=+lfs
+export DEB_LDFLAGS_MAINT_APPEND = -lcrypto -Wl,-soname,libsqlcipher.so.2
+export DEB_CFLAGS_MAINT_APPEND = -fno-strict-aliasing \
+	-DSQLITE_SECURE_DELETE -DSQLITE_ENABLE_COLUMN_METADATA \
+	-DSQLITE_ENABLE_FTS3 -DSQLITE_ENABLE_FTS3_PARENTHESIS \
+	-DSQLITE_ENABLE_RTREE=1 -DSQLITE_SOUNDEX=1 \
+	-DSQLITE_ENABLE_UNLOCK_NOTIFY \
+	-DSQLITE_ENABLE_DBSTAT_VTAB \
+	-DSQLITE_ENABLE_DBPAGE_VTAB \
+	-DSQLITE_OMIT_LOOKASIDE=1 \
+	-DSQLITE_ENABLE_UPDATE_DELETE_LIMIT=1 \
+	-DSQLITE_USE_URI=1 \
+	-DSQLITE_MAX_SCHEMA_RETRY=25 \
+	-DSQLITE_ENABLE_SESSION \
+	-DSQLITE_HAS_CODEC \
+	-DHAVE_USLEEP=1 -DSQLITE_EXTRA_INIT=sqlcipher_extra_init \
+	-DSQLITE_EXTRA_SHUTDOWN=sqlcipher_extra_shutdown
+	# -DHAVE_USLEEP may cause issues on some platforms, but as far as I can
+	# tell all platfoms debian supports have USLEEP.
+
+DPKG_EXPORT_BUILDFLAGS = 1
+include /usr/share/dpkg/buildflags.mk
+
+DESTDIR=$(CURDIR)/debian/tmp
+
+ifneq (,$(findstring debug,$(DEB_BUILD_OPTIONS)))
+    DDEBUG="--enable-debug"
+endif
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(DDEBUG) \
+	  --enable-threadsafe \
+	  --with-tempstore=yes \
+	  --enable-fts4 \
+	  --enable-fts5 \
+	  --enable-json \
+	  --enable-session \
+	  --enable-rtree \
+	  --disable-tcl \
+	  --dll-basename=libsqlcipher \
+
+override_dh_install:
+	chrpath -d $(DESTDIR)/usr/bin/sqlite3
+	chrpath -d $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/libsqlcipher.so
+	mv $(DESTDIR)/usr/bin/sqlite3 $(DESTDIR)/usr/bin/sqlcipher
+	mv $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/libsqlite3.a $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/libsqlcipher.a
+	mkdir -p $(DESTDIR)/usr/include/sqlcipher
+	mv $(DESTDIR)/usr/include/*.h $(DESTDIR)/usr/include/sqlcipher
+	mv $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig/sqlite3.pc $(DESTDIR)/usr/lib/$(DEB_HOST_MULTIARCH)/pkgconfig/sqlcipher.pc
+	mv $(DESTDIR)/usr/share/man/man1/sqlite3.1 $(DESTDIR)/usr/share/man/man1/sqlcipher.1
+	dh_install -Xlibsqlcipher.la
+
+override_dh_missing:
+	dh_missing -Xlibsqlcipher.la --fail-missing
+
+override_dh_auto_clean:
+	dh_auto_clean
+	$(RM) sqlite3session.h config.log mksourceid
+
+override_dh_makeshlibs:
+	dh_makeshlibs -Xusr/bin/sqlcipher
+
+# TODO: fix and enable auto tests
+override_dh_auto_test:

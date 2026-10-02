@@ -1,0 +1,60 @@
+From: Simon Chopin <simon.chopin@canonical.com>
+Date: Tue, 7 May 2024 16:38:29 +0200
+Subject: useradd: move group validation after option parsing
+
+Other options like extrausers will impact how that validation is done.
+
+V2: Fix unconditional Gflg=true, breaking the -D flag.
+
+Signed-off-by: Simon Chopin <simon.chopin@canonical.com>
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/shadow/+bug/2063200
+Forwarded: not-needed
+---
+ src/useradd.c | 20 +++++++++++++-------
+ 1 file changed, 13 insertions(+), 7 deletions(-)
+
+diff --git a/src/useradd.c b/src/useradd.c
+index 4ec66ef..41f2ea0 100644
+--- a/src/useradd.c
++++ b/src/useradd.c
+@@ -1136,6 +1136,7 @@ static void grp_update (void)
+ static void process_flags (int argc, char **argv)
+ {
+ 	const struct group *grp;
++	char *raw_groups = NULL;
+ 	bool anyflag = false;
+ 	char *cp;
+ 	struct stat st;
+@@ -1315,13 +1316,7 @@ static void process_flags (int argc, char **argv)
+ 				gflg = true;
+ 				break;
+ 			case 'G':
+-				if (get_groups (optarg) != 0) {
+-					exit (E_NOTFOUND);
+-				}
+-				if (NULL != user_groups[0]) {
+-					do_grp_update = true;
+-				}
+-				Gflg = true;
++				raw_groups = xstrdup(optarg);
+ 				break;
+ 			case 'h':
+ 				usage (E_SUCCESS);
+@@ -1445,6 +1440,17 @@ static void process_flags (int argc, char **argv)
+ 		}
+ 	}
+ 
++	if (raw_groups != NULL) {
++		if (get_groups (raw_groups) != 0) {
++			exit (E_NOTFOUND);
++		}
++		free(raw_groups);
++		if (NULL != user_groups[0]) {
++			do_grp_update = true;
++		}
++		Gflg = true;
++	}
++
+ 	if (!gflg && !Nflg && !Uflg) {
+ 		/* Get the settings from login.defs */
+ 		Uflg = getdef_bool ("USERGROUPS_ENAB");

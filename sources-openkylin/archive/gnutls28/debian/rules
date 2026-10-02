@@ -1,0 +1,101 @@
+#! /usr/bin/make -f
+# Build the gnutls package for Debian.
+
+export DEB_BUILD_MAINT_OPTIONS := hardening=+bindnow
+export DEB_CFLAGS_MAINT_APPEND := -Wall
+export DEB_CXXFLAGS_MAINT_APPEND := -Wall
+
+include /usr/share/dpkg/pkg-info.mk
+
+AMCONFBUILDINDEP := $(shell if dh_listpackages | grep -q gnutls-doc ; \
+	then echo "--enable-gtk-doc" ; \
+	else echo "--disable-gtk-doc --disable-doc"; fi)
+
+CONFIGUREARGS = \
+	--enable-ld-version-script --enable-cxx \
+	--disable-rpath \
+	--enable-libdane --without-tpm \
+	--enable-openssl-compatibility \
+	--disable-silent-rules \
+	--with-unbound-root-key-file=/usr/share/dns/root.key \
+	--with-default-trust-store-file=/etc/ssl/certs/ca-certificates.crt \
+	--with-packager=Debian \
+	--with-packager-bug-reports=http://bugs.debian.org/ \
+	--with-packager-version=$(DEB_VERSION) \
+
+BDIR = -O--builddirectory=b4deb
+
+override_dh_auto_configure:
+	dh_auto_configure --verbose $(BDIR) -- \
+		$(CONFIGUREARGS) \
+		--enable-static \
+		$(AMCONFBUILDINDEP)
+
+override_dh_autoreconf:
+	grep -rl --null gettext-0.20 m4/ | xargs -0r rm -v
+	if ! dh_listpackages | grep -q gnutls-doc ; \
+		then env GTKDOCIZE="echo DISABLED running gtkdocize" \
+			dh_autoreconf --verbose $(BDIR) ; \
+		else \
+			dh_autoreconf --verbose $(BDIR) ; \
+		fi
+
+override_dh_makeshlibs:
+	dh_makeshlibs $(BDIR) -p libgnutls30t64  \
+		-V 'libgnutls30t64 (>= 3.7.0-0)' -- -c0
+	dh_makeshlibs $(BDIR) -p libgnutls-dane0t64  \
+		-V 'libgnutls-dane0t64 (>= 3.7.0-0)' \
+		-- -c0
+	dh_makeshlibs $(BDIR) -p libgnutls-openssl27t64 \
+		-V 'libgnutls-openssl27t64 (>= 3.7.0-0)' \
+		-- -c0
+	dh_makeshlibs $(BDIR) --remaining-packages
+
+execute_after_dh_auto_clean:
+	find cligen -name '*.pyc' -delete
+
+override_dh_auto_build:
+	# temporarily avoid regeneration of manpages
+	# 50-0002-Move-the-GNUTLS_NO_EXTENSIONS-compatibility-define-t.patch
+	# does not change the generated docs.
+	touch --reference=lib/includes/gnutls/abstract.h \
+		lib/includes/gnutls/gnutls.h.in
+	dh_auto_build $(BDIR) --verbose
+ifeq ($(filter --disable-doc,$(AMCONFBUILDINDEP)),)
+	$(MAKE) -C b4deb html
+	rm -f doc/gnutls.pdf && $(MAKE) -C b4deb/doc gnutls.pdf
+else
+	$(MAKE) -C b4deb/doc/manpages
+endif
+
+override_dh_auto_install:
+	dh_auto_install $(BDIR) --verbose
+ifneq ($(filter --disable-doc,$(AMCONFBUILDINDEP)),)
+	$(MAKE) -C b4deb/doc/manpages DESTDIR=$(CURDIR)/debian/tmp install
+else
+	$(MAKE) -C b4deb/doc/ DESTDIR=$(CURDIR)/debian/tmp install-html
+	# we symlink these
+	rm -vf debian/tmp/usr/share/info/*.png
+endif
+	find debian/*/usr/lib/* -name '*.so.*.*' -type f -exec \
+		chrpath -d {} +
+	find debian/*/usr/lib/ -name 'libgnutlsxx.*' -delete
+
+override_dh_installinfo:
+	dh_installinfo $(BDIR)
+	if test -e debian/gnutls-doc ; then \
+		cd debian/gnutls-doc/usr/share/info && \
+		sed -i -e 's:image src="\([^"]*.png"\):image src="/usr/share/doc/gnutls-doc/html/\1:g' *.info* ; \
+	fi
+
+override_dh_compress:
+	dh_compress $(BDIR) -X.pdf
+
+override_dh_auto_test:
+	dh_auto_test $(BDIR) --verbose -- VERBOSE=1
+
+override_dh_clean:
+	dh_clean $(BDIR) -X.bak
+
+%:
+	dh $@ --builddirectory=b4deb

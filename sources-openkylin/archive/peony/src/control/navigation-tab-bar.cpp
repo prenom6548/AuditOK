@@ -1,0 +1,612 @@
+/*
+ * Peony-Qt
+ *
+ * Copyright (C) 2020, Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Yue Lan <lanyue@kylinos.cn>
+ *
+ */
+
+#include "navigation-tab-bar.h"
+#include "x11-window-manager.h"
+
+#include "file-utils.h"
+#include "search-vfs-uri-parser.h"
+#include "global-settings.h"
+#include "manager-control.h"
+
+#include "file-label-model.h"
+
+#include <QToolButton>
+
+#include <QDragEnterEvent>
+#include <QDragMoveEvent>
+#include <QDragLeaveEvent>
+#include <QDropEvent>
+
+#include <QMimeData>
+#include <QDrag>
+#include <QGraphicsOpacityEffect>
+
+#include <KWindowSystem>
+
+#include <QApplication>
+#include <QWindow>
+#include <QStyleOptionTab>
+#include <QStyle>
+#include <QPainter>
+#include <QPainterPath>
+
+#include <QStyleOption>
+
+#include <QParallelAnimationGroup>
+#include <QVariantAnimation>
+#include <QEasingCurve>
+#include <QTransform>
+
+#include <QChildEvent>
+#include <QAbstractButton>
+
+#include <QtX11Extras/QX11Info>
+
+#include <kstartupinfo.h>
+
+#include "FMWindowIface.h"
+#include "main-window.h"
+#include "file-info.h"
+#include "file-info-job.h"
+#include "file-utils.h"
+#include "global-settings.h"
+
+static TabBarStyle *global_instance = nullptr;
+
+NavigationTabBar::NavigationTabBar(QWidget *parent) : QTabBar(parent)
+{
+    setProperty("isWindowButton", 0x1);
+    setProperty("useIconHighlightEffect", 0x2);
+
+    m_animations = new QParallelAnimationGroup(this);
+    m_opacity_animation = new QVariantAnimation;
+    m_slide_animation = new QVariantAnimation;
+    m_zoom_animation = new QVariantAnimation;
+    m_opacity_animation->setDuration(200);
+    m_opacity_animation->setStartValue(qreal(0.0));
+    m_opacity_animation->setEndValue(qreal(1.0));
+    m_opacity_animation->setEasingCurve(QEasingCurve::InOutQuart);
+    m_slide_animation->setDuration(200);
+    m_slide_animation->setStartValue(qreal(0.0));
+    m_slide_animation->setEndValue(qreal(1.0));
+    m_slide_animation->setEasingCurve(QEasingCurve::InOutQuart);
+    m_zoom_animation->setDuration(200);
+    m_zoom_animation->setStartValue(qreal(0.0));
+    m_zoom_animation->setEndValue(qreal(1.0));
+    m_zoom_animation->setEasingCurve(QEasingCurve::InOutQuart);
+    m_animations->addAnimation(m_opacity_animation);
+    m_animations->addAnimation(m_slide_animation);
+    m_animations->addAnimation(m_zoom_animation);
+
+    setAcceptDrops(true);
+    m_drag_timer.setInterval(750);
+    m_drag_timer.setSingleShot(true);
+
+    setStyle(TabBarStyle::getStyle());
+
+    setContentsMargins(0, 0, 0, 0);
+    setFixedHeight(40);
+
+    setProperty("useStyleWindowManager", false);
+    setMovable(true);
+    setExpanding(false);
+    setTabsClosable(true);
+    setUsesScrollButtons(true);
+    X11WindowManager::getInstance()->registerWidget(this);
+    connect(this, &QTabBar::currentChanged, this, [=](int index) {
+        //qDebug()<<"current changed"<<index;
+    });
+
+    connect(this, &QTabBar::tabMoved, this, [=](int from, int to) {
+        //qDebug()<<"move"<<from<<"to"<<to;
+        // 同步更新 m_has_uris 列表，保持与标签顺序一致
+        if (from >= 0 && from < m_has_uris.count() && to >= 0 && to < m_has_uris.count()) {
+            QString uri = m_has_uris.takeAt(from);
+            m_has_uris.insert(to, uri);
+        }
+    });
+
+    connect(this, &QTabBar::tabBarClicked, this, [=](int index) {
+        //qDebug()<<"tab bar clicked"<<index;
+    });
+
+    connect(this, &QTabBar::tabBarDoubleClicked, this, [=](int index) {
+        //qDebug()<<"tab bar double clicked"<<index;
+    });
+
+    connect(m_opacity_animation, &QVariantAnimation::valueChanged, this, [this]{
+        this->update();
+    });
+
+    setDrawBase(false);
+}
+
+void NavigationTabBar::addPages(const QStringList &uri)
+{
+
+}
+
+QSize NavigationTabBar::tabSizeHint(int index) const
+{
+    QSize size = QTabBar::tabSizeHint(index);
+
+    int extraWidth = 20;
+    size.setWidth(size.width() - extraWidth);
+
+    return size;
+}
+
+QStringList NavigationTabBar::getCurrentUris()
+{
+    return m_has_uris;
+}
+
+bool NavigationTabBar::event(QEvent *ev)
+{
+    return QTabBar::event(ev);
+}
+
+void NavigationTabBar::updateLocation(int index, const QString &uri)
+{
+    if (index < 0 || index >= count())
+        return;
+
+    auto info = Peony::FileInfo::fromUri(uri);
+    auto infoJob = new Peony::FileInfoJob(info);
+    //infoJob->setAutoDelete();
+    setTabData(index, uri);
+    if (index < m_has_uris.count())
+        m_has_uris.replace(index, uri);
+
+    connect(infoJob, &Peony::FileInfoJob::queryAsyncFinished, this, [=](){
+        infoJob->deleteLater();
+        if (uri != tabData(index).toString())
+            return;
+        auto iconName = Peony::FileUtils::getFileIconName(uri);
+        auto displayName = Peony::FileUtils::getFileDisplayName(uri);
+        //qDebug() << "updateLocation text:" <<displayName <<uri << iconName;
+        if (uri.startsWith("search:///"))
+        {
+            displayName = Peony::SearchVFSUriParser::getSearchUriTargetDirectory(uri);
+        }
+        if (displayName.isEmpty()) {
+            displayName = tabText(index);
+        }
+        if (iconName.isEmpty()) {
+            iconName = tabIcon(index).name();
+        }
+
+        //elide text if it is too long
+//        if (displayName.length() > ELIDE_TEXT_LENGTH)
+//        {
+//            int  charWidth = fontMetrics().averageCharWidth();
+//            displayName = fontMetrics().elidedText(displayName, Qt::ElideRight, ELIDE_TEXT_LENGTH * charWidth);
+//        }
+        setElideMode(Qt::ElideRight);
+        setTabText(index, Peony::FileUtils::handleSpecialSymbols(displayName));
+        if (uri.startsWith("label://")) {
+            QString labelIdStr = uri.section("label:///", -1,-1);
+            QString name = FileLabelModel::getGlobalModel()->getLabelNameFromLabelId(labelIdStr.toInt());
+            QColor color = FileLabelModel::getGlobalModel()->getLableColorFromLabelName(name);
+            QPixmap pix(iconSize());
+            pix.fill(Qt::transparent);
+            QPainter p(&pix);
+            p.setRenderHints(QPainter::HighQualityAntialiasing | QPainter::SmoothPixmapTransform);
+            QRect tmpRect = QRect(iconSize().width()/2 - 6, iconSize().height()/2 - 6, 12, 12);
+            p.setPen(QPen(Qt::gray, 0.5, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            p.setBrush(color);
+            p.drawEllipse(tmpRect);
+            QIcon icon(pix);
+            setTabIcon(index, icon);
+        } else {
+            setTabIcon(index, QIcon::fromTheme(iconName));
+        }
+        setTabData(index, uri);
+
+        // QFont font = this->font();
+        // auto realDisplayName = Peony::FileUtils::wrapTextForTooltip(displayName,QCursor::pos(),font);
+        setTabToolTip(index, displayName);
+        Q_EMIT this->locationUpdated(uri);
+    });
+
+    infoJob->queryAsync();
+}
+
+void NavigationTabBar::addPage(const QString &uri, bool jumpToNewTab)
+{
+    //story 28077, control start of peony
+    if (!MANAGER_CONTROL->checkCanCreateNewView()) {
+        return;
+    }
+
+    if (m_animations->state() != QAbstractAnimation::Stopped) {
+        m_animations->stop();
+    }
+    m_animations->start();
+
+    //setFocus();
+    if (uri.isEmpty())
+        return;
+    //m_info = Peony::FileInfo::fromUri(uri);
+    if (!uri.isNull()) {
+        //FIXME: replace BLOCKING api in ui thread.
+        auto displayName = Peony::FileUtils::getFileDisplayName(uri);
+        auto iconName = Peony::FileUtils::getFileIconName(uri);
+        if (displayName.contains("&")) {
+            displayName = Peony::FileUtils::handleSpecialSymbols(displayName);
+        }
+        addTab(QIcon::fromTheme(iconName), displayName);
+        setTabData(count() - 1, uri);
+        m_has_uris.append(uri);
+        if (jumpToNewTab)
+            setCurrentIndex(count() - 1);
+        Q_EMIT this->pageAdded(uri);
+    } else {
+        if (currentIndex() == -1) {
+            addPage("file:///", true);
+        } else {
+            QString uri = tabData(currentIndex()).toString();
+            addPage(uri, jumpToNewTab);
+        }
+    }
+
+    auto closeButton = tabButton(currentIndex(), QTabBar::RightSide);
+    if (closeButton) {
+        closeButton->setStyle(TabBarStyle::getStyle());
+    }
+}
+
+void NavigationTabBar::tabRemoved(int index)
+{
+    //qDebug()<<"tab removed"<<index;
+    QTabBar::tabRemoved(index);
+
+    m_has_uris.removeAt(index);
+
+    Q_EMIT pageRemoved();
+    if (count() == 0) {
+        Q_EMIT closeWindowRequest();
+    }
+}
+
+void NavigationTabBar::tabInserted(int index)
+{
+    //qDebug()<<"tab inserted"<<index;
+    QTabBar::tabInserted(index);
+}
+
+void NavigationTabBar::dragEnterEvent(QDragEnterEvent *e)
+{
+    if (e->source() != this) {
+        QPoint pos = e->pos();
+        int index = tabAt(pos);
+        if (index >= 0) {
+            setCurrentIndex(index);
+        }
+    }
+    e->accept();
+    return;
+}
+
+void NavigationTabBar::dragMoveEvent(QDragMoveEvent *e)
+{
+    if (e->source() == this) {
+        m_should_trigger_drop = false;
+        m_drag->cancel();
+        grabMouse();
+    }
+    e->accept();
+    return;
+}
+
+void NavigationTabBar::dragLeaveEvent(QDragLeaveEvent *e)
+{
+    QTabBar::dragLeaveEvent(e);
+}
+
+void NavigationTabBar::dropEvent(QDropEvent *e)
+{
+    m_start_drag = false;
+    if (e->source() != this) {
+        if (e->mimeData()->hasUrls()) {
+            for (auto url : e->mimeData()->urls()) {
+                if (Peony::FileUtils::isFileDirectory(url.url())) {
+                    addPageRequest(url.url(), true);
+                }
+            }
+        } else if (e->mimeData()->hasFormat("peony/tab-index")) {
+            auto uri = e->mimeData()->data("peony/tab-index");
+            if (Peony::FileUtils::isFileDirectory(uri)) {
+                addPageRequest(uri, true);
+            }
+        }
+
+        //finish the drag, remove old tab page from old tab.
+        if (auto oldTab = qobject_cast<NavigationTabBar *>(e->source())) {
+            oldTab->removeTab(oldTab->currentIndex());
+        }
+    }
+    releaseMouse();
+}
+
+void NavigationTabBar::mousePressEvent(QMouseEvent *e)
+{
+    QTabBar::mousePressEvent(e);
+    m_press_pos = e->pos();
+    if (tabAt(e->pos()) >= 0)
+        m_start_drag = true;
+    else
+        m_start_drag = false;
+}
+
+void NavigationTabBar::mouseMoveEvent(QMouseEvent *e)
+{
+    QTabBar::mouseMoveEvent(e);
+
+    if (e->source() != Qt::MouseEventNotSynthesized) {
+        return;
+    }
+
+    auto offset = e->pos() - m_press_pos;
+    auto offsetX = qAbs(offset.x());
+    auto offsetY = qAbs(offset.y());
+
+    if (e->pos().y() >= 0 && e->pos().y() <= this->height()) {
+        return;
+    }
+
+    if (!m_start_drag)
+        return;
+
+    //start a drag
+    //note that we should remove this tab from the window
+    //at other tab's drop event.
+
+    auto pixmap = this->topLevelWidget()->grab().scaledToWidth(this->topLevelWidget()->width()/2, Qt::SmoothTransformation);
+
+    auto thisWindow = this->topLevelWidget();
+    //KWindowSystem::lowerWindow(this->topLevelWidget()->winId());
+    for (auto win : qApp->allWidgets()) {
+        if (auto mainWin = qobject_cast<MainWindow *>(win)) {
+            if (thisWindow != mainWin)
+                KWindowSystem::raiseWindow(win->winId());
+        }
+    }
+
+    QDrag *d = new QDrag(this);
+    m_drag = d;
+    QMimeData *data = new QMimeData();
+    auto uri = tabData(currentIndex()).toString();
+    //data->setText(uri);
+    data->setData("peony/tab-index", uri.toUtf8());
+    d->setMimeData(data);
+
+    d->setPixmap(pixmap);
+    d->setHotSpot(pixmap.rect().center());
+    m_should_trigger_drop = true;
+    d->exec();
+    qApp->restoreOverrideCursor();
+    m_drag = nullptr;
+
+    if (m_should_trigger_drop) {
+        if (auto tab = qobject_cast<NavigationTabBar *>(d->target())) {
+            //do nothing for target tab bar helped us handling yet.
+        } else {
+#ifdef KSTARTUPINFO_HAS_SET_ICON_GEOMETRY
+            quint32 timeStamp = QX11Info::isPlatformX11() ? QX11Info::appUserTime() : 0;
+            KStartupInfoId startInfoId;
+            startInfoId.initId(KStartupInfo::createNewStartupIdForTimestamp(timeStamp));
+            startInfoId.setupStartupEnv();
+            KStartupInfoData startData;
+            startData.setHostname();
+            startData.addPid(QCoreApplication::applicationPid());
+            QRect rect(-1, -1, -1, -1);
+            startData.setIconGeometry(rect);
+            startData.setLaunchedBy(QCoreApplication::applicationPid());
+            KStartupInfo::sendStartup(startInfoId, startData);
+#endif
+            auto window = dynamic_cast<Peony::FMWindowIface *>(this->topLevelWidget());
+            auto newWindow = dynamic_cast<QWidget *>(window->create(this->tabData(currentIndex()).toString()));
+            newWindow->show();
+            KWindowSystem::raiseWindow(newWindow->winId());
+
+            // Ensures the window is positioned within the visible area
+            int moveX = qMax(QCursor::pos().x() - newWindow->rect().center().x(), -10);
+            int moveY = qMax(QCursor::pos().y() - newWindow->rect().center().y(), -10);
+            newWindow->move(moveX, moveY);
+            Q_EMIT tabCloseRequested(currentIndex());
+        }
+        delete d;
+        releaseMouse();
+        m_start_drag = false;
+    } else {
+        d->deleteLater();
+    }
+}
+
+void NavigationTabBar::mouseReleaseEvent(QMouseEvent *e)
+{
+    QTabBar::mouseReleaseEvent(e);
+    m_start_drag = false;
+    releaseMouse();
+}
+
+void NavigationTabBar::resizeEvent(QResizeEvent *e)
+{
+    QTabBar::resizeEvent(e);
+}
+
+TabBarStyle *TabBarStyle::getStyle()
+{
+    if (!global_instance) {
+        global_instance = new TabBarStyle;
+    }
+    return global_instance;
+}
+
+TabBarStyle::TabBarStyle()
+{
+    m_need_adjust = Peony::GlobalSettings::getInstance()->getProjectName() == V10_SP1_EDU;
+}
+
+void TabBarStyle::polish(QWidget *widget)
+{
+    QProxyStyle::polish(widget);
+    if (widget && qobject_cast<QToolButton *>(widget)) {
+        widget->setProperty("isWindowButton", 0x1);
+        //bug#167146 useIconHighlightEffect=2 导致打开预览框的图标不反白
+        //widget->setProperty("useIconHighlightEffect", 0x2);
+    }
+}
+
+int TabBarStyle::pixelMetric(QStyle::PixelMetric metric, const QStyleOption *option, const QWidget *widget) const
+{
+    if (!m_need_adjust) {
+        return QProxyStyle::pixelMetric(metric, option, widget);
+    } else {
+        switch (metric) {
+        case PM_TabBarScrollButtonWidth:
+            return 48;
+        default:
+            return QProxyStyle::pixelMetric(metric, option, widget);
+        }
+    }
+}
+
+void TabBarStyle::drawPrimitive(QStyle::PrimitiveElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget) const
+{
+    if (!m_need_adjust) {
+        if (element == PE_IndicatorTabClose) {
+            if (option->styleObject && option->styleObject->inherits("CloseButton")) {
+                auto tabbar = qobject_cast<const NavigationTabBar *>(option->styleObject->parent());
+                if (tabbar->m_animations->state() == QAbstractAnimation::Running && tabbar->currentIndex() > 0) {
+                    if (tabbar->tabButton(tabbar->currentIndex(), QTabBar::RightSide) == option->styleObject) {
+                        painter->save();
+                        painter->setOpacity(tabbar->m_opacity_animation->currentValue().toReal());
+                        painter->translate(option->rect.center());
+                        painter->scale(tabbar->m_zoom_animation->currentValue().toReal(), tabbar->m_zoom_animation->currentValue().toReal());
+                        painter->translate(-option->rect.center());
+                        qApp->style()->drawPrimitive(element, option, painter, widget);
+                        painter->restore();
+                        return;
+                    }
+                }
+                qApp->style()->drawPrimitive(element, option, painter, widget);
+                return;
+            }
+        }
+        return QProxyStyle::drawPrimitive(element, option, painter, widget);
+    } else {
+        switch (element) {
+        case PE_PanelButtonTool:{
+            QPainterPath path;
+            painter->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+            path.addRoundedRect(widget->rect(), 16, 16);
+            painter->setClipPath(path);
+            return qApp->style()->drawPrimitive(element, option, painter, widget);
+        }
+        case PE_IndicatorArrowLeft:
+        case PE_IndicatorArrowRight: {
+            QStyleOption tmp = *option;
+            tmp.palette.setColor(QPalette::HighlightedText, qApp->palette().buttonText().color());
+            return qApp->style()->drawPrimitive(element, &tmp, painter, widget);
+        }
+        case PE_IndicatorTabClose: {
+            if (option->styleObject && option->styleObject->inherits("CloseButton")) {
+                auto tabbar = qobject_cast<const NavigationTabBar *>(option->styleObject->parent());
+                if (tabbar->m_animations->state() == QAbstractAnimation::Running  && tabbar->currentIndex() > 0) {
+                    if (tabbar->tabButton(tabbar->currentIndex(), QTabBar::RightSide) == option->styleObject) {
+                        painter->save();
+                        painter->setOpacity(tabbar->m_opacity_animation->currentValue().toReal());
+                        painter->scale(tabbar->m_zoom_animation->currentValue().toReal(), tabbar->m_zoom_animation->currentValue().toReal());
+                        qApp->style()->drawPrimitive(element, option, painter, widget);
+                        painter->restore();
+                        return;
+                    }
+                }
+                qApp->style()->drawPrimitive(element, option, painter, widget);
+                return;
+            }
+        }
+        default:
+            return qApp->style()->drawPrimitive(element, option, painter, widget);
+        }
+    }
+}
+
+void TabBarStyle::drawComplexControl(QStyle::ComplexControl control, const QStyleOptionComplex *option, QPainter *painter, const QWidget *widget) const
+{
+    if (widget && (widget->objectName() == "addPageButton" || widget->objectName() == "toolButton")) {
+        painter->save();
+        painter->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+        QPainterPath path;
+        if (!m_need_adjust) {
+            path.addEllipse(QRect(option->rect.adjusted(4, 4, -4, -4)));
+            painter->setClipPath(path);
+        } else {
+            path.addRoundedRect(widget->rect(), 16, 16);
+            painter->setClipPath(path);
+        }
+        qApp->style()->drawComplexControl(control, option, painter, widget);
+        painter->restore();
+    } else {
+        qApp->style()->drawComplexControl(control, option, painter, widget);
+    }
+}
+
+void TabBarStyle::drawControl(QStyle::ControlElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget) const
+{
+    if (widget && widget->objectName() == "previewButtons") {
+        return;
+    } else if (element == CE_TabBarTab && widget && qobject_cast<const NavigationTabBar *>(widget)) {
+        auto tabbar = qobject_cast<const NavigationTabBar *>(widget);
+        if (tabbar->m_animations->state() == QAbstractAnimation::Running) {
+            const QStyleOptionTab *tab = qstyleoption_cast<const QStyleOptionTab *>(option);
+            if (tab->position == QStyleOptionTab::End && tabbar->currentIndex() > 0) {
+                QStyleOptionTab tmpTab = *tab;
+                tmpTab.text = "";
+                painter->save();
+                painter->setClipRect(tab->rect.adjusted(-2, -2, 2, 2));
+                painter->setOpacity(tabbar->m_opacity_animation->currentValue().toReal());
+                painter->translate(-int(tab->rect.width() * (1 - tabbar->m_slide_animation->currentValue().toReal())), 0);
+                qApp->style()->drawControl(element, &tmpTab, painter, widget);
+                painter->restore();
+
+                auto textRect = qApp->style()->subElementRect(QStyle::SE_TabBarTabText, option, widget);
+                painter->save();
+                painter->translate(textRect.topLeft());
+                textRect.moveTo(0, 0);
+                painter->setOpacity(tabbar->m_opacity_animation->currentValue().toReal());
+                QTransform transform;
+                transform.translate(0, textRect.center().y());
+                transform.scale(tabbar->m_zoom_animation->currentValue().toReal(), tabbar->m_zoom_animation->currentValue().toReal());
+                transform.translate(0, -textRect.center().y());
+                painter->setTransform(transform, true);
+                qApp->style()->drawItemText(painter, textRect, Qt::AlignLeft|Qt::AlignVCenter, qApp->palette(), true, tab->text);
+                painter->restore();
+                return;
+            }
+        }
+    }
+    qApp->style()->drawControl(element, option, painter, widget);
+}

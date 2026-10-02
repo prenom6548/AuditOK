@@ -1,0 +1,1059 @@
+#!/bin/bash
+#Author Buquan Liu, liubuquan@kylinos.cn, walt_lbq@163.com
+#本程序本质上是对backup-auto/autobackup.cpp的重写.
+#因为采用Qt程序则打包进入内核，相应的库会导致内核超过16M，故改为shell程序.
+
+#backup-auto --autobackup ${rootpath} /backup
+#backup-auto --autorestore ${rootpath} /backup
+
+# 出厂备份改为压缩成dst.img
+backup-auto-factory $1 $2 $3
+exit $?
+
+#xgs备份还原要保留更多的文件或目录: 
+#kybackup/maindialog.cpp, backup-daemon/mountpoint.cpp, backup-daemon/data/backup-auto-efi
+XGS=false
+
+INFO="/etc/.bootinfo"
+METAINFO=".METAINFO"
+KB=1024
+MB=1048576
+GB=1073741824
+
+if [ $# -lt 3 ] ; then
+	exit
+fi
+
+#是否有/data数据分区
+hasDataPartition=0
+backupORrestore=$1
+rootpath=$2
+m_mountPath=$3
+
+BACKUP=
+if [[ -e "${rootpath}/backup/BACKUP/snapshots" ]]; then
+  BACKUP="/BACKUP"
+fi
+
+m_backuplistPath=${m_mountPath}${BACKUP}"/snapshots/backuplist.xml"
+EXCLUDEFILE=${m_mountPath}${BACKUP}"/snapshots/.exclude"
+PLOGFILEDIR="${m_mountPath}${BACKUP}/log"
+PLOGFILE="$PLOGFILEDIR/log-$(date +%Y%m%d%H%M)"
+LOGFILE="/backup"${BACKUP}"/log.txt" #LOGFILE="/tmp/log.txt"
+
+#是否是出厂备份
+m_isFactory=false
+factory_uuid="00000000-0000-0000-0000-000000000000"
+auto_uuid="01234567-0123-0123-0123-0123456789ab"
+PERSONAL_EXCLUDEFILE=".exclude.user.txt"
+PERSONAL_BACKUPFILE=".user.txt"
+
+#如果/backup不存在，则创建该目录
+mkdir -p ${m_mountPath}${BACKUP}
+
+m_restoreUuid=""
+m_enabled=""
+global_system_usedDisk=0
+m_size=0
+newSize=0
+#-----------------------------------------------------------------
+#see backup-auto/autobackup.cpp
+getBackupInfo(){
+	if [ "$rootpath" = "/" ]; then
+		bootinfo=$INFO
+	else
+		bootinfo=$rootpath$INFO
+	fi
+
+	if [ ! -e "$bootinfo" ]; then
+		echo "$bootinfo file not exist!"
+		exit 200
+	fi
+
+	which_line=0
+	content=`cat "$bootinfo" | grep -Ev "^#" | grep "=" | awk '{print $1}'`
+	for line in $content;
+	do
+		#parse_device "$device"
+		#只读第1行：RECOVERY_DEV_UUID=c965e712-9903-4139-b8da-c6e1eef0af6a
+		if [ $which_line -eq 0 ]; then
+			m_restoreUuid=`echo $line | sed 's:.*=::' | tr -d "\n"`
+			which_line=`expr $which_line + 1`
+		else
+			m_enabled=`echo $line | sed 's:.*=::' | tr -d "\n"`
+			which_line=`expr $which_line + 1`
+		fi
+	done
+}
+
+#-----------------------------------------------------------------
+
+#该函数是对backup-daemon/parsebackuplist.cpp中相应函数的替换
+createBackupList(){
+	local backuplistDir=${m_mountPath}${BACKUP}"/snapshots/"
+
+	if [ ! -e "$backuplistDir" ]; then
+		mkdir -p $backuplistDir
+	fi
+
+	if [ ! -e "$m_backuplistPath" ]; then
+		#echo "$m_backuplistPath file not exist!"
+
+		#第1行'>'会清空后写文件
+		echo "<?xml version='1.0'?>" >$m_backuplistPath
+                #echo "<backupList>" >>$m_backuplistPath
+                #echo "</backupList>" >>$m_backuplistPath
+                echo "<backupList/>" >>$m_backuplistPath #QDomDocument在节点为空时如此生成根节点
+	fi
+}
+
+#-----------------------------------------------------------------
+#see backup-auto/autobackup.cpp
+mountBackup()
+{
+	local myuuid="/dev/disk/by-uuid/"$m_restoreUuid
+	#echo "myuuid: $myuuid"
+
+	#support lvm by zhangze
+	tmp_root_dev=$(mount|grep " /root "| cut -d ' ' -f 1)
+	case "$tmp_root_dev" in
+		/dev/mapper/*)
+			eval $(dmsetup splitname --nameprefixes --noheadings --rows "${tmp_root_dev#/dev/mapper/}")
+			if [ "$DM_VG_NAME" ] && [ "$DM_LV_NAME" ];then
+				lvm lvchange -aay -y --sysinit --ignoreskippedcluster "$DM_VG_NAME"
+			fi
+		;;
+	esac
+
+	mount $myuuid $m_mountPath
+
+	mkdir -p $PLOGFILEDIR
+    if [ $? -ne 0 ]; then
+        echo "Could not create log directory in /backup"
+        exit 22
+    fi
+
+    touch $PLOGFILE
+    if [ $? -ne 0 ]; then
+        echo "Could not create log file"
+        exit 23
+    fi
+    echo "Log for backuping and restoring...." >$PLOGFILE
+
+	createBackupList #创建备份信息
+}
+
+#-----------------------------------------------------------------
+#see backup-auto/autobackup.cpp
+umountBackup()
+{
+	umount $m_mountPath
+}
+
+#-----------------------------------------------------------------
+#see backup-auto/backupcommon.cpp
+#在grub时，根分区为/root；在进入系统后，根分区为/
+#parameters: rootDiskName
+#返回值 elements=( $totalSize $freeDisk $usedDisk )
+caculateDiskSize(){
+	local origalParas
+
+	origalParas=(`echo "$@"`)
+	num=$[ $# ]
+
+	#if [ $# -ne 2 ]; then
+	if [ $num -ne 2 ]; then
+		echo "You shoud input the rootDiskName and disk"
+		exit
+	fi
+
+	local fullDiskName
+	local totalSize
+	local freeDisk
+	local usedDisk
+
+	if [ "${origalParas[1]}" = "/" ]; then
+		fullDiskName=${origalParas[0]}
+	else
+		fullDiskName=${origalParas[0]}${origalParas[1]}
+	fi
+
+	if [ ! -e "$fullDiskName" ]; then
+		##因为要返回数组，所以下面的echo没有上面用，不会显示，只会作为返回值
+		#echo "$fullDiskName not exist!"
+		elements=( 0 0 0 )
+		echo ${elements[*]}
+		return
+	fi
+
+	##因为要返回数组，这里不能echo "fullDiskName: $fullDiskName"
+	sss=`df -k $fullDiskName | sed '1d' | tr -d "\n"`
+	freeDisk=`echo $sss|awk '{print $4}'`
+	freeDisk=`expr 1024 \* $freeDisk`
+	usedDisk=`echo $sss|awk '{print $3}'`
+	usedDisk=`expr 1024 \* $usedDisk`
+
+	#totalSize没有从df命令的第2列来取，该值比下面2个的和还要大
+	totalSize=`expr $usedDisk + $freeDisk`
+
+	##因为要返回数组，这里不能echo "freeDisk=$freeDisk"
+	##因为要返回数组，这里不能echo "usedDisk=$usedDisk"
+	##因为要返回数组，这里不能echo "totalSize=$totalSize"
+
+	#local elements
+	elements=( $totalSize $freeDisk $usedDisk )
+	echo ${elements[*]}
+}
+
+parse_device(){
+	device=$1
+	if echo $device | grep -E -q "^UUID="; then
+		echo $device | sed 's:^UUID=:/dev/disk/by-uuid/:' | tr -d "\n"
+	elif echo $device | grep -E -q "^LABEL="; then
+		echo $device | sed 's:^LABEL=:/dev/disk/by-label/:' | tr -d "\n"
+	else
+		echo $device | tr -d "\n"
+	fi
+}
+
+is_remote(){
+	fstype=$1
+	if [ nfs = "$fstype" ] || [ nfs4 = "$fstype" ] || [ smbfs = "$fstype" ] || [ cifs = "$fstype" ] || [ coda = "$fstype" ] || [ ncp = "$fstype"  ]; then
+	echo yes
+	elif [ ncpfs = "$fstype" ] || [ ocfs2 = "$fstype" ] || [ gfs = "$fstype" ] || [ gfs2 = "$fstype" ] || [ ceph = "$fstype" ]; then
+	echo yes
+	else
+	echo no
+	fi
+}
+
+function caculateDirSize() {
+  mkdir -p /backup/snapshots/check/data
+  local total_file_size=$(rsync  -aAHXrn --stats --ignore-missing-args --exclude=/backup --exclude=/cdrom --exclude=/dev --exclude=/efi --exclude=/etc/uid_list --exclude=/data/ghost --exclude=/ghost --exclude=/lost+found --exclude=/media --exclude=/mnt --exclude=/proc --exclude=/run --exclude=/swap_file --exclude=/sys --exclude=/tmp --exclude=/var/lib/docker/overlay2 --exclude=/var/lib/kmre/data --exclude=/var/lib/kmre/kmre-*-*/data/media/0/0-麒麟* --exclude=/var/lib/udisks2 --exclude=/var/log --exclude=*/backup/snapshots --exclude=/data/home --exclude=/data/root "${rootpath}/" /backup/snapshots/check/data/ | grep "Total file size:" | awk '{print $4}' | sed 's/,//g')
+  total_file_size=$(expr ${total_file_size} + 200000000)
+  echo "备份所需空间大小：${total_file_size}" >>$PLOGFILE
+  echo "${total_file_size}"
+}
+
+#parameters: 无
+#返回值：(system_totalSize system_freeDisk system_usedDisk)
+caculateSystemSize(){
+	local root_totalSize root_freeDisk root_usedDisk
+	local system_totalSize system_freeDisk system_usedDisk
+	local origalParas
+	local found item result
+	local device mntdir fstype options dump passno
+	local -a alreadyDisks #数组，已经分析过的磁盘目录
+	local -a elements #存放返回值
+
+        #alreadyDisks=(${alreadyDisks[*]} "/boot") #插入一个元素"/boot"
+
+	#result=(`caculateDiskSize "$rootpath" "$rootpath"`)
+	#origalParas=($rootpath "/") 
+	#arg1=`echo ${origalParas[*]}`
+
+	#result=(`caculateDiskSize $arg1`)
+	#root_totalSize=${result[0]}
+	#root_freeDisk=${result[1]}
+	#root_usedDisk=${result[2]}
+
+	#system_totalSize=$root_totalSize
+	#system_freeDisk=$root_freeDisk
+	#system_usedDisk=$root_usedDisk
+
+	#echo "system_totalSize="$system_totalSize
+	#echo "system_freeDisk="$system_freeDisk
+	#echo "system_usedDisk="$system_usedDisk
+
+	##############3#caculateDiskSize / /backup
+	fstab_path=${rootpath}/etc/fstab
+
+	if [ ! -e "$fstab_path" ]; then
+		echo "$fstab_path file not exist!"
+		exit 701
+	fi
+	
+	system_totalSize=0
+        system_freeDisk=0
+        system_usedDisk=0
+
+	while read line;
+	do 
+	        #取第1个字符
+        	if [ "${line:0:1}" = "#" ]; then
+                	continue
+        	fi  
+
+        	echo $line
+		echo $line >>$PLOGFILE
+
+        	device=$( echo "$line"|awk '{print $1}')
+        	mntdir=$( echo "$line"|awk '{print $2}')
+        	fstype=$( echo "$line"|awk '{print $3}')
+        	options=$( echo "$line"|awk '{print $4}')
+        	dump=$( echo "$line"|awk '{print $5}')
+        	passno=$( echo "$line"|awk '{print $6}')
+
+		device=$(parse_device $device)
+
+		if [[ $options =~ "bind" ]]; then
+                    continue
+                fi
+
+		# nodev filesystems
+		( cat /proc/filesystems | grep "$fstype" | grep -q nodev ) && continue
+
+		# virtual or network filesystems
+		[ none = "$mntdir" ] || [ yes = $(is_remote $fstype) ] && continue
+
+		# swap or rootfs
+		[ swap = "$fstype" ] && continue
+#[ swap = "$fstype" ] || [ / = "$mntdir" ] || [ /home = "$mntdir" ] || [ /var/log = "$mntdir" ]&& continue
+
+	        #取第1个字符
+        	if [ ${mntdir:0:1} != "/" ]; then
+                	continue
+        	fi  
+
+                if [ $mntdir = "/backup" ]; then  #没有写成$m_mountPath,看下面if
+                        continue
+                fi
+
+                if [ $mntdir = $m_mountPath ]; then  #没有写成$m_mountPath
+                        continue
+                fi
+
+		#注意: 没有备份数据分区
+        	if [ $mntdir = "/data" ]; then
+			hasDataPartition=1
+        	fi  
+
+        	#echo "1: " $device
+        	#echo "2: " $mntdir
+        	#echo "3: " $fstype
+        	#echo "4: " $options
+        	#echo "5: " $dump
+        	#echo "6: " $passno
+
+		# not system partition
+#		[ no = $(is_system_partition $mntdir) ] && continue
+
+		################计算df $target_mntdir的各项值
+		origalParas=($rootpath $mntdir) 
+		arg1=`echo ${origalParas[*]}`
+
+		result=(`caculateDiskSize $arg1`)
+		disk_totalSize=${result[0]}
+		disk_freeDisk=${result[1]}
+		disk_usedDisk=${result[2]}
+
+		if [[ $disk_totalSize = $root_totalSize && $disk_freeDisk = $root_freeDisk && $disk_usedDisk = $root_usedDisk ]]; then
+			continue
+		fi
+
+		#echo "disk_totalSize="$disk_totalSize
+		#echo "disk_freeDisk="$disk_freeDisk
+		#echo "disk_usedDisk="$disk_usedDisk
+
+		system_totalSize=$( expr $system_totalSize + $disk_totalSize )
+		system_freeDisk=$( expr $system_freeDisk + $disk_freeDisk )
+		system_usedDisk=$( expr $system_usedDisk + $disk_usedDisk )
+
+		#echo "system_totalSize="$system_totalSize
+		#echo "system_freeDisk="$system_freeDisk
+		#echo "system_usedDisk="$system_usedDisk
+
+	done < "$fstab_path";
+
+	#echo "system_totalSize="$system_totalSize
+	#echo "system_freeDisk="$system_freeDisk
+	#echo "system_usedDisk="$system_usedDisk
+
+	#local elements
+	elements=( $system_totalSize $system_freeDisk $system_usedDisk )
+	echo ${elements[*]}
+}
+
+#-----------------------------------------------------------------
+#//检查备份还原分区/backup剩余空间是否满足备份需求
+#see backup-auto/backupcommon.cpp
+#返回值: 0表示/backup剩余容量不能够满足备份需求；1表示满足
+checkBackupCapacity() { #(m_rootPath.toStdString().c_str(), retstatus))
+	local origalParas
+	local root_totalSize root_freeDisk root_usedDisk
+	local backup_totalSize backup_freeDisk backup_usedDisk
+	local system_totalSize system_freeDisk system_usedDisk
+	###which_line=`expr $which_line + 1`
+
+	#从函数caculateSystemSize取返回值
+	result=(`caculateSystemSize`)
+	system_totalSize=${result[0]}
+	system_freeDisk=${result[1]}
+	system_usedDisk=${result[2]}
+
+        #global_system_usedDisk=$system_usedDisk
+	global_system_usedDisk=$(caculateDirSize)
+
+	#echo "--system_totalSize="$system_totalSize
+	#echo "--system_freeDisk="$system_freeDisk
+	#echo "--system_usedDisk="$system_usedDisk
+
+	#--------------------------------------------------------
+	#result=(`caculateDiskSize "$rootpath" "$rootpath"`)
+	origalParas=($rootpath "/") 
+	arg1=`echo ${origalParas[*]}`
+
+	result=(`caculateDiskSize $arg1`)
+	root_totalSize=${result[0]}
+	root_freeDisk=${result[1]}
+	root_usedDisk=${result[2]}
+	#echo "--root_totalSize="$root_totalSize
+	#echo "--root_freeDisk="$root_freeDisk
+	#echo "--root_usedDisk="$root_usedDisk
+
+	#--------------------------------------------------------
+	#caculateDiskSize / /backup
+	#origalParas=($rootpath "/backup") 
+	#origalParas=("/" "/backup") #/backup不会是/root/backup
+	origalParas=("/" $m_mountPath) #/backup不会是/root/backup
+	arg1=`echo ${origalParas[*]}`
+
+	result=(`caculateDiskSize $arg1`)
+	backup_totalSize=${result[0]}
+	backup_freeDisk=${result[1]}
+	backup_usedDisk=${result[2]}
+
+	#echo "--backup_totalSize="$backup_totalSize
+	#echo "--backup_freeDisk="$backup_freeDisk
+	#echo "--backup_usedDisk="$backup_usedDisk
+
+	if [[ $root_totalSize = $backup_totalSize && $root_freeDisk = $backup_freeDisk && $root_usedDisk = $backup_usedDisk ]]; then #"/backup"是不是一个独立的盘
+        	echo "Cannot find the /backup disk or not be mounted!"
+        	exit 403
+	fi
+
+	#echo "bybobbi: bakup_freeDisk is " $backup_freeDisk
+        #echo "bybobbi: system_usedDisk is " $system_usedDisk
+	echo "free size : $backup_freeDisk; sys_size : $global_system_usedDisk"
+        echo "free size : $backup_freeDisk; sys_size : $global_system_usedDisk" >>$PLOGFILE
+	if [ ${backup_freeDisk} -gt ${global_system_usedDisk} ]; then
+		return 1 
+	else	
+		return 0 
+	fi
+}
+
+updateStateByComment() {
+	tmpFile=${m_backuplistPath}".tmp"
+	#echo "tmpFile: $tmpFile"
+	is_first_line=1
+
+	foundComment=0 #是否发现了要修改的comment
+
+	#如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+	IFS_old=$IFS
+	IFS=$'\n'
+	while read line;
+	do 
+		#去除了前后空格
+		xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+		#echo "xxx: $xxx"
+
+                if [[ "$xxx" =~ "<Comment>" ]]; then
+			if [ $xxx = "<Comment>${m_comment}</Comment>" ]; then
+				foundComment=1 #当前comment是要修改的mycomment
+			else
+				foundComment=0 #当前comment不是要修改的mycomment
+			fi
+		fi
+
+		if [[ "$xxx" =~ "<Size>" ]]; then
+		    if [[ $foundComment -eq 1 ]]; then
+		        line="        <Size>${newSize}</Size>"
+	            fi
+		fi
+
+                if [[ "$xxx" =~ "<State>" ]]; then
+			if [ $foundComment -eq 1 ]; then
+    				line="        <State>${m_state}</State>"
+			fi
+		fi
+
+		if [ "$is_first_line" -eq 1 ]; then
+			echo "$line" >$tmpFile
+		else
+			echo "$line" >>$tmpFile
+		fi
+	
+		is_first_line=0
+
+	done < "$m_backuplistPath";
+	IFS=$IFS_old
+
+	cp -f $tmpFile ${m_backuplistPath}
+	rm -f $tmpFile
+}
+
+#参照backup-daemon/backupmanager.cpp, 写日志文件
+writeLogFile() {
+	echo $1 >>$LOGFILE
+}
+
+#参照backup-daemon/mountpoint.cpp
+bFileExists() {
+        local theFile theOldFile
+        theOldFile=$1  #必须以"/"开始，但本身是个相对路径，因为没有加rootpath.
+
+        if [ $rootpath = "/" ]; then
+                theFile=$theOldFile
+        else
+                theFile=$theOldFile
+                theFile="$rootpath""$theFile"
+        fi
+
+        if [ -e "$theFile" ]; then
+                echo "$theOldFile" >>$EXCLUDEFILE
+        fi
+}
+
+#参照backup-daemon/mountpoint.cpp
+generateExcludeFile() {
+	local backupOrRestore
+	backupOrRestore=$1	#0: backup 1:restore
+
+	#exclude的必须是相对目录，其实在efi启动时为/root/data
+	#see backup-daemon/mountpoint.cpp, backup-daemon/data/backup-auto-efi
+	#also kybackup: exclude.ui databackupdirs.ui dataincbackupdirs.ui
+	#if [ ! -e "$restoreDir" ]; then
+		#注意下面的>和>>-----------------------------------------------
+		echo "/efi" >$EXCLUDEFILE   
+		echo "/backup" >>$EXCLUDEFILE
+		#echo "/boot/efi" >>$EXCLUDEFILE
+		echo "/dev" >>$EXCLUDEFILE
+		echo "/ghost" >>$EXCLUDEFILE  #ghost镜像文件
+		echo "/mnt" >>$EXCLUDEFILE
+		echo "/proc" >>$EXCLUDEFILE
+		echo "/run" >>$EXCLUDEFILE
+		echo "/sys" >>$EXCLUDEFILE
+		echo "/media" >>$EXCLUDEFILE
+		echo "/tmp" >>$EXCLUDEFILE
+		echo "/lost+found" >>$EXCLUDEFILE
+		echo "/var/lib/udisks2" >>$EXCLUDEFILE
+		#echo "/data/home/*" >>$EXCLUDEFILE
+		#echo "/data/root/*" >>$EXCLUDEFILE
+	        #if [ -e "${rootpath}/data/home" ]; then
+                #   echo "/home" >>$EXCLUDEFILE
+                #   echo "/root" >>$EXCLUDEFILE
+                #fi
+		echo "/cdrom" >>$EXCLUDEFILE
+		echo "/swap_file" >>$EXCLUDEFILE
+		echo "/var/lib/docker/overlay2" >>$EXCLUDEFILE
+		echo "/var/log" >>$EXCLUDEFILE
+		echo "/data/security-dir" >>$EXCLUDEFILE
+		echo "*/backup/snapshots" >>$EXCLUDEFILE
+
+		#bind挂载的目录不进行备份或还原
+                cat ${rootpath}/etc/fstab | awk '{if($4~/bind/) print $1}' |
+                while read excludePath
+                do
+                    echo "$excludePath" >>$EXCLUDEFILE
+                done
+
+		#bFileExists "/etc/.bootinfo"
+		#bFileExists "/etc/fpb" 	#管控,暂时
+		#echo "/etc/.bootinfo" >>$EXCLUDEFILE
+		
+		#数据分区是否使用由用户输入，最终放到/backup/snapshots/.excludeuser
+		#因为GRUB没有界面，所以是不是先在其他模式下做一次备份，生成这个文件；然后GRUB就可以了。
+		#echo "/data/*" >>$EXCLUDEFILE   #用户可以把数据放到该分区或者目录
+	
+		#是否覆盖备份还原工具自身
+		#if [ $backupOrRestore -eq 1 ]; then
+		#    bFileExists "/usr/bin/backup-daemon"  	#备份还原
+	        #    bFileExists "/usr/bin/kybackup"		#备份还原
+		#    bFileExists "/usr/bin/mount_fstab"  	#备份还原
+		#    bFileExists "/usr/bin/backup-auto"  	#备份还原
+		#    bFileExists "/usr/bin/mount_fstab_efi" 	#备份还原
+		#    bFileExists "/usr/bin/backup-auto-efi" 	#备份还原
+		#fi
+
+		#是否使用由用户输入，最终放到/backup/snapshots/.excludeuser
+        	#if [ "$XGS" = true ]; then
+		#    echo "/etc/passwd" >>$EXCLUDEFILE
+		#    echo "/etc/group" >>$EXCLUDEFILE
+		#    echo "/etc/shadow" >>$EXCLUDEFILE
+		#    if [ -e "/etc/uid_list" ]; then
+		#	echo "/etc/uid_list" >>$EXCLUDEFILE
+		#    fi
+
+		#    echo "/home/*" >>$EXCLUDEFILE
+		#    echo "/opt/softmanager/log/log_cur.txt" >>$EXCLUDEFILE
+		#    echo "/opt/softmanager/conf/audit/auditLogCur.txt" >>$EXCLUDEFILE
+		#    echo "/opt/xgs/Audit/*" >>$EXCLUDEFILE
+		#    echo "/opt/LinuxKpc/log/*" >>$EXCLUDEFILE
+		#    echo "/var/log/*" >>$EXCLUDEFILE
+		#    echo "/var/run/*" >>$EXCLUDEFILE
+		#    echo "/root/*" >>$EXCLUDEFILE
+		#    echo "/var/mail/*" >>$EXCLUDEFILE
+		#    echo "/boot/efi/*" >>$EXCLUDEFILE #xgs出厂还原时会失败
+		#fi
+	#fi
+}
+
+backuping() {
+	local src dst
+
+	src=$1
+	dst=$2
+
+	#0:backup 1:restore
+	generateExcludeFile 0
+	echo "/" > ${m_mountPath}${BACKUP}/snapshots/$m_uuid/$PERSONAL_BACKUPFILE
+	cp $EXCLUDEFILE ${m_mountPath}${BACKUP}/snapshots/$m_uuid/$PERSONAL_EXCLUDEFILE
+
+	# /boot/efi不再单独备份
+	#if [ -d ${src}/boot/efi ];then
+	#	mkdir -p ${dst}/boot
+	#	rsync -av --ignore-missing-args ${src}/boot/efi ${dst}/boot
+	#fi
+
+	echo "Begin to backup..." >>$PLOGFILE
+        echo "Begin to backup..."
+
+	mkdir -p ${rootpath}/var/log
+	touch ${rootpath}/var/log/backup.log
+	#是否有数据分区
+	if [ $hasDataPartition -eq 0 ]; then
+		#exclude的必须是相对目录，其实在efi启动时为/root/data
+		#echo rsync -avAXH --ignore-missing-args --exclude-from $EXCLUDEFILE $src $dst
+		#rsync -avAXH --ignore-missing-args --exclude-from $EXCLUDEFILE $src $dst
+
+		#不是目录，也不备份
+		echo rsync -avAXH --ignore-missing-args --exclude-from $EXCLUDEFILE $src $dst >>${rootpath}/var/log/backup.log 2>&1
+		rsync -avAXH --ignore-missing-args --exclude-from $EXCLUDEFILE $src $dst >>${rootpath}/var/log/backup.log 2>&1
+	else
+		#exclude的必须是相对目录，其实在efi启动时为/root/data
+		#echo rsync -avAXH --ignore-missing-args --exclude data --exclude-from=$EXCLUDEFILE $src $dst
+		#The question is that the 'data' directories can not be copied
+		echo rsync -avAXH --ignore-missing-args --exclude-from $EXCLUDEFILE $src $dst >>${rootpath}/var/log/backup.log 2>&1
+		rsync -avAXH --ignore-missing-args --exclude-from $EXCLUDEFILE $src $dst >>${rootpath}/var/log/backup.log 2>&1
+	fi
+
+	if [ $? -eq 0 -o $? -eq 24 -o $? -eq 23 ]; then
+		#将状态从"备份未完成"改成"0"
+		#updateStateByComment $m_comment 0
+		m_state="backup finished"
+		touch $dst/.exectl
+		updateStateByComment
+
+	else
+		echo "backup update backuplist.xml failed for updateBackupAutoFinishedState!";
+		m_state="backup unfinished"
+		updateStateByComment
+	fi
+
+	#写文件
+	metainfo_file="${m_mountPath}${BACKUP}/snapshots/$m_uuid/$METAINFO"
+	#echo "metainfo_file="$metainfo_file
+	#第1行清空写
+	#这里写的不是xml文件，是一个文本文件，这时候的状态是0或者backup failed 
+	echo "COMMENT=$m_comment" >$metainfo_file
+	echo "TIME=$m_time" >>$metainfo_file
+	echo "UUID=$m_uuid" >>$metainfo_file
+	echo "SIZE=$m_size" >>$metainfo_file
+	echo "STATE=$m_state" >>$metainfo_file
+
+	#写日志文件
+ 	writeLogFile "${m_time},${m_uuid},0,出厂备份,${newSize}" #grub时只有全盘备份，没有增量备份
+        echo "sync..." >>$PLOGFILE
+	sync
+	echo "Backup end..." >>$PLOGFILE
+}
+
+CreateUuid() {
+    local uuid=`cat /proc/sys/kernel/random/uuid|tr -d "\n"`
+    while [ "$uuid" = $factory_uuid -o "$uuid" = $auto_uuid ]
+    do
+        uuid=`cat /proc/sys/kernel/random/uuid|tr -d "\n"`
+    done
+    echo $uuid
+}
+
+findCommentByUuid() {
+
+	local ret=1
+	local local_uuid=$1
+    local comment0
+	local ret_comment
+
+	#如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+    IFS_old=$IFS
+	IFS=$'\n'
+	while read line;
+	do
+		#去除了前后空格
+		xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+		#echo "xxx: $xxx"
+
+		if [[ "$xxx" =~ "<Comment>" ]]; then
+        	comment0=`echo $xxx | awk -F "<Comment>" '{print $2}' |awk -F "</Comment>" '{print $1}' | tr -d "\n"`
+		fi
+
+		if [[ "$xxx" =~ "<Uuid>" ]]; then
+			if [ $xxx = "<Uuid>${local_uuid}</Uuid>" ]; then
+				ret=0
+				ret_comment=$comment0
+				break
+			fi
+		fi
+	done < "$m_backuplistPath";
+	IFS=$IFS_old
+
+	echo $ret_comment
+	return $ret
+}
+
+deleteItemByComment() {
+    local local_comment=$1
+#    echo "arg local_comment = $local_comment"
+
+    tmpFile=${m_backuplistPath}".tmp"
+    cp -f ${m_backuplistPath} $tmpFile
+#    echo "tmpFile: $tmpFile"
+
+    local foundComment=0 #是否发现了要修改的comment
+    local i=0
+    local ii=0
+    local iii=0
+    local backupPointTmp=0
+
+    #如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+    IFS_old=$IFS
+    IFS=$'\n'
+    while read line;
+    do
+        let i+=1
+        #去除了前后空格
+        xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+        #echo "xxx: $xxx"
+
+        if [[ "$xxx" =~ "<BackupPoint>" ]]; then
+			backupPointTmp=$i
+        fi
+        if [[ "$xxx" =~ "<Comment>" ]]; then
+			if [ $xxx = "<Comment>$local_comment</Comment>" ]; then
+				foundComment=1 #当前comment是要修改的mycomment
+				ii=$backupPointTmp
+#				echo "delete foundComment = 1"
+			else
+				foundComment=0 #当前comment不是要修改的mycomment
+			fi
+        fi
+        if [[ "$xxx" =~ "</BackupPoint>" ]]; then
+        	if [ $foundComment -eq 1 ]; then
+   	        	iii=$i
+                	break
+            fi
+        fi
+    done < "$tmpFile";
+    IFS=$IFS_old
+
+#    echo "ii: $ii, iii: $iii"
+    if [ $iii -ne 0 ]; then
+    	sed -i "${ii},${iii}d" $tmpFile
+        cp -f $tmpFile ${m_backuplistPath}
+    fi
+    rm -f $tmpFile
+}
+
+DeleteFactoryBackup() {
+	if [ -e "/backup${BACKUP}/snapshots/{${factory_uuid}}" ]; then
+		rm /backup${BACKUP}/snapshots/{${factory_uuid}} -rf
+	fi
+
+	local comment=$(findCommentByUuid "{${factory_uuid}}")
+	echo "DeleteFactoryBackup comment is $comment"
+	if [ $? -eq 0 ]; then
+		deleteItemByComment "$comment"
+	fi
+}
+
+#see backup-auto/autobackup.cpp
+backupAuto() { #备份
+	if [ $m_isFactory = true ]; then
+		DeleteFactoryBackup
+	fi
+	local xxx
+	checkBackupCapacity
+	ret=$?
+	if [ "$ret" -eq 0 ]; then
+		echo "The backup disk space is not enough"
+		exit 100
+	fi
+
+	#global_system_usedDisk
+	#创建一个uuid
+	if [ $m_isFactory = false ]; then
+                m_uuid=$(CreateUuid)
+        else
+                m_uuid="$factory_uuid"
+        fi
+        m_uuid="{"${m_uuid}"}"
+	echo "BYbobbi: m_uuid is $m_uuid"
+	m_time=`date "+%y-%m-%d %H:%M:%S"|tr -d "\n"`
+	m_comment=$m_time #这个是全局变量
+	dst="${m_mountPath}${BACKUP}/snapshots/${m_uuid}/data"
+	#echo "dst: $dst"
+	mkdir -p $dst
+	m_size=$global_system_usedDisk
+
+	#m_size=188248
+	newSize1=$( echo "scale=2;$m_size / $GB"|bc)
+	newSize2=$( echo "scale=2;$m_size / $MB"|bc)
+	newSize3=$( echo "scale=2;$m_size / $KB"|bc)
+
+	if [ $( echo "$newSize1 > 1.0"|bc ) = 1 ]; then
+		newSize=$newSize1"GB"
+	elif [ $( echo "$newSize2 > 1.0"|bc ) = 1 ]; then
+		newSize=$newSize2"MB"
+	else
+		newSize=$newSize3"KB"
+	fi
+
+	state="backup unfinished"
+
+	#写入文件m_backuplistPath=$m_mountPath"/snapshots/backuplist1.xml"
+	#bool AutoBackup::backupAuto()251 if (!m_parse->addItem(m_comment, time, m_uuid, newsize, "backup unfinished")) {
+	#
+	tmpFile=${m_backuplistPath}".tmp"
+	#echo "tmpFile: $tmpFile"
+	new_content=""
+	is_first_line=1
+
+	hasHead=false #有头吗"<backupList>"
+
+	#如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+	IFS_old=$IFS
+	IFS=$'\n'
+
+	while read line;
+	do 
+		#去除了前后空格
+		xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+		#echo "xxx: $xxx"
+
+                if [[ "$xxx" =~ "<backupList>" ]]; then
+                        hasHead=true
+                fi
+
+                if [[ "$xxx" =~ "<backupList/>" ]]; then
+                        xxx="</backupList>"  #与图形界面一致
+                        line="</backupList>"
+                fi
+
+		#插入新的记录
+		if [ $xxx = "</backupList>" ]; then
+                        if [ "$hasHead" = false ]; then
+                                echo "<backupList>" >>$tmpFile
+                                hasHead=true
+                        fi
+
+    			echo "    <BackupPoint>" >>$tmpFile
+    			echo "        <Comment>$m_comment</Comment>" >>$tmpFile
+    			echo "        <Time>$m_time</Time>" >>$tmpFile
+    			echo "        <Uuid>$m_uuid</Uuid>" >>$tmpFile
+    			echo "        <Size>$newSize</Size>" >>$tmpFile
+    			echo "        <State>$state</State>" >>$tmpFile
+    			echo "        <Type>0</Type>" >>$tmpFile
+    			echo "    </BackupPoint>" >>$tmpFile
+		fi
+
+		if [ "$is_first_line" -eq 1 ]; then
+			echo "$line" >$tmpFile
+		else
+			echo "$line" >>$tmpFile
+		fi
+	
+		is_first_line=0
+
+	done < "$m_backuplistPath";
+	IFS=$IFS_old
+
+	cp -f $tmpFile ${m_backuplistPath}
+	rm -f $tmpFile
+
+	#写文件
+	metainfo_file="${m_mountPath}${BACKUP}/snapshots/$m_uuid/$METAINFO"
+	#echo "metainfo_file="$metainfo_file
+	#第1行清空写
+	#这里写的不是xml文件，是一个文本文件，这时候的状态是backup unfinished
+	echo "COMMENT=$m_comment" >$metainfo_file
+	echo "TIME=$m_time" >>$metainfo_file
+	echo "UUID=$m_uuid" >>$metainfo_file
+	echo "SIZE=$m_size" >>$metainfo_file
+	echo "STATE=$state" >>$metainfo_file
+	echo "TYPE=0" >>$metainfo_file
+
+	backuping ${rootpath}/ $dst
+}
+
+#返回值：
+getLastUsefulBackupPointUuid() {
+	local xxx currentUuid foundComment
+	currentUuid=""
+	currentState=false
+	currentType=true
+	lastUsefulBackupPointUuid=""
+	foundComment=0 #是否发现了要修改的comment
+
+	#如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+	IFS_old=$IFS
+	IFS=$'\n'
+	while read line;
+	do 
+		#去除了前后空格
+		xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+		#echo "xxx: $xxx"
+
+                if [[ "$xxx" =~ "<Uuid>" ]]; then
+			currentUuid=$xxx
+			currentState=false
+			currentType=true
+		fi
+
+                if [[ "$xxx" =~ "<State>backup finished</State>" ]]; then
+			#lastUsefulBackupPointUuid=$currentUuid
+			currentState=true
+		fi
+
+                if [[ "$xxx" =~ "<Type>2</Type>" ]]; then
+			currentType=false
+		fi
+
+                if [[ "$xxx" =~ "<Type>3</Type>" ]]; then
+			currentType=false
+		fi
+
+
+                if [[ "$xxx" =~ "</BackupPoint>" ]]; then
+			if [ "$currentState" = true -a "$currentType" = true ]; then #"/backup"是不是一个独立的盘
+			        lastUsefulBackupPointUuid=$currentUuid
+			fi
+		fi
+	done < "$m_backuplistPath";
+	IFS=$IFS_old
+
+	if [ "$lastUsefulBackupPointUuid" = "" ]; then
+		echo "can't find a useful backup for restoring"
+		exit 300
+	fi
+
+	lastUsefulBackupPointUuid=`echo $lastUsefulBackupPointUuid | sed 's:<Uuid>::' | tr -d "\n"`
+	lastUsefulBackupPointUuid=`echo $lastUsefulBackupPointUuid | sed 's:</Uuid>.*::' | tr -d "\n"`
+	#echo "lastUsefulBackupPointUuid=$lastUsefulBackupPointUuid"
+}
+
+#see backup-auto/autobackup.cpp
+restoreAuto() { #还原
+	local xxx
+
+	getLastUsefulBackupPointUuid
+	#echo "lastUsefulBackupPointUuid=$lastUsefulBackupPointUuid"
+
+	#写日志文件
+	local m_time=`date "+%y-%m-%d %H:%M:%S"|tr -d "\n"`
+ 	writeLogFile "${m_time},${lastUsefulBackupPointUuid},4,grub系统还原" #grub时只有一键还原，没有增量还原
+
+	restoreDir="${m_mountPath}${BACKUP}/snapshots/$lastUsefulBackupPointUuid"
+
+	if [ ! -e "$restoreDir" ]; then
+		echo "full restore directory not exists!"
+		exit 301 #备份文件不存在，不能还原系统
+	fi
+
+	#0:backup 1:restore
+	generateExcludeFile 1
+
+        if [ -d "${restoreDir}/data/efi" ];then
+          mkdir -p ${rootpath}/boot
+          rsync -avAXHr --no-inc-recursive --ignore-missing-args --delete ${restoreDir}/data/efi ${rootpath}/boot
+	elif [ -d "${restoreDir}/data/boot/efi" ];then
+          mkdir -p ${rootpath}/boot
+          rsync -avAXHr --no-inc-recursive --ignore-missing-args --delete ${restoreDir}/data/boot/efi ${rootpath}/boot
+        fi
+	#yi jian huan yuan
+	if [ ! -e "$restoreDir/data/data" ]; then
+		#这两行要一致
+		echo "rsync -avAXHr --no-inc-recursive --ignore-missing-args --delete --exclude /data --exclude-from $restoreDir/$PERSONAL_EXCLUDEFILE $restoreDir/data/ $rootpath >/dev/null 2>${rootpath}/var/log/backup.log"
+		rsync -avAXHr --no-inc-recursive --ignore-missing-args --delete --exclude /data --exclude-from $restoreDir/$PERSONAL_EXCLUDEFILE $restoreDir/data/ $rootpath >/dev/null 2>${rootpath}/var/log/backup.log
+	else
+		#这两行要一致
+		echo "rsync -avAXHr --no-inc-recursive --ignore-missing-args --delete --exclude-from $restoreDir/$PERSONAL_EXCLUDEFILE $restoreDir/data/ $rootpath >/dev/null 2>${rootpath}/var/log/backup.log"
+		rsync -avAXHr --no-inc-recursive --ignore-missing-args --delete --exclude-from $restoreDir/$PERSONAL_EXCLUDEFILE $restoreDir/data/ $rootpath >/dev/null 2>${rootpath}/var/log/backup.log
+	fi
+
+	if [ $? -ne 0 -a $? -ne 24 -a $? -ne 23 ]; then
+		echo "full restore process finished failed!"
+		exit 303
+	fi
+
+	#还原时清空目录
+	#if [ -e "$rootpath/home/data" ]; then
+	#	rm -r "$rootpath/home/data" ]
+	#fi
+	#mkdir -p "$rootpath/home/data" ]
+}
+
+#-----------------------------------------------------------------
+#see backup-auto/autobackup.cpp
+updateBackupAutoFinishedState() {
+	echo "this is updateBackupAutoFinishedState"
+
+}
+
+#-----------------------------------------------------------------
+#--------主程序从这里开始-----------------------------------------
+
+if [ "${rootpath}" = "/" ]; then
+	echo "This program is used in boot time"
+#	exit
+fi
+
+getBackupInfo
+#echo "m_restoreUuid="$m_restoreUuid
+#echo "m_enabled="$m_enabled
+#不加引号报错
+if [ "$m_restoreUuid" = "" ] || [ "$m_enabled" = "" ]; then
+	echo "bootinfo file is not correct!"
+	exit 202
+fi
+
+if [ $backupORrestore = "--autobackup" ]; then
+	mountBackup
+	backupAuto		#备份, grub时只有全盘备份，没有增量备份
+	updateBackupAutoFinishedState
+	#umountBackup
+
+	echo "This is autobackup"
+
+elif [ $backupORrestore = "--autorestore" ]; then
+	mountBackup
+	restoreAuto		#还原, grub时只有一键还原，没有增量还原
+	#umountBackup
+	echo "This is autorestore"
+
+elif [ $backupORrestore = "--factorybackup" ]; then
+        m_isFactory=true
+        mountBackup
+	mount >>$PLOGFILE
+        backupAuto              #备份, grub时只有全盘备份，没有增量备份
+        updateBackupAutoFinishedState
+        #umountBackup
+
+        echo "This is factorybackup"
+else
+	echo "Not correct command"
+	exit 1
+fi
+
+exit 0

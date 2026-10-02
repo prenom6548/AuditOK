@@ -1,0 +1,96 @@
+From: Yao Wei <mwei@lxde.org>
+Date: Tue, 21 Feb 2023 03:43:05 +0000
+Subject: [PATCH] dix: Force update LEDs after device state update in
+ EnableDevice
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+This is to make sure the hardware gets the device states regardless
+whether the internal state has changed or not, to overcome situations
+that device LEDs are out of sync e.g. switching between VTs.
+
+Signed-off-by: Yao Wei (魏銘廷) <yao.wei@canonical.com>
+---
+ dix/devices.c    |  4 ++++
+ include/xkbsrv.h |  2 ++
+ xkb/xkbLEDs.c    | 38 ++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 44 insertions(+)
+
+diff --git a/dix/devices.c b/dix/devices.c
+index 5f6d32e..5e70ce6 100644
+--- a/dix/devices.c
++++ b/dix/devices.c
+@@ -422,6 +422,10 @@ EnableDevice(DeviceIntPtr dev, BOOL sendevent)
+ 
+     if (!IsMaster(dev) && !IsFloating(dev))
+         XkbPushLockedStateToSlaves(GetMaster(dev, MASTER_KEYBOARD), 0, 0);
++
++    /* Now make sure our LEDs are in sync with the locked state */
++    XkbForceUpdateDeviceLEDs(dev);
++
+     RecalculateMasterButtons(dev);
+ 
+     /* initialise an idle timer for this device*/
+diff --git a/include/xkbsrv.h b/include/xkbsrv.h
+index b276627..086a89e 100644
+--- a/include/xkbsrv.h
++++ b/include/xkbsrv.h
+@@ -507,6 +507,8 @@ extern _X_EXPORT void XkbUpdateIndicators(DeviceIntPtr /* keybd */ ,
+                                           XkbEventCausePtr      /* cause */
+     );
+ 
++extern void XkbForceUpdateDeviceLEDs(DeviceIntPtr /* keybd */);
++
+ extern _X_EXPORT void XkbUpdateAllDeviceIndicators(XkbChangesPtr /* changes */,
+                                                    XkbEventCausePtr /* cause */
+     );
+diff --git a/xkb/xkbLEDs.c b/xkb/xkbLEDs.c
+index 5792d9f..3fb8fc5 100644
+--- a/xkb/xkbLEDs.c
++++ b/xkb/xkbLEDs.c
+@@ -435,6 +435,44 @@ XkbUpdateIndicators(DeviceIntPtr dev,
+ 
+ /***====================================================================***/
+ 
++        /*
++         * void
++         * XkbForceUpdateDeviceLEDs(DeviceIntPtr dev)
++         *
++         * Force update LED states to the hardware from the device state
++         * specified by 'dev'.
++         *
++         * If 'dev' is a master device, this function will also force update
++         * its slave devices.
++         *
++         * Used if the actual LED state was externally set and need to push
++         * current state to the hardware e.g. switching between VTs.
++         */
++
++void
++XkbForceUpdateDeviceLEDs(DeviceIntPtr dev)
++{
++    DeviceIntPtr master;
++    XkbSrvLedInfoPtr sli;
++
++    if (!dev->key)
++        return;
++
++    sli = XkbFindSrvLedInfo(dev, XkbDfltXIClass, XkbDfltXIId, 0);
++    XkbDDXUpdateDeviceIndicators(dev, sli, sli->effectiveState);
++
++    if (IsMaster(dev)) {
++        master = dev;
++        nt_list_for_each_entry(dev, inputInfo.devices, next) {
++            if (!dev->key || GetMaster(dev, MASTER_KEYBOARD) != master)
++                continue;
++
++            sli = XkbFindSrvLedInfo(dev, XkbDfltXIClass, XkbDfltXIId, 0);
++            XkbDDXUpdateDeviceIndicators(dev, sli, sli->effectiveState);
++        }
++    }
++}
++
+ /***====================================================================***/
+ 
+         /*

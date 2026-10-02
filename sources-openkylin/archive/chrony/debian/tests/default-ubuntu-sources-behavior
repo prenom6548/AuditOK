@@ -1,0 +1,116 @@
+#!/bin/bash
+
+set -e
+
+. debian/tests/helper-functions
+
+UBUNTU_NTP_POOLS="/etc/chrony/sources.d/ubuntu-ntp-pools.sources"
+
+trap __cleanup EXIT
+
+test_fresh_install_has_nts_sources() {
+    local -i n=0
+    local output
+
+    echo
+    echo "## Running ${FUNCNAME[0]}"
+    echo "## Fresh install, ubuntu NTS sources must be defined"
+    ls -la "$(dirname ${UBUNTU_NTP_POOLS})"
+    test -f "${UBUNTU_NTP_POOLS}" || return 1
+    cat "${UBUNTU_NTP_POOLS}"
+    grep -qE "^pool.*nts" "${UBUNTU_NTP_POOLS}" || return 1
+    echo
+    echo "## Chrony should have valid sources loaded"
+    # Sometimes this lists sources and still fails ($? != 0), so let's ignore
+    # errors and check the output instead
+    output=$(chronyc sources 2>&1 || :)
+    echo "${output}"
+    n=$(echo "${output}" | grep -E '^\^'|wc -l)
+    echo "## ${n} sources identified"
+    if [ "${n}" -gt 0 ]; then
+        echo "## OK"
+    else
+        echo "## FAIL"
+        return 1
+    fi
+    echo
+    echo "## And these sources should be authenticated"
+    output=$(chronyc authdata 2>&1 || :)
+    echo "${output}"
+    n=$(echo "${output}" | grep -E 'NTS'|wc -l)
+    echo "## ${n} authenticated sources identified"
+    if [ "${n}" -gt 0 ]; then
+        echo "## OK"
+    else
+        echo "## FAIL"
+        return 1
+    fi
+}
+
+test_debconf_no_ubuntu_sources() {
+    echo
+    echo "## Running ${FUNCNAME[0]}"
+    echo "## Checking that ${UBUNTU_NTP_POOLS} exists"
+    ls -la "${UBUNTU_NTP_POOLS}" || return 1
+    echo
+    echo "## Reconfiguring chrony with chrony/configure_ubuntu_pools_in_sourcesd set to false"
+    debconf-set-selections <<EOF
+chrony chrony/configure_ubuntu_pools_in_sourcesd boolean false
+EOF
+    dpkg-reconfigure chrony 2>&1
+    echo
+    echo "## Now ${UBUNTU_NTP_POOLS} should be gone"
+    ls -la "${UBUNTU_NTP_POOLS}" 2>&1 && return 1 || :
+    echo
+    echo "## And chrony should have no sources"
+    # Sometimes this lists sources and still fails ($? != 0), so let's ignore
+    # errors and check the output instead
+    output=$(chronyc sources 2>&1 || :)
+    echo "${output}"
+    n=$(echo "${output}" | grep -E '^\^'|wc -l)
+    echo "## ${n} sources identified"
+    if [ "${n}" -gt 0 ]; then
+        echo "## FAIL"
+        return 1
+    else
+        echo "## OK"
+    fi
+}
+
+test_debconf_with_ubuntu_sources() {
+    echo
+    echo "## Running ${FUNCNAME[0]}"
+    echo "## Checking that ${UBUNTU_NTP_POOLS} does not exist"
+    ls -la "${UBUNTU_NTP_POOLS}" 2>&1 && return 1 || :
+    echo
+    echo "## Reconfiguring chrony with chrony/configure_ubuntu_pools_in_sourcesd set to true"
+    debconf-set-selections <<EOF
+chrony chrony/configure_ubuntu_pools_in_sourcesd boolean true
+EOF
+    dpkg-reconfigure chrony 2>&1
+    echo
+    echo "## Now ${UBUNTU_NTP_POOLS} should exist now"
+    ls -la "${UBUNTU_NTP_POOLS}" || return 1
+    echo
+    echo "## And chrony should have valid sources"
+    # Sometimes this lists sources and still fails ($? != 0), so let's ignore
+    # errors and check the output instead
+    output=$(chronyc sources 2>&1 || :)
+    echo "${output}"
+    n=$(echo "${output}" | grep -E '^\^'|wc -l)
+    echo "## ${n} sources identified"
+    if [ "${n}" -gt 0 ]; then
+        echo "## OK"
+    else
+        echo "## FAIL"
+        return 1
+    fi
+}
+
+__no_system_clock_control
+__restart_chronyd
+# these tests must be run in this order, because they don't reset the state
+# each time
+test_fresh_install_has_nts_sources
+test_debconf_no_ubuntu_sources
+test_debconf_with_ubuntu_sources

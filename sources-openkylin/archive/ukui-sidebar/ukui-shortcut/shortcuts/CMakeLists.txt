@@ -1,0 +1,25 @@
+cmake_minimum_required(VERSION 3.16)
+project(ukui-shortcuts)
+
+# sub dirs
+add_subdirectory(wifi-shortcut)
+add_subdirectory(bluetooth-shortcut)
+add_subdirectory(status-change-shortcut)
+add_subdirectory(auto-rotation-shortcut)
+add_subdirectory(eyecare-mode-shortcut)
+add_subdirectory(dark-mode-shortcut)
+add_subdirectory(clock-shortcut)
+add_subdirectory(notebook-shortcut)
+add_subdirectory(multi-screen-shortcut)
+add_subdirectory(screenshot-shortcut)
+add_subdirectory(services-and-supports-shortcut)
+
+add_subdirectory(flight-mode-shortcut)
+add_subdirectory(clipboard-shortcut)
+add_subdirectory(DND-mode-shortcut)
+add_subdirectory(power-mode-shortcut)
+add_subdirectory(vpn-shortcut)
+add_subdirectory(connectivity-shortcut)
+
+add_subdirectory(brightness-shortcut)
+add_subdirectory(volume-shortcut)

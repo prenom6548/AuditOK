@@ -1,0 +1,61 @@
+#!/bin/sh
+# Check that chronyd is able to authenticate NTP packets when NTS is enabled
+# on the server.
+
+set -e
+
+. debian/tests/helper-functions
+
+cert_dir="/var/lib/chrony"
+cert_template="$cert_dir/cert.cfg"
+cert_file="$cert_dir/server.crt"
+priv_key="$cert_dir/server.key"
+server_addr="127.0.1.1"
+server_name="chrony-nts-test"
+
+create_cert_template() {
+    printf "Creating certificate template: "
+    cat <<EOF > "$cert_template"
+cn = "$server_name"
+serial = 001
+activation_date = "$(date -d '1 year ago' +'%Y-%m-%d') 00:00:00 UTC"
+expiration_date = "$(date -d '1 year' +'%Y-%m-%d') 00:00:00 UTC"
+signing_key
+encryption_key
+EOF
+}
+
+generate_cert() {
+    printf "Generating self-signed certificate: "
+    certtool --generate-privkey --key-type=ed25519 --outfile "$priv_key" > /dev/null 2>&1
+    certtool --generate-self-signed --load-privkey "$priv_key" --template "$cert_template" \
+        --outfile "$cert_file" > /dev/null 2>&1
+}
+
+server_config() {
+    printf "Preparing chronyd configuration: "
+    cat <<EOF > /etc/chrony/conf.d/local-server-config.conf
+server $server_name nts minpoll -6 maxpoll -6
+ntsserverkey $priv_key
+ntsservercert $cert_file
+ntstrustedcerts $cert_file
+EOF
+
+    __no_system_clock_control
+    __restart_chronyd
+}
+
+trap __cleanup EXIT
+
+echo "$server_addr $server_name" >> /etc/hosts
+
+create_cert_template && __test_ok || __test_skip "unable to create certificate template"
+
+generate_cert && __test_ok || __test_skip "unable to generate self-signed certificate"
+
+server_config && __test_ok || __test_skip
+
+printf "Checking if server authenticates NTP packets: "
+__check_auth "$server_addr,NTS"
+
+exit 0

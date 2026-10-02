@@ -1,0 +1,82 @@
+__cleanup() {
+    result=$?
+    set +e
+    if [ ${result} -ne 0 ]; then
+        __show_logs
+    fi
+    [ -f /etc/default/chrony.bak ] && mv /etc/default/chrony.bak /etc/default/chrony
+    rm -rf /etc/systemd/system/chrony.service.d
+    systemctl daemon-reload
+    systemctl --quiet restart chrony.service
+}
+
+__show_logs() {
+    lines=100
+    echo "## Something failed, gathering logs"
+    echo
+    echo "## Last ${lines} of syslog:"
+    tail -n ${lines} /var/log/syslog
+    echo
+    echo "## Last ${lines} of dmesg:"
+    dmesg -T | tail -n ${lines}
+    echo
+    echo "## Last ${lines} of chrony journal:"
+    journalctl -n ${lines} --full -u chrony.service
+    echo
+    echo "## Content of /etc/chrony/"
+    find /etc/chrony -ls
+    echo
+    echo "## chrony sources"
+    chronyc sources || :
+}
+
+__no_system_clock_control() {
+    printf "[Unit]\nConditionVirtualization=\n" | systemctl edit --stdin --drop-in=10-container chrony.service 2>/dev/null
+    if ! dpkg-vendor --derives-from Ubuntu; then
+        cp /etc/default/chrony /etc/default/chrony.bak
+        sed -i '/^DAEMON_OPTS=/s/"\(.*\)"/"\1 -x"/' /etc/default/chrony
+        printf "[Unit]\nConditionCapability=\n" | systemctl edit --stdin chrony.service 2>/dev/null
+    fi
+}
+
+__test_fail() {
+    printf 'FAIL\n' >&2
+    return 1
+}
+
+__test_ok() {
+    printf 'OK\n'
+    return 0
+}
+
+__test_skip() {
+    [ -n "$1" ] && printf 'SKIP: (%s)\n' "$1" || printf 'SKIP\n'
+    exit 77
+}
+
+__reload_sources() {
+    chronyc reload sources > /dev/null 2>&1 && __test_ok || __test_fail
+}
+
+__restart_chronyd() {
+    systemctl --quiet restart chrony.service
+    rc=$?
+    sleep 3
+    return $rc
+}
+
+__check_sources() {
+    chronyc sources | grep -q "$1" && __test_ok || __test_fail
+}
+
+__check_auth() {
+    chronyc -c authdata | grep -q "$1" && __test_ok || __test_fail
+}
+
+# Ubuntu's default config is fully populated causing issues with the test
+# If any of those tests run on Ubuntu, clear some and restart the daemon
+# to pick this up before entering the tests.
+if grep -q "^pool.*ubuntu.pool.ntp.org" /etc/chrony/chrony.conf; then
+    sudo sed -i -e '/^pool.*ubuntu.pool.ntp.org/d' /etc/chrony/chrony.conf
+    __restart_chronyd
+fi

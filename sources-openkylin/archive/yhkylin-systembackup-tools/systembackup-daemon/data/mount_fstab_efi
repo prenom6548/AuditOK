@@ -1,0 +1,136 @@
+#!/bin/bash
+
+parse_device(){
+	device=$1
+	if echo $device | grep -E -q "^UUID="; then
+		echo $device | sed 's:^UUID=:/dev/disk/by-uuid/:' | tr -d "\n"
+	elif echo $device | grep -E -q "^LABEL="; then
+		echo $device | sed 's:^LABEL=:/dev/disk/by-label/:' | tr -d "\n"
+	else
+		echo $device | tr -d "\n"
+	fi
+}
+
+findmnt_dev()
+{
+	fstab_path=$1
+	target_dir=$2
+	cat "$fstab_path" | grep -Ev "^#" | awk '{print $1 " " $2 " " $3 " " $4 " " $5 " " $6}' |
+	while read device mntdir fstype options dump passno ;
+	do
+		if [ "$mntdir" = "$target_dir" ] ; then
+			parse_device "$device"
+			break
+		fi
+	done
+}
+
+is_remote(){
+	fstype=$1
+	if [ nfs = "$fstype" ] || [ nfs4 = "$fstype" ] || [ smbfs = "$fstype" ] || [ cifs = "$fstype" ] || [ coda = "$fstype" ] || [ ncp = "$fstype"  ]; then
+	echo yes
+	elif [ ncpfs = "$fstype" ] || [ ocfs2 = "$fstype" ] || [ gfs = "$fstype" ] || [ gfs2 = "$fstype" ] || [ ceph = "$fstype" ]; then
+	echo yes
+	else
+	echo no
+	fi
+}
+
+parse_options(){
+	options=$1
+	optstr="showthrough bootwait nobootwait timeout ro"
+	echo "$options" | awk -v optstr="$optstr" 'BEGIN{FS=","; split(optstr, opts, " ");} {
+		result="";
+		for( i=1; i<=NF; i++ ){
+			flag=0;
+			for( opt in opts ){
+				if( $i == opts[opt] ){
+					flag=1;
+					break;
+				}
+			}
+			if( flag == 1 )
+				continue;
+
+			if( i==1 )
+				result=$i;
+			else
+				result=result","$i;
+		}
+
+		print result
+	}'
+}
+
+is_system_partition(){
+	mntdir=$1
+	sys_parts="/boot /home /var /usr /srv /opt /usr/local"	# files under /tmp is temporary, need to remove
+
+	echo $sys_parts | grep -Eq "(^| )"$mntdir"( |$)" && echo "yes" || echo "no"
+}
+
+
+
+mount_fstab(){
+	fstab_path=${rootmnt}/etc/fstab
+	if [ ! -e "$fstab_path" ]; then
+	    fstab_path=/etc/fstab-backup
+	fi
+	
+	# 将/usr/share/initramfs-tools/scripts/local-bottom/kybackup脚本放到/usr/share/initramfs-tools/scripts/init-bottom下后，在备份还原前就已经mount了各个分区（bind的没有mount）
+	echo "rw mode remount $fstab_path begin"
+        local mounted_path=
+	local tmp_path=
+	cat "$fstab_path" | grep -Ev "^#" | awk '{print $1 " " $2 " " $3 " " $4 " " $5 " " $6}' |
+	while read device mntdir fstype options dump passno ;
+	do
+		device=$(parse_device $device)
+		#mntopts=$(parse_options $options)
+		mntopts=defaults,rw
+
+		#nodev filesystems
+		( cat /proc/filesystems | grep "$fstype" | grep -q nodev ) && continue
+
+		#virtual or network filesystems
+		([ none = "$mntdir" ] || [ yes = $(is_remote $fstype) ]) && continue
+
+		#swap or backup分区，backup分区后面单独挂载，根分区已挂载
+		([ swap = "$fstype" ] || [ /backup = "$mntdir" ] || [ / = "$mntdir" ]) && continue
+
+		#not system partition
+		#[ no = $(is_system_partition $mntdir) ] && continue
+
+		#去掉首字符'/'
+		#mntdir_name=$(echo $mntdir | sed 's:^/::g')
+		#target_mntdir="/$(echo $mntdir_name | sed 's:/:-:g').orig"
+		target_mntdir=${rootmnt}${mntdir}
+                mounted_path=
+	        tmp_path=	
+		mkdir -p "$target_mntdir"
+		tmp_path=$target_mntdir
+		mounted_path=$(mount | awk -v v_path=${tmp_path} '{ if($3 == v_path) print $3 }')
+		if [[ $options =~ bind ]] ; then
+		    echo "mount -o $options ${rootmnt}${device} $target_mntdir"
+		    mount -o $options "${rootmnt}${device}" "$target_mntdir"
+	        elif [ "x" == "x"${mounted_path} ]; then
+		    echo "mount -n -t $fstype -o $mntopts $device $target_mntdir"
+                    mount -n -t $fstype -o $mntopts $device "$target_mntdir"
+		else
+		    # echo "mount -n -t $fstype -o $mntopts $device $target_mntdir"
+		    # mount -n -t $fstype -o $mntopts $device "$target_mntdir"
+		    echo "mount -o rw,remount $target_mntdir"
+		    mount -o rw,remount "$target_mntdir"
+		fi
+
+		#如果一个分区已经安装了，则下列会报错后不再继续
+		#if [ $? -ne 0 ]; then
+		#	panic "Failed to mount %s on %s" "$device" "$target_mntdir"
+		#	break
+		#fi
+
+	done || exit 1
+	echo "rw mode remount $fstab_path end"
+	mount
+}
+
+mount_fstab

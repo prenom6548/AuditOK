@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="pt">
+<context>
+    <name>TaskManager::TaskManagerItem</name>
+    <message>
+        <source>Add launcher to panel</source>
+        <translation>Fixar na barra de tarefas</translation>
+    </message>
+    <message>
+        <source>Remove launcher from panel</source>
+        <translation>Desafixar da barra de tarefas</translation>
+    </message>
+    <message>
+        <source>Close</source>
+        <translation>Fechar</translation>
+    </message>
+</context>
+<context>
+    <name>TaskManager::UkuiTaskManager</name>
+    <message>
+        <source>Close</source>
+        <translation>Fechar</translation>
+    </message>
+    <message>
+        <source>Restore</source>
+        <translation>Restaurar</translation>
+    </message>
+    <message>
+        <source>Maximize</source>
+        <translation>Maximizar</translation>
+    </message>
+    <message>
+        <source>Minimize</source>
+        <translation>Minimizar</translation>
+    </message>
+    <message>
+        <source>Keep above</source>
+        <translation>Manter no topo</translation>
+    </message>
+    <message>
+        <source>Unset keep above</source>
+        <translation>Cancelar manter no topo</translation>
+    </message>
+</context>
+<context>
+    <name>ThumbnailContainer</name>
+    <message>
+        <source>Close</source>
+        <translation>Fechar</translation>
+    </message>
+</context>
+<context>
+    <name>ThumbnailWindow</name>
+    <message>
+        <source>Close</source>
+        <translation>Fechar</translation>
+    </message>
+</context>
+</TS>

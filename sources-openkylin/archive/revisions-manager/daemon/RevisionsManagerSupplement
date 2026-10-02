@@ -1,0 +1,154 @@
+#!/usr/bin/python3
+# -*- coding: UTF-8 -*-
+
+import logging
+import os
+import signal
+import sys
+import dbus
+from RevisionsManager.Core.RMConf import RMConf
+from RevisionsManager.Core.RMCom import RMCom, get_sys_call
+
+from dbus.mainloop.glib import DBusGMainLoop
+DBusGMainLoop(set_as_default=True)
+from gi.repository import GLib
+
+STATE_PATH="/etc/RevisionsManager/RevisionsManager.state"
+RM_DBUS_INTERFACE = 'com.kylin.RevisionsManager.interface'
+RM_DBUS_PATH = '/com/kylin/RevisionsManager'
+RM_DBUS_SERVICE = 'com.kylin.RevisionsManager'
+
+BUS_METHOD = None
+RMPROCESS = 0
+RMNAME = "Script"
+HANDLE_COUNT = 0
+LAST_HANDLE_COUNT = 0
+
+
+# 监测线程
+def time_handler(index=0):
+    global HANDLE_COUNT
+    global LAST_HANDLE_COUNT
+
+    # 检测 plymouth_handler 是否在运行
+    logging.info("[SUPPLEMENT]: timer_handler start. count[%d %d].", LAST_HANDLE_COUNT, HANDLE_COUNT)
+    if HANDLE_COUNT == LAST_HANDLE_COUNT:
+        index += 1
+    if index >= 2:
+        index = 0
+        logging.info("[SUPPLEMENT]: Plymouth_handler is over. Start it again.")
+        GLib.timeout_add_seconds(0.5, plymouth_handler)
+
+    LAST_HANDLE_COUNT = HANDLE_COUNT
+
+    ret = False
+    try:
+        if BUS_METHOD != None:
+            ret = BUS_METHOD()
+    except Exception as e:
+        logging.error("[SUPPLEMENT]: err occur [%s]", e)
+
+    if ret:
+        # TODO: 定时检测 Daemon 是阻塞
+        logging.info("[SUPPLEMENT]: Daemon is blocked, exit.")
+        sys.exit(0)
+    else:
+        # Daemon 是运行
+        logging.info("[SUPPLEMENT]: Daemon is running, waiting.")
+        GLib.timeout_add_seconds(5, time_handler, index)
+
+def plymouth_handler():
+    global RMPROCESS
+    global RMNAME
+    global HANDLE_COUNT
+    HANDLE_COUNT += 1
+    if RMPROCESS > 100:
+        logging.info("[SUPPLEMENT]: RMPROCESS[%d] is over, and exit.", RMPROCESS)
+        sys.exit(0)
+    
+    try:
+        cmd = "/bin/plymouth system-update --progress=" + str(RMPROCESS)
+        get_sys_call(cmd)
+
+        symStr = "..."
+        if (HANDLE_COUNT % 3) == 0:
+            symStr = "."
+        elif (HANDLE_COUNT % 3) == 1:
+            symStr = ".."
+        else:
+            symStr = "..."
+
+        cmd = "/bin/plymouth message --text=\"Is upgrading " + symStr + " " + str(RMPROCESS) + "%" + "\""
+        get_sys_call(cmd)
+
+        GLib.timeout_add_seconds(2, plymouth_handler)
+    except Exception as e:
+        logging.error("[SUPPLEMENT]: err occur. [%s]", e)
+
+def update_process(name, process):
+    global RMPROCESS
+    global RMNAME
+    RMPROCESS = process
+    RMNAME = name
+    logging.info("[SUPPLEMENT]: new state[%s %d].", RMNAME, RMPROCESS)
+
+
+def signal_handler_term(signal, frame):
+    logging.warning("signal %d received, will stop", signal)
+    sys.exit(0)
+
+if __name__ == "__main__":
+
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    signal.signal(signal.SIGINT,signal_handler_term)
+    os.unsetenv("DISPLAY")
+
+    FORMAT = "%(asctime)s [%(levelname)s]: %(message)s"
+    logFileName = "/var/log/RevisionsManager/RevisionsManagerSupplement.log"
+    loglevel = logging.DEBUG
+    logging.basicConfig(format=FORMAT, level=loglevel, datefmt='%m-%d,%H:%M:%S', filename=logFileName, filemode='a')
+    if not os.path.exists(STATE_PATH):
+        logging.error("[SUPPLEMENT]: [%s] not exists.", STATE_PATH)
+        sys.exit(0)
+
+    try:
+        bus = dbus.SystemBus()
+        proxy = bus.get_object(RM_DBUS_SERVICE, RM_DBUS_PATH)
+        bus_interface = dbus.Interface(proxy, dbus_interface=RM_DBUS_INTERFACE)
+    except Exception as e:
+        logging.error("[SUPPLEMENT]: get bus err[%s].", e)
+        sys.exit(1)
+
+    BUS_METHOD = bus_interface.get_dbus_method("isblocked")
+
+    proxy.connect_to_signal("upgradeProcessSig2", handler_function=update_process, dbus_interface=RM_DBUS_INTERFACE)
+
+    conf = RMConf(STATE_PATH)
+    comClass = RMCom()
+
+    upstate = None
+    tmpCount = 0
+    while upstate == None:
+        upstate = conf.get_key(comClass.SEC_STATE, comClass.KEY_VERSIONMANAGER)
+        tmpCount = tmpCount +1 
+        if tmpCount > 5:
+            break
+
+    if upstate == comClass.intToStr.get(comClass.VMUPACT2):
+        logging.info("[SUPPLEMENT]:  upstate[%s], waiting for upgrading.", upstate)
+        GLib.timeout_add_seconds(10,time_handler)
+
+        cmd = "/sbin/plymouthd --mode=boot --pid-file=/run/plymouth/pid --attach-to-session"
+        get_sys_call(cmd)
+        cmd = "/bin/plymouth show-splash"
+        get_sys_call(cmd)
+        cmd = "/bin/plymouth message --text=\"Is upgrading ...\""
+        get_sys_call(cmd)
+        cmd = "/bin/plymouth change-mode --system-upgrade"
+        get_sys_call(cmd)
+        GLib.timeout_add_seconds(1,plymouth_handler)
+
+        GLib.MainLoop().run()
+
+    GLib.MainLoop().quit()
+

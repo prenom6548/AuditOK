@@ -1,0 +1,49 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = optimize=-lto
+
+DB2MAN = /usr/share/sgml/docbook/stylesheet/xsl/docbook-xsl/manpages/docbook.xsl
+XP     = xsltproc -''-nonet -''-param man.charmap.use.subset "0"
+
+%:
+	dh $@
+
+override_dh_autoreconf:
+	export LIBDL_LDFLAGS="-ldl"
+	dh_autoreconf ./bootstrap
+
+override_dh_auto_configure:
+	dh_auto_configure -- --enable-unit --enable-doxygen-doc
+
+override_dh_autoreconf_clean:
+	rm -f compile depcomp ltmain.sh config.sub missing config.guess \
+		install-sh m4/ltoptions.m4 m4/ltversion.m4 m4/libtool.m4 \
+		m4/ltsugar.m4 m4/lt\~obsolete.m4
+	dh_autoreconf_clean
+
+override_dh_auto_build: resourcemgr.1 tpmclient.1 tpmtest.1
+	dh_auto_build
+
+override_dh_install:
+	find debian/tmp \( -name '*.la' -o -name '*.a' \) -delete
+	dh_install
+
+resourcemgr.1: debian/resourcemgr.xml
+	$(XP) $(DB2MAN) $<
+
+tpmclient.1: debian/tpmclient.xml
+	$(XP) $(DB2MAN) $<
+
+tpmtest.1: debian/tpmtest.xml
+	$(XP) $(DB2MAN) $<
+
+execute_after_dh_gencontrol:
+	# debian/files will not exist until dh_gencontrol has ran at least once.
+	# The list of libraries is everchanging, so generate the dependency lists
+	# automatically at build time.
+	tsslibs=$$(grep -E 'libtss2-*' ./debian/files | grep -v -e 'dbgsym' -e 'libtss2-dev' -e 'libtss2-meta' -e 'libtss2-doc' | tr '_' ' ' | awk '{ print $$1,"(=",$$2 ")" }' | paste -sd ',' - | sed -e 's/,/, /g'); \
+		dh_gencontrol -p libtss2-dev -p tpm2-tss -- -V"libtss2:All=$${tsslibs}"
+
+override_dh_installsystemd:
+	dh_installsystemd -X tpm-udev.path --no-start --no-stop-on-upgrade
+	dh_installsystemd -X tpm-udev.service

@@ -1,0 +1,72 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export LC_ALL=C.UTF-8
+
+include /usr/share/dpkg/default.mk
+
+built_binaries := $(shell dh_listpackages)
+
+CONFFLAGS :=
+
+ifneq ($(filter %-dev,$(built_binaries)),)
+CONFFLAGS += -Ddocumentation=enabled
+else
+CONFFLAGS += -Ddocumentation=disabled
+endif
+
+ifneq ($(filter %-tests,$(built_binaries)),)
+CONFFLAGS += -Dinstalled-tests=true
+else
+CONFFLAGS += -Dinstalled-tests=false
+endif
+
+# We must enable tests whenever we want either build-time or as-installed tests
+ifneq ($(filter nocheck,$(DEB_BUILD_OPTIONS))$(filter %-tests,$(built_binaries)),nocheck)
+CONFFLAGS += -Dtests=enabled
+else
+CONFFLAGS += -Dtests=disabled
+endif
+
+ifeq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
+CONFFLAGS += -Dman-pages=enabled
+else
+CONFFLAGS += -Dman-pages=disabled
+endif
+
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-Dauto_features=enabled \
+		-Dsandboxed-image-validation=enabled \
+		$(CONFFLAGS)
+		$(NULL)
+
+ifneq ($(filter amd64 i386,$(DEB_HOST_ARCH_CPU)),)
+test_timeout_multiplier = 1
+else
+test_timeout_multiplier = 10
+endif
+
+override_dh_auto_test:
+ifeq ($(filter nocheck,$(DEB_BUILD_OPTIONS)),)
+	G_MESSAGES_DEBUG=all \
+	XDP_TEST_IN_CI=1 \
+	XDP_VALIDATE_ICON_INSECURE=1 \
+	XDP_VALIDATE_SOUND_INSECURE=1 \
+	dh_auto_test \
+		--no-parallel \
+		-- \
+		--timeout-multiplier $(test_timeout_multiplier) \
+		$(NULL)
+endif
+
+# debhelper >= 13.4 makes all of /usr/libexec executable, which is not
+# quite right for installed-tests
+override_dh_fixperms:
+	dh_fixperms -Xusr/libexec/installed-tests
+ifneq ($(filter %-tests,$(built_binaries)),)
+	chmod --recursive --changes a+rX,u+w,og-w debian/*-tests/usr/libexec/installed-tests
+endif

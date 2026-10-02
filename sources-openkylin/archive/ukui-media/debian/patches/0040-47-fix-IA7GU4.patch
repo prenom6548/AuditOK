@@ -1,0 +1,165 @@
+From: zhouyong <zhouyong01@kylinos.cn>
+Date: Wed, 24 Jul 2024 06:44:19 +0000
+Subject: !47 fix #IA7GU4 Merge pull request !47 from zhouyong/openkylin/nile
+
+---
+ audio/ukmedia_main_widget.cpp             | 11 +++++---
+ audio/ukmedia_main_widget.h               | 11 ++++----
+ sound-theme-player/sound_theme_player.cpp | 43 ++++++++++++++++++++++---------
+ sound-theme-player/sound_theme_player.h   |  3 ++-
+ 4 files changed, 47 insertions(+), 21 deletions(-)
+
+diff --git a/audio/ukmedia_main_widget.cpp b/audio/ukmedia_main_widget.cpp
+index b3f0181..249e110 100644
+--- a/audio/ukmedia_main_widget.cpp
++++ b/audio/ukmedia_main_widget.cpp
+@@ -2187,9 +2187,14 @@ int UkmediaMainWidget::caPlayForWidget(UkmediaMainWidget *w, uint32_t id, ...)
+ 
+     if (ret < 0)
+         return -1;
+-    ca_context *c ;
+-    ca_context_create(&c);
+-    ret = ca_context_play_full(c, id, p, NULL, NULL);
++
++    if (nullptr != m_caContext)
++    {
++        ca_context_cancel(m_caContext, 0);
++        ca_context_destroy(m_caContext);
++    }
++    ca_context_create(&m_caContext);
++    ret = ca_context_play_full(m_caContext, id, p, NULL, NULL);
+ 
+     return ret;
+ }
+diff --git a/audio/ukmedia_main_widget.h b/audio/ukmedia_main_widget.h
+index 0964846..79c54a1 100644
+--- a/audio/ukmedia_main_widget.h
++++ b/audio/ukmedia_main_widget.h
+@@ -140,10 +140,9 @@ public:
+     int valueToPaVolume(int value); //滑动条值转换成音量
+     int paVolumeToValue(int value); //音量值转换成滑动条值
+     void themeChangeIcons();
+-    static int connectContext(gpointer userdata);
+-    static int caProplistMergeAp(ca_proplist *p, va_list ap);
+-    static int caPlayForWidget(UkmediaMainWidget *w, uint32_t id, ...);
+-    static int caProplistSetForWidget(ca_proplist *p, UkmediaMainWidget *widget);
++    int caProplistMergeAp(ca_proplist *p, va_list ap);
++    int caPlayForWidget(UkmediaMainWidget *w, uint32_t id, ...);
++    int caProplistSetForWidget(ca_proplist *p, UkmediaMainWidget *widget);
+ 
+     QPixmap drawDarkColoredPixmap(const QPixmap &source);
+     QPixmap drawLightColoredPixmap(const QPixmap &source);
+@@ -177,7 +176,7 @@ public:
+     static void populateModelFromNode (UkmediaMainWidget *w,xmlNodePtr node);
+     static xmlChar *xmlGetAndTrimNames (xmlNodePtr node);
+ 
+-    static void playAlretSoundFromPath (UkmediaMainWidget *w,QString path);
++    void playAlretSoundFromPath (UkmediaMainWidget *w,QString path);
+ 
+     static gboolean saveAlertSounds (QComboBox *combox,const char *id);
+     static void deleteOldFiles (const char **sounds);
+@@ -320,6 +319,8 @@ private:
+     bool mousePress = false;
+     bool mouseReleaseState = false;
+ 
++    ca_context* m_caContext = nullptr;
++
+     QTimer *timeSliderBlance;
+     bool mousePressBlance = false;
+     bool mouseReleaseStateBlance = false;
+diff --git a/sound-theme-player/sound_theme_player.cpp b/sound-theme-player/sound_theme_player.cpp
+index d0ae284..331ace3 100644
+--- a/sound-theme-player/sound_theme_player.cpp
++++ b/sound-theme-player/sound_theme_player.cpp
+@@ -2,7 +2,7 @@
+ 
+ SoundThemePlayer::SoundThemePlayer()
+ {
+-    ca_context_create(&caContext); //注册
++    createCaContext(); //注册
+     UkmediaPlayerDbusRegister();
+ 
+     addSoundFileList();
+@@ -11,6 +11,20 @@ SoundThemePlayer::SoundThemePlayer()
+         m_pSoundSettings = new QGSettings(KEY_SOUNDS_SCHEMA);
+ }
+ 
++/**
++ * @brief create for the libcanberra context
++ * @return create successfully or not
++ */
++bool SoundThemePlayer::createCaContext()
++{
++    if (nullptr != m_caContext)
++    {
++        ca_context_cancel(m_caContext, 0);
++        ca_context_destroy(m_caContext);
++    }
++
++    return (ca_context_create(&m_caContext) == 0) ? true : false;
++}
+ 
+ /**
+  * @brief Register for the dbus service
+@@ -71,7 +85,9 @@ bool SoundThemePlayer::playAlertSound(QString soundEvent)
+         return retval;
+     }
+ 
+-    retval = ca_context_play(this->caContext, 0, CA_PROP_EVENT_ID, eventId, CA_PROP_EVENT_DESCRIPTION, desc, NULL);
++    if (createCaContext()) {
++        retval = ca_context_play(m_caContext, 0, CA_PROP_EVENT_ID, eventId, CA_PROP_EVENT_DESCRIPTION, desc, NULL);
++    }
+ 
+     qDebug() << __func__ << soundEvent << eventId << retval;
+ 
+@@ -125,16 +141,19 @@ QString SoundThemePlayer::readJson(QString action)
+ 
+ bool SoundThemePlayer::playCustomAlertSound(QString soundPath)
+ {
+-    int retval = ca_context_play (this->caContext, 0,
+-                                  CA_PROP_APPLICATION_NAME, "Sound Theme Player",
+-                                  CA_PROP_MEDIA_FILENAME, soundPath.toLatin1().data(),
+-                                  CA_PROP_EVENT_DESCRIPTION, "Testing event sound",
+-                                  CA_PROP_CANBERRA_CACHE_CONTROL, "never",
+-                                  CA_PROP_APPLICATION_ID, "org.ukui.VolumeControl",
+-                              #ifdef CA_PROP_CANBERRA_ENABLE
+-                                  CA_PROP_CANBERRA_ENABLE, "1",
+-                              #endif
+-                                  NULL);
++    int retval = 1;
++    if (createCaContext()) {
++        retval = ca_context_play (m_caContext, 0,
++                                      CA_PROP_APPLICATION_NAME, "Sound Theme Player",
++                                      CA_PROP_MEDIA_FILENAME, soundPath.toLatin1().data(),
++                                      CA_PROP_EVENT_DESCRIPTION, "Testing event sound",
++                                      CA_PROP_CANBERRA_CACHE_CONTROL, "never",
++                                      CA_PROP_APPLICATION_ID, "org.ukui.VolumeControl",
++                                  #ifdef CA_PROP_CANBERRA_ENABLE
++                                      CA_PROP_CANBERRA_ENABLE, "1",
++                                  #endif
++                                      NULL);
++    }
+ 
+     qDebug() << __func__ << soundPath << retval;
+ 
+diff --git a/sound-theme-player/sound_theme_player.h b/sound-theme-player/sound_theme_player.h
+index 9057ba5..76764a7 100644
+--- a/sound-theme-player/sound_theme_player.h
++++ b/sound-theme-player/sound_theme_player.h
+@@ -35,6 +35,7 @@ class SoundThemePlayer : public QObject
+ public:
+     SoundThemePlayer();
+     ~SoundThemePlayer();
++    bool createCaContext();
+     void UkmediaPlayerDbusRegister();
+     QString readJson(QString action);
+     void addSoundFileList();
+@@ -46,7 +47,7 @@ public Q_SLOTS: //METHODS
+     bool playAlertSound(QString soundEvent);
+ 
+ private:
+-    ca_context *caContext;
++    ca_context *m_caContext;
+     QGSettings *m_pSoundSettings;
+     QStringList m_pSoundFileList;
+ };

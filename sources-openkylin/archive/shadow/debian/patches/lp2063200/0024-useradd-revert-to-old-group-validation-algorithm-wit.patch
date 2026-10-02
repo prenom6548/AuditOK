@@ -1,0 +1,62 @@
+From: Simon Chopin <simon.chopin@canonical.com>
+Date: Tue, 7 May 2024 16:43:21 +0200
+Subject: [PATCH] useradd: revert to old group validation algorithm with
+ extrausers
+
+The previous way was to directly check that the system has any knowledge
+of the group, without caring about its origin. It has changed to instead
+manually check the local group files, under the assumption that it is
+the only source of local group info, and it doesn't make sense for a
+local user to belong to, say, a LDAP group.
+
+That approach breaks down with our extrausers patch set, as we're
+splitting the local group info in multiple places. To work around this,
+this patch works around the problem by simply reverting to the old
+approach if using the extrausers option.
+
+Signed-off-by: Simon Chopin <simon.chopin@canonical.com>
+Bug-Ubuntu: https://bugs.launchpad.net/ubuntu/+source/shadow/+bug/2063200
+Forwarded: not-needed
+---
+ src/useradd.c | 14 ++++++++++----
+ 1 file changed, 10 insertions(+), 4 deletions(-)
+
+diff --git a/src/useradd.c b/src/useradd.c
+index 41f2ea0..c998643 100644
+--- a/src/useradd.c
++++ b/src/useradd.c
+@@ -769,7 +769,8 @@ static int get_groups (char *list)
+ 	/*
+ 	 * Open the group files
+ 	 */
+-	open_group_files ();
++	if (!use_extrausers)
++		open_group_files ();
+ 
+ 	/*
+ 	 * So long as there is some data to be converted, strip off
+@@ -788,7 +789,10 @@ static int get_groups (char *list)
+ 		 * Names starting with digits are treated as numerical
+ 		 * GID values, otherwise the string is looked up as is.
+ 		 */
+-		grp = get_local_group(g);
++		if (use_extrausers)
++			grp = prefix_getgr_nam_gid(g);
++		else
++			grp = get_local_group(g);
+ 
+ 		/*
+ 		 * There must be a match, either by GID value or by
+@@ -826,8 +830,10 @@ static int get_groups (char *list)
+ 		gr_free (grp);
+ 	}
+ 
+-	close_group_files ();
+-	unlock_group_files ();
++	if (!use_extrausers) {
++		close_group_files ();
++		unlock_group_files ();
++	}
+ 
+ 	user_groups[ngroups] = NULL;
+ 

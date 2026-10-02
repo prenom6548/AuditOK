@@ -1,0 +1,45 @@
+#!/bin/sh
+
+set -e
+exec 2>&1
+
+# Ubuntu provides internet access via a proxy, but libostree doesn't need
+# that. However, libostree also doesn't support no_proxy, so it will try
+# to use Ubuntu's proxy for localhost, and fail to reach itself.
+unset ftp_proxy
+unset http_proxy
+unset https_proxy
+unset no_proxy
+
+namespace=libostree/
+
+tests="$(gnome-desktop-testing-runner -l "$namespace" | while read -r t; do
+	t="${t%% *}"
+
+	case "$t" in
+		(libostree/test-concurrency.py.test)
+			# https://bugs.debian.org/901170
+			# https://github.com/ostreedev/ostree/issues/1620
+			continue
+			;;
+
+		(libostree/test-sysroot.js.test)
+			# https://bugs.debian.org/1025532
+			# https://github.com/ostreedev/ostree/issues/2527
+			if [ "${DEB_HOST_ARCH-}" = s390x ] || [ "$(uname -m)" = s390x ]; then
+				continue
+			fi
+			;;
+	esac
+
+	echo "$t"
+done)"
+
+if [ -z "$tests" ]; then
+	echo "Error: no installed-tests found matching $namespace" >&2
+	exit 1
+fi
+
+# Deliberately word-splitting
+# shellcheck disable=SC2046
+exec gnome-desktop-testing-runner $tests

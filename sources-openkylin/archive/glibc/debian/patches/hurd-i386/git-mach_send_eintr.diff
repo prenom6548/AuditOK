@@ -1,0 +1,34 @@
+From: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Date: Fri, 5 Jun 2026 17:15:20 +0800
+Subject: git-mach_send_eintr
+
+commit 807b3d5e48ffa63561de6cf5b4b8f6b877cd9880
+Author: Mike Kelly <mike@weatherwax.co.uk>
+Date:   Mon Feb 9 20:42:00 2026 +0000
+
+    hurd: _hurd_intr_rpc_mach_msg() might not preserve the correct reply port
+    
+    Calls to mach_msg_trap() that return MACH_SEND_INTERRUPTED modify the message header. A subsequent attempt at sending the message can return EINTR for handling by the caller. Mig generated code (expecting the message header to be unaltered) now fails assertion in __mig_dealloc_reply_port(). Fixed by restoring the altered message header content before reattempting RPC message delivery.
+    Message-ID: <20260209204213.91782-2-mike@weatherwax.co.uk>
+---
+ hurd/intr-msg.c | 7 +++++++
+ 1 file changed, 7 insertions(+)
+
+diff --git a/hurd/intr-msg.c b/hurd/intr-msg.c
+index 02e5144..83db941 100644
+--- a/hurd/intr-msg.c
++++ b/hurd/intr-msg.c
+@@ -136,6 +136,13 @@ _hurd_intr_rpc_mach_msg (mach_msg_header_t *msg,
+ 	}
+       if (!(option & MACH_SEND_INTERRUPT))
+ 	{
++	  m->header.msgh_local_port = rcv_name;
++	  m->header.msgh_remote_port = remote_port;
++	  m->header.msgh_id = msgid;
++	  m->header.msgh_bits = msgh_bits;
++	  /* Restore the two words clobbered by the reply data.  */
++	  m->request.data = save_data;
++
+ 	  option = user_option;
+ 	  timeout = user_timeout;
+ 	  goto message;

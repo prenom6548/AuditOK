@@ -1,0 +1,131 @@
+From: xie_klve <xie_klve@163.com>
+Date: Wed, 28 Feb 2024 02:16:06 +0000
+Subject: !26 fix bug Merge pull request !26 from xie_klve/openkylin/nile
+
+---
+ kyasDbus/systemdaemon/audioadaptorthread.py   | 18 ++++++++++++------
+ kyasDbus/systemdaemon/networkadaptorthread.py | 19 +++++++++++++------
+ kyasDbus/systemdaemon/utils.py                | 24 +++++++++++++++++++++++-
+ 3 files changed, 48 insertions(+), 13 deletions(-)
+
+diff --git a/kyasDbus/systemdaemon/audioadaptorthread.py b/kyasDbus/systemdaemon/audioadaptorthread.py
+index 7c84624..1fdc715 100644
+--- a/kyasDbus/systemdaemon/audioadaptorthread.py
++++ b/kyasDbus/systemdaemon/audioadaptorthread.py
+@@ -256,7 +256,8 @@ class AudioAdaptor():
+                         with open(compatible_path, 'r') as f:
+                             compatible_content_split = f.read().split(',')
+                             vendor = compatible_content_split[0]
+-                            product = compatible_content_split[1].strip()
++                            if len(compatible_content_split) > 1:
++                                product = compatible_content_split[1].strip()
+                     flag_9a0 = Judgment_HW9A0()
+                     if flag_9a0 and "da_combine_v5" in product:
+                         product = "Hi6405"
+@@ -264,8 +265,12 @@ class AudioAdaptor():
+                     flag_pangu = Judgment_PANGUW()
+                     if flag_pangu and "Audio" in vendor:
+                         vendor = "HUAWEI"
++                    if Judgment_PANGUX():
++                        vendor = "HUAWEI"
++                        product = "OnBoard Audio"
+                     if len(vendor) > 0 :
+                         audioAdaptor[AudioAdaptor_Manufacturer] = get_url(mystrip(vendor), mystrip(vendor))
++                    audioAdaptor[AudioAdaptor_Product] = mystrip(product)
+                     driver_name = driver_realpath_split[-1]
+                     audioAdaptor[AudioAdaptor_Driver] = driver_name
+                     if AudioAdaptor_Manufacturer in audioAdaptor :
+@@ -375,12 +380,13 @@ class AudioAdaptor():
+             else:
+                 os.mkdir(youkerConfigDir)
+             #写文件
+-            if not os.path.exists(youkerConfigDir+"/"+"soundCard"):
+-                os.popen('touch %s'%(youkerConfigDir+"/"+"soundCard"))
+-            os.popen('echo "%s|%s" >> %s'%(strProduct,pciPath,youkerConfigDir+"/"+"soundCard"))
+-            print('echo "%s|%s" >> %s'%(strProduct,pciPath,youkerConfigDir+"/"+"soundCard"))
++            with open(youkerConfigDir+"/"+"soundCard", "w+") as file:
++                file.write(strProduct + "|" + pciPath)
+             #保存设备名称和pci写到文件中    设备名称+pci地址    而且要做区分            
+-            os.popen('echo 1 > %s'%(sysPciPath+pciPath+"/remove"))
++            if validate_command(pciPath):
++                device_path = sysPciPath+pciPath+"/remove";
++                with open(device_path, "w") as file:
++                    file.write("1")
+         # except Exception as e:
+         #     print(e)       
+         return True
+diff --git a/kyasDbus/systemdaemon/networkadaptorthread.py b/kyasDbus/systemdaemon/networkadaptorthread.py
+index cf6f42f..7ec6759 100644
+--- a/kyasDbus/systemdaemon/networkadaptorthread.py
++++ b/kyasDbus/systemdaemon/networkadaptorthread.py
+@@ -333,15 +333,22 @@ class NetworkAdaptor():
+             else:
+                 os.mkdir(youkerConfigDir)
+             #写文件
+-            if not os.path.exists(youkerConfigDir+"/"+"netCard"):
+-                os.popen('touch %s'%(youkerConfigDir+"/"+"netCard"))
+             if Judgment_SW():
+-                os.popen('echo "%s|%s" >> %s'%(strProduct,pciPath,youkerConfigDir+"/"+"netCard"))          
+-                os.popen('echo 1 > %s'%("/sys/devices/pci0000:02/"+pciPath+"/remove"))
++                with open(youkerConfigDir+"/"+"netCard", "w+") as file:
++                    file.write(strProduct + "|" + pciPath)
++                if validate_command(pciPath):
++                    device_path = "/sys/devices/pci0000:02/"+pciPath+"/remove";
++                    with open(device_path, "w") as file:
++                        file.write("1")
+             else:
+-                os.popen('echo "%s|%s" >> %s'%(strProduct,pciPath,youkerConfigDir+"/"+"netCard"))
++                with open(youkerConfigDir+"/"+"netCard", "w+") as file:
++                    file.write(strProduct + "|" + pciPath)
+                 #保存设备名称和pci写到文件中    设备名称+pci地址    而且要做区分            
+-                os.popen('echo 1 > %s'%(sysPciPath+pciPath+"/remove"))
++                if validate_command(pciPath):
++                    device_path = sysPciPath+pciPath+"/remove";
++                    with open(device_path, "w") as file:
++                        file.write("1")
++
+         # except Exception as e:
+         #     print(e)   
+         return True
+diff --git a/kyasDbus/systemdaemon/utils.py b/kyasDbus/systemdaemon/utils.py
+index 0c3001b..29b1856 100644
+--- a/kyasDbus/systemdaemon/utils.py
++++ b/kyasDbus/systemdaemon/utils.py
+@@ -67,7 +67,7 @@ def Judgment_L410():
+     output = pipe.stdout.readlines()
+     for l in output:
+         line = bytes.decode(l.strip(),"utf-8","ignore")
+-        if line.find("KVK90") >= 0 or line.find("KVK90A"):
++        if line.find("KVK90") >= 0 or line.find("KVK90A") >= 0:
+             return True
+     return False
+ 
+@@ -117,6 +117,28 @@ def Judgment_SW():
+     else:
+         return False
+ 
++def validate_command(command):
++    forbidden_chars = [';', '|', '&', '$', '<', '>', '`']
++    if any(char in command for char in forbidden_chars):
++        return False
++    else:
++        return True
++
++def Judgment_PANGUX():
++    args = ["dmidecode", "--oem-string", "4"]
++    pipe = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
++    output = pipe.stdout.readlines()
++    for l in output:
++        line = bytes.decode(l.strip(),"utf-8","ignore")
++        if "PGUX" == line:
++            # 联合判断主板product
++            sysBoardInfo = SystemBoard()
++            baseBoardInfo = sysBoardInfo.getBaseBoardInfo()
++            if Board_Product in baseBoardInfo and ("SP1PANGUXM" in baseBoardInfo[Board_Product]) :
++                return True
++            return False
++    return False
++
+ def myctoascii(buf):
+     ch = bytes(buf.encode('utf-8'))
+     asci = binascii.b2a_hex(ch)

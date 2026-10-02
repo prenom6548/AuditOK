@@ -1,0 +1,103 @@
+This file describes some of the peculiarities of the glibc package in Ubuntu,
+especially related to its counterpart. It should *not* be shipped in the binary
+packages.
+
+# Repository
+
+The Ubuntu delta is maintained in a LP Git repository, as documented by the
+Vcs-Git field in d/control. It is *not* the git-ubuntu repo, but rather a Git
+history that relates to the Salsa history. HOWEVER it is handled similarly: the
+ubuntu/devel branch is frequently rebased on top of the latest Debian version,
+rather than use a git merge.
+
+This allows for better ongoing maintenance of the sizeable patch set that we
+have.
+
+# Orig tarball
+
+For long, old, boring (and legal-ish) reasons, Debian does *not* use the
+upstream orig tarball but rather repacks it. HOWEVER they don't change the
+upstream version number with +dfsg to reflect it, as is customary.
+
+We *do* use the upstream tarball because we want to ship their docs. So, even
+though we use the same upstream version number, our tarballs and theirs are
+*not* compatible. That means that when rebasing on top of Debian, don't forget
+to download the upstream tarball on your own rather than rely on Debian's.
+`uscan --download-current-version` should help you there.
+
+# Upstreaming the delta
+
+*If* you know why a specific piece of delta is there, you can try to upstream
+it. Sadly, a lot of it is either specific to Ubuntu (e.g. to deal with
+AppArmor, NCRs, test failures on our infra, etc...) or it has been lost to time
+and it's unclear why it's still there (but also unclear what'd happen if we
+remove it).
+
+# Things to look out for when rebasing on top of Debian
+
+## Breaks
+
+When merging in changes from Debian, you want to pay close attention to...
+well, basically everything, but more so to the Breaks adjustments. The Debian
+maintainer might remove some of them around the time of a Debian release, since
+they don't support skipping releases. If that happens, there's a chance you
+need to re-add them as a delta as we do support upgrades from our latest LTS.
+
+If they add new Breaks (typically in packaging updates rather than new upstream
+releases), you might need to translate them into Ubuntu versions. There is no
+easy way to know, you just need to figure out the reason for the breakage, and
+how it translates in the Ubuntu archive.
+
+## Time-based deltas
+
+Some pieces of delta are documented as having a shelf-life. It'll usually be in
+either the commit log or a code comment. Be on the look-out for them, and kick
+them out if it applies (do check the logic behind it though, the original
+author might be bad at math).
+
+## xfails
+
+A sad fact of our development cycle is that we're often pressed with time and
+so will mark some tests as XFAIL to get the package migrating. Of course we
+always think it temporary, but as with all temporary kludges, it tends to stick
+around.
+
+If you're adding new xfails, make sure you open a new bug for them *and do not
+close it on upload*. The test failure is the bug, and the xfail is just
+papering over it. You only get to close them once the xfail is no longer
+necessary. Document the bug number along with the xfail. If you ever get bored,
+you can always come back to one of those and properly investigate ;).
+
+More likely, you'll never get around to investigate. Instead, you might want to
+periodically try to remove them when preparing a new upload (depending on time
+constraints, either on the first upload of a new upstream version or the second
+upload post FF). It's a basic iteration: you remove everything, build the
+package in a PPA, trigger its autopkgtests, and re-add the matching xfails.
+Rince and repeat until both the build and the autopkgtest succeed.
+
+# Packages needing rebuild
+
+To identify which packages have a hard dependency on specific glibc version, I use something like this:
+
+grep-dctrl -s Source:Package -F Depends 'libc6 (<<' /var/lib/apt/lists/fr.archive.ubuntu.com_ubuntu_dists_plucky_*_binary-amd64_Packages
+
+Note there might be some false positives in there, e.g. steam-utils.
+
+The usual suspect list is dante, libnss-db, wcc, zzuf
+
+# Dealing with upstream release branches
+
+Upstream does not publish point releases and expect people to track stable release branches instead.
+We'll *usually* just bundle it up in one big patch and update said patch whenever uploading to devel,
+BUT:
+
+* we can't do that for SRUs, because it's not actually microreleases
+* their backporting policy is... very relaxed. It's apparently not a problem to
+backport entire ASM-optimized routines to older releases.
+
+If you want to update the patch entirely, just use
+`debian/rules update-from-upstream` (assuming you have the upstream repo configured as the `origin` remote).
+
+If you want to be more picky about the patches, someone a slightly
+over-engineered script for this endeavour at debian/main/review. Use at your
+own risks.

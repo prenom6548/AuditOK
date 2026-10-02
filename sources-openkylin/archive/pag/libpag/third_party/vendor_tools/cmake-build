@@ -1,0 +1,121 @@
+#!/usr/bin/env node
+const path = require("path");
+const CommandLine = require('./lib/CommandLine');
+const CmakeBuild = require("./lib/CMake");
+const Platform = require("./lib/Platform");
+
+const optionDeclarations = [
+    {
+        name: "source",
+        shortName: "s",
+        type: "string",
+        description: "Specify the source path of `CMakeLists.txt`. Default is the current working directory."
+    },
+    {
+        name: "output",
+        shortName: "o",
+        type: "string",
+        description: "Specifies the output path. Default is [source]/out."
+    },
+    {
+        name: "platform",
+        shortName: "p",
+        type: "string",
+        description: "Specifies current platform. Supported platforms: [\"win\", \"mac\", \"ios\", \"linux\", \"android\", \"web\", \"ohos\"]."
+    },
+    {
+        name: "arch",
+        shortName: "a",
+        type: "string",
+        description: "Builds the specified arch only. Supported archs: [\"x86\", \"x64\", \"arm\", \"arm64\", \"arm64-simulator\", \"wasm\", \"wasm-mt\"]."
+    },
+    {
+        name: "incremental",
+        shortName: "i",
+        type: "boolean",
+        description: "Uses incremental build. The build directory will not be removed after the building finished."
+    },
+    {
+        name: "native",
+        shortName: "n",
+        type: "boolean",
+        description: "Use the native generator with cmake to build the library if the current platform supports it."
+    },
+    {
+        name: "debug",
+        shortName: "d",
+        type: "boolean",
+        description: "Builds with debug mode enabled."
+    },
+    {
+        name: "symbols",
+        type: "boolean",
+        description: "Generate the debug symbols. Default is true if --debug is specified."
+    },
+    {
+        name: "verbose",
+        shortName: "v",
+        type: "boolean",
+        description: "Prints message in verbose mode."
+    },
+    {
+        name: "help",
+        shortName: "h",
+        type: "boolean",
+        description: "Print help message."
+    },
+];
+
+
+function printHelp(cmd) {
+    let output = "";
+    output += "Syntax:   " + cmd + " [cmakeTarget] [cmakeTarget]... [options] [-Dcmake_variable=value]... [-Dcmake_variable=value]\n";
+    output += "Examples: " + cmd + " pag -p ios -o ./out/ios\n";
+    output += "Examples: " + cmd + " pag pag-ss --debug\n";
+    output += "Examples: " + cmd + " pag -DTGFX_USE_WEBP_ENCODE=ON -p mac --verbose\n";
+    output += CommandLine.printOptions(optionDeclarations);
+    process.stdout.write(output);
+}
+
+let args = process.argv;
+let cmd = "node " + path.basename(args[1]);
+args = args.slice(2);
+let cmakeArgs = [];
+let cmdArgs = [];
+for (let arg of args) {
+    if (arg.indexOf("-D") === 0) {
+        cmakeArgs.push(arg);
+    } else {
+        cmdArgs.push(arg);
+    }
+}
+let options = CommandLine.parse(cmdArgs, optionDeclarations);
+if (!options.targets || options.targets.length === 0) {
+    options.help = true;
+}
+if (options.help) {
+    printHelp(cmd);
+    if (options.errors.length > 0) {
+        process.exit(1);
+    }
+    return;
+}
+if (!options.debug) {
+    if (process.env["VENDOR_BUILD_TYPE"] === "Debug") {
+        options.debug = true;
+    }
+}
+let platform = Platform.Create(options.platform, options.debug, options.verbose);
+if (options.arch) {
+    platform.archs = [options.arch.toLowerCase()];
+}
+let cmake = CmakeBuild.Create(platform);
+let sourcePath = options.source ? path.resolve(options.source) : process.cwd();
+let outPath = options.output ? path.resolve(options.output) : path.join(sourcePath, "out");
+let cmakeOptions = {};
+cmakeOptions.targets = options.targets;
+cmakeOptions.arguments = cmakeArgs;
+cmakeOptions.incremental = options.incremental;
+cmakeOptions.native = options.native;
+cmakeOptions.symbols = options.symbols;
+cmake.build(sourcePath, outPath, cmakeOptions, platform.archs);

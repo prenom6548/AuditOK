@@ -1,0 +1,414 @@
+From: Corwin-Song <songjuntao@kylinos.cn>
+Date: Thu, 14 May 2026 13:59:44 +0800
+Subject: update changelog information
+
+Signed-off-by: Corwin-Song <songjuntao@kylinos.cn>
+---
+ crypto/cms/cms_dh.c                     | 13 +++++--
+ crypto/cms/cms_ec.c                     | 14 +++++--
+ crypto/cms/cms_rsa.c                    | 31 +++++++++------
+ crypto/x509/x509_vfy.c                  |  2 +
+ providers/implementations/kem/rsa_kem.c | 20 +++++-----
+ test/certs/cve-2026-28388-ca.pem        | 19 ++++++++++
+ test/certs/cve-2026-28388-crls.pem      | 22 +++++++++++
+ test/certs/cve-2026-28388-leaf.pem      | 19 ++++++++++
+ test/evp_extra_test.c                   | 67 +++++++++++++++++++++++++++++++++
+ test/recipes/25-test_verify.t           | 14 ++++++-
+ 10 files changed, 191 insertions(+), 30 deletions(-)
+ create mode 100644 test/certs/cve-2026-28388-ca.pem
+ create mode 100644 test/certs/cve-2026-28388-crls.pem
+ create mode 100644 test/certs/cve-2026-28388-leaf.pem
+
+diff --git a/crypto/cms/cms_dh.c b/crypto/cms/cms_dh.c
+index ab3453d1c7c1..424729523697 100644
+--- a/crypto/cms/cms_dh.c
++++ b/crypto/cms/cms_dh.c
+@@ -89,16 +89,21 @@ static int dh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
+     int keylen, plen;
+     EVP_CIPHER *kekcipher = NULL;
+     EVP_CIPHER_CTX *kekctx;
++    const ASN1_OBJECT *aoid;
++    const void *parameter = NULL;
++    int ptype = 0;
+     char name[OSSL_MAX_NAME_SIZE];
+ 
+     if (!CMS_RecipientInfo_kari_get0_alg(ri, &alg, &ukm))
+         goto err;
+ 
++    X509_ALGOR_get0(&aoid, &ptype, &parameter, alg);
++
+     /*
+      * For DH we only have one OID permissible. If ever any more get defined
+      * we will need something cleverer.
+      */
+-    if (OBJ_obj2nid(alg->algorithm) != NID_id_smime_alg_ESDH) {
++    if (OBJ_obj2nid(aoid) != NID_id_smime_alg_ESDH) {
+         ERR_raise(ERR_LIB_CMS, CMS_R_KDF_PARAMETER_ERROR);
+         goto err;
+     }
+@@ -107,11 +112,11 @@ static int dh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
+         || EVP_PKEY_CTX_set_dh_kdf_md(pctx, EVP_sha1()) <= 0)
+         goto err;
+ 
+-    if (alg->parameter->type != V_ASN1_SEQUENCE)
++    if (ptype != V_ASN1_SEQUENCE)
+         goto err;
+ 
+-    p = alg->parameter->value.sequence->data;
+-    plen = alg->parameter->value.sequence->length;
++    p = ASN1_STRING_get0_data(parameter);
++    plen = ASN1_STRING_length(parameter);
+     kekalg = d2i_X509_ALGOR(NULL, &p, plen);
+     if (kekalg == NULL)
+         goto err;
+diff --git a/crypto/cms/cms_ec.c b/crypto/cms/cms_ec.c
+index ff8adad61668..e60d0a786ec5 100644
+--- a/crypto/cms/cms_ec.c
++++ b/crypto/cms/cms_ec.c
+@@ -166,21 +166,27 @@ static int ecdh_cms_set_shared_info(EVP_PKEY_CTX *pctx, CMS_RecipientInfo *ri)
+     int plen, keylen;
+     EVP_CIPHER *kekcipher = NULL;
+     EVP_CIPHER_CTX *kekctx;
++    const ASN1_OBJECT *aoid = NULL;
++    int ptype = 0;
++    const void *parameter = NULL;
++
+     char name[OSSL_MAX_NAME_SIZE];
+ 
+     if (!CMS_RecipientInfo_kari_get0_alg(ri, &alg, &ukm))
+         return 0;
+ 
+-    if (!ecdh_cms_set_kdf_param(pctx, OBJ_obj2nid(alg->algorithm))) {
++    X509_ALGOR_get0(&aoid, &ptype, &parameter, alg);
++
++    if (!ecdh_cms_set_kdf_param(pctx, OBJ_obj2nid(aoid))) {
+         ERR_raise(ERR_LIB_CMS, CMS_R_KDF_PARAMETER_ERROR);
+         return 0;
+     }
+ 
+-    if (alg->parameter->type != V_ASN1_SEQUENCE)
++    if (ptype != V_ASN1_SEQUENCE)
+         return 0;
+ 
+-    p = alg->parameter->value.sequence->data;
+-    plen = alg->parameter->value.sequence->length;
++    p = ASN1_STRING_get0_data(parameter);
++    plen = ASN1_STRING_length(parameter);
+     kekalg = d2i_X509_ALGOR(NULL, &p, plen);
+     if (kekalg == NULL)
+         goto err;
+diff --git a/crypto/cms/cms_rsa.c b/crypto/cms/cms_rsa.c
+index 6b65842cc14e..34c739a9825a 100644
+--- a/crypto/cms/cms_rsa.c
++++ b/crypto/cms/cms_rsa.c
+@@ -42,10 +42,13 @@ static int rsa_cms_decrypt(CMS_RecipientInfo *ri)
+     X509_ALGOR *cmsalg;
+     int nid;
+     int rv = -1;
+-    unsigned char *label = NULL;
++    const unsigned char *label = NULL;
+     int labellen = 0;
+     const EVP_MD *mgf1md = NULL, *md = NULL;
+     RSA_OAEP_PARAMS *oaep;
++    const ASN1_OBJECT *aoid;
++    const void *parameter = NULL;
++    int ptype = 0;
+ 
+     pkctx = CMS_RecipientInfo_get0_pkey_ctx(ri);
+     if (pkctx == NULL)
+@@ -75,21 +78,19 @@ static int rsa_cms_decrypt(CMS_RecipientInfo *ri)
+         goto err;
+ 
+     if (oaep->pSourceFunc != NULL) {
+-        X509_ALGOR *plab = oaep->pSourceFunc;
++        X509_ALGOR_get0(&aoid, &ptype, &parameter, oaep->pSourceFunc);
+ 
+-        if (OBJ_obj2nid(plab->algorithm) != NID_pSpecified) {
++        if (OBJ_obj2nid(aoid) != NID_pSpecified) {
+             ERR_raise(ERR_LIB_CMS, CMS_R_UNSUPPORTED_LABEL_SOURCE);
+             goto err;
+         }
+-        if (plab->parameter->type != V_ASN1_OCTET_STRING) {
++        if (ptype != V_ASN1_OCTET_STRING) {
+             ERR_raise(ERR_LIB_CMS, CMS_R_INVALID_LABEL);
+             goto err;
+         }
+ 
+-        label = plab->parameter->value.octet_string->data;
+-        /* Stop label being freed when OAEP parameters are freed */
+-        plab->parameter->value.octet_string->data = NULL;
+-        labellen = plab->parameter->value.octet_string->length;
++        label = ASN1_STRING_get0_data(parameter);
++        labellen = ASN1_STRING_length(parameter);
+     }
+ 
+     if (EVP_PKEY_CTX_set_rsa_padding(pkctx, RSA_PKCS1_OAEP_PADDING) <= 0)
+@@ -98,10 +99,16 @@ static int rsa_cms_decrypt(CMS_RecipientInfo *ri)
+         goto err;
+     if (EVP_PKEY_CTX_set_rsa_mgf1_md(pkctx, mgf1md) <= 0)
+         goto err;
+-    if (label != NULL
+-        && EVP_PKEY_CTX_set0_rsa_oaep_label(pkctx, label, labellen) <= 0) {
+-        OPENSSL_free(label);
+-        goto err;
++    if (label != NULL) {
++        unsigned char *dup_label = OPENSSL_memdup(label, labellen);
++
++        if (dup_label == NULL)
++            goto err;
++
++        if (EVP_PKEY_CTX_set0_rsa_oaep_label(pkctx, dup_label, labellen) <= 0) {
++            OPENSSL_free(dup_label);
++            goto err;
++        }
+     }
+     /* Carry on */
+     rv = 1;
+diff --git a/crypto/x509/x509_vfy.c b/crypto/x509/x509_vfy.c
+index ca3ffc420473..e71d71e9caa6 100644
+--- a/crypto/x509/x509_vfy.c
++++ b/crypto/x509/x509_vfy.c
+@@ -1307,6 +1307,8 @@ static int check_delta_base(X509_CRL *delta, X509_CRL *base)
+     if (ASN1_INTEGER_cmp(delta->base_crl_number, base->crl_number) > 0)
+         return 0;
+     /* Delta CRL number must exceed full CRL number */
++    if (delta->crl_number == NULL)
++        return 0;
+     return ASN1_INTEGER_cmp(delta->crl_number, base->crl_number) > 0;
+ }
+ 
+diff --git a/providers/implementations/kem/rsa_kem.c b/providers/implementations/kem/rsa_kem.c
+index f7bf368a0dfc..74dfafddd9e0 100644
+--- a/providers/implementations/kem/rsa_kem.c
++++ b/providers/implementations/kem/rsa_kem.c
+@@ -316,17 +316,19 @@ static int rsasve_generate(PROV_RSA_CTX *prsactx,
+         return 0;
+ 
+     /* Step(3): out = RSAEP((n,e), z) */
+-    ret = RSA_public_encrypt(nlen, secret, out, prsactx->rsa, RSA_NO_PADDING);
+-    if (ret) {
+-        ret = 1;
+-        if (outlen != NULL)
+-            *outlen = nlen;
+-        if (secretlen != NULL)
+-            *secretlen = nlen;
+-    } else {
++    ret = RSA_public_encrypt((int)nlen, secret, out, prsactx->rsa,
++        RSA_NO_PADDING);
++    if (ret <= 0 || ret != (int)nlen) {
+         OPENSSL_cleanse(secret, nlen);
++        return 0;
+     }
+-    return ret;
++
++    if (outlen != NULL)
++        *outlen = nlen;
++    if (secretlen != NULL)
++        *secretlen = nlen;
++
++    return 1;
+ }
+ 
+ /**
+diff --git a/test/certs/cve-2026-28388-ca.pem b/test/certs/cve-2026-28388-ca.pem
+new file mode 100644
+index 000000000000..9e36d11c4b4b
+--- /dev/null
++++ b/test/certs/cve-2026-28388-ca.pem
+@@ -0,0 +1,19 @@
++-----BEGIN CERTIFICATE-----
++MIIDFTCCAf2gAwIBAgIUOl5NN/jfsuLU9JSGLZAfRzviF+owDQYJKoZIhvcNAQEL
++BQAwEjEQMA4GA1UEAwwHVGVzdCBDQTAeFw0yNjAzMTcwODE5NDdaFw0yNzAzMTcw
++ODE5NDdaMBIxEDAOBgNVBAMMB1Rlc3QgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IB
++DwAwggEKAoIBAQD0m4KETjF0c25spNWUiNChWP0GalDL0gVDFbtAoMVF/lvlZEcp
++hcg62ifHJRPntWyVAmH70DAI87cWzl/73QYGaOcMVcH5yEM31BoK83FvhsS3RTPO
++FSrNCHaZrrWuga+QkBmMcR6qX7GF5eb6ASMBsLuuDqbkCRbTJ2ryhYeWF+VFemBF
++pSHpcinSSLvswTVbZiCqmoy0WkK8eiyfLMZA17PgVLQpyPZ3rp5YG5vEZZoqFc/f
++1bCHjwQ7fNdLCEMqPvE/I0mg2skRClb1L1Vieud/jmjL8nVd9I12j1eUOcSKtCkW
++nj4BFa7TRz13sN3LZOFvV774ZaXRJ1GxoAlnAgMBAAGjYzBhMB0GA1UdDgQWBBSt
++UxfaVbV9QMmfwMoImdgi4MZHzTAfBgNVHSMEGDAWgBStUxfaVbV9QMmfwMoImdgi
++4MZHzTAPBgNVHRMBAf8EBTADAQH/MA4GA1UdDwEB/wQEAwIBBjANBgkqhkiG9w0B
++AQsFAAOCAQEA84w49n0pPJlqiD1/mn3pUZ66lBP0fFZiCuV/3YatBZcW+xcboW0Q
++xImYztjZo0i+sQLZOalI4GoBqD77Dv4Qas0QoJZIp0wM8DjE3YcudCr4cpUhT1XC
++ruHVHQA9bY5rW0GsfUBW6/3RbRpiK4SaFG3sUBbXPo0dC2EaLDjpLM7o2UljRrWu
++d/vg6ieKuAicexLxqQLdM4SxjyvBpCwHg/dnMxawSj4Xhks1BHJ0hTLKJGDgfVHh
++ex8+878u6Gf7fAOZa5idWUgTvdt5WHSW5x+Tm/P6LGG3HkM425ZU6BLTCHONoBud
++cOlfWTTuIyweX5TRL5HY3SuO1cpMBpjiAA==
++-----END CERTIFICATE-----
+diff --git a/test/certs/cve-2026-28388-crls.pem b/test/certs/cve-2026-28388-crls.pem
+new file mode 100644
+index 000000000000..46cbd7876dcd
+--- /dev/null
++++ b/test/certs/cve-2026-28388-crls.pem
+@@ -0,0 +1,22 @@
++-----BEGIN X509 CRL-----
++MIIBizB1AgEBMA0GCSqGSIb3DQEBCwUAMBIxEDAOBgNVBAMMB1Rlc3QgQ0EXDTI2
++MDMxNzA4MTk0N1oXDTI2MDQxNjA4MTk0N1qgLzAtMB8GA1UdIwQYMBaAFK1TF9pV
++tX1AyZ/AygiZ2CLgxkfNMAoGA1UdFAQDAgEBMA0GCSqGSIb3DQEBCwUAA4IBAQBl
++3vVknchCNA/oW0ovtnrE+xQs8yAk3uElooQlw88moTcts2YAcKWl49lnNWZk/RbF
++Zs8m+MUuNb2W861siuvY3EwnSKVaJB2tKPfCRBP4xt+Q0g/Tn5CWxzpzHjQfLT6l
++pvWOwaO7aE6bthX7MQ9XBpnHSPxsbul+MhV5PER11BYZGVh5MH0XxfMI0jDHFh2M
++klTamgaao3TkVOI3OQPgzUx/q0Lz/YoCIH0pYGGP6KTGUX2x7UfD1tcIOcUp6tvO
++6hG3utMgJOpZJl9yMzhG+ZURjbz4MSbBM0FVIaWnBn2VzY1jHGky0nK83IZhiddf
++OohWoSH8tqwrNFZkblAH
++-----END X509 CRL-----
++-----BEGIN X509 CRL-----
++MIIBjjB4AgEBMA0GCSqGSIb3DQEBCwUAMBIxEDAOBgNVBAMMB1Rlc3QgQ0EXDTI2
++MDEwODEyMDAwMFoXDTI2MDIwODEyMDAwMFqgMjAwMB8GA1UdIwQYMBaAFK1TF9pV
++tX1AyZ/AygiZ2CLgxkfNMA0GA1UdGwEB/wQDAgEBMA0GCSqGSIb3DQEBCwUAA4IB
++AQCyYxa5iVUFxBpdXgBGSMqkuxJqQzVni8nXK0DiXHfgbTud+HD5Qp/6PX2EQuwK
++SrT0yeNJBU1gxxMMsbdA0yVTPa7N2Ny39mjq/27yBXduiljo3Gs4NLEW9grJRnep
++WOD1cQe3Fea5HlEfUoQJF1WVekF6CnOSqESaDvTAzqpZd7pxU8cuduiRJPin93ki
++1nicQAU/G4Td190+JEAWD3/dJTg2LF6LKrmHiv2ZUTuNsVBfcbhFSoC6FpnjFUAI
++kF8EgJpuBEfqV6erIuT1GD+5p1QGNqdcNl7LO9erJaUFnssJBJtj84iXd7RZARNs
++njcibOSKC9YWgNmZUy0QV5D8
++-----END X509 CRL-----
+diff --git a/test/certs/cve-2026-28388-leaf.pem b/test/certs/cve-2026-28388-leaf.pem
+new file mode 100644
+index 000000000000..02b22997cdd8
+--- /dev/null
++++ b/test/certs/cve-2026-28388-leaf.pem
+@@ -0,0 +1,19 @@
++-----BEGIN CERTIFICATE-----
++MIIDHTCCAgWgAwIBAgIBATANBgkqhkiG9w0BAQsFADASMRAwDgYDVQQDDAdUZXN0
++IENBMB4XDTI2MDMxNzA4MTk0N1oXDTI3MDMxNzA4MTk0N1owFDESMBAGA1UEAwwJ
++VGVzdCBMZWFmMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqx7jpC6+
++nRZ4ol6sShkpv04hGYtt7y+Ns4oIfdQTqo57DItFab8D8cH04zR8NND42MMnsPPn
++Ovh9gv2l1mj9ZfwgXI5PvaKc6CoXvXb0ttekdDUS1iw9g04BxIXTDANxsdSXrCDd
++Npyr1Pxdo3N2fiH6qN9/Lsh7yg0vJW/aJzdvhLcCTFcr89qmCsh17XfcTR0wZJXP
++QdlRib9EK8aa6aKOYmm44SBbuXXyWojhheUaqVuzDj6A0L9opmh/DVXa9bdIN/FX
++CKJB+d60Qxy5pKwpzDDxbCdG2vA1U2cPz8yAgelFG5AmXSHF7Id4G6GTCAY6PbTO
++Jy2Z4I6NY+mj5wIDAQABo3wwejAdBgNVHQ4EFgQUlf2YZ93MvS4kZm7fshosgp+J
++ImkwHwYDVR0jBBgwFoAUrVMX2lW1fUDJn8DKCJnYIuDGR80wCQYDVR0TBAIwADAt
++BgNVHS4EJjAkMCKgIKAehhxodHRwOi8vZXhhbXBsZS5jb20vZGVsdGEucGVtMA0G
++CSqGSIb3DQEBCwUAA4IBAQDoNAQGLS0Juf3i2fhuVQyWIFvNIMElLexeLnnd/y80
++13nsP68ZGT2D3DoHQSz3SL7sNjLBc2CiUVftdaRQ4dNCz8sBY5BRTS5XEGbbTAFZ
++bQUReykuuTy83CGw/JYN6YT/OHcf4gEhUnWtRMCmIz3J/NMRVSRnpV2Ezjltm/Q+
++emFS/QclRhkP6Vu+lwM/nV6uAN8T7Ba68Hym2MN0clozrpoKeqFouB7D0i+iCZMw
++zbac5as0hn7Fm+HGTbfTs2/fqUslvE6PmagepceP37pTSSVmYRmdpOD2cyCb30A+
++nJFGQg7PcacGSL1re65W35XzdU8Si8OYD+PxjDaRbPcP
++-----END CERTIFICATE-----
+diff --git a/test/evp_extra_test.c b/test/evp_extra_test.c
+index f55d17258d1f..d45f497f032a 100644
+--- a/test/evp_extra_test.c
++++ b/test/evp_extra_test.c
+@@ -929,6 +929,32 @@ static EVP_PKEY *load_example_ec_key(void)
+ #endif
+ 
+ #ifndef OPENSSL_NO_DEPRECATED_3_0
++
++static EVP_PKEY *make_bad_rsa_pubkey(void)
++{
++    RSA *rsa = NULL;
++    BIGNUM *n = NULL, *e = NULL;
++    EVP_PKEY *pkey = NULL;
++
++    /* Deliberately invalid public key: n = 17, e = 17 */
++    if (!TEST_ptr(pkey = EVP_PKEY_new())
++        || !TEST_ptr(rsa = RSA_new())
++        || !TEST_ptr(n = BN_new())
++        || !TEST_ptr(e = BN_new())
++        || !TEST_true(BN_set_word(n, 17))
++        || !TEST_true(BN_set_word(e, 17))
++        || !TEST_true(RSA_set0_key(rsa, n, e, NULL))
++        || !EVP_PKEY_assign_RSA(pkey, rsa))
++        goto err;
++
++    return pkey;
++err:
++    BN_free(n);
++    BN_free(e);
++    RSA_free(rsa);
++    return NULL;
++}
++
+ #ifndef OPENSSL_NO_DH
+ static EVP_PKEY *load_example_dh_key(void)
+ {
+@@ -5898,6 +5924,46 @@ err:
+     return testresult;
+ }
+ 
++static int test_rsasve_kem_with_invalid_pub_key(void)
++{
++    RSA *rsa = NULL;
++    EVP_PKEY *pkey = NULL;
++    EVP_PKEY_CTX *ctx = NULL;
++    unsigned char *ct = NULL;
++    unsigned char *secret = NULL;
++    size_t ctlen = 0, secretlen = 0;
++    int testresult = 0;
++
++    if (nullprov != NULL) {
++        testresult = TEST_skip("Test does not support a non-default library context");
++        goto err;
++    }
++
++    if (!TEST_ptr(pkey = make_bad_rsa_pubkey()))
++        goto err;
++
++    if (!TEST_ptr(ctx = EVP_PKEY_CTX_new_from_pkey(testctx, pkey, NULL))
++        || !TEST_int_eq(EVP_PKEY_encapsulate_init(ctx, NULL), 1)
++        || !TEST_int_eq(EVP_PKEY_CTX_set_kem_op(ctx, "RSASVE"), 1)
++        || !TEST_int_eq(EVP_PKEY_encapsulate(ctx, NULL, &ctlen, NULL, &secretlen), 1)
++        || !TEST_ptr(ct = OPENSSL_malloc(ctlen))
++        || !TEST_ptr(secret = OPENSSL_malloc(secretlen)))
++        goto err;
++
++    if (!TEST_int_eq(EVP_PKEY_encapsulate(ctx, ct, &ctlen, secret, &secretlen), 0))
++        goto err;
++
++    testresult = 1;
++
++err:
++    OPENSSL_free(secret);
++    OPENSSL_free(ct);
++    EVP_PKEY_CTX_free(ctx);
++    RSA_free(rsa);
++    EVP_PKEY_free(pkey);
++    return testresult;
++}
++
+ #ifndef OPENSSL_NO_DYNAMIC_ENGINE
+ /* Test we can create a signature keys with an associated ENGINE */
+ static int test_signatures_with_engine(int tst)
+@@ -6854,6 +6920,7 @@ int setup_tests(void)
+     ADD_TEST(test_evp_md_cipher_meth);
+     ADD_TEST(test_custom_md_meth);
+     ADD_TEST(test_custom_ciph_meth);
++    ADD_TEST(test_rsasve_kem_with_invalid_pub_key);
+ 
+ #ifndef OPENSSL_NO_DYNAMIC_ENGINE
+     /* Tests only support the default libctx */
+diff --git a/test/recipes/25-test_verify.t b/test/recipes/25-test_verify.t
+index 673c3d5f1772..fcb343b9ee3a 100644
+--- a/test/recipes/25-test_verify.t
++++ b/test/recipes/25-test_verify.t
+@@ -30,7 +30,7 @@ sub verify {
+     run(app([@args]));
+ }
+ 
+-plan tests => 203;
++plan tests => 204;
+ 
+ # Canonical success
+ ok(verify("ee-cert", "sslserver", ["root-cert"], ["ca-cert"]),
+@@ -594,6 +594,18 @@ ok(!verify("ee-cert-policies-bad", "", ["root-cert"], ["ca-pol-cert"],
+            "-explicit_policy"),
+    "Bad certificate policy");
+ 
++# CVE-2026-28388
++my $cve_28388_stderr = "cve-2026-28388.err";
++run(app(["openssl", "verify",
++         "-attime", "1739527200",
++         "-CAfile", srctop_file(@certspath, "cve-2026-28388-ca.pem"),
++         "-crl_check", "-use_deltas",
++         "-CRLfile", srctop_file(@certspath, "cve-2026-28388-crls.pem"),
++         srctop_file(@certspath, "cve-2026-28388-leaf.pem")],
++         stderr => $cve_28388_stderr));
++ok(grep(/CRL is not yet valid/, do { open my $fh, '<', $cve_28388_stderr; <$fh> }),
++   "CVE-2026-28388");
++
+ # CAstore option
+ my $rootcertname = "root-cert";
+ my $rootcert = srctop_file(@certspath, "${rootcertname}.pem");

@@ -1,0 +1,36 @@
+#!/bin/bash
+
+set -ex
+
+augtool set '/files/etc/nsswitch.conf/database["passwd"]/service[last()+1]' extrausers
+augtool set '/files/etc/nsswitch.conf/database["group"]/service[last()+1]' extrausers
+augtool set '/files/etc/nsswitch.conf/database["shadow"]/service[last()+1]' extrausers
+augtool set '/files/etc/nsswitch.conf/database["gshadow"]/service[last()+1]' extrausers
+
+mv /etc /etc-rw
+mkdir /etc
+mount -o bind,ro /etc-rw /etc
+
+groupadd --extrausers existinggroup
+grep -E -q '^existinggroup:' /var/lib/extrausers/group
+
+useradd --extrausers --groups existinggroup somenewuser
+grep -E -q '^existinggroup:x:[0-9]+:somenewuser' /var/lib/extrausers/group
+grep -E -q '^somenewuser:' /var/lib/extrausers/group
+grep -E -q '^somenewuser:' /var/lib/extrausers/gshadow
+grep -E -q '^somenewuser:' /var/lib/extrausers/passwd
+grep -E -q '^somenewuser:' /var/lib/extrausers/shadow
+
+if useradd --extrausers --groups invalidgroup someotheruser; then
+    echo "Should have failed!"
+    exit 1
+fi
+
+groupadd --extrausers existinggroup2
+grep -E -q '^existinggroup2:' /var/lib/extrausers/group
+
+usermod -G existinggroup2 somenewuser
+if grep -E -q '^existinggroup:x:[0-9]+:somenewuser' /var/lib/extrausers/group; then
+    exit 1
+fi
+grep -E -q '^existinggroup2:x:[0-9]+:somenewuser' /var/lib/extrausers/group

@@ -1,0 +1,69 @@
+From: =?utf-8?q?P=C3=A1draig_Brady?= <P@draigBrady.com>
+Date: Wed, 8 Jan 2025 21:46:05 +0000
+Subject: ls: suppress "Permission denied" errors on NFS
+
+NFS (on Linux 6.12 at least) was seen to return EACCES
+from listxattr() for files without read access.
+We started using listxattr() in coreutils 9.4.
+
+* src/ls.c (gobble_file): Map EACCES from file_has_aclinfo()
+to '?', rather than displaying the error.
+* doc/coreutils.texi (ls invocation): Document the '?' flag.
+* NEWS: Mention the bug fix.
+Addresses https://bugs.gnu.org/74692
+
+Origin: backport, https://cgit.git.savannah.gnu.org/cgit/coreutils.git/commit/?id=b58e321c8d5dd841f4170312692035a66b5ac149
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/2115274
+---
+ src/ls.c | 12 +++++++++---
+ 1 file changed, 9 insertions(+), 3 deletions(-)
+
+diff --git a/src/ls.c b/src/ls.c
+index f5ac98d..a2b5524 100644
+--- a/src/ls.c
++++ b/src/ls.c
+@@ -188,6 +188,7 @@ static_assert (sizeof filetype_letter - 1 == arg_directory + 1);
+ enum acl_type
+   {
+     ACL_T_NONE,
++    ACL_T_UNKNOWN,
+     ACL_T_LSM_CONTEXT_ONLY,
+     ACL_T_YES
+   };
+@@ -3555,21 +3556,24 @@ gobble_file (char const *name, enum filetype type, ino_t inode,
+                 err = 0;
+             }
+ 
++          int n = file_has_acl_cache (full_name, f);
+           if (err == 0 && format == long_format)
+             {
+-              int n = file_has_acl_cache (full_name, f);
+               err = (n < 0);
+               have_acl = (0 < n);
+             }
+ 
++          bool cannot_access_acl = n < 0
++           && (errno == EACCES || errno == ENOENT);
++
+           f->acl_type = (!have_scontext && !have_acl
+-                         ? ACL_T_NONE
++                         ? (cannot_access_acl ? ACL_T_UNKNOWN : ACL_T_NONE)
+                          : (have_scontext && !have_acl
+                             ? ACL_T_LSM_CONTEXT_ONLY
+                             : ACL_T_YES));
+           any_has_acl |= f->acl_type != ACL_T_NONE;
+ 
+-          if (err)
++          if (err && !cannot_access_acl)
+             error (0, errno, "%s", quotef (full_name));
+         }
+ 
+@@ -4341,6 +4345,8 @@ print_long_format (const struct fileinfo *f)
+     modebuf[10] = '.';
+   else if (f->acl_type == ACL_T_YES)
+     modebuf[10] = '+';
++   else if (f->acl_type == ACL_T_UNKNOWN)
++    modebuf[10] = '?';
+ 
+   switch (time_type)
+     {

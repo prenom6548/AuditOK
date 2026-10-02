@@ -1,0 +1,345 @@
+/*
+ * Peony-Qt's Library
+ *
+ * Copyright (C) 2020, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Yue Lan <lanyue@kylinos.cn>
+ *
+ */
+
+#ifndef BASICPROPERTIESPAGE_H
+#define BASICPROPERTIESPAGE_H
+
+#include <QWidget>
+#include "peony-core_global.h"
+
+#include <QCheckBox>
+#include <QFrame>
+#include <QGridLayout>
+#include <QThread>
+#include <memory>
+#include <QProxyStyle>
+#include <QComboBox>
+#include <QDBusInterface>
+#include <QRadioButton>
+
+#include "properties-window-tab-iface.h"
+#include "open-with-properties-page.h"
+
+#define CELL1K 1024
+#define CELL4K 4096
+#define CELL1M 1048576
+#define CELL1G 1073741824
+
+#define TEMP_PERMISSIONS    "temp-permissions"
+
+class QVBoxLayout;
+class QFormLayout;
+class QPushButton;
+class QLabel;
+class QLineEdit;
+class QRadioButton;
+class QListWidget;
+
+namespace Peony {
+
+class FileInfo;
+class FileWatcher;
+class FileCountOperation;
+
+class PropertiesSetDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit PropertiesSetDialog(QWidget *parent = nullptr);
+    ~PropertiesSetDialog();
+    void initUI();
+
+Q_SIGNALS:
+    void sendSelectRadioButton(int Id);
+
+private:
+    QVBoxLayout *m_layout = nullptr;
+    QLabel *m_label = nullptr;
+    QRadioButton *m_currentSelectBtn = nullptr;
+    QRadioButton *m_recursiveBtn = nullptr;
+    QPushButton *m_okBtn = nullptr;
+    QPushButton *m_cancelBtn = nullptr;
+    QButtonGroup *m_group = nullptr;
+};
+
+class BatchStatusThread : public QThread {
+    Q_OBJECT
+public:
+    BatchStatusThread(const QStringList &uris);
+
+protected:
+    void run();
+    void queryInfoUpdate(const QString &uri, const bool &queryHidden = false, const bool &queryIsAllDir = false);
+
+Q_SIGNALS:
+    void updateState(Qt::CheckState readOnlyState, Qt::CheckState hiddenState);
+    void updateDisabled(const bool &readOnlyDisable, const bool &hiddenDisable);
+    void updateIsAllDir(const bool &isAllDir);
+
+private:
+    const QStringList m_uris;
+    bool m_existReadOnly = false;
+    bool m_existWrite = false;
+    bool m_existHidden = false;
+    bool m_existShow = false;
+    bool m_canRename = true;
+    bool m_isDesktop = false;
+    bool m_isAllDir = false;
+    bool m_isIDM = false;
+};
+
+class CustomIconDialog : public QDialog {
+    Q_OBJECT
+public:
+    explicit CustomIconDialog(const QString &uri, const QString &currentIconPath = QString(), QWidget *parent = nullptr);
+    ~CustomIconDialog();
+    static const QStringList& getAllIcons();
+
+Q_SIGNALS:
+    void sendCustomIcon(const QString &iconName);
+
+protected Q_SLOTS:
+    void updateSystemBtnStatus(const QListWidgetItem *current, const QListWidgetItem *previous);
+    void updatePreviewIcon();
+    void updateCustomStatus();
+    void onClicked();
+    void onDefaultIcon();
+
+private:
+    void initUI();
+    void initConnects();
+    void loadData();
+    QStringList getThemeIcon() const;
+
+private:
+    QVBoxLayout *m_layout = nullptr;
+    QLabel *m_previewIconLabel = nullptr;
+    QRadioButton *m_systemIconRadio = nullptr;
+    QRadioButton *m_customIconRadio = nullptr;
+    QListWidget *m_iconList = nullptr;
+    QLineEdit *m_customEdit = nullptr;
+    QPushButton *m_customIconBtn = nullptr;
+    QPushButton *m_defaultIconBtn = nullptr;
+    QPushButton *m_cancelBtn = nullptr;
+    QPushButton *m_okBtn = nullptr;
+
+    QString m_selectIconName;
+    QString m_uri;
+    static QStringList initializeIconList();
+    static const QStringList s_iconList;
+};
+
+class FileNameThread : public QThread {
+    Q_OBJECT
+private:
+    const QStringList m_uris;
+public:
+    FileNameThread(const QStringList &uris) : m_uris(uris){}
+
+Q_SIGNALS:
+    void fileNameReady(QString fileName);
+
+protected:
+    void run();
+};
+
+/*!
+ * \brief The BasicPropertiesPage class
+ * \todo
+ * handle special files, such as divice or remote server.
+ */
+class BasicPropertiesPage : public PropertiesWindowTabIface
+{
+    Q_OBJECT
+public:
+
+    enum FileType{
+        BP_Folder = 1,
+        BP_File,
+        BP_Application,
+        BP_MultipleFIle /*选中多个文件*/
+    };
+
+    explicit BasicPropertiesPage(const QStringList &uris, QWidget *parent = nullptr);
+    ~BasicPropertiesPage();
+
+    static QString chooseCustomIconFile(QWidget *widget = nullptr);
+    // PropertiesWindowTabIface interface
+public:
+    void saveAllChange();
+
+protected:
+    /**
+     * @brief 初始化ui组件
+     */
+    void initUI();
+
+    /*!
+     *
+     * \brief formLayout 左侧label栏
+     * \param minWidth
+     * \param minHeight
+     * \param text
+     * \param parent
+     * \return
+     */
+    QLabel *createFixedLabel(quint64 minWidth, quint64 minHeight, QString text, QWidget *parent = nullptr);
+    QLabel *createFixedLabel(quint64 minWidth, quint64 minHeight, QWidget *parent = nullptr);
+    /**
+     * @brief 顶部图标，名称和地址信息区域
+     */
+    void initFloorOne();
+
+    /**
+     * @brief 日期，大小信息区域
+     */
+    void initFloorTwo();
+
+    void addSeparator();
+
+    void loadData();
+    void loadPartOne();
+    void loadPartTwo();
+    void loadOptionalData();
+
+    void updateCountInfo(bool isDone = false);
+    void addOpenWithLayout(QWidget *parent = nullptr);
+
+    BasicPropertiesPage::FileType checkFileType(const QStringList &uris);
+    void chooseFileIcon();
+    void changeFileIcon();
+    bool isNameChanged();
+    void setSysTimeFormat();
+    QString elideText(QFont font,int width,QString strInfo);
+    QString elideTextAndToolTip(QFont font, int width, QString strInfo, Qt::TextElideMode mode, QWidget* widgt);
+    void moveFile();
+    bool checkUserPermission(const QString &targetUser);
+    void queryUserPermission(const QString &uri);
+      bool getFileUnixMode(const QString &uri, quint32 &mode);
+      void setFileUnixMode(const QString &uri, quint32 mode);
+
+protected Q_SLOTS:
+    void getFIleInfo(QString uri);
+    void onSingleFileChanged(const QString &oldUri, const QString &newUri);
+    void countFilesAsync(const QStringList &uris);
+    void onFileCountOne(const QString &uri, quint64 size);
+    void cancelCount();
+    void updateInfo(const QString &uri);
+    void updateDateFormat(QString dateFormat);
+
+private:
+    QVBoxLayout                 *m_layout = nullptr;
+    std::shared_ptr<FileInfo>    m_info   = nullptr;
+    QStringList                  m_uris;
+    QFutureWatcher<void>        *m_futureWatcher = nullptr;
+    std::shared_ptr<FileWatcher> m_watcher;
+    std::shared_ptr<FileWatcher> m_thumbnail_watcher;
+
+    FileType m_fileType        = BP_File;
+    qint64   m_fileDoneCount   = 0;
+
+    //floor1
+    QPushButton *m_iconButton       = nullptr;    //文件图标
+    QString     m_newFileIconPath;                //文件新图标
+    //**new version
+    QLineEdit   *m_displayNameEdit  = nullptr;    //文件名称
+    QLineEdit   *m_locationEdit     = nullptr;    //文件路径
+    QPushButton *m_moveButton       = nullptr;    //移动按钮
+    QLabel      *m_displayNameLabel = nullptr;
+    QLabel      *m_locationLabel    = nullptr;
+    QPushButton *m_changeIconButton = nullptr;  //修改图标按钮
+
+    //floor2  --  public
+    QLabel *m_fileTypeLabel         = nullptr;    //文件类型
+    QLabel *m_fileSizeLabel         = nullptr;    //文件大小
+    QLabel *m_fileTotalSizeLabel    = nullptr;    //文件占用空间
+
+    quint64 m_fileSizeCount        = 0;
+    quint64 m_fileTotalSizeCount   = 0;
+
+    //folder type
+    QLabel *m_folderContainLabel = nullptr;       //文件夹下文件统计Label
+
+    quint64 m_folderContainFiles   = 0;      //文件夹下文件数量
+    quint64 m_folderContainFolders = 0;      //文件夹下文件夹数量
+
+    //file , zip
+    QHBoxLayout           *m_openWithLayout        = nullptr;    //文件打开方式
+    DefaultOpenWithWidget *m_defaultOpenWithWidget = nullptr;
+    QComboBox             *m_moreAppBox            = nullptr;
+
+    //application
+    QLabel *m_descrptionLabel = nullptr;       //应用程序描述
+
+    //floor3
+    QString m_systemTimeFormat  = "";
+    QLabel *m_timeCreatedLabel  = nullptr;
+    QLabel *m_timeModifiedLabel = nullptr;
+    QLabel *m_timeAccessLabel   = nullptr;
+
+    quint64 m_timeCreated  = 0;
+    quint64 m_timeModified = 0;
+    quint64 m_timeAccess   = 0;
+
+    //floor4
+    QCheckBox *m_readOnly = nullptr;
+    QCheckBox *m_hidden   = nullptr;
+    QCheckBox *m_executable = nullptr;
+    //
+    FileCountOperation *m_countOp = nullptr;
+
+    QTimer *m_timer = nullptr;
+    bool m_isReadOnly = false;
+
+    QString m_date_format = "";
+    QDBusInterface  *mDbusDateServer;
+    Qt::CheckState m_readOnlyState;
+    Qt::CheckState m_hiddenState;
+    Qt::CheckState m_executableState;
+    bool m_isAllDir = false;
+    bool m_hasPermission = false;
+};
+
+class PushButtonStyle : public QProxyStyle
+{
+
+public:
+    static PushButtonStyle *getStyle();
+
+    PushButtonStyle() : QProxyStyle() {}
+
+    void drawControl(QStyle::ControlElement element,
+                     const QStyleOption *option,
+                     QPainter *painter,
+                     const QWidget *widget = nullptr) const;
+
+    int pixelMetric(PixelMetric metric,
+                    const QStyleOption *option = nullptr,
+                    const QWidget *widget = nullptr) const override;
+
+    QRect subElementRect(SubElement element,
+                         const QStyleOption *option,
+                         const QWidget *widget = nullptr) const;
+};
+
+}
+
+#endif // BASICPROPERTIESPAGE_H

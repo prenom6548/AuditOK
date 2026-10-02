@@ -1,0 +1,493 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="zh_CN">
+<context>
+    <name>DesktopOrganizationManager</name>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-window-manager.cpp" line="640"/>
+        <location filename="../../peony-qt-desktop/desktop-window-manager.cpp" line="645"/>
+        <source>New Partition</source>
+        <translation>新建分区</translation>
+    </message>
+</context>
+<context>
+    <name>FileActionController</name>
+    <message>
+        <location filename="../../peony-qt-desktop/controls/file-action-controler.cpp" line="393"/>
+        <source>New Folder</source>
+        <translation>新建文件夹</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/controls/file-action-controler.cpp" line="501"/>
+        <source>管理插件</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/controls/file-action-controler.cpp" line="502"/>
+        <source>调整插件位置</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/controls/file-action-controler.cpp" line="546"/>
+        <source>Open Link failed</source>
+        <translation>打开快捷方式失败</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/controls/file-action-controler.cpp" line="547"/>
+        <source>File not exist, do you want to delete the link file?</source>
+        <translation>目标文件夹不存在，是否删除该无效快捷方式？</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/controls/file-action-controler.cpp" line="563"/>
+        <source>Open failed</source>
+        <translation>打开失败</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/controls/file-action-controler.cpp" line="564"/>
+        <source>Open directory failed, you have no permission!</source>
+        <translation>打开文件夹失败，您没有该目录的权限！</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DesktopMenu</name>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="721"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="757"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="824"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="830"/>
+        <source>Reverse Select</source>
+        <translation>反选</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="387"/>
+        <source>New Folder</source>
+        <translation>新建文件夹</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="847"/>
+        <source>Select All</source>
+        <translation>全选</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="201"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="245"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="316"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="327"/>
+        <source>Open</source>
+        <translation>打开</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="226"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="312"/>
+        <source>Open with...</source>
+        <translation>打开方式</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="238"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="304"/>
+        <source>More applications...</source>
+        <translation>更多应用</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="287"/>
+        <source>File Manager</source>
+        <translation>文件管理器</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="333"/>
+        <source>Open %1 selected files</source>
+        <translation>打开%1个选中文件</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="361"/>
+        <source>Store %1 selected files into a new partition</source>
+        <translation>收纳 %1 个文件到新分区</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="375"/>
+        <source>New</source>
+        <translation>新建</translation>
+    </message>
+    <message>
+        <source>Empty File</source>
+        <translation type="vanished">空文本</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="382"/>
+        <source>Folder</source>
+        <translation>文件夹</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="395"/>
+        <source>Text Document</source>
+        <translation>文本文档</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="560"/>
+        <source>Auto arrange</source>
+        <translation>自动排列</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="569"/>
+        <source>View Type</source>
+        <translation>视图类型</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="575"/>
+        <source>Small</source>
+        <translation>小图标</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="578"/>
+        <source>Normal</source>
+        <translation>中图标</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="581"/>
+        <source>Large</source>
+        <translation>大图标</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="584"/>
+        <source>Huge</source>
+        <translation>超大图标</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="612"/>
+        <source>Sort By</source>
+        <translation>排序类型</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="618"/>
+        <source>Time Modified</source>
+        <translation>修改时间</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="652"/>
+        <source>Newest to oldest</source>
+        <translation>从新到旧</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="653"/>
+        <source>Oldest to newest</source>
+        <translation>从旧到新</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="656"/>
+        <source>Files from large to small</source>
+        <translation>从大到小</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="657"/>
+        <source>Files from small to large</source>
+        <translation>从小到大</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="684"/>
+        <source>Desktop Origanization</source>
+        <translation>桌面整理</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="697"/>
+        <source>Create New Partiton</source>
+        <translation>新建分区</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="974"/>
+        <source>Mount</source>
+        <translation>挂载</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="1146"/>
+        <source>Remove Desktop Widget</source>
+        <translation>移除桌面小插件</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="1169"/>
+        <source>Add Plugin</source>
+        <translation>添加插件</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="617"/>
+        <source>Name</source>
+        <translation>文件名称</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="619"/>
+        <source>File Type</source>
+        <translation>文件类型</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="620"/>
+        <source>File Size</source>
+        <translation>文件大小</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="738"/>
+        <source>Clean the trash</source>
+        <translation>清空回收站</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="769"/>
+        <source>Copy</source>
+        <translation>复制</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="808"/>
+        <source>Delete to trash</source>
+        <translation>删除到回收站</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="763"/>
+        <source>Cut</source>
+        <translation>剪切</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="818"/>
+        <source>Delete forever</source>
+        <translation>永久删除</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="777"/>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="783"/>
+        <source>Rename</source>
+        <translation>重命名</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="153"/>
+        <source>Open Desktop in Window</source>
+        <translation>在窗口中打开“桌面”</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="837"/>
+        <source>Paste</source>
+        <translation>粘贴</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="703"/>
+        <source>Refresh</source>
+        <translation>刷新</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="862"/>
+        <source>Properties</source>
+        <translation>属性</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="649"/>
+        <source>Ascending Order</source>
+        <translation>升序</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="648"/>
+        <source>Descending Order</source>
+        <translation>降序</translation>
+    </message>
+</context>
+<context>
+    <name>PeonyDesktopApplication</name>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="246"/>
+        <source>peony-qt-desktop</source>
+        <translation>桌面</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="516"/>
+        <source>Close the peony desktop window</source>
+        <translation>关闭桌面程序</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="519"/>
+        <source>Take over the dbus service.</source>
+        <translation>接管DBus服务。</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="522"/>
+        <source>Take over the desktop displaying</source>
+        <translation>接管桌面</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="525"/>
+        <source>Setup backgrounds</source>
+        <translation>Setup backgrounds</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="528"/>
+        <source>Clear standard icons</source>
+        <translation>Clear standard icons</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="531"/>
+        <source>Layout item with top to bottom left to right</source>
+        <translation>从左上到右下排列图标</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="535"/>
+        <source>Force update backgrounds</source>
+        <translation>强制更新背景</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/peony-desktop-application.cpp" line="539"/>
+        <source>Add desktop widget to desktop</source>
+        <translation></translation>
+    </message>
+</context>
+<context>
+    <name>PlatformWindow</name>
+    <message>
+        <location filename="../../peony-qt-desktop/qml-desktop/platformwindow.cpp" line="2869"/>
+        <source>Application</source>
+        <translation>程序</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/qml-desktop/platformwindow.cpp" line="2872"/>
+        <source>Folder</source>
+        <translation>文件夹</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/qml-desktop/platformwindow.cpp" line="2875"/>
+        <source>Files</source>
+        <translation>文件</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="987"/>
+        <source>Background Settings</source>
+        <translation>背景设置</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="993"/>
+        <source>Display Settings</source>
+        <translation>显示设置</translation>
+    </message>
+</context>
+<context>
+    <name>WidgetManagerDialog</name>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="802"/>
+        <source>Desktop Widget Manager</source>
+        <translation>桌面插件管理</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="916"/>
+        <source>Search application cards</source>
+        <translation>搜索应用卡片</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="992"/>
+        <source>Click a card to add it to the desktop, or drag a card onto the desktop.</source>
+        <translation>点击卡片以添加到桌面，或将卡片拖放到桌面</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="995"/>
+        <source>Done</source>
+        <translation>完成</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="1044"/>
+        <source>All</source>
+        <translation>所有</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="1115"/>
+        <source>No desktop widgets found.
+Install widget packages to get started.</source>
+        <translation>未找到桌面小部件。请安装小部件包以开始使用。</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="1169"/>
+        <source>All desktop widgets</source>
+        <translation>所有桌面小插件</translation>
+    </message>
+</context>
+<context>
+    <name>WidgetMenu</name>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="12"/>
+        <source>Rename Partition</source>
+        <translation>重命名分区</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="16"/>
+        <source>View Type</source>
+        <translation>视图方式</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="17"/>
+        <source>Icon View</source>
+        <translation>图标视图</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="18"/>
+        <source>List View</source>
+        <translation>列表视图</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="26"/>
+        <source>Sort Type</source>
+        <translation>排序方式</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="28"/>
+        <source>File Name</source>
+        <translation>文件名称</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="32"/>
+        <source>Time Modified</source>
+        <translation>修改时间</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="36"/>
+        <source>File Type</source>
+        <translation>文件类型</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="40"/>
+        <source>File Size</source>
+        <translation>文件大小</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="47"/>
+        <source>Descending Order</source>
+        <translation>降序</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="48"/>
+        <source>Ascending Order</source>
+        <translation>升序</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="55"/>
+        <source>Newest to oldest</source>
+        <translation>从新到旧</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="56"/>
+        <source>Oldest to newest</source>
+        <translation>从旧到新</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="59"/>
+        <source>Files from large to small</source>
+        <translation>从大到小</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="60"/>
+        <source>Files from small to large</source>
+        <translation>从小到大</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="80"/>
+        <source>Disband Partition</source>
+        <translation>解散分区</translation>
+    </message>
+    <message>
+        <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.h" line="66"/>
+        <source>Widget Menu</source>
+        <translation></translation>
+    </message>
+</context>
+</TS>

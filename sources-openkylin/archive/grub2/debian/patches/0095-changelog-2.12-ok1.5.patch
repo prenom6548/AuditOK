@@ -1,0 +1,1023 @@
+From: liweidong <liweidong@kylinos.cn>
+Date: Thu, 2 Nov 2023 15:15:59 +0800
+Subject: changelog: 2.12-ok1.5
+
+---
+ grub-core/Makefile.core.def       |   7 -
+ grub-core/kern/efi/mm.c           |  32 ----
+ grub-core/loader/i386/efi/linux.c | 383 --------------------------------------
+ grub-core/loader/i386/linux.c     |  41 ----
+ include/grub/efi/efi.h            |   3 -
+ util/grub-mkconfig_lib.in         |  44 +++++
+ util/grub.d/10_linux.in           | 177 +++++++++++-------
+ util/grub.d/20_linux_xen.in       |  60 +++---
+ 8 files changed, 182 insertions(+), 565 deletions(-)
+ delete mode 100644 grub-core/loader/i386/efi/linux.c
+
+diff --git a/grub-core/Makefile.core.def b/grub-core/Makefile.core.def
+index c116ca8..53d40ae 100644
+--- a/grub-core/Makefile.core.def
++++ b/grub-core/Makefile.core.def
+@@ -1945,13 +1945,6 @@ module = {
+   enable = x86_64_efi;
+ };
+ 
+-module = {
+-  name = linuxefi;
+-  efi = loader/i386/efi/linux.c;
+-  enable = i386_efi;
+-  enable = x86_64_efi;
+-};
+-
+ module = {
+   name = chain;
+   efi = loader/efi/chainloader.c;
+diff --git a/grub-core/kern/efi/mm.c b/grub-core/kern/efi/mm.c
+index b27e820..6a6fba8 100644
+--- a/grub-core/kern/efi/mm.c
++++ b/grub-core/kern/efi/mm.c
+@@ -112,38 +112,6 @@ grub_efi_drop_alloc (grub_efi_physical_address_t address,
+     }
+ }
+ 
+-/* Allocate pages below a specified address */
+-void *
+-grub_efi_allocate_pages_max (grub_efi_physical_address_t max,
+-			     grub_efi_uintn_t pages)
+-{
+-  grub_efi_status_t status;
+-  grub_efi_boot_services_t *b;
+-  grub_efi_physical_address_t address = max;
+-
+-  if (max > 0xffffffff)
+-    return 0;
+-
+-  b = grub_efi_system_table->boot_services;
+-  status = efi_call_4 (b->allocate_pages, GRUB_EFI_ALLOCATE_MAX_ADDRESS, GRUB_EFI_LOADER_DATA, pages, &address);
+-
+-  if (status != GRUB_EFI_SUCCESS)
+-    return 0;
+-
+-  if (address == 0)
+-    {
+-      /* Uggh, the address 0 was allocated... This is too annoying,
+-	 so reallocate another one.  */
+-      address = max;
+-      status = efi_call_4 (b->allocate_pages, GRUB_EFI_ALLOCATE_MAX_ADDRESS, GRUB_EFI_LOADER_DATA, pages, &address);
+-      grub_efi_free_pages (0, pages);
+-      if (status != GRUB_EFI_SUCCESS)
+-	return 0;
+-    }
+-
+-  return (void *) ((grub_addr_t) address);
+-}
+-
+ /* Allocate pages. Return the pointer to the first of allocated pages.  */
+ void *
+ grub_efi_allocate_pages_real (grub_efi_physical_address_t address,
+diff --git a/grub-core/loader/i386/efi/linux.c b/grub-core/loader/i386/efi/linux.c
+deleted file mode 100644
+index 45b68c0..0000000
+--- a/grub-core/loader/i386/efi/linux.c
++++ /dev/null
+@@ -1,383 +0,0 @@
+-/*
+- *  GRUB  --  GRand Unified Bootloader
+- *  Copyright (C) 2012  Free Software Foundation, Inc.
+- *
+- *  GRUB is free software: you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation, either version 3 of the License, or
+- *  (at your option) any later version.
+- *
+- *  GRUB is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with GRUB.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#include <grub/loader.h>
+-#include <grub/file.h>
+-#include <grub/err.h>
+-#include <grub/misc.h>
+-#include <grub/types.h>
+-#include <grub/mm.h>
+-#include <grub/cpu/linux.h>
+-#include <grub/command.h>
+-#include <grub/i18n.h>
+-#include <grub/lib/cmdline.h>
+-#include <grub/linux.h>
+-#include <grub/efi/efi.h>
+-#include <grub/efi/sb.h>
+-
+-GRUB_MOD_LICENSE ("GPLv3+");
+-
+-static grub_dl_t my_mod;
+-static int loaded;
+-static void *kernel_mem;
+-static grub_uint64_t kernel_size;
+-static grub_uint8_t *initrd_mem;
+-static grub_uint32_t handover_offset;
+-struct linux_kernel_params *params;
+-static char *linux_cmdline;
+-
+-#define BYTES_TO_PAGES(bytes)   (((bytes) + 0xfff) >> 12)
+-
+-#define SHIM_LOCK_GUID \
+-  { 0x605dab50, 0xe046, 0x4300, {0xab, 0xb6, 0x3d, 0xd8, 0x10, 0xdd, 0x8b, 0x23} }
+-
+-struct grub_efi_shim_lock
+-{
+-  grub_efi_status_t (*verify) (void *buffer, grub_uint32_t size);
+-};
+-typedef struct grub_efi_shim_lock grub_efi_shim_lock_t;
+-
+-static grub_efi_boolean_t
+-grub_linuxefi_secure_validate (void *data, grub_uint32_t size)
+-{
+-  grub_efi_guid_t guid = SHIM_LOCK_GUID;
+-  grub_efi_shim_lock_t *shim_lock;
+-  grub_efi_status_t status;
+-
+-  if (grub_efi_get_secureboot () != GRUB_EFI_SECUREBOOT_MODE_ENABLED)
+-    {
+-      grub_dprintf ("linuxefi", "secure boot not enabled, not validating");
+-      return 1;
+-    }
+-
+-  grub_dprintf ("linuxefi", "Locating shim protocol\n");
+-  shim_lock = grub_efi_locate_protocol(&guid, NULL);
+-
+-  if (!shim_lock)
+-    {
+-      grub_dprintf ("linuxefi", "shim not available\n");
+-      return 0;
+-    }
+-
+-  grub_dprintf ("linuxefi", "Asking shim to verify kernel signature\n");
+-  status = shim_lock->verify(data, size);
+-  if (status == GRUB_EFI_SUCCESS)
+-    {
+-      grub_dprintf ("linuxefi", "Kernel signature verification passed\n");
+-      return 1;
+-    }
+-
+-  grub_dprintf ("linuxefi", "Kernel signature verification failed (0x%lx)\n",
+-		(unsigned long) status);
+-  return 0;
+-}
+-
+-typedef void(*handover_func)(void *, grub_efi_system_table_t *, struct linux_kernel_params *);
+-
+-static grub_err_t
+-grub_linuxefi_boot (void)
+-{
+-  handover_func hf;
+-  int offset = 0;
+-
+-#ifdef __x86_64__
+-  offset = 512;
+-#endif
+-
+-  hf = (handover_func)((char *)kernel_mem + handover_offset + offset);
+-
+-  asm volatile ("cli");
+-
+-  hf (grub_efi_image_handle, grub_efi_system_table, params);
+-
+-  /* Not reached */
+-  return GRUB_ERR_NONE;
+-}
+-
+-static grub_err_t
+-grub_linuxefi_unload (void)
+-{
+-  grub_dl_unref (my_mod);
+-  loaded = 0;
+-  if (initrd_mem)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)initrd_mem, BYTES_TO_PAGES(params->ramdisk_size));
+-  if (linux_cmdline)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)linux_cmdline, BYTES_TO_PAGES(params->cmdline_size + 1));
+-  if (kernel_mem)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)kernel_mem, BYTES_TO_PAGES(kernel_size));
+-  if (params)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)params, BYTES_TO_PAGES(16384));
+-  return GRUB_ERR_NONE;
+-}
+-
+-static grub_err_t
+-grub_cmd_initrd (grub_command_t cmd __attribute__ ((unused)),
+-                 int argc, char *argv[])
+-{
+-  grub_size_t size = 0;
+-  struct grub_linux_initrd_context initrd_ctx;
+-
+-  if (argc == 0)
+-    {
+-      grub_error (GRUB_ERR_BAD_ARGUMENT, N_("filename expected"));
+-      goto fail;
+-    }
+-
+-  if (!loaded)
+-    {
+-      grub_error (GRUB_ERR_BAD_ARGUMENT, N_("you need to load the kernel first"));
+-      goto fail;
+-    }
+-
+-  if (grub_initrd_init (argc, argv, &initrd_ctx))
+-    goto fail;
+-
+-  size = grub_get_initrd_size (&initrd_ctx);
+-
+-  initrd_mem = grub_efi_allocate_pages_max (0x3fffffff, BYTES_TO_PAGES(size));
+-
+-  if (!initrd_mem)
+-    {
+-      grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("can't allocate initrd"));
+-      goto fail;
+-    }
+-
+-  grub_dprintf ("linuxefi", "initrd_mem = %lx\n", (unsigned long) initrd_mem);
+-
+-  params->ramdisk_size = size;
+-  params->ramdisk_image = (grub_uint32_t)(grub_addr_t) initrd_mem;
+-
+-  if (grub_initrd_load (&initrd_ctx, argv, initrd_mem))
+-    goto fail;
+-
+-  params->ramdisk_size = size;
+-
+- fail:
+-  grub_initrd_close (&initrd_ctx);
+-
+-  if (initrd_mem && grub_errno)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)initrd_mem, BYTES_TO_PAGES(size));
+-
+-  return grub_errno;
+-}
+-
+-static grub_err_t
+-grub_cmd_linux (grub_command_t cmd __attribute__ ((unused)),
+-		int argc, char *argv[])
+-{
+-  grub_file_t file = 0;
+-  struct linux_i386_kernel_header lh;
+-  grub_ssize_t len, start, filelen;
+-  void *kernel;
+-
+-  grub_dl_ref (my_mod);
+-
+-  if (argc == 0)
+-    {
+-      grub_error (GRUB_ERR_BAD_ARGUMENT, N_("filename expected"));
+-      goto fail;
+-    }
+-
+-  file = grub_file_open (argv[0], GRUB_FILE_TYPE_LINUX_KERNEL);
+-  if (! file)
+-    goto fail;
+-
+-  filelen = grub_file_size (file);
+-
+-  kernel = grub_malloc(filelen);
+-
+-  if (!kernel)
+-    {
+-      grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("cannot allocate kernel buffer"));
+-      goto fail;
+-    }
+-
+-  if (grub_file_read (file, kernel, filelen) != filelen)
+-    {
+-      grub_error (GRUB_ERR_FILE_READ_ERROR, N_("Can't read kernel %s"), argv[0]);
+-      goto fail;
+-    }
+-
+-  if (! grub_linuxefi_secure_validate (kernel, filelen))
+-    {
+-      grub_error (GRUB_ERR_ACCESS_DENIED, N_("%s has invalid signature"), argv[0]);
+-      grub_free (kernel);
+-      goto fail;
+-    }
+-
+-  grub_file_seek (file, 0);
+-
+-  grub_free(kernel);
+-
+-  params = grub_efi_allocate_pages_max (0x3fffffff, BYTES_TO_PAGES(16384));
+-
+-  if (! params)
+-    {
+-      grub_error (GRUB_ERR_OUT_OF_MEMORY, "cannot allocate kernel parameters");
+-      goto fail;
+-    }
+-
+-  grub_dprintf ("linuxefi", "params = %lx\n", (unsigned long) params);
+-
+-  grub_memset (params, 0, 16384);
+-
+-  if (grub_file_read (file, &lh, sizeof (lh)) != sizeof (lh))
+-    {
+-      if (!grub_errno)
+-	grub_error (GRUB_ERR_BAD_OS, N_("premature end of file %s"),
+-		    argv[0]);
+-      goto fail;
+-    }
+-
+-  if (lh.boot_flag != grub_cpu_to_le16 (0xaa55))
+-    {
+-      grub_error (GRUB_ERR_BAD_OS, N_("invalid magic number"));
+-      goto fail;
+-    }
+-
+-  if (lh.setup_sects > GRUB_LINUX_MAX_SETUP_SECTS)
+-    {
+-      grub_error (GRUB_ERR_BAD_OS, N_("too many setup sectors"));
+-      goto fail;
+-    }
+-
+-  if (lh.version < grub_cpu_to_le16 (0x020b))
+-    {
+-      grub_error (GRUB_ERR_BAD_OS, N_("kernel too old"));
+-      goto fail;
+-    }
+-
+-  if (!lh.handover_offset)
+-    {
+-      grub_error (GRUB_ERR_BAD_OS, N_("kernel doesn't support EFI handover"));
+-      goto fail;
+-    }
+-
+-  linux_cmdline = grub_efi_allocate_pages_max(0x3fffffff,
+-					 BYTES_TO_PAGES(lh.cmdline_size + 1));
+-
+-  if (!linux_cmdline)
+-    {
+-      grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("can't allocate cmdline"));
+-      goto fail;
+-    }
+-
+-  grub_dprintf ("linuxefi", "linux_cmdline = %lx\n",
+-		(unsigned long) linux_cmdline);
+-
+-  grub_memcpy (linux_cmdline, LINUX_IMAGE, sizeof (LINUX_IMAGE));
+-  {
+-    grub_err_t err;
+-    err = grub_create_loader_cmdline (argc, argv,
+-				      linux_cmdline
+-				      + sizeof (LINUX_IMAGE) - 1,
+-				      lh.cmdline_size
+-				      - (sizeof (LINUX_IMAGE) - 1),
+-				      GRUB_VERIFY_KERNEL_CMDLINE);
+-    if (err)
+-      goto fail;
+-  }
+-
+-  lh.cmd_line_ptr = (grub_uint32_t)(grub_addr_t)linux_cmdline;
+-
+-  handover_offset = lh.handover_offset;
+-
+-  start = (lh.setup_sects + 1) * 512;
+-  len = grub_file_size(file) - start;
+-
+-  kernel_mem = grub_efi_allocate_fixed(lh.pref_address,
+-				       BYTES_TO_PAGES(lh.init_size));
+-
+-  if (!kernel_mem)
+-    kernel_mem = grub_efi_allocate_pages_max(0x3fffffff,
+-					     BYTES_TO_PAGES(lh.init_size));
+-
+-  if (!kernel_mem)
+-    {
+-      grub_error (GRUB_ERR_OUT_OF_MEMORY, N_("can't allocate kernel"));
+-      goto fail;
+-    }
+-  grub_errno = GRUB_ERR_NONE;
+-
+-  grub_dprintf ("linuxefi", "kernel_mem = %lx\n", (unsigned long) kernel_mem);
+-
+-  if (grub_file_seek (file, start) == (grub_off_t) -1)
+-    {
+-      grub_error (GRUB_ERR_BAD_OS, N_("premature end of file %s"),
+-		  argv[0]);
+-      goto fail;
+-    }
+-
+-  if (grub_file_read (file, kernel_mem, len) != len && !grub_errno)
+-    {
+-      grub_error (GRUB_ERR_BAD_OS, N_("premature end of file %s"),
+-		  argv[0]);
+-    }
+-
+-  if (grub_errno == GRUB_ERR_NONE)
+-    {
+-      grub_loader_set (grub_linuxefi_boot, grub_linuxefi_unload, 0);
+-      loaded = 1;
+-      lh.code32_start = (grub_uint32_t)(grub_addr_t) kernel_mem;
+-    }
+-
+-  grub_memcpy (params, &lh, 2 * 512);
+-
+-  params->type_of_loader = 0x21;
+-
+- fail:
+-
+-  if (file)
+-    grub_file_close (file);
+-
+-  if (grub_errno != GRUB_ERR_NONE)
+-    {
+-      grub_dl_unref (my_mod);
+-      loaded = 0;
+-    }
+-
+-  if (linux_cmdline && !loaded)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)linux_cmdline, BYTES_TO_PAGES(lh.cmdline_size + 1));
+-
+-  if (kernel_mem && !loaded)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)kernel_mem, BYTES_TO_PAGES(kernel_size));
+-
+-  if (params && !loaded)
+-    grub_efi_free_pages((grub_efi_physical_address_t)(grub_addr_t)params, BYTES_TO_PAGES(16384));
+-
+-  return grub_errno;
+-}
+-
+-static grub_command_t cmd_linux, cmd_initrd;
+-
+-GRUB_MOD_INIT(linuxefi)
+-{
+-  cmd_linux =
+-    grub_register_command ("linuxefi", grub_cmd_linux,
+-                           0, N_("Load Linux."));
+-  cmd_initrd =
+-    grub_register_command ("initrdefi", grub_cmd_initrd,
+-                           0, N_("Load initrd."));
+-  my_mod = mod;
+-}
+-
+-GRUB_MOD_FINI(linuxefi)
+-{
+-  grub_unregister_command (cmd_linux);
+-  grub_unregister_command (cmd_initrd);
+-}
+diff --git a/grub-core/loader/i386/linux.c b/grub-core/loader/i386/linux.c
+index 1c4ecef..997647a 100644
+--- a/grub-core/loader/i386/linux.c
++++ b/grub-core/loader/i386/linux.c
+@@ -78,8 +78,6 @@ static grub_size_t maximal_cmdline_size;
+ static struct linux_kernel_params linux_params;
+ static char *linux_cmdline;
+ #ifdef GRUB_MACHINE_EFI
+-static int using_linuxefi;
+-static grub_command_t initrdefi_cmd;
+ static grub_efi_uintn_t efi_mmap_size;
+ #else
+ static const grub_size_t efi_mmap_size = 0;
+@@ -661,39 +659,6 @@ grub_cmd_linux (grub_command_t cmd __attribute__ ((unused)),
+ 
+   grub_dl_ref (my_mod);
+ 
+-#ifdef GRUB_MACHINE_EFI
+-  using_linuxefi = 0;
+-  if (grub_efi_get_secureboot () == GRUB_EFI_SECUREBOOT_MODE_ENABLED)
+-    {
+-      /* linuxefi requires a successful signature check and then hand over
+-	 to the kernel without calling ExitBootServices. */
+-      grub_dl_t mod;
+-      grub_command_t linuxefi_cmd;
+-
+-      grub_dprintf ("linux", "Secure Boot enabled: trying linuxefi\n");
+-
+-      mod = grub_dl_load ("linuxefi");
+-      if (mod)
+-	{
+-	  grub_dl_ref (mod);
+-	  linuxefi_cmd = grub_command_find ("linuxefi");
+-	  initrdefi_cmd = grub_command_find ("initrdefi");
+-	  if (linuxefi_cmd && initrdefi_cmd)
+-	    {
+-	      (linuxefi_cmd->func) (linuxefi_cmd, argc, argv);
+-	      if (grub_errno == GRUB_ERR_NONE)
+-		{
+-		  grub_dprintf ("linux", "Handing off to linuxefi\n");
+-		  using_linuxefi = 1;
+-		  return GRUB_ERR_NONE;
+-		}
+-	      grub_dprintf ("linux", "linuxefi failed (%d)\n", grub_errno);
+-	      goto fail;
+-	    }
+-	}
+-    }
+-#endif
+-
+   if (argc == 0)
+     {
+       grub_error (GRUB_ERR_BAD_ARGUMENT, N_("filename expected"));
+@@ -1077,12 +1042,6 @@ grub_cmd_initrd (grub_command_t cmd __attribute__ ((unused)),
+   grub_err_t err;
+   struct grub_linux_initrd_context initrd_ctx = { 0, 0, 0 };
+ 
+-#ifdef GRUB_MACHINE_EFI
+-  /* If we're using linuxefi, just forward to initrdefi.  */
+-  if (using_linuxefi && initrdefi_cmd)
+-    return (initrdefi_cmd->func) (initrdefi_cmd, argc, argv);
+-#endif
+-
+   if (argc == 0)
+     {
+       grub_error (GRUB_ERR_BAD_ARGUMENT, N_("filename expected"));
+diff --git a/include/grub/efi/efi.h b/include/grub/efi/efi.h
+index d2645e4..a6aab7c 100644
+--- a/include/grub/efi/efi.h
++++ b/include/grub/efi/efi.h
+@@ -61,9 +61,6 @@ EXPORT_FUNC(grub_efi_allocate_fixed) (grub_efi_physical_address_t address,
+ 				      grub_efi_uintn_t pages);
+ void *
+ EXPORT_FUNC(grub_efi_allocate_any_pages) (grub_efi_uintn_t pages);
+-void *
+-EXPORT_FUNC(grub_efi_allocate_pages_max) (grub_efi_physical_address_t max,
+-					  grub_efi_uintn_t pages);
+ void EXPORT_FUNC(grub_efi_free_pages) (grub_efi_physical_address_t address,
+ 				       grub_efi_uintn_t pages);
+ grub_efi_uintn_t EXPORT_FUNC(grub_efi_find_mmap_size) (void);
+diff --git a/util/grub-mkconfig_lib.in b/util/grub-mkconfig_lib.in
+index 3c2021d..3d68ddd 100644
+--- a/util/grub-mkconfig_lib.in
++++ b/util/grub-mkconfig_lib.in
+@@ -353,6 +353,50 @@ grub_fmt () {
+   fi
+ }
+ 
++version_find_latest ()
++{
++   version_find_latest_a=""
++   for i in "$@" ; do
++     if version_test_gt "$i" "$version_find_latest_a" ; then
++        version_find_latest_a="$i"
++     fi
++   done
++   echo "$version_find_latest_a"
++}
++
++
++version_test_gt ()
++{
++  version_test_gt_sedexp="s/[^-]*-//;s/[._-]\(pre\|rc\|test\|git\|old\|trunk\)/~\1/g"
++  version_test_gt_a="`echo "$1" | sed -e "$version_test_gt_sedexp"`"
++  version_test_gt_b="`echo "$2" | sed -e "$version_test_gt_sedexp"`"
++  version_test_gt_cmp=gt
++  if [ "x$version_test_gt_b" = "x" ] ; then
++    return 0
++  fi
++
++  # GRUB_FLAVOUR_ORDER is an ordered list of kernels, in decreasing
++  # priority. Any items in the list take precedence over other kernels,
++  # and earlier flavours are preferred over later ones.
++  for flavour in ${GRUB_FLAVOUR_ORDER:-}; do
++    version_test_gt_a_preferred=$(echo "$version_test_gt_a" | grep --  "-[0-9]*-$flavour\$")
++    version_test_gt_b_preferred=$(echo "$version_test_gt_b" | grep --  "-[0-9]*-$flavour\$")
++
++    if [ -n "$version_test_gt_a_preferred" -a -z "$version_test_gt_b_preferred" ] ; then
++      return 0
++    elif [ -z "$version_test_gt_a_preferred" -a -n "$version_test_gt_b_preferred" ] ; then
++      return 1
++    fi
++  done
++
++  case "$version_test_gt_a:$version_test_gt_b" in
++    *.old:*.old) ;;
++    *.old:*) version_test_gt_a="`echo "$version_test_gt_a" | sed -e 's/\.old$//'`" ; version_test_gt_cmp=gt ;;
++    *:*.old) version_test_gt_b="`echo "$version_test_gt_b" | sed -e 's/\.old$//'`" ; version_test_gt_cmp=ge ;;
++  esac
++  dpkg --compare-versions "$version_test_gt_a" "$version_test_gt_cmp" "$version_test_gt_b"
++  return "$?"
++}
+ grub_tab="	"
+ 
+ grub_add_tab () {
+diff --git a/util/grub.d/10_linux.in b/util/grub.d/10_linux.in
+index 7d84312..2358a24 100644
+--- a/util/grub.d/10_linux.in
++++ b/util/grub.d/10_linux.in
+@@ -32,6 +32,7 @@ export TEXTDOMAIN=@PACKAGE@
+ export TEXTDOMAINDIR="@localedir@"
+ 
+ CLASS="--class gnu-linux --class gnu --class os"
++SUPPORTED_INITS="sysvinit:/lib/sysvinit/init systemd:/lib/systemd/systemd upstart:/sbin/upstart"
+ 
+ if [ "x${GRUB_DISTRIBUTOR}" = "x" ] ; then
+   OS=GNU/Linux
+@@ -60,11 +61,9 @@ case ${GRUB_DEVICE} in
+   ;;
+ esac
+ 
+-: ${GRUB_CMDLINE_LINUX_RECOVERY:=single}
+-
+ # Default to disabling partition uuid support to maintian compatibility with
+ # older kernels.
+-: ${GRUB_DISABLE_LINUX_PARTUUID=true}
++GRUB_DISABLE_LINUX_PARTUUID=${GRUB_DISABLE_LINUX_PARTUUID-true}
+ 
+ # get_dm_field_for_dev /dev/dm-0 uuid -> get the device mapper UUID for /dev/dm-0
+ # get_dm_field_for_dev /dev/dm-1 name -> get the device mapper name for /dev/dm-1
+@@ -144,9 +143,9 @@ esac
+ title_correction_code=
+ 
+ if [ -x /lib/recovery-mode/recovery-menu ]; then
+-    GRUB_CMDLINE_LINUX_RECOVERY="${GRUB_CMDLINE_LINUX_RECOVERY} recovery"
++    GRUB_CMDLINE_LINUX_RECOVERY=recovery
+ else
+-    GRUB_CMDLINE_LINUX_RECOVERY="${GRUB_CMDLINE_LINUX_RECOVERY} single"
++    GRUB_CMDLINE_LINUX_RECOVERY=single
+ fi
+ if [ "$ubuntu_recovery" = 1 ]; then
+     GRUB_CMDLINE_LINUX_RECOVERY="$GRUB_CMDLINE_LINUX_RECOVERY nomodeset"
+@@ -170,6 +169,18 @@ EOF
+    echo "set partuuid=${GRUB_FORCE_PARTUUID}"
+ fi
+ 
++
++if [ -s /etc/initramfs-tools/conf.d/resume ];then
++  resume_dev=$(cat /etc/initramfs-tools/conf.d/resume 2>/dev/null) || true
++else
++  resume_dev=$(cat /etc/fstab |grep -v "^#"|grep swap|head -n 1| awk '{print $1}') || true
++fi
++
++if [ -n "$resume_dev" ];then
++  GRUB_CMDLINE_LINUX_DEFAULT="$GRUB_CMDLINE_LINUX_DEFAULT resume=${resume_dev#*RESUME=}"
++fi
++
++
+ linux_entry ()
+ {
+   os="$1"
+@@ -184,6 +195,14 @@ linux_entry ()
+       case $type in
+ 	  recovery)
+ 	      title="$(gettext_printf "%s, with Linux %s (%s)" "${os}" "${version}" "$(gettext "${GRUB_RECOVERY_TITLE}")")" ;;
++          backup)
++             title="$(gettext_printf "%s (backup mode)" "${os}")" ;;
++          restore)
++             title="$(gettext_printf "%s (restore mode)" "${os}")" ;;
++          restore-retain-userdata)
++             title="$(gettext_printf "%s (restore-retain-userdata mode)" "${os}")" ;;
++	  init-*)
++	      title="$(gettext_printf "%s, with Linux %s (%s)" "${os}" "${version}" "${type#init-}")" ;;
+ 	  *)
+ 	      title="$(gettext_printf "%s, with Linux %s" "${os}" "${version}")" ;;
+       esac
+@@ -238,66 +257,72 @@ linux_entry ()
+ 	echo	'$(echo "$message" | grub_quote)'
+ EOF
+   fi
+-  # We have initrd and PARTUUID is set - we try to boot without initrd, and fallback to using it
+-  # if it fails.
+-  # "panic=-1" means "on panic reboot immediately". "panic=0" disables the reboot behavior.
+-  if [ x"$GRUB_FORCE_PARTUUID" != x ]; then
+-      linux_root_device_thisversion="PARTUUID=${GRUB_FORCE_PARTUUID}"
+-  fi
+-  message="$(gettext_printf "Loading initial ramdisk ...")"
+-  initrdlessfail_msg="$(gettext_printf "GRUB_FORCE_PARTUUID set, initrdless boot failed. Attempting with initrd.")"
+-  initrdlesstry_msg="$(gettext_printf "GRUB_FORCE_PARTUUID set, attempting initrdless boot.")"
+-  initrd_path=
+-  for i in ${initrd}; do
+-      initrd_path="${initrd_path} ${rel_dirname}/${i}"
+-  done
+-  initrd_path_only_early=
+-  for i in ${initrd_early}; do
+-      initrd_path_only_early="${initrd_path_only_early} ${rel_dirname}/${i}"
+-  done
+-  if test -n "${initrd}" && [ x"$GRUB_FORCE_PARTUUID" != x ]; then
+-      sed "s/^/$submenu_indentation/" << EOF
+-	if [ "\${initrdfail}" = 1 ]; then
+-		echo	'$(echo "$initrdlessfail_msg" | grub_quote)'
+-		linux	${rel_dirname}/${basename} root=${linux_root_device_thisversion} ro ${args}
++  if test -d /sys/firmware/efi && test -e "${linux}.efi.signed"; then
++    sed "s/^/$submenu_indentation/" << EOF
++	linux	${rel_dirname}/${basename}.efi.signed root=${linux_root_device_thisversion} ro ${args}
+ EOF
+-      if [ x"$quiet_boot" = x0 ] || [ x"$type" != xsimple ]; then
++  else
++    # We have initrd and PARTUUID is set - we try to boot without initrd, and fallback to using it
++    # if it fails.
++    # "panic=-1" means "on panic reboot immediately". "panic=0" disables the reboot behavior.
++    if [ x"$GRUB_FORCE_PARTUUID" != x ]; then
++        linux_root_device_thisversion="PARTUUID=${GRUB_FORCE_PARTUUID}"
++    fi
++    message="$(gettext_printf "Loading initial ramdisk ...")"
++    initrdlessfail_msg="$(gettext_printf "GRUB_FORCE_PARTUUID set, initrdless boot failed. Attempting with initrd.")"
++    initrdlesstry_msg="$(gettext_printf "GRUB_FORCE_PARTUUID set, attempting initrdless boot.")"
++    initrd_path=
++    for i in ${initrd}; do
++        initrd_path="${initrd_path} ${rel_dirname}/${i}"
++    done
++    initrd_path_only_early=
++    for i in ${initrd_early}; do
++        initrd_path_only_early="${initrd_path_only_early} ${rel_dirname}/${i}"
++    done
++    if test -n "${initrd}" && [ x"$GRUB_FORCE_PARTUUID" != x ]; then
+         sed "s/^/$submenu_indentation/" << EOF
+-		echo	'$(echo "$message" | grub_quote)'
++	if [ "\${initrdfail}" = 1 ]; then
++	  echo	'$(echo "$initrdlessfail_msg" | grub_quote)'
++	  linux	${rel_dirname}/${basename} root=${linux_root_device_thisversion} ro ${args}
+ EOF
+-      fi
+-      sed "s/^/$submenu_indentation/" << EOF
+-		initrd	$(echo $initrd_path)
+-	else
+-		echo	'$(echo "$initrdlesstry_msg" | grub_quote)'
+-		linux	${rel_dirname}/${basename} root=${linux_root_device_thisversion} ro ${args} panic=-1
++        if [ x"$quiet_boot" = x0 ] || [ x"$type" != xsimple ]; then
++          sed "s/^/$submenu_indentation/" << EOF
++	  echo	'$(echo "$message" | grub_quote)'
+ EOF
+-      if [ -n "$initrd_path_only_early" ]; then
++        fi
+         sed "s/^/$submenu_indentation/" << EOF
+-	initrd	$(echo $initrd_path_only_early)
++	  initrd	$(echo $initrd_path)
++	else
++	  echo	'$(echo "$initrdlesstry_msg" | grub_quote)'
++	  linux	${rel_dirname}/${basename} root=${linux_root_device_thisversion} ro ${args} panic=-1
+ EOF
+-      fi
+-      sed "s/^/$submenu_indentation/" << EOF
++        if [ -n "$initrd_path_only_early" ]; then
++          sed "s/^/$submenu_indentation/" << EOF
++	  initrd	$(echo $initrd_path_only_early)
++EOF
++        fi
++        sed "s/^/$submenu_indentation/" << EOF
+ 	fi
+ 	initrdfail
+ EOF
+-  else
+-  # We don't have initrd or we don't want to set PARTUUID. Don't try initrd-less boot with fallback.
+-      sed "s/^/$submenu_indentation/" << EOF
++    else
++    # We don't have initrd or we don't want to set PARTUUID. Don't try initrd-less boot with fallback.
++        sed "s/^/$submenu_indentation/" << EOF
+ 	linux	${rel_dirname}/${basename} root=${linux_root_device_thisversion} ro ${args}
+ EOF
+-      if test -n "${initrd}"; then
+-          # We do have initrd - let's use it at boot.
+-          # TRANSLATORS: ramdisk isn't identifier. Should be translated.
+-          if [ x"$quiet_boot" = x0 ] || [ x"$type" != xsimple ]; then
+-            sed "s/^/$submenu_indentation/" << EOF
++        if test -n "${initrd}"; then
++            # We do have initrd - let's use it at boot.
++            # TRANSLATORS: ramdisk isn't identifier. Should be translated.
++            if [ x"$quiet_boot" = x0 ] || [ x"$type" != xsimple ]; then
++              sed "s/^/$submenu_indentation/" << EOF
+ 	echo	'$(echo "$message" | grub_quote)'
+ EOF
+-          fi
+-          sed "s/^/$submenu_indentation/" << EOF
++            fi
++            sed "s/^/$submenu_indentation/" << EOF
+ 	initrd	$(echo $initrd_path)
+ EOF
+-      fi
++        fi
++    fi
+     if test -n "${dtb}" ; then
+       if [ x"$quiet_boot" = x0 ] || [ x"$type" != xsimple ]; then
+         message="$(gettext_printf "Loading device tree blob...")"
+@@ -398,19 +423,16 @@ EOF
+ # yet, so it's empty. In a submenu it will be equal to '\t' (one tab).
+ submenu_indentation=""
+ 
+-# Perform a reverse version sort on the entire list.
+-# Temporarily replace the '.old' suffix by ' 1' and append ' 2' for all
+-# other files to order the '.old' files after their non-old counterpart
+-# in reverse-sorted order.
+-
+-reverse_sorted_list=$(echo $list | tr ' ' '\n' | sed -e 's/\.old$/ 1/; / 1$/! s/$/ 2/' | version_sort -r | sed -e 's/ 1$/.old/; s/ 2$//')
+-
+-if [ "x$GRUB_TOP_LEVEL" != x ]; then
+-  reverse_sorted_list=$(grub_move_to_front "$GRUB_TOP_LEVEL" ${reverse_sorted_list})
+-fi
+-
+ is_top_level=true
+-for linux in ${reverse_sorted_list}; do
++while [ "x$list" != "x" ] ; do
++  linux=`version_find_latest $list`
++  case $linux in
++    *.efi.signed)
++      # We handle these in linux_entry.
++      list=`echo $list | tr ' ' '\n' | grep -vx $linux | tr '\n' ' '`
++      continue
++      ;;
++  esac
+   gettext_printf "Found linux image: %s\n" "$linux" >&2
+   basename=`basename $linux`
+   dirname=`dirname $linux`
+@@ -428,10 +450,8 @@ for linux in ${reverse_sorted_list}; do
+   done
+ 
+   initrd_real=
+-  for i in "initrd.img-${version}" "initrd-${version}.img" \
+-	   "initrd-${alt_version}.img.old" "initrd-${version}.gz" \
+-	   "initrd-${alt_version}.gz.old" "initrd-${version}" \
+-	   "initramfs-${version}.img" "initramfs-${alt_version}.img.old" \
++  for i in "initrd.img-${version}" "initrd-${version}.img" "initrd-${version}.gz" \
++	   "initrd-${version}" "initramfs-${version}.img" \
+ 	   "initrd.img-${alt_version}" "initrd-${alt_version}.img" \
+ 	   "initrd-${alt_version}" "initramfs-${alt_version}.img" \
+ 	   "initramfs-genkernel-${version}" \
+@@ -505,6 +525,22 @@ for linux in ${reverse_sorted_list}; do
+     if [ -z "$boot_device_id" ]; then
+ 	boot_device_id="$(grub_get_device_id "${GRUB_DEVICE}")"
+     fi
++    ########## for backup and restore and restore-retain-userdata ##########
++    if [ -f /etc/.bootinfo ] && [ -f /usr/bin/kybackup ];then
++      RECOVERY_DEV_UUID=$(cat /etc/.bootinfo | grep -Ev "^#|^$"|grep RECOVERY_DEV_UUID | awk '{split($0,arr,"=");print arr[2]}')
++      SNAPSHOT_ENABLED=$(cat /etc/.bootinfo | grep -Ev "^#|^$"|grep SNAPSHOT_ENABLED | awk '{split($0,arr,"=");print arr[2]}')
++      if [ -n "$RECOVERY_DEV_UUID" ] && [ $SNAPSHOT_ENABLED -eq 1 ];then
++        has_backup=true
++        echo "  submenu '$(gettext_printf "Backup and Restore Options for %s" "${OS}" | grub_quote)' --unrestricted \$menuentry_id_option 'gnulinux-advanced-$boot_device_id' {"
++        linux_entry "${OS}" "${version}" backup  \
++            "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT} ${GRUB_CMDLINE_LINUX_SECURITY} selinux=0 backup ${GRUB_CMDLINE_LINUX_SECURITY_BACKUP}"
++        linux_entry "${OS}" "${version}" restore  \
++            "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT} ${GRUB_CMDLINE_LINUX_SECURITY} selinux=0 restore ${GRUB_CMDLINE_LINUX_SECURITY_RESTORE}"
++        linux_entry "${OS}" "${version}" restore-retain-userdata  \
++            "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT} ${GRUB_CMDLINE_LINUX_SECURITY} selinux=0 restore-retain-userdata ${GRUB_CMDLINE_LINUX_SECURITY_USERDATA}"
++        echo '  }'
++      fi
++    fi
+     # TRANSLATORS: %s is replaced with an OS name
+     echo "submenu '$(gettext_printf "Advanced options for %s" "${OS}" | grub_quote)' \$menuentry_id_option 'gnulinux-advanced-$boot_device_id' {"
+     is_top_level=false
+@@ -512,10 +548,19 @@ for linux in ${reverse_sorted_list}; do
+ 
+   linux_entry "${OS}" "${version}" advanced \
+               "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT}"
++  for supported_init in ${SUPPORTED_INITS}; do
++    init_path="${supported_init#*:}"
++    if [ -x "${init_path}" ] && [ "$(readlink -f /sbin/init)" != "$(readlink -f "${init_path}")" ]; then
++      linux_entry "${OS}" "${version}" "init-${supported_init%%:*}" \
++		  "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT} init=${init_path}"
++    fi
++  done
+   if [ "x${GRUB_DISABLE_RECOVERY}" != "xtrue" ]; then
+     linux_entry "${OS}" "${version}" recovery \
+                 "${GRUB_CMDLINE_LINUX_RECOVERY} ${GRUB_CMDLINE_LINUX}"
+   fi
++
++  list=`echo $list | tr ' ' '\n' | fgrep -vx "$linux" | tr '\n' ' '`
+ done
+ 
+ # If at least one kernel was found, then we need to
+diff --git a/util/grub.d/20_linux_xen.in b/util/grub.d/20_linux_xen.in
+index bbd5e45..a12780e 100644
+--- a/util/grub.d/20_linux_xen.in
++++ b/util/grub.d/20_linux_xen.in
+@@ -27,6 +27,7 @@ export TEXTDOMAIN=@PACKAGE@
+ export TEXTDOMAINDIR="@localedir@"
+ 
+ CLASS="--class gnu-linux --class gnu --class os --class xen"
++SUPPORTED_INITS="sysvinit:/lib/sysvinit/init systemd:/lib/systemd/systemd upstart:/sbin/upstart"
+ 
+ if [ "x${GRUB_DISTRIBUTOR}" = "x" ] ; then
+   OS=GNU/Linux
+@@ -48,11 +49,9 @@ case ${GRUB_DEVICE} in
+   ;;
+ esac
+ 
+-: ${GRUB_CMDLINE_LINUX_RECOVERY:=single}
+-
+ # Default to disabling partition uuid support to maintian compatibility with
+ # older kernels.
+-: ${GRUB_DISABLE_LINUX_PARTUUID=true}
++GRUB_DISABLE_LINUX_PARTUUID=${GRUB_DISABLE_LINUX_PARTUUID-true}
+ 
+ # btrfs may reside on multiple devices. We cannot pass them as value of root= parameter
+ # and mounting btrfs requires user space scanning, so force UUID in this case.
+@@ -110,7 +109,6 @@ linux_entry_xsm ()
+   xsm="$7"
+   # If user wants to enable XSM support, make sure there's
+   # corresponding policy file.
+-  xenpolicy=
+   if ${xsm} ; then
+       xenpolicy="xenpolicy-$xen_version"
+       if test ! -e "${xen_dirname}/${xenpolicy}" ; then
+@@ -126,6 +124,8 @@ linux_entry_xsm ()
+   if [ x$type != xsimple ] ; then
+       if [ x$type = xrecovery ] ; then
+ 	  title="$(gettext_printf "%s, with Xen %s and Linux %s (%s)" "${os}" "${xen_version}" "${version}" "$(gettext "${GRUB_RECOVERY_TITLE}")")"
++      elif [ "${type#init-}" != "$type" ] ; then
++	  title="$(gettext_printf "%s, with Xen %s and Linux %s (%s)" "${os}" "${xen_version}" "${version}" "${type#init-}")"
+       else
+ 	  title="$(gettext_printf "%s, with Xen %s and Linux %s" "${os}" "${xen_version}" "${version}")"
+       fi
+@@ -166,12 +166,12 @@ EOF
+     message="$(gettext_printf "Loading initial ramdisk ...")"
+     initrd_path=
+     for i in ${initrd}; do
+-       initrd_path="${rel_dirname}/${i}"
+-       sed "s/^/$submenu_indentation/" << EOF
++       initrd_path="${initrd_path} ${rel_dirname}/${i}"
++    done
++    sed "s/^/$submenu_indentation/" << EOF
+ 	echo	'$(echo "$message" | grub_quote)'
+ 	${module_loader}	--nounzip   $(echo $initrd_path)
+ EOF
+-    done
+   fi
+   if ${xsm} && test -n "${xenpolicy}" ; then
+     message="$(gettext_printf "Loading XSM policy ...")"
+@@ -241,24 +241,11 @@ esac
+ # yet, so it's empty. In a submenu it will be equal to '\t' (one tab).
+ submenu_indentation=""
+ 
+-# Perform a reverse version sort on the entire xen_list and linux_list.
+-# Temporarily replace the '.old' suffix by ' 1' and append ' 2' for all
+-# other files to order the '.old' files after their non-old counterpart
+-# in reverse-sorted order.
+-
+-reverse_sorted_xen_list=$(echo ${xen_list} | tr ' ' '\n' | sed -e 's/\.old$/ 1/; / 1$/! s/$/ 2/' | version_sort -r | sed -e 's/ 1$/.old/; s/ 2$//')
+-reverse_sorted_linux_list=$(echo ${linux_list} | tr ' ' '\n' | sed -e 's/\.old$/ 1/; / 1$/! s/$/ 2/' | version_sort -r | sed -e 's/ 1$/.old/; s/ 2$//')
+-
+-if [ "x$GRUB_TOP_LEVEL_XEN" != x ]; then
+-  reverse_sorted_xen_list=$(grub_move_to_front "$GRUB_TOP_LEVEL_XEN" ${reverse_sorted_xen_list})
+-fi
+-if [ "x$GRUB_TOP_LEVEL" != x ]; then
+-  reverse_sorted_linux_list=$(grub_move_to_front "$GRUB_TOP_LEVEL" ${reverse_sorted_linux_list})
+-fi
+-
+ is_top_level=true
+ 
+-for current_xen in ${reverse_sorted_xen_list}; do
++while [ "x${xen_list}" != "x" ] ; do
++    list="${linux_list}"
++    current_xen=`version_find_latest $xen_list`
+     xen_basename=`basename ${current_xen}`
+     xen_dirname=`dirname ${current_xen}`
+     rel_xen_dirname=`make_system_path_relative_to_its_root $xen_dirname`
+@@ -290,7 +277,8 @@ for current_xen in ${reverse_sorted_xen_list}; do
+        fi
+     done
+ 
+-    for linux in ${reverse_sorted_linux_list}; do
++    while [ "x$list" != "x" ] ; do
++	linux=`version_find_latest $list`
+ 	gettext_printf "Found linux image: %s\n" "$linux" >&2
+ 	basename=`basename $linux`
+ 	dirname=`dirname $linux`
+@@ -300,10 +288,8 @@ for current_xen in ${reverse_sorted_xen_list}; do
+ 	linux_root_device_thisversion="${LINUX_ROOT_DEVICE}"
+ 
+ 	initrd_real=
+-	for i in "initrd.img-${version}" "initrd-${version}.img" \
+-	   "initrd-${alt_version}.img.old" "initrd-${version}.gz" \
+-	   "initrd-${alt_version}.gz.old" "initrd-${version}" \
+-	   "initramfs-${version}.img" "initramfs-${alt_version}.img.old" \
++	for i in "initrd.img-${version}" "initrd-${version}.img" "initrd-${version}.gz" \
++	   "initrd-${version}" "initramfs-${version}.img" \
+ 	   "initrd.img-${alt_version}" "initrd-${alt_version}.img" \
+ 	   "initrd-${alt_version}" "initramfs-${alt_version}.img" \
+ 	   "initramfs-genkernel-${version}" \
+@@ -318,10 +304,7 @@ for current_xen in ${reverse_sorted_xen_list}; do
+ 
+ 	initrd=
+ 	if test -n "${initrd_early}" || test -n "${initrd_real}"; then
+-	    # Xen assumes the real initrd is the first module after the kernel.
+-	    # Additional (later) initrds can also be used for microcode update,
+-	    # with Xen option 'ucode=<scan|module number> (non-default anyway).
+-	    initrd="${initrd_real} ${initrd_early}"
++	    initrd="${initrd_early} ${initrd_real}"
+ 
+ 	    initrd_display=
+ 	    for i in ${initrd}; do
+@@ -366,14 +349,25 @@ for current_xen in ${reverse_sorted_xen_list}; do
+ 
+ 	linux_entry "${OS}" "${version}" "${xen_version}" advanced \
+ 	    "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT}" "${GRUB_CMDLINE_XEN} ${GRUB_CMDLINE_XEN_DEFAULT}"
++	for supported_init in ${SUPPORTED_INITS}; do
++	    init_path="${supported_init#*:}"
++	    if [ -x "${init_path}" ] && [ "$(readlink -f /sbin/init)" != "$(readlink -f "${init_path}")" ]; then
++		linux_entry "${OS}" "${version}" "${xen_version}" "init-${supported_init%%:*}" \
++		    "${GRUB_CMDLINE_LINUX} ${GRUB_CMDLINE_LINUX_DEFAULT} init=${init_path}" "${GRUB_CMDLINE_XEN} ${GRUB_CMDLINE_XEN_DEFAULT}"
++
++	    fi
++	done
+ 	if [ "x${GRUB_DISABLE_RECOVERY}" != "xtrue" ]; then
+ 	    linux_entry "${OS}" "${version}" "${xen_version}" recovery \
+-		"${GRUB_CMDLINE_LINUX_RECOVERY} ${GRUB_CMDLINE_LINUX}" "${GRUB_CMDLINE_XEN}"
++		"single ${GRUB_CMDLINE_LINUX}" "${GRUB_CMDLINE_XEN}"
+ 	fi
++
++	list=`echo $list | tr ' ' '\n' | fgrep -vx "$linux" | tr '\n' ' '`
+     done
+     if [ x"$is_top_level" != xtrue ]; then
+ 	echo '	}'
+     fi
++    xen_list=`echo $xen_list | tr ' ' '\n' | fgrep -vx "$current_xen" | tr '\n' ' '`
+ done
+ 
+ # If at least one kernel was found, then we need to

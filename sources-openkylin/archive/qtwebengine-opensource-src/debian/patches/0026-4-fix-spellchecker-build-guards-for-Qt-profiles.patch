@@ -1,0 +1,104 @@
+From: hanpinlong <hanpinlong@kylinos.cn>
+Date: Mon, 3 Aug 2026 02:17:56 +0000
+Subject: !4 fix spellchecker build guards for Qt profiles
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Merge pull request !4 from 张攀/fix/huanghe-spellcheck-vtable
+---
+ .../chrome/browser/spellchecker/spellcheck_service.cc   |  2 +-
+ .../components/spellcheck/spellcheck_buildflags.h       | 17 +++++------------
+ .../chromium/content/public/browser/browser_context.h   |  2 +-
+ src/core/profile_qt.cpp                                 |  4 ++--
+ src/core/profile_qt.h                                   |  2 +-
+ 5 files changed, 10 insertions(+), 17 deletions(-)
+
+diff --git a/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc b/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc
+index 32942bd..8544626 100644
+--- a/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc
++++ b/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc
+@@ -566,7 +566,7 @@ void SpellcheckService::OnHunspellDictionaryDownloadSuccess(
+ 
+ void SpellcheckService::OnHunspellDictionaryDownloadFailure(
+     const std::string& language) {
+-#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
++#ifdef TOOLKIT_QT
+     DCHECK_CURRENTLY_ON(BrowserThread::UI);
+     context_->FailedToLoadDictionary(language);
+ #endif
+diff --git a/src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h b/src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h
+index 26a360c..fe9dd14 100644
+--- a/src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h
++++ b/src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h
+@@ -8,18 +8,11 @@
+ #ifndef COMPONENTS_SPELLCHECK_SPELLCHECK_BUILDFLAGS_H_
+ #define COMPONENTS_SPELLCHECK_SPELLCHECK_BUILDFLAGS_H_
+ 
+-// Direct defines for use with defined() in #if
+-#define ENABLE_SPELLCHECK 1
+-#define USE_BROWSER_SPELLCHECKER 0
+-#define USE_RENDERER_SPELLCHECKER 1
+-#define ENABLE_SPELLING_SERVICE 1
+-#define HAS_SPELLCHECK_PANEL 0
+-
+ // Function-style defines for use with BUILDFLAG macro
+-#define BUILDFLAG_INTERNAL_ENABLE_SPELLCHECK () 1
+-#define BUILDFLAG_INTERNAL_USE_BROWSER_SPELLCHECKER () 0
+-#define BUILDFLAG_INTERNAL_USE_RENDERER_SPELLCHECKER () 1
+-#define BUILDFLAG_INTERNAL_ENABLE_SPELLING_SERVICE () 1
+-#define BUILDFLAG_INTERNAL_HAS_SPELLCHECK_PANEL () 0
++#define BUILDFLAG_INTERNAL_ENABLE_SPELLCHECK() (1)
++#define BUILDFLAG_INTERNAL_USE_BROWSER_SPELLCHECKER() (0)
++#define BUILDFLAG_INTERNAL_USE_RENDERER_SPELLCHECKER() (1)
++#define BUILDFLAG_INTERNAL_ENABLE_SPELLING_SERVICE() (1)
++#define BUILDFLAG_INTERNAL_HAS_SPELLCHECK_PANEL() (0)
+ 
+ #endif  // COMPONENTS_SPELLCHECK_SPELLCHECK_BUILDFLAGS_H_
+diff --git a/src/3rdparty/chromium/content/public/browser/browser_context.h b/src/3rdparty/chromium/content/public/browser/browser_context.h
+index f40f916..eaef196 100644
+--- a/src/3rdparty/chromium/content/public/browser/browser_context.h
++++ b/src/3rdparty/chromium/content/public/browser/browser_context.h
+@@ -346,7 +346,7 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
+   // directly, so privacy is not compromised.
+   virtual media::VideoDecodePerfHistory* GetVideoDecodePerfHistory();
+ 
+-#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
++#if defined(TOOLKIT_QT) && BUILDFLAG(ENABLE_SPELLCHECK)
+   // Inform about not working dictionary for given language
+   virtual void FailedToLoadDictionary(const std::string& language) = 0;
+ #endif
+diff --git a/src/core/profile_qt.cpp b/src/core/profile_qt.cpp
+index 617fb6a..3630360 100644
+--- a/src/core/profile_qt.cpp
++++ b/src/core/profile_qt.cpp
+@@ -247,14 +247,14 @@ content::SharedCorsOriginAccessList *ProfileQt::GetSharedCorsOriginAccessList()
+     return m_sharedCorsOriginAccessList.get();
+ }
+ 
+-#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
++#if QT_CONFIG(webengine_spellchecker)
+ void ProfileQt::FailedToLoadDictionary(const std::string &language)
+ {
+     Q_ASSERT(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+     LOG(WARNING) << "Could not load dictionary for:" << language;
+     LOG(INFO) << "Make sure that correct bdic file is in:" << WebEngineLibraryInfo::getPath(base::DIR_APP_DICTIONARIES);
+ }
+-#endif // defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
++#endif // QT_CONFIG(webengine_spellchecker)
+ 
+ #if BUILDFLAG(ENABLE_EXTENSIONS)
+ extensions::ExtensionSystemQt* ProfileQt::GetExtensionSystem()
+diff --git a/src/core/profile_qt.h b/src/core/profile_qt.h
+index 290da32..59f5a8c 100644
+--- a/src/core/profile_qt.h
++++ b/src/core/profile_qt.h
+@@ -108,7 +108,7 @@ public:
+ 
+     content::PlatformNotificationService *platformNotificationService();
+ 
+-#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
++#if QT_CONFIG(webengine_spellchecker)
+     void FailedToLoadDictionary(const std::string &language) override;
+ #endif
+ #if BUILDFLAG(ENABLE_EXTENSIONS)

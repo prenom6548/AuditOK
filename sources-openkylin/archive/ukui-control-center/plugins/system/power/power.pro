@@ -1,0 +1,34 @@
+include(../../../env.pri)
+QT       += widgets dbus
+TEMPLATE = lib
+CONFIG   += plugin
+
+TARGET = $$qtLibraryTarget(power)
+DESTDIR = ../..
+target.path = $${PLUGIN_INSTALL_DIRS}
+INSTALLS += target
+
+INCLUDEPATH += \
+               $$PROJECT_ROOTDIR \
+
+LIBS     += -L$$[QT_INSTALL_LIBS] -lgsettings-qt -lupower-glib
+
+CONFIG +=  \
+          link_pkgconfig \
+          c++11
+
+PKGCONFIG += gsettings-qt \
+             gio-2.0 \
+             gio-unix-2.0 \
+             upower-glib \
+             kysdk-qtwidgets \
+             kysdk-sysinfo
+
+FORMS +=
+
+HEADERS += \
+    power.h \
+    powermacrodata.h
+
+SOURCES += \
+    power.cpp

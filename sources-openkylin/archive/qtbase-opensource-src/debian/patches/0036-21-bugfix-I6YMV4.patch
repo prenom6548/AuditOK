@@ -1,0 +1,175 @@
+From: Augenblick <liuyapeng@kylinos.cn>
+Date: Tue, 19 Dec 2023 09:41:13 +0000
+Subject: =?utf-8?b?ITIxIGJ1Z2ZpeDojSTZZTVY044CQ5Lu75Yqh5qCP44CR5Lu75Yqh5qCP?=
+ =?utf-8?b?5bC65a+45Li65bCP5ZKM5Lit5pe277yM5Lu75Yqh5qCP5LiL5pa55pyJ57yd6ZqZ?=
+ =?utf-8?b?IE1lcmdlIHB1bGwgcmVxdWVzdCAhMjEgZnJvbSBBdWdlbmJsaWNrL29wZW5reWxp?=
+ =?utf-8?b?bi9uaWxl?=
+
+---
+ src/gui/kernel/qhighdpiscaling_p.h             | 23 +++++++++++++++++
+ src/gui/kernel/qwindow.cpp                     |  6 ++---
+ src/plugins/platforms/xcb/qxcbbackingstore.cpp | 15 +++++++++++-
+ src/plugins/platforms/xcb/qxcbwindow.cpp       | 34 +++++++++++++++++++++++---
+ 4 files changed, 71 insertions(+), 7 deletions(-)
+
+diff --git a/src/gui/kernel/qhighdpiscaling_p.h b/src/gui/kernel/qhighdpiscaling_p.h
+index e4714c9..36b8dae 100644
+--- a/src/gui/kernel/qhighdpiscaling_p.h
++++ b/src/gui/kernel/qhighdpiscaling_p.h
+@@ -294,6 +294,29 @@ inline QRegion toNativeLocalRegion(const QRegion &pointRegion, const QWindow *wi
+     return scale(pointRegion, QHighDpiScaling::factor(window));
+ }
+ 
++inline QRect toNativePixelsWithCalibration(const QRect &rect, const QWindow *window)
++{
++    if (!QHighDpiScaling::isActive() || !window)
++        return rect;
++
++    QWindow *win = const_cast<QWindow *>(window);
++    QPoint convertAfterSum = rect.topLeft();
++
++    QPoint convertAtEach = QHighDpi::toNativePixels(rect.topLeft(), window);
++
++    while ((win = win->parent()) && !win->isTopLevel()){
++        convertAfterSum += win->geometry().topLeft();
++        convertAtEach += QHighDpi::toNativePixels(win->geometry().topLeft(), win);
++    }
++    QPoint renderPos = QHighDpi::toNativePixels(convertAfterSum, window);
++    QPoint diff = renderPos - convertAtEach;
++
++    QPoint newPoint = QHighDpi::toNativePixels(rect.topLeft(), window) + diff;
++    QSize newSize = QHighDpi::toNativePixels(rect.size(), window);
++
++    return QRect(newPoint, newSize);
++}
++
+ } // namespace QHighDpi
+ #else // QT_NO_HIGHDPISCALING
+ class Q_GUI_EXPORT QHighDpiScaling {
+diff --git a/src/gui/kernel/qwindow.cpp b/src/gui/kernel/qwindow.cpp
+index 6398172..ba2998a 100644
+--- a/src/gui/kernel/qwindow.cpp
++++ b/src/gui/kernel/qwindow.cpp
+@@ -1745,7 +1745,7 @@ void QWindow::setGeometry(const QRect &rect)
+         if (newScreen && isTopLevel())
+             nativeRect = QHighDpi::toNativePixels(rect, newScreen);
+         else
+-            nativeRect = QHighDpi::toNativeLocalPosition(rect, newScreen);
++            nativeRect = QHighDpi::toNativePixelsWithCalibration(rect, this);
+         d->platformWindow->setGeometry(nativeRect);
+     } else {
+         d->geometry = rect;
+@@ -1865,7 +1865,7 @@ void QWindow::setFramePosition(const QPoint &point)
+     d->positionPolicy = QWindowPrivate::WindowFrameInclusive;
+     d->positionAutomatic = false;
+     if (d->platformWindow) {
+-        d->platformWindow->setGeometry(QHighDpi::toNativePixels(QRect(point, size()), this));
++        d->platformWindow->setGeometry(QHighDpi::toNativePixelsWithCalibration(QRect(point, size()), this));
+     } else {
+         d->geometry.moveTopLeft(point);
+     }
+@@ -1936,7 +1936,7 @@ void QWindow::resize(const QSize &newSize)
+     d->positionPolicy = QWindowPrivate::WindowFrameExclusive;
+     if (d->platformWindow) {
+         if (isTopLevel()) {
+-            d->platformWindow->setGeometry(QHighDpi::toNativePixels(QRect(position(), newSize), this));
++            d->platformWindow->setGeometry(QHighDpi::toNativePixelsWithCalibration(QRect(position(), newSize), this));
+         } else {
+             d->platformWindow->setGeometry(QRect(QHighDpi::toNativeLocalPosition(position(), this),
+                                                  QHighDpi::toNativePixels(newSize, this)));
+diff --git a/src/plugins/platforms/xcb/qxcbbackingstore.cpp b/src/plugins/platforms/xcb/qxcbbackingstore.cpp
+index 5569bd0..fe34728 100644
+--- a/src/plugins/platforms/xcb/qxcbbackingstore.cpp
++++ b/src/plugins/platforms/xcb/qxcbbackingstore.cpp
+@@ -241,6 +241,18 @@ void QXcbBackingStoreImage::resize(const QSize &size)
+                                   << "] destroyed SHM segment due to resize to" << size;
+             }
+         } else {
++            if (QHighDpiScaling::isActive()) {
++                auto windows = QGuiApplication::allWindows();
++                for (auto window : windows) {
++                    if (!window->isTopLevel() && m_backingStore->window()->isAncestorOf(window) && window->handle()) {
++                        QRect nativeRect = QHighDpi::toNativePixelsWithCalibration(window->geometry(), window);
++                        if (nativeRect != QHighDpi::toNativePixels(window->geometry(), window)) {
++                            window->handle()->setGeometry(nativeRect);
++                        }
++                    }
++                }
++            }
++
+             // Destroy shared memory segment if it is double (or more) of what we actually
+             // need with new window size. Or if the new size is bigger than what we currently
+             // have allocated.
+@@ -602,6 +614,7 @@ void QXcbBackingStoreImage::shmPutImage(xcb_drawable_t drawable, const QRegion &
+ {
+     for (const QRect &rect : region) {
+         const QPoint source = rect.translated(offset).topLeft();
++        int r= 0;
+         xcb_shm_put_image(xcb_connection(),
+                           drawable,
+                           m_gc,
+@@ -609,7 +622,7 @@ void QXcbBackingStoreImage::shmPutImage(xcb_drawable_t drawable, const QRegion &
+                           m_xcb_image->height,
+                           source.x(), source.y(),
+                           rect.width(), rect.height(),
+-                          rect.x(), rect.y(),
++                          rect.x() + r, rect.y(),
+                           m_xcb_image->depth,
+                           m_xcb_image->format,
+                           0, // send event?
+diff --git a/src/plugins/platforms/xcb/qxcbwindow.cpp b/src/plugins/platforms/xcb/qxcbwindow.cpp
+index 45bac8e..55ae224 100644
+--- a/src/plugins/platforms/xcb/qxcbwindow.cpp
++++ b/src/plugins/platforms/xcb/qxcbwindow.cpp
+@@ -565,13 +565,26 @@ void QXcbWindow::destroy()
+ 
+ void QXcbWindow::setGeometry(const QRect &rect)
+ {
++    QXcbScreen *currentScreen = xcbScreen();
++    QXcbScreen *newScreen = parent() ? parentScreen() : static_cast<QXcbScreen*>(screenForGeometry(rect));
++
++    if (window()->isTopLevel()) {
++        // to check whether the bottom of QWindow is intended to be matched to
++        // the bottom of screen or not
++        QRect logicalScreenRect = static_cast<QPlatformScreen*>(newScreen)->screen()->geometry();
++        QRect logicalWinRect = QHighDpi::fromNativePixels(rect, window());
++
++        if (logicalScreenRect.height() == (logicalWinRect.y() + logicalWinRect.height())) {
++            // update height of physical rect
++            QRect *newRect = const_cast<QRect *>(&rect);
++            newRect->setHeight(newScreen->geometry().height() - newRect->y());
++        }
++    }
++
+     QPlatformWindow::setGeometry(rect);
+ 
+     propagateSizeHints();
+ 
+-    QXcbScreen *currentScreen = xcbScreen();
+-    QXcbScreen *newScreen = parent() ? parentScreen() : static_cast<QXcbScreen*>(screenForGeometry(rect));
+-
+     if (!newScreen)
+         newScreen = xcbScreen();
+ 
+@@ -1407,6 +1420,21 @@ void QXcbWindow::propagateSizeHints()
+     QSize baseSize = windowBaseSize();
+     QSize sizeIncrement = windowSizeIncrement();
+ 
++    if (window()->isTopLevel() && minimumSize == maximumSize && !sizeIncrement.isEmpty()) {
++        // to use adjusted values at QXcbWindow::setGeometry
++        minimumSize = rect.size();
++
++        // to adjust values by sizeIncrement
++        if (minimumSize.width() % sizeIncrement.width() != 0) {
++            minimumSize.setWidth((minimumSize.width() / sizeIncrement.width() + 1) * sizeIncrement.width());
++        }
++
++        if (minimumSize.height() % sizeIncrement.height() != 0) {
++            minimumSize.setHeight((minimumSize.height() / sizeIncrement.height() + 1) * sizeIncrement.height());
++        }
++        maximumSize = minimumSize;
++    }
++
+     if (minimumSize.width() > 0 || minimumSize.height() > 0)
+         xcb_icccm_size_hints_set_min_size(&hints,
+                                           qMin(XCOORD_MAX,minimumSize.width()),

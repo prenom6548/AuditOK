@@ -1,0 +1,56 @@
+#!/bin/sh
+
+set -e
+
+glib-compile-schemas /usr/share/glib-2.0/schemas/
+
+file=/home/$SUDO_USER/.profile
+echo "$file"
+if [ -f "$file" ]; then
+	sed -i '/export GDK_SCALE=/d' $file
+        sed -i '/export QT_SCALE_FACTOR=/d' $file
+        sed -i '/export QT_AUTO_SCREEN_SET_FACTOR=/d' $file
+fi
+
+conf_file="/etc/os-release"
+# 获取config键值值（支持空Section）
+# 用法: get_config_value "section" "key" [default_value]
+get_config_value() {
+    local section="$1"
+    local key="$2"
+    local default_value="${3:-}"
+    local content
+    
+    # 如果section为空，搜索整个文件
+    if [ -z "$section" ]; then
+        content=$(cat "$conf_file")
+    else
+        content=$(sed -n "/^\[$section\]/,/^\[/p" "$conf_file")
+    fi
+    
+    # 提取值并处理（去引号/注释/空格）
+    local value=$(echo "$content" | \
+                  grep -E "^[[:space:]]*$key[[:space:]]*=" | \
+                  awk -F '=' '{print $2}' | \
+                  sed -e 's/^"//' -e 's/"$//' \
+                      -e 's/[[:space:]]*[#;].*$//' \
+                      -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | \
+                  head -n 1)  # 只取第一个匹配项
+    
+    if [ -z "$value" ]; then
+        echo "$default_value"
+    else
+        echo "$value"
+    fi
+}
+
+os_name=$(get_config_value "" "NAME" "")
+#非openkylin不支持x11的ukui
+if [ "$os_name" != "openKylin" ]; then
+    if [ -e "/usr/share/xsessions/ukui.desktop" ]; then
+        mv /usr/share/xsessions/ukui.desktop /etc/ukui/ukui-session/ukui.desktop
+    fi
+fi
+
+#DEBHELPER#
+

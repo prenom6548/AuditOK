@@ -1,0 +1,45 @@
+From: Georgia Garcia <georgia.garcia@canonical.com>
+Date: Fri, 20 Mar 2026 17:05:25 -0300
+Subject: [PATCH 08/13] parser: move to encode an alternation of a null
+ transition and iface
+
+Use an alternation of a null transition and the interface name so the
+kernel can determine whether label a packet even if interface name is
+not available.
+
+Signed-off-by: Georgia Garcia <georgia.garcia@canonical.com>
+(cherry picked from commit e2473ded2e6d0165d1f57a681452bae5872bb944)
+Signed-off-by: John Johansen <john.johansen@canonical.com>
+---
+ parser/network.cc | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/parser/network.cc b/parser/network.cc
+index ba2c906..054787f 100644
+--- a/parser/network.cc
++++ b/parser/network.cc
+@@ -791,6 +791,15 @@ bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &st
+ 
+ 		/* only output for secmark rule rules */
+ 		if (is_iface && (entry.label_match || is_peer)) {
++			/* use an alternation of a direct null or
++			 * iface match pattern to ensure kernel can
++			 * use direct null to skip iface cond when
++			 * determining whether to label a packet,
++			 * because iface is not available at this
++			 * point
++			 */
++			if (perms & AA_MAY_SEND)
++				oss << "(\\x00|";
+ 			if (!entry.iface)
+ 				oss << default_match_pattern; /* iface not specified */
+ 			else
+@@ -798,6 +807,8 @@ bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &st
+ 
+ 			oss << "\\x00"; /* null transition */
+ 
++			if (perms & AA_MAY_SEND)
++				oss << ")";
+ 			buf = oss.str();
+ 
+ 			perm32_t ifperms = cond_perms;

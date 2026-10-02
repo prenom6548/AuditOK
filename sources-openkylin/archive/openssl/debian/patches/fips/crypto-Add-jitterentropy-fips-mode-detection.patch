@@ -1,0 +1,133 @@
+From: Eric Berry <eric.berry@canonical.com>
+Date: Tue, 7 Apr 2026 10:23:14 +0800
+Subject: Add jitterentropy mode detection for FIPS
+
+Origin: vendor, Canonical
+
+Origin: vendor, Canonical
+---
+ crypto/build.info            |  4 ++--
+ crypto/context.c             |  2 +-
+ crypto/fips_mode.c           | 28 +++++++++++++++++++++-------
+ crypto/fips_mode.h           |  6 ++++++
+ crypto/provider_predefined.c |  2 +-
+ 5 files changed, 31 insertions(+), 11 deletions(-)
+
+diff --git a/crypto/build.info b/crypto/build.info
+index bee8a172d2b6..2db1c25dbcf9 100644
+--- a/crypto/build.info
++++ b/crypto/build.info
+@@ -100,14 +100,14 @@ $UTIL_COMMON=\
+         threads_pthread.c threads_win.c threads_none.c initthread.c \
+         context.c sparse_array.c asn1_dsa.c packet.c param_build.c \
+         param_build_set.c der_writer.c threads_lib.c params_dup.c \
+-        time.c params_idx.c
++        time.c params_idx.c fips_mode.c
+ 
+ SOURCE[../libcrypto]=$UTIL_COMMON \
+         mem.c mem_sec.c \
+         comp_methods.c cversion.c info.c cpt_err.c ebcdic.c uid.c o_time.c \
+         o_dir.c o_fopen.c getenv.c o_init.c init.c trace.c provider.c \
+         provider_child.c punycode.c passphrase.c sleep.c deterministic_nonce.c \
+-        quic_vlint.c time.c defaults.c ssl_err.c fips_mode.c
++        quic_vlint.c time.c defaults.c ssl_err.c
+ SOURCE[../providers/libfips.a]=$UTIL_COMMON
+ 
+ SOURCE[../libcrypto]=$UPLINKSRC
+diff --git a/crypto/context.c b/crypto/context.c
+index e64820d48697..d45de8bb8377 100644
+--- a/crypto/context.c
++++ b/crypto/context.c
+@@ -238,7 +238,7 @@ static int context_init(OSSL_LIB_CTX *ctx)
+ #endif
+ 
+ #if !defined(FIPS_MODULE)
+-    if (ossl_fips_mode() == 1 && !evp_default_properties_enable_fips_int(ctx, 1, 0))
++    if (ossl_fips_mode() != FIPS_MODE_DISABLED && !evp_default_properties_enable_fips_int(ctx, 1, 0))
+         goto err;
+ #endif
+ 
+diff --git a/crypto/fips_mode.c b/crypto/fips_mode.c
+index 0131075ed764..e9045b9837f6 100644
+--- a/crypto/fips_mode.c
++++ b/crypto/fips_mode.c
+@@ -9,6 +9,7 @@
+ #include "fips_mode.h"
+ 
+ #define FIPS_MODE_SWITCH_FILE "/proc/sys/crypto/fips_enabled"
++#define FIPS_MODE_JITTER_MODE_FILE "/etc/ubuntu-fips"
+ 
+ static int fips_mode;
+ 
+@@ -25,7 +26,7 @@ void ossl_init_fips(void)
+     int fd;
+ 
+     if ((v = secure_getenv("OPENSSL_FORCE_FIPS_MODE")) != NULL) {
+-        fips_mode = strcmp(v, "0") == 0 ? 0 : 1;
++        fips_mode = strcmp(v, "0") == 0 ? FIPS_MODE_DISABLED : FIPS_MODE_KERNEL_ENTROPY;
+         return;
+     }
+ 
+@@ -34,13 +35,26 @@ void ossl_init_fips(void)
+     }
+ 
+     fd = open(switch_path, O_RDONLY);
+-    if (fd < 0) {
+-        fips_mode = 0;
+-        return;
++    if (fd >= 0) {
++        while (read(fd, &c, sizeof(c)) < 0 && errno == EINTR);
++        close(fd);
++
++        if (c == '1') {
++            fips_mode = FIPS_MODE_KERNEL_ENTROPY;
++            return;
++        }
+     }
+ 
+-    while (read(fd, &c, sizeof(c)) < 0 && errno == EINTR);
+-    close(fd);
++    fd = open(FIPS_MODE_JITTER_MODE_FILE, O_RDONLY);
++    if (fd >= 0) {
++        while (read(fd, &c, sizeof(c)) < 0 && errno == EINTR);
++        close(fd);
++
++        if (c == '1') {
++            fips_mode = FIPS_MODE_JITTER_ENTROPY;
++            return;
++        }
++    }
+ 
+-    fips_mode = c == '1' ? 1 : 0;
++    fips_mode = FIPS_MODE_DISABLED;
+ }
+diff --git a/crypto/fips_mode.h b/crypto/fips_mode.h
+index 5f0607ba9d70..cacceed77fb7 100644
+--- a/crypto/fips_mode.h
++++ b/crypto/fips_mode.h
+@@ -11,6 +11,12 @@
+ # define OSSL_FIPS_MODE_H
+ # pragma once
+ 
++enum {
++    FIPS_MODE_DISABLED = 0,
++    FIPS_MODE_KERNEL_ENTROPY,
++    FIPS_MODE_JITTER_ENTROPY
++};
++
+ int ossl_fips_mode(void);
+ void ossl_init_fips(void);
+ 
+diff --git a/crypto/provider_predefined.c b/crypto/provider_predefined.c
+index e24f97a76495..768d4194fe14 100644
+--- a/crypto/provider_predefined.c
++++ b/crypto/provider_predefined.c
+@@ -47,7 +47,7 @@ const OSSL_PROVIDER_INFO fips_providers[] = {
+ const OSSL_PROVIDER_INFO *ossl_predefined_providers(void)
+ {
+ #if !defined(FIPS_MODULE)
+-    if (ossl_fips_mode() == 1)
++    if (ossl_fips_mode() != FIPS_MODE_DISABLED)
+         return fips_providers;
+ #endif
+ 

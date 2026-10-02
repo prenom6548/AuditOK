@@ -1,0 +1,13 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(widgets VERSION 4.1)
+add_subdirectory(ukui-task-manager)
+add_subdirectory(ukui-menu-starter)
+add_subdirectory(ukui-panel-showDesktop)
+add_subdirectory(ukui-panel-widget-test)
+add_subdirectory(ukui-panel-calendar)
+add_subdirectory(ukui-panel-separator)
+add_subdirectory(ukui-panel-search)
+add_subdirectory(ukui-panel-taskView)
+add_subdirectory(ukui-panel-idm)
+add_subdirectory(ukui-ai-assistant)

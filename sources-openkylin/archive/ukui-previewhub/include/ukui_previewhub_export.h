@@ -1,0 +1,12 @@
+#ifndef UKUI_PREVIEWHUB_EXPORT_H
+#define UKUI_PREVIEWHUB_EXPORT_H
+
+#include <QtGlobal>
+
+#if defined(UKUIPREVIEWHUB_LIBRARY)
+#  define UKUIPREVIEWHUB_EXPORT Q_DECL_EXPORT
+#else
+#  define UKUIPREVIEWHUB_EXPORT Q_DECL_IMPORT
+#endif
+
+#endif

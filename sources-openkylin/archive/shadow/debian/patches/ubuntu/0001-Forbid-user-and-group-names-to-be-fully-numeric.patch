@@ -1,0 +1,97 @@
+From: Hector Cao <hector.cao@canonical.com>
+Date: Mon, 12 Aug 2024 19:05:58 +0000
+Subject: [PATCH] Forbid user and group names to be fully numeric
+
+---
+ lib/chkname.c      | 37 ++++++++++++++++++++++++++++++++++++-
+ man/groupadd.8.xml |  5 +++++
+ man/useradd.8.xml  |  5 +++++
+ 3 files changed, 46 insertions(+), 1 deletion(-)
+
+diff --git a/lib/chkname.c b/lib/chkname.c
+index 6af55a9..1858657 100644
+--- a/lib/chkname.c
++++ b/lib/chkname.c
+@@ -97,7 +97,35 @@ is_valid_name(const char *name)
+ 		return false;
+ 	}
+ 
+-	while (!streq(++name, "")) {
++	bool is_numeric = true;
++	bool is_hex = true;
++	bool is_octal = true;
++	int chars_checked = 0;
++
++	/* if the username does not start with "0x" it is not hexadecimal */
++	if (*name != '0' || *(name + 1) != 'x') {
++		is_hex = false;
++	}
++
++	/* if the username does not start with "0o" it is not octal */
++	if (*name != '0' || *(name + 1) != 'o') {
++		is_octal = false;
++	}
++
++	while (!streq(name, "")) {
++		if ((*name < '0' || *name > '9')) {
++		    is_numeric = false;
++		}
++		if ((*name < '0' || *name > '9') &&
++		    (*name < 'A' || *name > 'F') &&
++		    (*name < 'a' || *name > 'f') &&
++		    chars_checked >= 2) {
++		    is_hex = false;
++		}
++		if ((*name < '0' || *name > '7') && chars_checked >= 2) {
++		    is_octal = false;
++		}
++
+ 		if (!((*name >= 'a' && *name <= 'z') ||
+ 		      (*name >= 'A' && *name <= 'Z') ||
+ 		      (*name >= '0' && *name <= '9') ||
+@@ -110,6 +138,13 @@ is_valid_name(const char *name)
+ 			errno = EINVAL;
+ 			return false;
+ 		}
++		chars_checked++;
++		name++;
++	}
++
++	if (is_numeric || is_hex || is_octal) {
++		errno = EINVAL;
++		return false;
+ 	}
+ 
+ 	return true;
+diff --git a/man/groupadd.8.xml b/man/groupadd.8.xml
+index 9abf159..350e164 100644
+--- a/man/groupadd.8.xml
++++ b/man/groupadd.8.xml
+@@ -71,6 +71,11 @@
+        Fully numeric groupnames and groupnames . or .. are
+        also disallowed.
+      </para>
++     <para>
++       On Ubuntu, the same constraints as Debian are in place, with the
++       additional constraint that the groupname cannot be fully numeric,
++       including octal and hexadecimal syntax.
++     </para>
+      <para>
+        Groupnames may only be up to &GROUP_NAME_MAX_LENGTH; characters long.
+      </para>
+diff --git a/man/useradd.8.xml b/man/useradd.8.xml
+index 9009d83..401412e 100644
+--- a/man/useradd.8.xml
++++ b/man/useradd.8.xml
+@@ -731,6 +731,11 @@
+       with . character as their home directories will be hidden in
+       the <command>ls</command> output.
+     </para>
++    <para>
++      On Ubuntu, the same constraints as Debian are in place, with the
++      additional constraint that the username cannot be fully numeric,
++      including octal and hexadecimal syntax.
++    </para>
+     <para>
+       Usernames may only be up to 256 characters long.
+     </para>

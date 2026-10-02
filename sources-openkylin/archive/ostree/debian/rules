@@ -1,0 +1,107 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+binaries := $(shell dh_listpackages)
+
+%:
+	dh $@ --with gir
+
+override_dh_autoreconf:
+	mkdir -p debian/tmp-path
+ifneq (,$(filter nodoc,$(DEB_BUILD_PROFILES)))
+	ln -fns /bin/true debian/tmp-path/gtkdocize
+endif
+	env NOCONFIGURE=1 PATH=$(CURDIR)/debian/tmp-path:$(PATH) dh_autoreconf ./autogen.sh
+
+configure_options = \
+	--enable-installed-tests \
+	--with-avahi \
+	--with-composefs \
+	--with-curl \
+	--with-dracut \
+	--with-grub2 \
+	--with-grub2-mkconfig-path=/usr/sbin/grub-mkconfig \
+	--with-libarchive \
+	--with-libsystemd \
+	--with-libmount \
+	--with-modern-grub \
+	--with-gcr \
+	--with-soup3 \
+	--with-selinux \
+	--with-systemdsystemgeneratordir=/usr/lib/systemd/system-generators \
+	--with-systemdsystemunitdir=/usr/lib/systemd/system \
+	--without-smack \
+	$(NULL)
+
+ifneq ($(filter alpha hppa ia64 m68k sh4 sparc64 x32,$(DEB_HOST_ARCH)),)
+configure_options += ac_cv_path_GJS=
+endif
+
+ifneq ($(filter libostree-doc,$(binaries)),)
+configure_options += --enable-gtk-doc
+else
+configure_options += --disable-gtk-doc
+endif
+
+ifeq (,$(filter nodoc,$(DEB_BUILD_PROFILES)))
+configure_options += --enable-man
+else
+configure_options += --disable-man
+endif
+
+override_dh_auto_configure:
+	dh_auto_configure -- $(configure_options)
+
+override_dh_auto_build:
+	# The upstream build system overrides this to gcc as a way to avoid
+	# passing unsupported options to clang, but that's wrong for
+	# cross-builds
+	dh_auto_build -- INTROSPECTION_SCANNER_ENV="CC=$(DEB_HOST_GNU_TYPE)-gcc"
+
+override_dh_auto_test-arch:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	chmod +x tests/test-pull-bareuseronly.sh
+	debian/test.sh
+endif
+
+override_dh_auto_test-indep:
+	:
+
+override_dh_auto_install:
+	dh_auto_install
+ifeq (,$(filter nodoc,$(DEB_BUILD_PROFILES)))
+	# docbook-xsl capitalizes the whole heading, including the macro
+	# used to represent a single quote... https://bugs.debian.org/821235
+	sed -i -e 's,\*(AQ,*(Aq,g' \
+		debian/tmp/usr/share/man/man1/ostree-remote.1 \
+		debian/tmp/usr/share/man/man1/ostree-static-delta.1 \
+		$(NULL)
+endif
+
+override_dh_install:
+	find debian/tmp -name '*.la' -print -delete
+	if [ -f debian/tmp/usr/share/locale/zh_CN/LC_MESSAGES/libostree.mo ]; then \
+		install -d debian/libostree-1-1/usr/share/locale/zh_CN/LC_MESSAGES/; \
+		mv debian/tmp/usr/share/locale/zh_CN/LC_MESSAGES/libostree.mo \
+			debian/libostree-1-1/usr/share/locale/zh_CN/LC_MESSAGES/; \
+	fi
+	rm -f debian/tmp/usr/lib/*/*.la
+	rm -f debian/tmp/usr/libexec/installed-tests/libostree/*.la
+	:
+	dh_install
+
+override_dh_fixperms:
+	dh_fixperms -Xusr/libexec/installed-tests
+ifneq ($(filter %-tests,$(binaries)),)
+	# debhelper >= 13.4 makes all of /usr/libexec executable, which is not
+	# quite right for installed-tests
+	chmod --recursive --changes a+rX,u+w,og-w debian/*-tests/usr/libexec/installed-tests
+endif
+
+override_dh_installsystemd:
+	dh_installsystemd --no-start
+
+
+override_dh_auto_test:
+

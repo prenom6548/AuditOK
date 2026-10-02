@@ -1,0 +1,42 @@
+set(test_root "@CMAKE_CURRENT_BINARY_DIR@/package-config-test")
+file(REMOVE_RECURSE "${test_root}")
+file(MAKE_DIRECTORY "${test_root}")
+
+set(consumer_source_dir "${test_root}/consumer")
+file(MAKE_DIRECTORY "${consumer_source_dir}")
+
+file(WRITE "${consumer_source_dir}/main.cpp" "
+  #include <zip-reader.h>
+  int main() { return 0; }
+  ")
+
+file(WRITE "${consumer_source_dir}/CMakeLists.txt" [=[
+cmake_minimum_required(VERSION 3.14)
+project(ukui_file_metadata_package_consumer LANGUAGES CXX)
+
+find_package(ukui-file-metadata CONFIG REQUIRED)
+
+add_executable(package-consumer main.cpp)
+target_link_libraries(package-consumer PRIVATE ukui-file-metadata)
+]=])
+
+function(run_checked)
+    execute_process(
+        COMMAND ${ARGN}
+        RESULT_VARIABLE result
+        OUTPUT_VARIABLE stdout
+        ERROR_VARIABLE stderr
+    )
+    if (NOT result EQUAL 0)
+        message(FATAL_ERROR "Command failed: ${ARGN}\nstdout:\n${stdout}\nstderr:\n${stderr}")
+    endif()
+endfunction()
+
+set(build_tree_package_dir "@CMAKE_BINARY_DIR@/src")
+set(build_tree_consumer_dir "${test_root}/build-tree-consumer")
+run_checked("@CMAKE_COMMAND@" -S "${consumer_source_dir}" -B "${build_tree_consumer_dir}"
+            "-Dukui-file-metadata_DIR=${build_tree_package_dir}")
+run_checked("@CMAKE_COMMAND@" --build "${build_tree_consumer_dir}")
+
+set(install_root "${test_root}/install-root")
+run_checked("@CMAKE_COMMAND@" -E env "DESTDIR=${install_root}" "@CMAKE_COMMAND@" --install "@CMAKE_BINARY_DIR@")

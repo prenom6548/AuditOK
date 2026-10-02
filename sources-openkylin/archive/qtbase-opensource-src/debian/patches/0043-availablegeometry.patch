@@ -1,0 +1,163 @@
+From: Augenblick <liuyapeng@kylinos.cn>
+Date: Mon, 29 Apr 2024 10:21:34 +0800
+Subject: =?utf-8?b?5pKk5ZueYXZhaWxhYmxlZ2VvbWV0cnnmlLnliqg=?=
+
+---
+ src/plugins/platforms/xcb/qxcbscreen.cpp | 77 ++------------------------------
+ src/plugins/platforms/xcb/qxcbscreen.h   |  2 -
+ 2 files changed, 4 insertions(+), 75 deletions(-)
+
+diff --git a/src/plugins/platforms/xcb/qxcbscreen.cpp b/src/plugins/platforms/xcb/qxcbscreen.cpp
+index a15b27c..21e7e0e 100644
+--- a/src/plugins/platforms/xcb/qxcbscreen.cpp
++++ b/src/plugins/platforms/xcb/qxcbscreen.cpp
+@@ -37,15 +37,6 @@
+ **
+ ****************************************************************************/
+ 
+-/*
+- * This file is only intended for use with the Kylin system and requires reliance on Kylin's UKUI-Panel to update availableGeometry. The main contents include:
+- * 1.Added the QXcbVirtualDesktop::getPanelWindow method for obtaining the taskbar window.
+- * 2.Added the QXcbScreen::kyinAvailableGeometry interface for performing actual updates to the m_availableGeometry of the main and extended screens after receiving the necessary update signal.
+- * 3.Fixed an issue with incorrect retrieval of the working area in certain cases in getWorkArea.
+- * 4.Fixed an issue with incorrect calculation of the availableGeometry in certain cases.
+- * 5.Modified the availableGeometry function to directly return the correct m_availableGeometry.
+- */
+-
+ #include "qxcbscreen.h"
+ #include "qxcbwindow.h"
+ #include "qxcbcursor.h"
+@@ -290,40 +281,6 @@ void QXcbVirtualDesktop::handleScreenChange(xcb_randr_screen_change_notify_event
+     to get height of the panel, but I did not find one. Maybe other WMs have their own tricks, so
+     the reliability of this approach is questionable.
+  */
+-
+-xcb_window_t QXcbVirtualDesktop::getPanelWindow(xcb_window_t top, const char *name) const
+-{
+-    xcb_window_t *children;
+-    unsigned int nchildren;
+-    unsigned int i;
+-    auto tree = Q_XCB_REPLY(xcb_query_tree, xcb_connection(), top);
+-    if (!tree)
+-        return 0;
+-    nchildren = xcb_query_tree_children_length (tree.get());
+-    children = xcb_query_tree_children (tree.get());
+-    size_t len = strlen(name);
+-
+-    for (i = 0; i < nchildren; i++) {
+-        auto property = Q_XCB_REPLY(xcb_get_property, xcb_connection(), false, children[i],
+-                               atom(QXcbAtom::_NET_WM_NAME),
+-                               atom(QXcbAtom::UTF8_STRING), 0, 1024);
+-        if (property && (property->type == atom(QXcbAtom::UTF8_STRING))) {
+-            const char *win_name = (const char*)xcb_get_property_value (property.get());
+-            int win_name_len = xcb_get_property_value_length (property.get());
+-            if (memcmp(win_name, name, win_name_len) == 0 && len == (size_t)win_name_len) {
+-                return children[i];
+-            }
+-        }
+-    }
+-
+-    for (i = 0; i < nchildren; i++) {
+-        auto win = getPanelWindow(children[i], name);
+-        if (win)
+-            return win;
+-    }
+-    return 0;
+-}
+-
+ QRect QXcbVirtualDesktop::getWorkArea() const
+ {
+     QRect r;
+@@ -593,7 +550,7 @@ QXcbScreen::QXcbScreen(QXcbConnection *connection, QXcbVirtualDesktop *virtualDe
+     } else if (xineramaScreenInfo) {
+         m_geometry = QRect(xineramaScreenInfo->x_org, xineramaScreenInfo->y_org,
+                            xineramaScreenInfo->width, xineramaScreenInfo->height);
+-        m_availableGeometry = kylinAvailableGeometry();
++        m_availableGeometry = m_virtualDesktop->availableGeometry(m_geometry);
+         m_sizeMillimeters = sizeInMillimeters(m_geometry.size(), m_virtualDesktop->dpi());
+         if (xineramaScreenIdx > -1)
+             m_outputName += QLatin1Char('-') + QString::number(xineramaScreenIdx);
+@@ -603,7 +560,7 @@ QXcbScreen::QXcbScreen(QXcbConnection *connection, QXcbVirtualDesktop *virtualDe
+         m_geometry = QRect(QPoint(), virtualDesktop->size());
+ 
+     if (m_availableGeometry.isEmpty())
+-        m_availableGeometry = kylinAvailableGeometry();
++        m_availableGeometry = m_virtualDesktop->availableGeometry(m_geometry);
+ 
+     if (m_sizeMillimeters.isEmpty())
+         m_sizeMillimeters = virtualDesktop->physicalSize();
+@@ -868,13 +825,10 @@ void QXcbScreen::sendStartupMessage(const QByteArray &message) const
+ 
+ QRect QXcbScreen::availableGeometry() const
+ {
+-    /*
+     static bool enforceNetWorkarea = !qEnvironmentVariableIsEmpty("QT_RELY_ON_NET_WORKAREA_ATOM");
+     bool isMultiHeadSystem = virtualSiblings().length() > 1;
+     bool useScreenGeometry = isMultiHeadSystem && !enforceNetWorkarea;
+     return useScreenGeometry ? m_geometry : m_availableGeometry;
+-    */
+-   return m_availableGeometry;
+ }
+ 
+ QImage::Format QXcbScreen::format() const
+@@ -985,38 +939,15 @@ void QXcbScreen::updateGeometry(const QRect &geometry, uint8_t rotation)
+         m_sizeMillimeters = sizeInMillimeters(geometry.size(), m_virtualDesktop->dpi());
+ 
+     m_geometry = geometry;
+-    m_availableGeometry = kylinAvailableGeometry();
++    m_availableGeometry = m_virtualDesktop->availableGeometry(m_geometry);
+     QWindowSystemInterface::handleScreenGeometryChange(QPlatformScreen::screen(), m_geometry, m_availableGeometry);
+     if (m_orientation != oldOrientation)
+         QWindowSystemInterface::handleScreenOrientationChange(QPlatformScreen::screen(), m_orientation);
+ }
+ 
+-QRect QXcbScreen::kylinAvailableGeometry()
+-{
+-    QRect availableGeometry = m_geometry;
+-    const char *name = "UKUI Panel";
+-    xcb_window_t win = m_virtualDesktop->getPanelWindow(screen()->root, name);
+-
+-    if (win) {
+-        auto geometry = Q_XCB_REPLY(xcb_get_geometry, xcb_connection(), win);
+-        auto trans = Q_XCB_REPLY(xcb_translate_coordinates, xcb_connection(), win, geometry->root,
+-                                    -(geometry->border_width), -(geometry->border_width));
+-        QRegion screenRgn(m_geometry);
+-        QRegion panelRgn(trans->dst_x, trans->dst_y, (geometry->width + 2) / 10 * 10, geometry->height);
+-
+-        if (screenRgn.contains(panelRgn.boundingRect().center())) {
+-            QRegion workArea = screenRgn - panelRgn;
+-            QRegion::const_iterator begin = workArea.cbegin();
+-            availableGeometry = static_cast<QRect>(*begin);
+-        }
+-    }
+-
+-    return availableGeometry;
+-}
+-
+ void QXcbScreen::updateAvailableGeometry()
+ {
+-    QRect availableGeometry = kylinAvailableGeometry();
++    QRect availableGeometry = m_virtualDesktop->availableGeometry(m_geometry);
+     if (m_availableGeometry != availableGeometry) {
+         m_availableGeometry = availableGeometry;
+         QWindowSystemInterface::handleScreenGeometryChange(QPlatformScreen::screen(), m_geometry, m_availableGeometry);
+diff --git a/src/plugins/platforms/xcb/qxcbscreen.h b/src/plugins/platforms/xcb/qxcbscreen.h
+index 84cb385..fd8d962 100644
+--- a/src/plugins/platforms/xcb/qxcbscreen.h
++++ b/src/plugins/platforms/xcb/qxcbscreen.h
+@@ -113,7 +113,6 @@ public:
+     quint8 depthOfVisual(xcb_visualid_t) const;
+     xcb_colormap_t colormapForVisual(xcb_visualid_t) const;
+ 
+-    xcb_window_t getPanelWindow(xcb_window_t top, const char *name) const;
+ private:
+     QRect getWorkArea() const;
+ 
+@@ -215,7 +214,6 @@ public:
+     void updateGeometry(const QRect &geometry, uint8_t rotation);
+     void updateGeometry(xcb_timestamp_t timestamp = XCB_TIME_CURRENT_TIME);
+     void updateAvailableGeometry();
+-    QRect kylinAvailableGeometry();
+     void updateRefreshRate(xcb_randr_mode_t mode);
+ 
+     QFontEngine::HintStyle hintStyle() const { return m_virtualDesktop->hintStyle(); }

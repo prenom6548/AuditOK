@@ -1,0 +1,98 @@
+#!/bin/sh -e
+
+PREREQS=""
+
+prereqs() { echo "$PREREQS"; }
+
+case "$1" in
+    prereqs)
+    prereqs
+    exit 0
+    ;;
+esac
+
+# 上面的内容和initramfs脚本很像，可以不管。
+# hook脚本的功能是将一些文件放到initramfs文件里去。
+# 把该脚本放到 /usr/share/initramfs-tools/hooks/ 目录下，权限为 0755
+# 在更新initramfs时会自动执行该脚本，安装文件。
+
+# 下面这一行是加载hook-functions里的一些功能，用到这个脚本来。
+# 这一行必须有
+# /usr/share/initramfs-tools/hook-functions定义了copy_exec
+. /usr/share/initramfs-tools/hook-functions
+
+ExistCopyExec()
+{
+  if [ -f $1 ]; then
+     copy_exec $1 $2
+  fi
+}
+
+ExistCp()
+{
+  if [ -f $1 ]; then
+     cp $1 $2
+  fi
+}
+
+# 以添加rsync程序为例
+# 在系统中rsync在/usr/bin/ 目录下
+# 首先创建目录 /usr/bin/ ，一定要加上 $DESTDIR
+# 然后用copy_exec 将系统中的 rsync 拷贝到 initramfs 的预期位置中。
+# 对于动态可执行文件， copy_exec 会将其依赖库也拷贝到 initramfs 中。
+# 使用 copy_exec 时，不要用 $DESTDIR
+# 但是如果是拷贝普通文件，则用 cp ，并且还要使用 $DESTDIR ，例如
+# mkdir -p $DESTDIR/common/file
+# cp /common/file/path $DESTDIR/common/file/
+
+mkdir -p $DESTDIR/usr/bin
+mkdir -p $DESTDIR/bin
+mkdir -p $DESTDIR/etc
+ExistCopyExec /etc/.bootinfo      /etc
+ExistCopyExec /etc/fstab    /etc/fstab-backup
+ExistCopyExec /usr/bin/rsync      /usr/bin
+###backup-auto-efi需要调用bc来计算磁盘用量
+ExistCopyExec /usr/bin/bc      /usr/bin
+ExistCopyExec /usr/bin/backup-auto-factory /usr/bin
+ExistCopyExec /usr/bin/backup-auto-efi /usr/bin
+###Now backup-auto is identical to backup-auto-efi
+ExistCopyExec /usr/bin/backup-auto /usr/bin
+ExistCopyExec /usr/bin/mount_fstab_efi /usr/bin
+ExistCopyExec /usr/bin/mksquashfs /usr/bin
+ExistCopyExec /bin/bash /bin
+ExistCopyExec /bin/mkdir /bin
+ExistCopyExec /bin/ls /bin
+ExistCopyExec /bin/mount /bin
+ExistCopyExec /bin/sync /bin
+ExistCopyExec /sbin/reboot /bin
+ExistCopyExec /sbin/grub-install /bin
+#fix wrong timezone in initrd(#)
+#ExistCopyExec /usr/share/zoneinfo/Asia/Shanghai /etc/localtime
+#v11相关脚本
+ExistCopyExec /usr/bin/backup-factory /usr/bin
+ExistCopyExec /usr/bin/backup-grub /usr/bin
+ExistCopyExec /usr/bin/backup-deploy /usr/bin
+ExistCopyExec /usr/bin/backup-undeploy /usr/bin
+ExistCopyExec /usr/bin/backup-setdefault /usr/bin
+
+ExistCopyExec /usr/bin/kylin_activation_check /usr/bin
+ExistCopyExec /usr/bin/gpg /usr/bin
+
+mkdir -p $DESTDIR//var/lib/dpkg/info
+ExistCp /var/lib/dpkg/info/libkylin-activation.md5sums $DESTDIR/var/lib/dpkg/info
+
+mkdir -p $DESTDIR/etc/xdg/autostart
+ExistCp /etc/xdg/autostart/kylin-notification.desktop $DESTDIR/etc/xdg/autostart
+
+mkdir -p $DESTDIR/etc/update-motd.d
+ExistCp /etc/update-motd.d/99-kylin-verify-info $DESTDIR/etc/update-motd.d/
+
+ExistCopyExec /usr/bin/kylin-verify /usr/bin
+###打包很多库，包括gdk，内核会超过16M
+###ExistCopyExec /usr/bin/kylin-verify-gui /usr/bin
+ExistCopyExec /bin/bash /bin
+ExistCp /var/lib/dpkg/info/kylin-verify.md5sums $DESTDIR/var/lib/dpkg/info/
+ExistCp /var/lib/dpkg/info/bash.md5sums $DESTDIR/var/lib/dpkg/info/
+
+#fix wrong timezone in initrd(#316)
+#ExistCp /usr/share/zoneinfo/Asia/Shanghai $DESTDIR/etc/localtime

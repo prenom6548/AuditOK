@@ -1,0 +1,524 @@
+#!/bin/sh
+# tlp-func-cpu - Processor Functions
+#
+# Copyright (c) 2024 Thomas Koch <linrunner at gmx.net> and others.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Needs: tlp-func-base
+
+# ----------------------------------------------------------------------------
+# Constants
+
+readonly CPUD=/sys/devices/system/cpu
+readonly CPU_BOOST_ALL_CTRL=${CPUD}/cpufreq/boost
+readonly INTEL_PSTATED=${CPUD}/intel_pstate
+readonly AMD_PSTATED=${CPUD}/amd_pstate
+readonly CPU_MIN_PERF_PCT=$INTEL_PSTATED/min_perf_pct
+readonly CPU_MAX_PERF_PCT=$INTEL_PSTATED/max_perf_pct
+readonly CPU_TURBO_PSTATE=$INTEL_PSTATED/no_turbo
+readonly INTEL_DYN_BOOST=$INTEL_PSTATED/hwp_dynamic_boost
+readonly AMD_DYN_BOOST=$AMD_PSTATED/cppc_dynamic_boost
+
+readonly CPU_INFO=/proc/cpuinfo
+readonly ENERGYPERF=x86_energy_perf_policy
+
+readonly FWACPID=/sys/firmware/acpi
+
+# ----------------------------------------------------------------------------
+# Functions
+
+# --- Scaling Driver and Governor
+
+check_intel_pstate () {
+    # detect intel_pstate driver -- rc: 0=present/1=absent
+    # note: intel_pstate requires Linux 3.9 or higher
+    [ -d $INTEL_PSTATED ]
+}
+
+check_amd_pstate () {
+    # detect amd_pstate driver -- rc: 0=present/1=absent
+    # note: intel_pstate requires Linux 5.17 or higher
+    [ -d $AMD_PSTATED ]
+}
+
+print_cpu_driver () {
+    # print active CPU scaling driver
+    read_sysf "${CPUD}/cpu0/cpufreq/scaling_driver" || printf "cpu"
+}
+
+set_cpu_driver_opmode () {
+    # set CPU driver operation mode -- $1: 0=ac mode, 1=battery mode
+    local cfg opmode
+
+    if [ "$1" = "1" ]; then
+        opmode=${CPU_DRIVER_OPMODE_ON_BAT:-}
+        cfg="CPU_DRIVER_OPMODE_ON_BAT"
+    else
+        opmode=${CPU_DRIVER_OPMODE_ON_AC:-}
+        cfg="CPU_DRIVER_OPMODE_ON_AC"
+    fi
+
+    if [ -z "$opmode" ]; then
+        echo_debug "pm" "set_cpu_driver_opmode($1).not_configured"
+        return 0
+    fi
+
+    if check_intel_pstate; then
+        if write_sysf "$opmode" "${INTEL_PSTATED}/status"; then
+            echo_debug "pm" "set_cpu_driver_opmode($1).intel_pstate: $opmode; rc=$?"
+        else
+            # kernel rejected the configured opmode
+            echo_debug "pm" "set_cpu_driver_opmode($1).intel_pstate: $opmode; rc=$?"
+            echo_message "Error in configuration at ${cfg}=\"${opmode}\": this operation mode is not supported by the intel_pstate driver."
+            return 1
+        fi
+    elif check_amd_pstate; then
+        if write_sysf "$opmode" "${AMD_PSTATED}/status"; then
+            echo_debug "pm" "set_cpu_driver_opmode($1).amd_pstate: $opmode; rc=$?"
+        else
+            # kernel rejected the configured opmode
+            echo_debug "pm" "set_cpu_driver_opmode($1).amd_pstate: $opmode; rc=$?"
+            echo_message "Error in configuration at ${cfg}=\"${opmode}\": this operation mode is not supported by the amd-pstate driver."
+            return 1
+        fi
+    else
+        echo_debug "pm" "set_cpu_driver_opmode($1).unsupported_driver"
+        echo_message "Error in configuration at ${cfg}=\"${opmode}\": the $(print_cpu_driver) driver does not support operation modes."
+        return 1
+    fi
+
+    return 0
+}
+
+set_cpu_scaling_governor () {
+    # set CPU scaling governor -- $1: 0=ac mode, 1=battery mode
+    local cfg cpu ec gov
+
+    if [ "$1" = "1" ]; then
+        gov=${CPU_SCALING_GOVERNOR_ON_BAT:-}
+        cfg="CPU_SCALING_GOVERNOR_ON_BAT"
+    else
+        gov=${CPU_SCALING_GOVERNOR_ON_AC:-}
+        cfg="CPU_SCALING_GOVERNOR_ON_AC"
+    fi
+
+    if [ -n "$gov" ]; then
+        # apply governor
+        ec=0
+        for cpu in "${CPUD}"/cpu*/cpufreq/scaling_governor; do
+            if [ -f "$cpu" ] && ! write_sysf "$gov" "$cpu"; then
+                echo_debug "pm" "set_cpu_scaling_governor($1).write_error: $cpu $gov; rc=$?"
+                ec=$((ec+1))
+            fi
+        done
+        if [ "$ec" -gt 0 ]; then
+            # kernel rejected the configured governor
+            echo_debug "pm" "set_cpu_scaling_governor($1).not_available: $gov; ec=$ec"
+            echo_message "Error in configuration at ${cfg}=\"${gov}\": governor not available."
+            return 1
+        fi
+        echo_debug "pm" "set_cpu_scaling_governor($1): $gov; ec=$ec"
+    else
+        echo_debug "pm" "set_cpu_scaling_governor($1).not_configured"
+    fi
+
+    return 0
+}
+
+set_cpu_scaling_min_max_freq () {
+    # set CPU scaling limits -- $1: 0=ac mode, 1=battery mode
+    local minfreq maxfreq cpu ec
+    local conf=0
+
+    if [ "$1" = "1" ]; then
+        minfreq=${CPU_SCALING_MIN_FREQ_ON_BAT:-}
+        maxfreq=${CPU_SCALING_MAX_FREQ_ON_BAT:-}
+    else
+        minfreq=${CPU_SCALING_MIN_FREQ_ON_AC:-}
+        maxfreq=${CPU_SCALING_MAX_FREQ_ON_AC:-}
+    fi
+
+    if [ -n "$minfreq" ] && [ "$minfreq" != "0" ]; then
+        conf=1
+        ec=0
+        for cpu in "${CPUD}"/cpu*/cpufreq/scaling_min_freq; do
+            if [ -f "$cpu" ] && ! write_sysf "$minfreq" "$cpu"; then
+                echo_debug "pm" "set_cpu_scaling_min_max_freq($1).min.write_error: $cpu $minfreq; rc=$?"
+                ec=$((ec+1))
+            fi
+        done
+        echo_debug "pm" "set_cpu_scaling_min_max_freq($1).min: $minfreq; ec=$ec"
+    fi
+
+    if [ -n "$maxfreq" ] && [ "$maxfreq" != "0" ]; then
+        conf=1
+        ec=0
+        for cpu in "${CPUD}"/cpu*/cpufreq/scaling_max_freq; do
+            if [ -f "$cpu" ] && ! write_sysf "$maxfreq" "$cpu"; then
+                echo_debug "pm" "set_cpu_scaling_min_max_freq($1).max.write_error: $cpu $maxfreq; rc=$?"
+                ec=$((ec+1))
+            fi
+        done
+        echo_debug "pm" "set_cpu_scaling_min_max_freq($1).max: $maxfreq; ec=$ec"
+    fi
+
+    [ $conf -eq 1 ] || echo_debug "pm" "set_cpu_scaling_min_max_freq($1).not_configured"
+    return 0
+}
+
+# --- Performance Policies and Boost
+
+supports_intel_cpu_epb () {
+    # rc: 0=CPU supports EPB/1=false
+    grep -E -q -m 1 '^flags.+epb' $CPU_INFO
+}
+
+supports_intel_cpu_epp () {
+    # rc: 0=CPU supports HWP.EPP/1=false
+    grep -E -q -m 1 '^flags.+hwp_epp' $CPU_INFO
+}
+
+supports_amd_cpu_epp () {
+    # rc: 0=CPU supports amd_pstate EPP/1=false
+    [ "$(read_sysf "${AMD_PSTATED}/status")" = "active" ]
+}
+
+set_cpu_perf_policy () {
+    # set Intel/AMD CPU energy vs. performance policies
+    # $1: 0=ac mode, 1=battery mode
+    #
+    # depending on the CPU model the values
+    #   performance, balance_performance, default, balance_power, power
+    # in CPU_ENERGY_PERF_POLICY_ON_AC/BAT are applied to:
+    # --- intel_pstate
+    # (a) energy-performance preference (EPP) in IA32_HWP_REQUEST MSR
+    # (b) energy-performance bias (EPB) in IA32_ENERGY_PERF_BIAS MSR
+    # EPP and EPB are mutually exclusive: when EPP is available,
+    # Intel CPUs will not honor EPB
+    # --- amd_pstate
+    # CPPC firmware via the Energy Performance Preference register
+    # Note: needs a patchset not yet merged as of Linux 6.1, see [5]
+    #
+    # References:
+    # [1] https://www.kernel.org/doc/html/latest/admin-guide/pm/intel_pstate.html#energy-vs-performance-hints
+    # [2] https://www.kernel.org/doc/html/latest/admin-guide/pm/intel_epb.html
+    # [3] https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git/commit/?id=4beec1d7519691b4b6c6b764e75b4e694a09c5f7
+    # [4] http://manpages.ubuntu.com/manpages/kinetic/man8/x86_energy_perf_policy.8.html
+    # [5] https://lore.kernel.org/lkml/20221208111852.386731-1-perry.yuan@amd.com/
+
+    local cnt cpuf ec perf pnum
+
+    if [ "$1" = "1" ]; then
+        perf=${CPU_ENERGY_PERF_POLICY_ON_BAT:-}
+    else
+        perf=${CPU_ENERGY_PERF_POLICY_ON_AC:-}
+    fi
+    # translate alphanumeric values from EPB to EPP syntax
+    case "$perf" in
+        'balance-performance')  perf='balance_performance' ;;
+        'normal')               perf='default' ;;
+        'balance-power')        perf='balance_power' ;;
+        'powersave')            perf='power' ;;
+    esac
+
+    if [ -z "$perf" ]; then
+        echo_debug "pm" "set_cpu_perf_policy($1).not_configured"
+        return 0
+    fi
+
+    if { check_intel_pstate && supports_intel_cpu_epp; } || { check_amd_pstate && supports_amd_cpu_epp; }; then
+        # validate EPP setting
+        case "$perf" in
+            performance|balance_performance|default|balance_power|power) # OK --> continue
+                ;;
+
+            [0-9]|[0-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5]) # HWP.EPP accepts 0 to 255 --> continue
+                ;;
+
+            *) # invalid setting
+                echo_debug "pm" "set_cpu_perf_policy($1).epp.invalid: perf=$perf"
+                return 0
+                ;;
+        esac
+
+        # don't apply intel_pstate HWP.EPP when power-profile-daemon is running
+        if check_intel_pstate && check_ppd_active ; then
+            echo_message "Warning: CPU_ENERGY_PERF_POLICY_ON_AC/BAT is not set because power-profiles-daemon is running."
+            echo_debug "pm" "set_cpu_perf_policy($1).epp.nop_ppd_active"
+            return 0
+        fi
+
+        # apply EPP setting
+        cnt=0
+        ec=0
+        for cpuf in "${CPUD}"/cpu*/cpufreq/energy_performance_preference; do
+            if [ -f "$cpuf" ]; then
+                cnt=$((cnt+1))
+                if  ! write_sysf "$perf" "$cpuf"; then
+                    echo_debug "pm" "set_cpu_perf_policy($1).epp.write_error: $perf $cpuf; rc=$?"
+                    ec=$((ec+1))
+                fi
+            fi
+        done
+        if [ $cnt -gt 0 ]; then
+            echo_debug "pm" "set_cpu_perf_policy($1).epp: $perf; ec=$ec"
+            # EPP active and applied, quit unless EPB is forced
+            [ "$X_FORCE_EPB" = "1" ] || return 0
+        else
+            echo_debug "pm" "set_cpu_perf_policy($1).epp.not_available"
+        fi
+    else
+        echo_debug "pm" "set_cpu_perf_policy($1).epp.unsupported_cpu"
+    fi
+
+    if supports_intel_cpu_epb; then
+        # translate Intel HWP.EPP alphanumeric to EPB numeric values for native kernel support
+        # and x86_energy_perf_policy backwards compatibility; validate numeric values
+        case "$perf" in
+            performance)         pnum=0 ;;
+            balance_performance) pnum=4 ;;
+            default)             pnum=6 ;;
+            balance_power)       pnum=8 ;;
+            power)               pnum=15 ;;
+
+            0|1|2|3|4|5|6|7|8|9|10|11|12|13|14|15) pnum="$perf" ;;
+
+            *) # invalid setting
+                echo_debug "pm" "set_cpu_perf_policy($1).epb.invalid: perf=$perf"
+                return 0
+                ;;
+        esac
+
+        # apply EPB setting
+        # try native kernel API first (5.2 and later)
+        cnt=0
+        ec=0
+        for cpuf in "${CPUD}"/cpu*/power/energy_perf_bias; do
+            if [ -f "$cpuf" ]; then
+                cnt=$((cnt + 1))
+                if  ! write_sysf "$pnum" "$cpuf"; then
+                    echo_debug "pm" "set_cpu_perf_policy($1).epb_kernel.write_error: $perf($pnum) $cpuf; rc=$?"
+                    ec=$((ec+1))
+                fi
+            fi
+        done
+        if [ $cnt -gt 0 ]; then
+            # native kernel API actually detected
+            echo_debug "pm" "set_cpu_perf_policy($1).epb_kernel: $perf($pnum); ec=$ec"
+            return 0
+        fi
+
+        # no native kernel support, try x86_energy_perf_policy
+        if ! cmd_exists $ENERGYPERF; then
+            # x86_energy_perf_policy not installed
+            echo_debug "pm" "set_cpu_perf_policy($1).epb_x: $perf($pnum); x86_energy_perf_policy not installed"
+        else
+            # x86_energy_perf_policy needs kernel module 'msr'
+            load_modules "$MOD_MSR"
+            $ENERGYPERF "$pnum" > /dev/null 2>&1
+            rc=$?
+            case $rc in
+                0) echo_debug "pm" "set_cpu_perf_policy($1).epb_x: $perf($pnum); rc=$?" ;;
+                1) echo_debug "pm" "set_cpu_perf_policy($1).epb_x: $perf($pnum); rc=$? (unsupported cpu)" ;;
+                2) echo_debug "pm" "set_cpu_perf_policy($1).epb_x: $perf($pnum); rc=$? (kernel specific x86_energy_perf_policy missing)" ;;
+                *) echo_debug "pm" "set_cpu_perf_policy($1).epb_x: $perf($pnum); rc=$? (unknown)" ;;
+            esac
+            return $rc
+        fi
+    else
+        echo_debug "pm" "set_cpu_perf_policy($1).epb.unsupported_cpu"
+    fi
+
+    return 0
+}
+
+set_intel_cpu_perf_pct () {
+    # set Intel P-state performance limits
+    # $1: 0=ac mode, 1=battery mode
+    local min max
+
+
+    if ! check_intel_pstate; then
+        echo_debug "pm" "set_intel_cpu_perf_pct($1).no_intel_pstate"
+        return 0
+    fi
+
+    if [ "$1" = "1" ]; then
+        min=${CPU_MIN_PERF_ON_BAT:-}
+        max=${CPU_MAX_PERF_ON_BAT:-}
+    else
+        min=${CPU_MIN_PERF_ON_AC:-}
+        max=${CPU_MAX_PERF_ON_AC:-}
+    fi
+
+    if [ ! -f $CPU_MIN_PERF_PCT ]; then
+        echo_debug "pm" "set_intel_cpu_perf_pct($1).min.not_supported"
+    elif [ -n "$min" ]; then
+        write_sysf "$min" $CPU_MIN_PERF_PCT
+        echo_debug "pm" "set_intel_cpu_perf_pct($1).min: $min; rc=$?"
+    else
+        echo_debug "pm" "set_intel_cpu_perf_pct($1).min.not_configured"
+    fi
+
+    if [ ! -f $CPU_MAX_PERF_PCT ]; then
+        echo_debug "pm" "set_intel_cpu_perf_pct($1).max.not_supported"
+    elif [ -n "$max" ]; then
+        write_sysf "$max" $CPU_MAX_PERF_PCT
+        echo_debug "pm" "set_intel_cpu_perf_pct($1).max: $max; rc=$?"
+    else
+        echo_debug "pm" "set_intel_cpu_perf_pct($1).max.not_configured"
+    fi
+
+    return 0
+}
+
+set_cpu_boost_all () { # $1: 0=ac mode, 1=battery mode
+    # global cpu boost behavior control based on the current power mode
+    #
+    # Relevant config option(s): CPU_BOOST_ON_{AC,BAT} with values {'',0,1}
+    #
+    # Note:
+    #  * needs commit #615b7300717b9ad5c23d1f391843484fe30f6c12
+    #     (linux-2.6 tree), "Add support for disabling dynamic overclocking",
+    #    => requires Linux 3.7 or later
+
+    local val
+
+    if [ "$1" = "1" ]; then
+        val=${CPU_BOOST_ON_BAT:-}
+    else
+        val=${CPU_BOOST_ON_AC:-}
+    fi
+
+    if [ -z "$val" ]; then
+        # do nothing if unconfigured
+        echo_debug "pm" "set_cpu_boost_all($1).not_configured"
+        return 0
+    fi
+
+    if check_intel_pstate; then
+        if check_ppd_active; then
+            # do not apply no_turbo when power-profiles-daemon is running
+            echo_message "Warning: CPU_BOOST_ON_BAT/BAT is not set because power-profiles-daemon is running."
+            echo_debug "pm" "set_cpu_boost_all($1).intel_pstate.nop_ppd_active"
+            return 0
+        fi
+        # use intel_pstate sysfiles, invert value
+        if write_sysf "$((val ^ 1))" $CPU_TURBO_PSTATE; then
+            echo_debug "pm" "set_cpu_boost_all($1).intel_pstate: $val"
+        else
+            echo_debug "pm" "set_cpu_boost_all($1).intel_pstate.cpu_not_supported"
+        fi
+    elif [ -f $CPU_BOOST_ALL_CTRL ]; then
+        # use acpi_cpufreq sysfiles
+        # simple test for attribute "w" doesn't work, so actually write
+        if write_sysf "$val" $CPU_BOOST_ALL_CTRL; then
+            echo_debug "pm" "set_cpu_boost_all($1).acpi_cpufreq: $val"
+        else
+            echo_debug "pm" "set_cpu_boost_all($1).acpi_cpufreq.cpu_not_supported"
+        fi
+    else
+        echo_debug "pm" "set_cpu_boost_all($1).not_available"
+    fi
+
+    return 0
+}
+
+set_cpu_dyn_boost () {
+    # set Intel/AMD CPU dynamic boost feature
+    # - intel_state in HWP active mode
+    # - amd_pstate in active mode, same requirements as set_cpu_perf_policy()
+    # $1: 0=ac mode, 1=battery mode
+    local val
+
+    if [ "$1" = "1" ]; then
+        val=${CPU_HWP_DYN_BOOST_ON_BAT:-}
+    else
+        val=${CPU_HWP_DYN_BOOST_ON_AC:-}
+    fi
+
+    if [ -z "$val" ]; then
+        echo_debug "pm" "set_cpu_dyn_boost($1).not_configured"
+    elif check_intel_pstate; then
+        if [ $INTEL_DYN_BOOST ]; then
+            write_sysf "$val" $INTEL_DYN_BOOST
+            echo_debug "pm" "set_cpu_dyn_boost($1).intel_pstate: $val; rc=$?"
+        else
+            echo_debug "pm" "set_cpu_dyn_boost($1).intel_pstate.not_supported"
+        fi
+    elif check_amd_pstate; then
+        if [ $AMD_DYN_BOOST ]; then
+            write_sysf "$val" $AMD_DYN_BOOST
+            echo_debug "pm" "set_cpu_dyn_boost($1).amd_pstate: $val; rc=$?"
+        else
+            echo_debug "pm" "set_cpu_dyn_boost($1).amd_pstate.not_supported"
+        fi
+    else
+        echo_debug "pm" "set_cpu_dyn_boost($1).no_driver"
+    fi
+
+    return 0
+}
+
+# --- Misc
+
+set_nmi_watchdog () { # enable/disable nmi watchdog
+    local nmiwd=${NMI_WATCHDOG:-}
+
+    if [ -z "$nmiwd" ]; then
+        # do nothing if unconfigured
+        echo_debug "pm" "set_nmi_watchdog.not_configured"
+        return 0
+    fi
+
+    if [ -f /proc/sys/kernel/nmi_watchdog ]; then
+        if write_sysf "$nmiwd" /proc/sys/kernel/nmi_watchdog; then
+            echo_debug "pm" "set_nmi_watchdog: $nmiwd; rc=$?"
+        else
+            echo_debug "pm" "set_nmi_watchdog.disabled_by_kernel: $nmiwd"
+        fi
+    else
+        echo_debug "pm" "set_nmi_watchdog.not_available"
+    fi
+
+    return 0
+}
+
+# --- Platform
+
+set_platform_profile () { # set platform profile
+    # $1: 0=ac mode, 1=battery mode
+
+    local pwr
+
+    if [ "$1" = "1" ]; then
+        pwr=${PLATFORM_PROFILE_ON_BAT:-}
+    else
+        pwr=${PLATFORM_PROFILE_ON_AC:-}
+    fi
+
+    if [ -z "$pwr" ]; then
+        # do nothing if unconfigured
+        echo_debug "pm" "set_platform_profile($1).not_configured"
+        return 0
+    fi
+
+    if [ -f $FWACPID/platform_profile ]; then
+        if check_ppd_active; then
+            # do not apply platform profile when power-profiles-daemon is running
+            echo_message "Warning: PLATFORM_PROFILE_ON_AC/BAT is not set because power-profiles-daemon is running."
+            echo_debug "pm" "set_platform_profile($1).nop_ppd_active"
+            return 0
+        fi
+
+        if write_sysf "$pwr" $FWACPID/platform_profile; then
+            echo_debug "pm" "set_platform_profile($1): $pwr"
+        else
+            echo_debug "pm" "set_platform_profile($1).write_error"
+        fi
+    else
+        echo_debug "pm" "set_platform_profile($1).not_available"
+    fi
+
+    return 0
+}

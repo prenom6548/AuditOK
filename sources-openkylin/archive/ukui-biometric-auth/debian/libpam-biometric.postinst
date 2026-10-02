@@ -1,0 +1,60 @@
+#!/bin/sh
+set -e
+#DEBHELPER#
+
+pam-auth-update --package
+
+#update default conf
+config_file=/etc/biometric-auth/ukui-biometric.conf
+
+delimeter='='
+
+get_opt(){
+  file=$1
+  section=$2
+  key=$3
+  val=$(awk -F "$delimeter" '/\['${section}'\]/{a=1}(a==1 && "'${key}'"==$1){print $2;exit}' ${file})
+  echo ${val}
+}
+
+is_key_exist(){
+  file=$1
+  section=$2
+  key=$3
+  is_exist=$(awk -F "$delimeter" '/\['${section}'\]/{a=1}(a==1 && "'${key}'"==$1){print '1';exit}' ${file})
+  echo ${is_exist}
+}
+
+set_opt(){
+  file=$1
+  section=$2
+  key=$3
+  val=$4
+  contain_section=$(awk '/\['${section}'\]/ {print NR}' ${file})
+  if [ ${#contain_section} -gt 0 ]; then
+    is_exist=$(is_key_exist $file $section $key)
+    if [ "${is_exist}" = "1" ]; then
+      awk -F "$delimeter" '/\['${section}'\]/{a=1}(a==1 && "'${key}'"==$1){gsub($2,"'${val}'");a=0} {print $0}' ${file} 1<>${file}
+    else
+      sed -i "s/\[${section}\]/\[${section}\]\n${key}\=${val}/g" ${file}
+    fi
+  else
+    echo -e "\n[${section}]\n${key}=${val}" >> ${file}
+    sed -i "s/\-e//g" ${file}
+  fi
+}
+
+if [ ! -f ${config_file} ]; then
+  mkdir -p /etc/biometric-auth
+  cp /usr/share/ukui-biometric/ukui-biometric.conf ${config_file}
+else
+  set_opt ${config_file} General UseFirstDevice true
+  set_opt ${config_file} General MaxFailedTimes 5
+  set_opt ${config_file} General EnableAuth true
+  set_opt ${config_file} Functions EnableQRCode true
+fi
+
+if [ -f "/usr/share/libpam-biometric/kylin-config/org.ukui.UniauthBackend.yaml" ]; then
+    mkdir -p /etc/kylin-config/basic/
+    cp /usr/share/libpam-biometric/kylin-config/org.ukui.UniauthBackend.yaml /etc/kylin-config/basic/org.ukui.UniauthBackend.yaml
+fi

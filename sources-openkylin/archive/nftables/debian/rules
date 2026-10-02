@@ -1,0 +1,59 @@
+#!/usr/bin/make -f
+
+ifeq (,$(filter terse,$(DEB_BUILD_OPTIONS)))
+export DH_VERBOSE=1
+endif
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+include /usr/share/dpkg/architecture.mk
+include /usr/share/dpkg/pkg-info.mk
+
+export PYBUILD_NAME = $(DEB_SOURCE)
+
+configure_opts := --with-xtables \
+                  --with-json    \
+                  --with-cli=editline
+pybuild_opts   := --buildsystem=pybuild -- --dir $(CURDIR)/py
+pybuild_pkg    := python3-$(PYBUILD_NAME)
+
+ifeq (,$(filter terse,$(DEB_BUILD_OPTIONS)))
+configure_opts += --disable-silent-rules
+pybuild_opts   += --verbose
+else
+configure_opts += --enable-silent-rules
+pybuild_opts   += --quiet
+endif
+
+%:
+	dh $@ --with python3
+
+override_dh_auto_clean:
+	dh_auto_clean -N$(pybuild_pkg)
+	dh_auto_clean -p$(pybuild_pkg) $(pybuild_opts)
+
+override_dh_auto_configure:
+	dh_auto_configure -N$(pybuild_pkg) -- $(configure_opts)
+	dh_auto_configure -p$(pybuild_pkg) $(pybuild_opts)
+
+override_dh_auto_build:
+	dh_auto_build -N$(pybuild_pkg) -- MAKE_STAMP=$(SOURCE_DATE_EPOCH)
+	dh_auto_build -p$(pybuild_pkg) $(pybuild_opts)
+
+override_dh_auto_test:
+
+override_dh_auto_install:
+	dh_auto_install -N$(pybuild_pkg)
+	dh_auto_install -p$(pybuild_pkg) $(pybuild_opts)
+
+execute_after_dh_fixperms:
+	chmod a+x debian/nftables/etc/nftables.conf
+
+override_dh_installsystemd:
+	dh_installsystemd --no-enable --no-start --restart-after-upgrade
+
+override_dh_installexamples:
+	dh_installexamples -XMakefile
+
+ifneq (,$(filter nodoc,$(DEB_BUILD_OPTIONS)))
+override_dh_link:
+endif

@@ -1,0 +1,42 @@
+/*
+ * Copyright (C) 2023 KylinSoftCo., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 3, or (at your option)
+ * any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, see <http://www.gnu.org/licenses/>.
+ *
+ **/
+#ifndef FREEDESKTOPHELPER_H
+#define FREEDESKTOPHELPER_H
+
+#include <QtDBus>
+#include <QDBusAbstractInterface>
+#include <QDBusUnixFileDescriptor>
+#include "../common/definetypes.h"
+
+class FreedesktopHelper : public QDBusAbstractInterface
+{
+    Q_OBJECT
+public:
+    explicit FreedesktopHelper(bool bSession = true, QObject *parent = nullptr);
+
+public Q_SLOTS:
+    bool NameHasOwner(const QString &strService);
+    bool isServiceActivable(const QString &strService);
+    void onDBusNameOwnerChanged(const QString &name, const QString &oldOwner, const QString &newOwner);
+
+Q_SIGNALS:
+    void serviceStatusChanged(QString strName, bool isActive);
+    void NameOwnerChanged(QString, QString, QString);
+};
+
+#endif // FREEDESKTOPHELPER_H

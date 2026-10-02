@@ -1,0 +1,141 @@
+#!/usr/bin/make -f
+# debian/rules file - for GnuPG
+# Copyright 1994,1995 by Ian Jackson.
+# Copyright 1998-2003 by James Troup.
+# Copyright 2003-2004 by Matthias Urlichs.
+#
+# I hereby give you perpetual unlimited permission to copy,
+# modify and relicense this file, provided that you do not remove
+# my name from the file itself.  (I assert my moral right of
+# paternity under the Copyright, Designs and Patents Act 1988.)
+# This file may have to be extensively modified
+
+include /usr/share/dpkg/architecture.mk
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+# avoid -pie for gpgv-static on kfreebsd-amd64, and x32
+# platforms, which cannot support it by default:
+ifeq (,$(filter $(DEB_HOST_ARCH), kfreebsd-amd64 x32))
+GPGV_STATIC_HARDENING = "-pie"
+else
+GPGV_STATIC_HARDENING = ""
+endif
+
+# Avoid parallel tests on hppa and riscv64 architecture.
+# Parallel tests generates high load on machine which causes timeouts and thus
+# triggers unexpected failures.
+ifeq (,$(filter $(DEB_HOST_ARCH), hppa riscv64))
+# And also, avoid parallel tests due to swtpm failures (see https://dev.gnupg.org/T7494)
+AUTOTEST_FLAGS = "--no-parallel"
+else
+AUTOTEST_FLAGS = "--no-parallel"
+endif
+
+ifneq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
+	NODOC = --disable-doc
+endif
+
+%:
+	dh $@ --with=autoreconf --builddirectory=build
+
+GPGV_UNNEEDED = gpgtar gpgsm scdaemon dirmngr tofu exec ldap gnutls sqlite libdns keyboxd tpm2d npth
+GPGV_UDEB_UNNEEDED = $(GPGV_UNNEEDED) bzip2 doc
+
+WIN32_FLAGS=LDFLAGS="-Xlinker --no-insert-timestamp -static" CFLAGS="-g -Os" CPPFLAGS=
+
+ifeq ($(filter pkg.gnupg2.gpgvonly,$(DEB_BUILD_PROFILES)),)
+
+execute_after_dh_auto_configure:
+	dh_auto_configure --builddirectory=build --verbose -- \
+		--libexecdir=\$${prefix}/lib/gnupg \
+		--enable-wks-tools \
+		--enable-all-tests \
+		--with-agent-s2k-calibration=300 \
+		--enable-large-secmem \
+		--with-mailprog=/usr/sbin/sendmail \
+		--enable-maintainer-mode \
+		$(NODOC)
+	# win32 uses hand-written *FLAGS
+	# mkdefsinc is built with *_FOR_BUILD
+	# gpgscm is also not shipped
+	@echo 'blhc: ignore-line-regexp: .*i686-w64-mingw32-gcc .*'
+	@echo 'blhc: ignore-line-regexp: .*-o mkdefsinc .*'
+	@echo 'blhc: ignore-line-regexp: .*-o gpgscm .*'
+
+override_dh_auto_configure-arch:
+	dh_auto_configure --builddirectory=build-gpgv-udeb -- \
+		$(NODOC) \
+		$(foreach x, $(GPGV_UDEB_UNNEEDED), --disable-$(x))
+
+override_dh_auto_configure-indep:
+	# nothing to do
+
+execute_after_dh_auto_build:
+	dh_auto_build --builddirectory=build
+
+override_dh_auto_build-arch:
+	dh_auto_build --builddirectory=build-gpgv-udeb
+	cp -a build-gpgv-udeb build-gpgv-static
+	rm -f build-gpgv-static/g10/gpgv
+	cd build-gpgv-static/g10 && $(MAKE) LDFLAGS="$$LDFLAGS $(GPGV_STATIC_HARDENING) -static" gpgv
+	mv build-gpgv-static/g10/gpgv build-gpgv-static/g10/gpgv-static
+
+override_dh_auto_build-indep:
+	mkdir -p build-gpgv-win32
+	cd build-gpgv-win32 && $(WIN32_FLAGS) ../configure \
+		$(foreach x, $(GPGV_UDEB_UNNEEDED), --disable-$(x)) \
+		$(foreach x, libgpg-error libgcrypt libassuan ksba, --with-$x-prefix=/usr/i686-w64-mingw32) \
+		$(NODOC) \
+		--enable-gpg2-is-gpg \
+		--with-zlib=/usr/i686-w64-mingw \
+		--prefix=/usr/i686-w64-mingw32 \
+		--host i686-w64-mingw32
+	cd build-gpgv-win32/common && $(WIN32_FLAGS) $(MAKE) status-codes.h audit-events.h
+	cd build-gpgv-win32/common && $(WIN32_FLAGS) $(MAKE) libgpgrl.a
+	cd build-gpgv-win32/common && $(WIN32_FLAGS) $(MAKE) libsimple-pwquery.a
+	cd build-gpgv-win32/common && $(WIN32_FLAGS) $(MAKE) libcommon.a
+	cd build-gpgv-win32/kbx && $(WIN32_FLAGS) $(MAKE) libkeybox.a
+	cd build-gpgv-win32/regexp && $(WIN32_FLAGS) $(MAKE) _unicode_mapping.c
+	cd build-gpgv-win32/regexp && $(WIN32_FLAGS) $(MAKE) libregexp.a
+	cd build-gpgv-win32/g10 && $(WIN32_FLAGS) $(MAKE) gpgv.exe
+	strip build-gpgv-win32/g10/gpgv.exe
+
+execute_after_dh_installdocs:
+	# These are already shipped in the respective packages
+	rm -vf \
+		debian/gnupg/usr/share/doc/gnupg/examples/systemd-user/*.service \
+		debian/gnupg/usr/share/doc/gnupg/examples/systemd-user/*.socket
+
+override_dh_auto_test:
+ifeq (,$(filter $(DEB_HOST_ARCH), riscv64))
+	dh_auto_test --builddirectory=build -- verbose=3 TESTFLAGS=$(AUTOTEST_FLAGS)
+else
+	@echo 'riscv64 architecture skip dh_auto_test'
+endif
+
+override_dh_shlibdeps:
+# Make ldap a recommends rather than a hard dependency.
+	dpkg-shlibdeps -Tdebian/dirmngr.substvars -dRecommends debian/dirmngr/usr/lib/gnupg/dirmngr_ldap -dDepends debian/dirmngr/usr/bin/dirmngr*
+	dh_shlibdeps -Ndirmngr
+
+else # ifeq ($(filter pkg.gnupg2.gpgvonly,$(DEB_BUILD_PROFILES)),)
+override_dh_auto_configure:
+	dh_auto_configure --builddirectory=build --verbose -- \
+		--libexecdir=\$${prefix}/lib/gnupg \
+		--enable-maintainer-mode \
+		$(NODOC) \
+		$(foreach x, $(GPGV_UNNEEDED), --disable-$(x))
+
+override_dh_auto_test:
+	# stripped down build fails on make check
+
+endif  # ifeq ($(filter pkg.gnupg2.gpgvonly,$(DEB_BUILD_PROFILES)),
+
+
+execute_before_dh_autoreconf:
+	echo "Developer change history can be found in the source tarball. See NEWS for high-level changes." > ChangeLog
+
+# visualizations of package dependencies:
+debian/%.png: debian/%.dot
+	dot -T png -o $@ $<

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="th">
+<context>
+    <name>UkuiShortcut::SystemSettingShortcut</name>
+    <message>
+        <source>Settings</source>
+        <translation>การตั้งค่าระบบ</translation>
+    </message>
+</context>
+</TS>

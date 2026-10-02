@@ -1,0 +1,42 @@
+From: Georgia Garcia <georgia.garcia@canonical.com>
+Date: Wed, 1 Apr 2026 19:46:27 -0300
+Subject: [PATCH 12/13] parser: fix label match for default label values
+
+After default_match_pattern for label, but before the null transition
+we need to add the full permission set because the kernel requires the
+perms to match on the label. The indication that the match may need to
+continue being done is done on the permissions of the null transition,
+as it's expected by the kernel.
+
+(cherry picked from commit fff3df88741e8b939483fd7f184c7697240bef22)
+Signed-off-by: John Johansen <john.johansen@canonical.com>
+---
+ parser/network.cc | 15 +++++++++++++++
+ 1 file changed, 15 insertions(+)
+
+diff --git a/parser/network.cc b/parser/network.cc
+index c89eef8..5a95fcf 100644
+--- a/parser/network.cc
++++ b/parser/network.cc
+@@ -828,6 +828,21 @@ bool network_rule::gen_ip_conds(Profile &prof, std::list<std::ostringstream> &st
+ 				lperms = map_perms(perms);
+ 
+ 			oss << default_match_pattern; /* label - not used for now */
++
++			buf = oss.str();
++			if (is_iface && !entry.label_match) {
++				/* mandatory perms at this point for
++				 * skb because default label has to
++				 * match actual perms.
++				 * AA_COMPAT_CONT_MATCH is checked on
++				 * the null transition */
++				if (!prof.policy.rules->add_rule(buf.c_str(), priority,
++								 rule_mode, map_perms(perms),
++								 dedup_perms_rule_t::audit == audit_t::FORCE ? map_perms(perms) : 0,
++								 parseopts))
++					return false;
++			}
++
+ 			oss << "\\x00"; /* null transition */
+ 
+ 			buf = oss.str();

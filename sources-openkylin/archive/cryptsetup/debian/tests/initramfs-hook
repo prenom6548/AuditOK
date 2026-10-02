@@ -1,0 +1,157 @@
+#!/bin/bash
+
+set -eu
+PATH="/usr/bin:/bin:/usr/sbin:/sbin"
+export PATH
+
+. ./debian/tests/utils/initramfs-hook.common
+set -x
+
+#######################################################################
+# make sure /cryptroot/crypttab is empty when nothing needs to be unclocked early
+
+disk_setup
+cat /proc/sys/kernel/random/uuid >"$TMPDIR/passphrase"
+luks2Format -- "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup luksOpen "$CRYPT_DEV" test0_crypt <"$TMPDIR/passphrase"
+cat >/etc/crypttab <<-EOF
+	test0_crypt $CRYPT_DEV none
+EOF
+
+mkinitramfs
+# make sure cryptsetup exists and doesn't crash (for instance due to missing libraries) in initrd
+chroot "$INITRD_DIR" cryptsetup --version
+test -f "$INITRD_DIR/lib/cryptsetup/askpass" || exit 1
+check_initrd_crypttab </dev/null
+
+
+#######################################################################
+# 'initramfs' crypttab option
+
+cat >/etc/crypttab <<-EOF
+	test0_crypt $CRYPT_DEV none initramfs
+EOF
+
+mkinitramfs
+chroot "$INITRD_DIR" cryptsetup luksOpen --test-passphrase "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup close test0_crypt
+check_initrd_crypttab <<-EOF
+	test0_crypt UUID=$(blkid -s UUID -o value "$CRYPT_DEV") none initramfs
+EOF
+
+
+#######################################################################
+# KEYFILE_PATTERN
+
+disk_setup
+cat /proc/sys/kernel/random/uuid >"$TMPDIR/passphrase"
+luks2Format -- "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup luksOpen "$CRYPT_DEV" test1_crypt <"$TMPDIR/passphrase"
+cat >/etc/crypttab <<-EOF
+	test1_crypt $CRYPT_DEV $TMPDIR/keyfile initramfs
+EOF
+
+echo KEYFILE_PATTERN="$TMPDIR/keyfile" >>/etc/cryptsetup-initramfs/conf-hook
+tr -d '\n' <"$TMPDIR/passphrase" >"$TMPDIR/keyfile"
+mkinitramfs
+check_initrd_crypttab <<-EOF
+	test1_crypt UUID=$(blkid -s UUID -o value "$CRYPT_DEV") /cryptroot/keyfiles/test1_crypt.key initramfs
+EOF
+test -f "$INITRD_DIR/cryptroot/keyfiles/test1_crypt.key" || exit 1
+chroot "$INITRD_DIR" cryptsetup luksOpen --test-passphrase --key-file="/cryptroot/keyfiles/test1_crypt.key" "$CRYPT_DEV"
+cryptsetup close test1_crypt
+
+
+#######################################################################
+# ASKPASS
+
+disk_setup
+cat /proc/sys/kernel/random/uuid >"$TMPDIR/passphrase"
+luks2Format -- "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup luksOpen "$CRYPT_DEV" test2_crypt <"$TMPDIR/passphrase"
+cat >/etc/crypttab <<-EOF
+	test2_crypt $CRYPT_DEV none initramfs
+EOF
+
+# interactive unlocking forces ASKPASS=y
+echo ASKPASS=n >/etc/cryptsetup-initramfs/conf-hook
+mkinitramfs
+test -f "$INITRD_DIR/lib/cryptsetup/askpass" || exit 1
+
+# check that unlocking via keyscript doesn't copy askpass
+cat >/etc/crypttab <<-EOF
+	test2_crypt $CRYPT_DEV foobar initramfs,keyscript=passdev
+EOF
+mkinitramfs
+! test -f "$INITRD_DIR/lib/cryptsetup/askpass" || exit 1
+test -f "$INITRD_DIR/lib/cryptsetup/scripts/passdev" || exit 1
+
+# check that unlocking via keyfile doesn't copy askpass
+echo KEYFILE_PATTERN="$TMPDIR/keyfile" >>/etc/cryptsetup-initramfs/conf-hook
+tr -d '\n' <"$TMPDIR/passphrase" >"$TMPDIR/keyfile"
+cat >/etc/crypttab <<-EOF
+	test2_crypt $CRYPT_DEV $TMPDIR/keyfile initramfs
+EOF
+mkinitramfs
+! test -f "$INITRD_DIR/lib/cryptsetup/askpass" || exit 1
+chroot "$INITRD_DIR" cryptsetup luksOpen --test-passphrase --key-file="/cryptroot/keyfiles/test2_crypt.key" "$CRYPT_DEV"
+cryptsetup close test2_crypt
+
+
+#######################################################################
+# legacy ciphers and hashes
+# see https://salsa.debian.org/cryptsetup-team/cryptsetup/-/merge_requests/31
+
+# Since OpenSSL 3.0.7 RIPEMD160 is in both legacy and default providers, see
+#
+#   https://github.com/openssl/openssl/commit/4534468866c2b29d197c48f0763c32e5a7b65868
+#   https://github.com/openssl/openssl/issues/17722
+
+# plain, ripemd160
+disk_setup
+cat /proc/sys/kernel/random/uuid >"$TMPDIR/passphrase"
+cryptsetup open --type=plain --cipher="aes-cbc-essiv:sha256" --size=256 --hash="ripemd160" "$CRYPT_DEV" test3_crypt <"$TMPDIR/passphrase"
+echo "test3_crypt $CRYPT_DEV none plain,cipher=aes-cbc-essiv:sha256,hash=ripemd160,size=256,initramfs" >/etc/crypttab
+mkinitramfs
+volume_key="$(dmsetup table --target crypt --showkeys -- test3_crypt | cut -s -d' ' -f5)"
+test -n "$volume_key" || exit 1
+cryptsetup close test3_crypt
+chroot "$INITRD_DIR" cryptsetup open --type=plain --cipher="aes-cbc-essiv:sha256" --size=256 --hash="ripemd160" "$CRYPT_DEV" test3_crypt <"$TMPDIR/passphrase"
+test -b /dev/mapper/test3_crypt || exit 1
+volume_key2="$(dmsetup table --target crypt --showkeys -- test3_crypt | cut -s -d' ' -f5)"
+test "$volume_key" = "$volume_key2" || exit 1
+cryptsetup close test3_crypt
+
+# LUKS2, ripemd160
+disk_setup
+cat /proc/sys/kernel/random/uuid >"$TMPDIR/passphrase"
+luks2Format --hash="ripemd160" -- "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup luksOpen "$CRYPT_DEV" test3_crypt <"$TMPDIR/passphrase"
+echo "test3_crypt $CRYPT_DEV none initramfs" >/etc/crypttab
+mkinitramfs
+chroot "$INITRD_DIR" cryptsetup luksOpen --test-passphrase "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup close test3_crypt
+
+# LUKS2 (detached header), ripemd160
+disk_setup
+cat /proc/sys/kernel/random/uuid >"$TMPDIR/passphrase"
+luks2Format --hash="ripemd160" --header="$TMPDIR/header.img" -- "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup luksOpen --header="$TMPDIR/header.img" "$CRYPT_DEV" test3_crypt <"$TMPDIR/passphrase"
+echo "test3_crypt $CRYPT_DEV none header=$TMPDIR/header.img,initramfs" >/etc/crypttab
+mkinitramfs
+cp -T "$TMPDIR/header.img" "$INITRD_DIR/cryptroot/header.img"
+chroot "$INITRD_DIR" cryptsetup luksOpen --header="/cryptroot/header.img" --test-passphrase "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup close test3_crypt
+rm -f "$TMPDIR/header.img"
+
+# LUKS2 (detached header, missing), ripemd160
+disk_setup
+cat /proc/sys/kernel/random/uuid >"$TMPDIR/passphrase"
+luks2Format --hash="ripemd160" --header="$TMPDIR/header.img" -- "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup luksOpen --header="$TMPDIR/header.img" "$CRYPT_DEV" test3_crypt <"$TMPDIR/passphrase"
+echo "test3_crypt $CRYPT_DEV none header=/nonexistent,initramfs" >/etc/crypttab
+mkinitramfs
+cp -T "$TMPDIR/header.img" "$INITRD_DIR/cryptroot/header.img"
+chroot "$INITRD_DIR" cryptsetup luksOpen --header="/cryptroot/header.img" --test-passphrase "$CRYPT_DEV" <"$TMPDIR/passphrase"
+cryptsetup close test3_crypt
+rm -f "$TMPDIR/header.img"

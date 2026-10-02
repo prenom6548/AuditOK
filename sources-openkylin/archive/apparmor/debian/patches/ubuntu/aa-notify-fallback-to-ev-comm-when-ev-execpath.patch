@@ -1,0 +1,66 @@
+From: =?utf-8?q?Maxime_B=C3=A9lair?= <maxime.belair@canonical.com>
+Date: Thu, 24 Jul 2025 11:59:40 +0200
+Subject: [PATCH] aa-notify: fallback to ev['comm'] when ev['execpath'] is
+ missing
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Relying on ev['comm'] to get ev['execpath'] is only used for user
+namespaces related special profiles and only when ev['execpath'] is not
+readily available. This allows to create these special profiles
+automatically, which is more convenient for the user.
+
+This mechanism is brittle as ev['comm'] is unreliable. comm could be
+modified by a program, or displayed in hex format. Also, if the executed
+binary is not in $PATH, Apparmor will not be able to find it and could
+even resolve a wrong executable in the unlucky case a similarly named
+binary exists in $PATH. Most such cases are detected and warned about.
+
+This fallback will be not be used once apparmor-kernel!8 (or similar) is
+used in the user environment to provide a reliable source. Until then,
+this patch is small and easily reverted.
+
+Signed-off-by: Maxime Bélair <maxime.belair@canonical.com>
+---
+ utils/aa-notify | 13 ++++++++-----
+ 1 file changed, 8 insertions(+), 5 deletions(-)
+
+diff --git a/utils/aa-notify b/utils/aa-notify
+index dec400f..7a7852e 100755
+--- a/utils/aa-notify
++++ b/utils/aa-notify
+@@ -560,7 +560,7 @@ def get_more_info_about_event(rl, ev, special_profiles, profile_path, header='')
+         if get_event_special_type(ev, special_profiles) != 'normal':
+             userns_event_usable = can_leverage_userns_event(ev)
+             if userns_event_usable == 'error_cannot_find_path':
+-                raw_rule = _('# You may allow it through a dedicated unconfined profile for {0}. If you want to allow it, please create a profile for it manually.').format(ev['comm'])
++                raw_rule = _('# You may allow it through a dedicated unconfined profile for {0}. However, apparmor cannot find {0}. If you want to allow it, please create a profile for it manually.').format(ev['comm'])
+             elif userns_event_usable == 'error_userns_profile_exists':
+                 raw_rule = _('# You may allow it through a dedicated unconfined profile for {} ({}). However, a profile already exists with this name. If you want to allow it, please create a profile for it manually.').format(ev['comm'], ev['execpath'])
+             elif userns_event_usable == 'ok':
+@@ -761,8 +761,11 @@ def get_aggregated(rl, agg, max_nb_profiles, keys_to_aggregate, special_profiles
+         is_userns_profile = get_event_special_type(ev, special_profiles) != 'normal'
+         if is_userns_profile:
+             bin_name = ev['comm']
+-            if 'execpath' not in ev:
+-                ev['execpath'] = None
++            # We fix execpath for all events if possible
++            if 'execpath' not in ev or not ev['execpath']:
++                ev['execpath'] = aa.find_executable(bin_name)
++                for _ev in data['events']:
++                    _ev['execpath'] = ev['execpath']
+             bin_path = ev['execpath']
+             actionable = can_leverage_userns_event(ev) == 'ok'
+         else:
+@@ -1201,8 +1204,8 @@ def main():
+ 
+                 # Special behavior for userns:
+                 if get_event_special_type(ev, userns_special_profiles) != 'normal':
+-                    if 'execpath' not in ev:
+-                        ev['execpath'] = None
++                    if 'execpath' not in ev or not ev['execpath']:
++                        ev['execpath'] = aa.find_executable(ev['comm'])
+ 
+                     if args.prompt_filter and 'userns' in args.prompt_filter:
+                         prompt_userns(ev)

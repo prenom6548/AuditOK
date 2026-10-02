@@ -1,0 +1,43 @@
+From: =?utf-8?q?Maxime_B=C3=A9lair?= <maxime.belair@canonical.com>
+Date: Tue, 14 Apr 2026 12:03:11 +0200
+Subject: [PATCH 3/3] parser: handle compressed cache on kernels without
+ decompression support
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+If a compressed cache file lands in a non-compression kernel's cache
+directory (e.g. manually copied), setup_cache_policy() would promote
+zstd_compress_policy to ZSTD_COMPRESS_PRECOMPRESSED, failing to load.
+
+Fix this by treating the file as a cache miss, allowing reparse to
+install an uncompressed replacement.
+
+Signed-off-by: Maxime Bélair <maxime.belair@canonical.com>
+---
+ parser/policy_cache.c | 12 +++++++++++-
+ 1 file changed, 11 insertions(+), 1 deletion(-)
+
+diff --git a/parser/policy_cache.c b/parser/policy_cache.c
+index de5c972..462e9cc 100644
+--- a/parser/policy_cache.c
++++ b/parser/policy_cache.c
+@@ -161,7 +161,17 @@ void setup_cache_policy(const char *cachename)
+ {
+ 	zstd_compress_t tmp = valid_compressed_cache(cachename);
+ 	if (tmp == ZSTD_COMPRESS_PRECOMPRESSED) {
+-		zstd_compress_policy = ZSTD_COMPRESS_PRECOMPRESSED;
++		if (zstd_compress_policy != ZSTD_COMPRESS_NONE) {
++			zstd_compress_policy = ZSTD_COMPRESS_PRECOMPRESSED;
++		} else {
++			/*
++			 * Found a compressed cache be we doen't support compression
++			 * (e.g. cache copied from a compression-capable kernel's cache dir).
++			 * Treat as a miss; reparse will install an uncompressed replacement.
++			 */
++			pwarn(WARN_CACHE, "Compressed cache found but compression is disabled: ignoring\n");
++			mru_skip_cache = 1;
++		}
+ 	} else if (tmp == ZSTD_COMPRESS_RECOMPRESS) {
+ 		if (zstd_compress_policy == ZSTD_COMPRESS_POLICY ||
+ 		    zstd_compress_policy == ZSTD_COMPRESS_GUESS) {

@@ -1,0 +1,79 @@
+#!/bin/sh
+
+set -e
+
+nmbd_error_handler() {
+    if [ -d /sys/class/net/lo ] && ls /sys/class/net | grep -qv ^lo$; then
+        # https://bugs.debian.org/893762
+        echo 'WARNING: nmbd failed to start as there is no non-loopback interfaces available.'
+        echo 'Either add an interface or set "disable netbios = yes" in smb.conf'
+        return 0
+    elif command -v ip > /dev/null && ip a show | grep '^[[:space:]]*inet ' | grep -vq ' lo$'; then
+        # https://bugs.debian.org/859526
+        echo 'WARNING: nmbd failed to start as there is no local IPv4 non-loopback interfaces available.'
+        echo 'Either add an IPv4 address or set "disable netbios = yes" in smb.conf'
+        return 0
+    else
+        echo 'ERROR: nmbd failed to start.'
+        return 1 # caught by set -e
+    fi
+}
+
+# We generate several files during the postinst, and we don't want
+#	them to be readable only by root.
+umask 022
+
+if [ configure = "$1" -a -z "$2" ] # only do this if not upgrading
+then
+    # add the sambashare group; --force: ok if group already exist
+    groupadd --force --system sambashare
+    dir=/var/lib/samba/usershares
+    [ -d $dir ] || install -d -m 1770 -g sambashare $dir
+fi
+
+# in 4.17.4+dfsg-3 we stopped masking services, unmask them here
+if [ configure = "$1" ] && dpkg --compare-versions "$2" lt-nl 2:4.17.4+dfsg-3~
+then
+    for s in nmbd smbd samba-ad-dc; do
+	if [ /dev/null = $(realpath /etc/systemd/system/$s.service) ]
+	then
+	    rm -f /etc/systemd/system/$s.service
+	fi
+    done
+fi
+
+# remove old spool directory (point it to /var/tmp if in use)
+if [ configure = "$1" ] && dpkg --compare-versions "$2" lt-nl 2:4.17.4+dfsg-3~
+then
+    dir=/var/spool/samba
+    pat="^(\\s*path\\s*=\\s*)$dir"
+    if grep -q -E "$pat\\s*$" /etc/samba/smb.conf ; then
+	echo "WARNING: fixing smb.conf, replacing $dir with /var/tmp" >&2
+	sed -ri "s|$pat\\s*$|\\1/var/tmp|" /etc/samba/smb.conf
+    fi
+    if [ -d $dir -a ! -L $dir ]; then
+	echo "W: removing old samba print spool $dir" >&2
+	rm -rf $dir
+    fi
+    # we can still have it in an include file (or have a subdir there?)
+    if testparm -s 2>/dev/null | grep -E "$pat\\b" >&2; then
+	echo "WARNING: $dir is still referenced in smb.conf. Please update smb.conf" >&2
+	if [ ! -L $dir ]; then
+	    echo "WARNING: redirecting $dir to /var/tmp" >&2
+	    ln -s ../tmp $dir
+	fi
+    fi
+fi
+
+#DEBHELPER#
+
+# remove msg.sock/ directory (moved to /run/samba/)
+dir=/var/lib/samba/private/msg.sock
+if [ -d $dir -a configure = "$1" ] &&
+   dpkg --compare-versions "$2" lt-nl 2:4.16.0+dfsg-7~
+then
+    rm -f $dir/*
+    rmdir $dir
+fi
+
+exit 0

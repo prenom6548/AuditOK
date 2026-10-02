@@ -1,0 +1,60 @@
+#!/bin/sh
+set -eu
+
+# Regression test for https://bugs.debian.org/1040790
+
+mode="${1-}"
+
+export LC_ALL=C.UTF-8
+fail=
+set -x
+
+# dbus-daemon.deb provides a machine ID
+ls -l /etc/machine-id /var/lib/dbus/machine-id || :
+head /etc/machine-id /var/lib/dbus/machine-id || :
+uuid="$(dbus-uuidgen --get)"
+test -n "$uuid" || fail=yes
+# The machine ID consists of 32 lower-case hex digits (and the file
+# also has a newline)
+test "$uuid" = "$(perl -pe 'print "wrong: " unless /\A[a-z0-9]{32}\n\z/' /var/lib/dbus/machine-id)" || fail=yes
+
+# Intentionally not asserting that /etc/machine-id matches
+# /var/lib/dbus/machine-id: if the test container has both dbus and
+# systemd, and it was generated with a version of dbus that has #1040790,
+# then that assertion could fail.
+
+# If there is a systemd machine ID, installing dbus-daemon should
+# make the D-Bus machine ID be the same as it.
+# Unfortunately nothing currently guarantees that a Debian
+# system will have a machine ID, so this has to be conditional. (See
+# also #745876, #783716).
+if [ -e /etc/machine-id ] || [ "$mode" = with-systemd ]; then
+    rm -f /var/lib/dbus/machine-id
+    # This is for its side-effect of running the postinst, emulating
+    # a fresh installation
+    dpkg-reconfigure -fnoninteractive -pcritical dbus-daemon
+    ls -l /etc/machine-id /var/lib/dbus/machine-id || :
+    head /etc/machine-id /var/lib/dbus/machine-id || :
+    uuid="$(dbus-uuidgen --get)"
+    test -n "$uuid" || fail=yes
+    test "$uuid" = "$(perl -pe 'print "wrong: " unless /\A[a-z0-9]{32}\n\z/' /var/lib/dbus/machine-id)" || fail=yes
+    test "$uuid" = "$(perl -pe 'print "wrong: " unless /\A[a-z0-9]{32}\n\z/' /etc/machine-id)" || fail=yes
+fi
+
+# Similarly, if there is a D-Bus machine ID but no systemd machine ID
+# (for example if dbus-daemon happened to be installed before systemd),
+# then we expect systemd-machine-id-setup to copy ours.
+if [ "$mode" = with-systemd ]; then
+    rm -f /etc/machine-id
+    systemd-machine-id-setup
+    ls -l /etc/machine-id /var/lib/dbus/machine-id || :
+    head /etc/machine-id /var/lib/dbus/machine-id || :
+    uuid="$(dbus-uuidgen --get)"
+    test -n "$uuid" || fail=yes
+    test "$uuid" = "$(perl -pe 'print "wrong: " unless /\A[a-z0-9]{32}\n\z/' /var/lib/dbus/machine-id)" || fail=yes
+    test "$uuid" = "$(perl -pe 'print "wrong: " unless /\A[a-z0-9]{32}\n\z/' /etc/machine-id)" || fail=yes
+fi
+
+test -z "$fail"
+
+# vim:set sw=4 sts=4 et:

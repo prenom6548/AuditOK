@@ -1,0 +1,242 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="kk">
+<context>
+    <name>AISearchTask</name>
+    <message>
+        <location filename="ai/aisearchtask.cpp" line="59"/>
+        <source>Failed to create ai search session.</source>
+        <translation>ai ٸزدەۋ جوبالاۋدى قۇرۋ جەڭىلىس قالدى.</translation>
+    </message>
+    <message>
+        <location filename="ai/aisearchtask.cpp" line="65"/>
+        <source>Search task cancelled.</source>
+        <translation>ٸزدەۋ مىندەتى كۇشىنەن قالدىرىلدى.</translation>
+    </message>
+</context>
+<context>
+    <name>Condition</name>
+    <message>
+        <location filename="condition/condition.cpp" line="620"/>
+        <source>File name contains &quot;%1&quot;</source>
+        <translation>حۇجات مى «٪1» نى ٶز ىشىنە الادٸ</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="624"/>
+        <source>File name without &quot;%1&quot;</source>
+        <translation>«٪1» بولماعان حۇجات مى</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="640"/>
+        <source>File type contains &quot;%1&quot;</source>
+        <translation>حۇجات تيپى «٪1» نى ٶز ىشىنە الادٸ</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>By suffix</source>
+        <translation>قوسىمشاسى</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>Folder</source>
+        <translation>حۇجات قىسقىش</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>Plain Text</source>
+        <translation>تۇنىق تەكىسىت</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>WPS Document</source>
+        <translation>WPS حۇجاتى</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>PDF</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>Image</source>
+        <translation>راسىم</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>Video</source>
+        <translation>سىن</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="642"/>
+        <source>Audio</source>
+        <translation>ۇن</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="646"/>
+        <source>File type contains %1</source>
+        <translation>حۇجات تيپى ٪1 نى ٶز ىشىنە الادٸ</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>All</source>
+        <translation>جالپىسى</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>Empty(0K)</source>
+        <translation>قۇرعاق(0K)</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>Tiny(0-16K)</source>
+        <translation>كىشكەنەسىنە (0-16K)</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>Small(16K-1M)</source>
+        <translation>كشكەنە (16K-1M)</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>Medium(1M-128M)</source>
+        <translation>ورتاشا (1M-128M)</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>Big(128M-1G)</source>
+        <translation>ۇلكەن(128M-1G)</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>Large(1-4G)</source>
+        <translation>ۇلكەن(1-4G)</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="655"/>
+        <source>Great(&gt;4G)</source>
+        <translation>كەرەمەت(&gt;4G)</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="658"/>
+        <source>File size contains %1</source>
+        <translation>حۇجات ۇلكەندىگى ٪1 نى ٶز ىشىنە الادٸ</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="660"/>
+        <source>File size without %1</source>
+        <translation>حۇجات ۇلكەندىگى ٪1 جوق</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="666"/>
+        <source>File content match %1</source>
+        <translation>حۇجات مازمۇنى ٪1 بۇرشاق كەلەدى</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="674"/>
+        <source>File location contains &quot;%1&quot;</source>
+        <translation>حۇجات ورنى «٪1» نى ٶز ىشىنە الادٸ</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="676"/>
+        <source>File location without &quot;%1&quot;</source>
+        <translation>حۇجات ورنى «٪1» جوق</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="685"/>
+        <source>Later than &quot;%1&quot;</source>
+        <translation>«٪1» دان كەيىن</translation>
+    </message>
+    <message>
+        <location filename="condition/condition.cpp" line="686"/>
+        <source>Earlier than &quot;%1&quot;</source>
+        <translation>«٪1» دان بۇرٸنعٸ</translation>
+    </message>
+</context>
+<context>
+    <name>DatabaseManager</name>
+    <message>
+        <location filename="database/databasemanager.cpp" line="281"/>
+        <source>New Space %1</source>
+        <translation>جاڭا بوستٸق ٪1</translation>
+    </message>
+    <message>
+        <location filename="database/databasemanager.cpp" line="475"/>
+        <source>File %1 has areally been added to %2</source>
+        <translation>حۇجات ٪1 راسىندا ٪2 گە قوسىلدى</translation>
+    </message>
+    <message>
+        <location filename="database/databasemanager.cpp" line="578"/>
+        <source>File %1 doesn&apos;t exsit in any space.</source>
+        <translation>حۇجات ٪1 ەشقانداي بوستققا شىقپايدى.</translation>
+    </message>
+    <message>
+        <location filename="database/databasemanager.cpp" line="730"/>
+        <source>Failed to get space %1&apos;s id from query</source>
+        <translation>سۈرۈشتۈرۈشتىن بوستٸق ٪1 نىڭ ID عا يە بولعالٸ بولمادى</translation>
+    </message>
+    <message>
+        <location filename="database/databasemanager.cpp" line="758"/>
+        <source>Failed to get %1&apos;s id from query</source>
+        <translation>سۈرۈشتۈرۈشتىن ٪1 نىڭ ازاماتتىق كۋالىك الۋ جەڭىلىپ قالدى</translation>
+    </message>
+</context>
+<context>
+    <name>ModelController</name>
+    <message>
+        <location filename="model/modelcontroller.cpp" line="282"/>
+        <source>Failed to rename space %1 to %2, %2 is existed.</source>
+        <translation>بوستقتٸڭ اتاعىن ٪1 گە ٪2 ورىنداپ وزگەرتۋ جەڭىلىس قالدى، ٪2 ساقتالعان.</translation>
+    </message>
+    <message>
+        <location filename="model/modelcontroller.cpp" line="320"/>
+        <source>Failed to remove space %1, error message: %2</source>
+        <translation>٪1 بوستقتٸ شىعارىپ وتۋ جەڭىلىس قالدى، قاتەلىك حابارى: ٪2</translation>
+    </message>
+    <message>
+        <location filename="model/modelcontroller.cpp" line="640"/>
+        <location filename="model/modelcontroller.cpp" line="641"/>
+        <source>New Space %1</source>
+        <translation>جاڭا بوستٸق ٪1</translation>
+    </message>
+    <message>
+        <location filename="model/modelcontroller.cpp" line="654"/>
+        <source>Failed to updatestatus space %1, error message: %2</source>
+        <translation>٪1 بەينە بوستٸقتٸ جاڭالاۋ جەڭىلىس قالدى، قاتەلىك حابارى: ٪2</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <location filename="condition/condition.cpp" line="61"/>
+        <source>%1 %2</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="database/databasemanager.cpp" line="186"/>
+        <source>Intelligent Data Manager Introduction</source>
+        <translation>وي قابٸلەتتٸ ساندىق مالىمەت باسقارۋشنىڭ تونۇشتۇرۇشى</translation>
+    </message>
+    <message>
+        <source>peony-intelligent-data-management-service</source>
+        <translation type="vanished">پيون وي قابٸلەتتٸ ساندىق مالىمەت باسقارۋ قىزىمەت وتەۋى</translation>
+    </message>
+    <message>
+        <location filename="main.cpp" line="69"/>
+        <source>exit</source>
+        <translation>شەگىنۋ</translation>
+    </message>
+</context>
+<context>
+    <name>UKUI::IDM::FileInfoJob</name>
+    <message>
+        <location filename="file/fileinfojob.cpp" line="323"/>
+        <source>Create Date: %1</source>
+        <translation>چيسىلا قۇرۋ: ٪1</translation>
+    </message>
+    <message>
+        <location filename="file/fileinfojob.cpp" line="325"/>
+        <source>Open Date: %1</source>
+        <translation>اشىلعان ۋاقىتى: ٪1</translation>
+    </message>
+</context>
+</TS>

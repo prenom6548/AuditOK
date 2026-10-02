@@ -1,0 +1,71 @@
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ *
+ * Copyright (C) 2023 Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
+ */
+#include <QDBusPendingCall>
+#include <QDBusInterface>
+
+#include "touch-calibrate.h"
+#include "usd_base_class.h"
+#include "touch_calibrate_x.h"
+#include "touch_calibrate_wayland.h"
+
+TouchCalibrate::TouchCalibrate()
+{
+
+}
+
+TouchCalibrate::~TouchCalibrate()
+{
+
+}
+
+
+//进行映射
+void TouchCalibrate::calibrate()
+{
+    if (UsdBaseClass::isWlcom()) {
+        calibrateWayland();
+    } else {
+        calibrateX();
+    }
+}
+
+void TouchCalibrate::calibrateX()
+{
+    TouchCalibrateX calibrateX;
+
+    //获取设备
+    calibrateX.getScreenList();
+    calibrateX.getTouchDeviceList();
+    calibrateX.getTouchConfigure();
+    calibrateX.calibrateTouchScreen();
+    calibrateX.calibrateTablet();
+}
+
+void TouchCalibrate::calibrateWayland()
+{
+    USD_LOG(LOG_DEBUG,"//");
+    TouchCalibrateWayland calibarteWayland;
+    calibarteWayland.getScreenList();
+    calibarteWayland.getTouchDeviceList();
+    calibarteWayland.getTouchConfigure();
+    calibarteWayland.calibrateTouchScreen();
+    calibarteWayland.calibrateTablet();
+    USD_LOG(LOG_DEBUG,"//");
+}

@@ -1,0 +1,62 @@
+#!/bin/sh
+set -eu
+
+# Check that dbus-bin provides its intended command-line interface.
+#
+# We can't really *use* any of these without dbus-daemon, but we can
+# at least check that they are shipped in the package and can be run.
+
+export LC_ALL=C.UTF-8
+fail=
+
+# dbus-bin.deb provides dbus-cleanup-sockets in PATH
+dbus-cleanup-sockets --help
+
+# dbus-bin.deb provides dbus-monitor in PATH
+dbus-monitor --help
+
+# dbus-bin.deb provides dbus-send in PATH
+dbus-cleanup-sockets --help
+output="$(dbus-send --help 2>&1 || :)"
+echo "$output"
+
+case "$output" in
+    (Usage:\ dbus-send*)
+        ;;
+    (*)
+        echo "Unexpected output from dbus-send" >&2
+        fail=yes
+        ;;
+esac
+
+# dbus-bin.deb provides dbus-update-activation-environment in PATH
+output="$(dbus-update-activation-environment --help 2>&1 || :)"
+echo "$output"
+
+case "$output" in
+    (*Options:*)
+        ;;
+    (*)
+        echo "Unexpected output from dbus-update-activation-environment" >&2
+        fail=yes
+        ;;
+esac
+
+# dbus-bin.deb provides dbus-uuidgen in PATH
+rm -f "$AUTOPKGTEST_TMP/uuid"
+dbus-uuidgen --ensure="$AUTOPKGTEST_TMP/uuid"
+uuid="$(cat "$AUTOPKGTEST_TMP/uuid")"
+echo "uuid: $uuid"
+set -x
+test -n "$uuid" || fail=yes
+# The UUID consists of 32 lower-case hex digits (and the file
+# also has a newline)
+test "$uuid" = "$(perl -pe 'print "wrong: " unless /\A[a-z0-9]{32}\n\z/' "$AUTOPKGTEST_TMP/uuid")" || fail=yes
+test "$uuid" = "$(dbus-uuidgen --get="$AUTOPKGTEST_TMP/uuid")" || fail=yes
+test "" = "$(dbus-uuidgen --ensure="$AUTOPKGTEST_TMP/uuid")" || fail=yes
+test "$uuid" = "$(cat "$AUTOPKGTEST_TMP/uuid")" || fail=yes
+set +x
+
+test -z "$fail"
+
+# vim:set sw=4 sts=4 et:

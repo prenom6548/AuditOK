@@ -1,0 +1,248 @@
+From: Pinlong Han <hanpinlong@kylinos.cn>
+Date: Wed, 15 Jul 2026 12:00:37 +0800
+Subject: fix build error for huanghe
+
+---
+ src/3rdparty/chromium/base/containers/id_map.h     |  4 ++--
+ .../chromium/build/config/compiler/BUILD.gn        |  9 ++++++++
+ .../browser/spellchecker/spellcheck_service.cc     |  2 +-
+ .../components/spellcheck/spellcheck_buildflags.h  | 25 ++++++++++++++++++++++
+ .../content/public/browser/browser_context.h       |  2 +-
+ .../chromium/media/filters/ffmpeg_demuxer.cc       |  8 +++----
+ .../quiche/src/quic/core/quic_interval_deque.h     |  4 ++--
+ .../chromium/sandbox/linux/seccomp-bpf/trap.cc     |  2 +-
+ .../sandbox/linux/system_headers/linux_seccomp.h   |  4 ++--
+ .../flatbuffers/src/include/flatbuffers/base.h     |  8 ++-----
+ src/core/profile_qt.cpp                            |  4 ++--
+ src/core/profile_qt.h                              |  2 +-
+ 12 files changed, 52 insertions(+), 22 deletions(-)
+ create mode 100644 src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h
+
+diff --git a/src/3rdparty/chromium/base/containers/id_map.h b/src/3rdparty/chromium/base/containers/id_map.h
+index 4caf8a2..4c77f1f 100644
+--- a/src/3rdparty/chromium/base/containers/id_map.h
++++ b/src/3rdparty/chromium/base/containers/id_map.h
+@@ -153,8 +153,8 @@ class IDMap final {
+     }
+ 
+     const Iterator& operator=(const Iterator& iter) {
+-      map_ = iter.map;
+-      iter_ = iter.iter;
++      map_ = iter.map_;
++      iter_ = iter.iter_;
+       Init();
+       return *this;
+     }
+diff --git a/src/3rdparty/chromium/build/config/compiler/BUILD.gn b/src/3rdparty/chromium/build/config/compiler/BUILD.gn
+index 6a58d21..5dc809f 100644
+--- a/src/3rdparty/chromium/build/config/compiler/BUILD.gn
++++ b/src/3rdparty/chromium/build/config/compiler/BUILD.gn
+@@ -234,6 +234,15 @@ config("compiler") {
+   defines = []
+   configs = []
+ 
++  # Force include <cstdint> for all C++ files
++  cflags_cc += [ "-include", "cstdint" ]
++
++  # Disable -Wchanges-meaning which is an error in GCC 14
++  cflags_cc += [ "-Wno-changes-meaning" ]
++
++  # Disable -Wc++20-compat warning for C++20 keyword 'requires'
++  cflags_cc += [ "-Wno-c++20-compat" ]
++
+   # System-specific flags. If your compiler flags apply to one of the
+   # categories here, add it to the associated file to keep this shared config
+   # smaller.
+diff --git a/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc b/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc
+index 8544626..32942bd 100644
+--- a/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc
++++ b/src/3rdparty/chromium/chrome/browser/spellchecker/spellcheck_service.cc
+@@ -566,7 +566,7 @@ void SpellcheckService::OnHunspellDictionaryDownloadSuccess(
+ 
+ void SpellcheckService::OnHunspellDictionaryDownloadFailure(
+     const std::string& language) {
+-#ifdef TOOLKIT_QT
++#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
+     DCHECK_CURRENTLY_ON(BrowserThread::UI);
+     context_->FailedToLoadDictionary(language);
+ #endif
+diff --git a/src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h b/src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h
+new file mode 100644
+index 0000000..26a360c
+--- /dev/null
++++ b/src/3rdparty/chromium/components/spellcheck/spellcheck_buildflags.h
+@@ -0,0 +1,25 @@
++// Copyright 2016 The Chromium Authors. All rights reserved.
++// Use of this source code is governed by a BSD-style license that can be
++// found in the LICENSE file.
++
++// Generated file - do not edit.
++// Manual replacement for buildflag_header generated file.
++
++#ifndef COMPONENTS_SPELLCHECK_SPELLCHECK_BUILDFLAGS_H_
++#define COMPONENTS_SPELLCHECK_SPELLCHECK_BUILDFLAGS_H_
++
++// Direct defines for use with defined() in #if
++#define ENABLE_SPELLCHECK 1
++#define USE_BROWSER_SPELLCHECKER 0
++#define USE_RENDERER_SPELLCHECKER 1
++#define ENABLE_SPELLING_SERVICE 1
++#define HAS_SPELLCHECK_PANEL 0
++
++// Function-style defines for use with BUILDFLAG macro
++#define BUILDFLAG_INTERNAL_ENABLE_SPELLCHECK () 1
++#define BUILDFLAG_INTERNAL_USE_BROWSER_SPELLCHECKER () 0
++#define BUILDFLAG_INTERNAL_USE_RENDERER_SPELLCHECKER () 1
++#define BUILDFLAG_INTERNAL_ENABLE_SPELLING_SERVICE () 1
++#define BUILDFLAG_INTERNAL_HAS_SPELLCHECK_PANEL () 0
++
++#endif  // COMPONENTS_SPELLCHECK_SPELLCHECK_BUILDFLAGS_H_
+diff --git a/src/3rdparty/chromium/content/public/browser/browser_context.h b/src/3rdparty/chromium/content/public/browser/browser_context.h
+index eaef196..f40f916 100644
+--- a/src/3rdparty/chromium/content/public/browser/browser_context.h
++++ b/src/3rdparty/chromium/content/public/browser/browser_context.h
+@@ -346,7 +346,7 @@ class CONTENT_EXPORT BrowserContext : public base::SupportsUserData {
+   // directly, so privacy is not compromised.
+   virtual media::VideoDecodePerfHistory* GetVideoDecodePerfHistory();
+ 
+-#if defined(TOOLKIT_QT) && BUILDFLAG(ENABLE_SPELLCHECK)
++#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
+   // Inform about not working dictionary for given language
+   virtual void FailedToLoadDictionary(const std::string& language) = 0;
+ #endif
+diff --git a/src/3rdparty/chromium/media/filters/ffmpeg_demuxer.cc b/src/3rdparty/chromium/media/filters/ffmpeg_demuxer.cc
+index 29f87c9..c690158 100644
+--- a/src/3rdparty/chromium/media/filters/ffmpeg_demuxer.cc
++++ b/src/3rdparty/chromium/media/filters/ffmpeg_demuxer.cc
+@@ -410,11 +410,11 @@ void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
+   scoped_refptr<DecoderBuffer> buffer;
+ 
+   if (type() == DemuxerStream::TEXT) {
+-    long unsigned int id_size = 0;
++    int id_size = 0;
+     uint8_t* id_data = av_packet_get_side_data(
+         packet.get(), AV_PKT_DATA_WEBVTT_IDENTIFIER, &id_size);
+ 
+-    long unsigned int settings_size = 0;
++    int settings_size = 0;
+     uint8_t* settings_data = av_packet_get_side_data(
+         packet.get(), AV_PKT_DATA_WEBVTT_SETTINGS, &settings_size);
+ 
+@@ -426,7 +426,7 @@ void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
+     buffer = DecoderBuffer::CopyFrom(packet->data, packet->size,
+                                      side_data.data(), side_data.size());
+   } else {
+-    long unsigned int side_data_size = 0;
++    int side_data_size = 0;
+     uint8_t* side_data = av_packet_get_side_data(
+         packet.get(), AV_PKT_DATA_MATROSKA_BLOCKADDITIONAL, &side_data_size);
+ 
+@@ -487,7 +487,7 @@ void FFmpegDemuxerStream::EnqueuePacket(ScopedAVPacket packet) {
+                                        packet->size - data_offset);
+     }
+ 
+-    long unsigned int skip_samples_size = 0;
++    int skip_samples_size = 0;
+     const uint32_t* skip_samples_ptr =
+         reinterpret_cast<const uint32_t*>(av_packet_get_side_data(
+             packet.get(), AV_PKT_DATA_SKIP_SAMPLES, &skip_samples_size));
+diff --git a/src/3rdparty/chromium/net/third_party/quiche/src/quic/core/quic_interval_deque.h b/src/3rdparty/chromium/net/third_party/quiche/src/quic/core/quic_interval_deque.h
+index 252d99c..8d8b1f9 100644
+--- a/src/3rdparty/chromium/net/third_party/quiche/src/quic/core/quic_interval_deque.h
++++ b/src/3rdparty/chromium/net/third_party/quiche/src/quic/core/quic_interval_deque.h
+@@ -198,12 +198,12 @@ class QUIC_NO_EXPORT QuicIntervalDeque {
+     Iterator operator+(difference_type amount) const {
+       Iterator copy = *this;
+       copy.index_ += amount;
+-      DCHECK(copy.index_ < copy.deque_->size());
++      DCHECK(copy.index_ < copy.deque_->Size());
+       return copy;
+     }
+     Iterator& operator+=(difference_type amount) {
+       index_ += amount;
+-      DCHECK(index_ < deque_->size());
++      DCHECK(index_ < deque_->Size());
+       return *this;
+     }
+     difference_type operator-(const Iterator& rhs) const {
+diff --git a/src/3rdparty/chromium/sandbox/linux/seccomp-bpf/trap.cc b/src/3rdparty/chromium/sandbox/linux/seccomp-bpf/trap.cc
+index f5b86a7..c1f54cf 100644
+--- a/src/3rdparty/chromium/sandbox/linux/seccomp-bpf/trap.cc
++++ b/src/3rdparty/chromium/sandbox/linux/seccomp-bpf/trap.cc
+@@ -152,7 +152,7 @@ void Trap::SigSys(int nr, LinuxSigInfo* info, ucontext_t* ctx) {
+   // Various sanity checks to make sure we actually received a signal
+   // triggered by a BPF filter. If something else triggered SIGSYS
+   // (e.g. kill()), there is really nothing we can do with this signal.
+-  if (nr != LINUX_SIGSYS || info->si_code != SYS_SECCOMP || !ctx ||
++  if (nr != LINUX_SIGSYS || info->si_code != SANDBOX_SYS_SECCOMP || !ctx ||
+       info->si_errno <= 0 ||
+       static_cast<size_t>(info->si_errno) > trap_array_size_) {
+     // ATI drivers seem to send SIGSYS, so this cannot be FATAL.
+diff --git a/src/3rdparty/chromium/sandbox/linux/system_headers/linux_seccomp.h b/src/3rdparty/chromium/sandbox/linux/system_headers/linux_seccomp.h
+index 980b98b..6247a4a 100644
+--- a/src/3rdparty/chromium/sandbox/linux/system_headers/linux_seccomp.h
++++ b/src/3rdparty/chromium/sandbox/linux/system_headers/linux_seccomp.h
+@@ -234,8 +234,8 @@ struct seccomp_notif_addfd {
+ #define SECCOMP_RET_INVALID 0x00010000U  // Illegal return value
+ #endif
+ 
+-#ifndef SYS_SECCOMP
+-#define SYS_SECCOMP                   1
++#ifndef SANDBOX_SYS_SECCOMP
++#define SANDBOX_SYS_SECCOMP           1
+ #endif
+ 
+ #endif  // SANDBOX_LINUX_SYSTEM_HEADERS_LINUX_SECCOMP_H_
+diff --git a/src/3rdparty/chromium/third_party/flatbuffers/src/include/flatbuffers/base.h b/src/3rdparty/chromium/third_party/flatbuffers/src/include/flatbuffers/base.h
+index 86ecf23..8654bbf 100644
+--- a/src/3rdparty/chromium/third_party/flatbuffers/src/include/flatbuffers/base.h
++++ b/src/3rdparty/chromium/third_party/flatbuffers/src/include/flatbuffers/base.h
+@@ -231,12 +231,8 @@ namespace flatbuffers {
+   // Enable locale independent functions {strtof_l, strtod_l,strtoll_l, strtoull_l}.
+   // They are part of the POSIX-2008 but not part of the C/C++ standard.
+   // GCC/Clang have definition (_XOPEN_SOURCE>=700) if POSIX-2008.
+-  #if ((defined(_MSC_VER) && _MSC_VER >= 1800)            || \
+-       (defined(_XOPEN_SOURCE) && (_XOPEN_SOURCE>=700)))
+-    #define FLATBUFFERS_LOCALE_INDEPENDENT 1
+-  #else
+-    #define FLATBUFFERS_LOCALE_INDEPENDENT 0
+-  #endif
++  // Force to 0 to avoid ClassicLocale::instance_ undefined reference
++  #define FLATBUFFERS_LOCALE_INDEPENDENT 0
+ #endif  // !FLATBUFFERS_LOCALE_INDEPENDENT
+ 
+ // Suppress Undefined Behavior Sanitizer (recoverable only). Usage:
+diff --git a/src/core/profile_qt.cpp b/src/core/profile_qt.cpp
+index 3630360..617fb6a 100644
+--- a/src/core/profile_qt.cpp
++++ b/src/core/profile_qt.cpp
+@@ -247,14 +247,14 @@ content::SharedCorsOriginAccessList *ProfileQt::GetSharedCorsOriginAccessList()
+     return m_sharedCorsOriginAccessList.get();
+ }
+ 
+-#if QT_CONFIG(webengine_spellchecker)
++#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
+ void ProfileQt::FailedToLoadDictionary(const std::string &language)
+ {
+     Q_ASSERT(content::BrowserThread::CurrentlyOn(content::BrowserThread::UI));
+     LOG(WARNING) << "Could not load dictionary for:" << language;
+     LOG(INFO) << "Make sure that correct bdic file is in:" << WebEngineLibraryInfo::getPath(base::DIR_APP_DICTIONARIES);
+ }
+-#endif // QT_CONFIG(webengine_spellchecker)
++#endif // defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
+ 
+ #if BUILDFLAG(ENABLE_EXTENSIONS)
+ extensions::ExtensionSystemQt* ProfileQt::GetExtensionSystem()
+diff --git a/src/core/profile_qt.h b/src/core/profile_qt.h
+index 59f5a8c..290da32 100644
+--- a/src/core/profile_qt.h
++++ b/src/core/profile_qt.h
+@@ -108,7 +108,7 @@ public:
+ 
+     content::PlatformNotificationService *platformNotificationService();
+ 
+-#if QT_CONFIG(webengine_spellchecker)
++#if defined(TOOLKIT_QT) && defined(ENABLE_SPELLCHECK)
+     void FailedToLoadDictionary(const std::string &language) override;
+ #endif
+ #if BUILDFLAG(ENABLE_EXTENSIONS)

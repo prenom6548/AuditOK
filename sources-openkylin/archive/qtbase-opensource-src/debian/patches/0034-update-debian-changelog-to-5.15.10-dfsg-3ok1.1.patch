@@ -1,0 +1,1243 @@
+From: hanpinlong <hanpinlong@kylinos.cn>
+Date: Mon, 20 Nov 2023 07:12:56 +0000
+Subject: update debian/changelog to 5.15.10+dfsg-3ok1.1
+
+Signed-off-by: hanpinlong <hanpinlong@kylinos.cn>
+---
+ src/corelib/global/archdetect.cpp                |   4 +
+ src/corelib/global/qprocessordetection.h         |   7 +
+ src/gui/kernel/qguiapplication.cpp               |   1 +
+ src/gui/kernel/qhighdpiscaling.cpp               |  13 +-
+ src/gui/kernel/qhighdpiscaling_p.h               |   4 +-
+ src/gui/kernel/qplatformwindow.cpp               |   7 +
+ src/gui/kernel/qplatformwindow.h                 |   1 +
+ src/gui/kernel/qscreen.cpp                       |   6 +
+ src/gui/painting/qtransform.cpp                  |   2 +-
+ src/plugins/platforms/xcb/qxcbconnection_xi2.cpp |  33 +-
+ src/widgets/kernel/qtooltip.cpp                  |  35 +-
+ src/widgets/util/qflickgesture.cpp               | 634 +++++++++++++++--------
+ src/widgets/util/qflickgesture_p.h               |  93 +++-
+ src/widgets/widgets/qcombobox_p.h                |   1 -
+ 14 files changed, 605 insertions(+), 236 deletions(-)
+
+diff --git a/src/corelib/global/archdetect.cpp b/src/corelib/global/archdetect.cpp
+index 1d00b7f..8ca6efe 100644
+--- a/src/corelib/global/archdetect.cpp
++++ b/src/corelib/global/archdetect.cpp
+@@ -59,6 +59,10 @@
+ #  define ARCH_PROCESSOR "x86_64"
+ #elif defined(Q_PROCESSOR_IA64)
+ #  define ARCH_PROCESSOR "ia64"
++#elif defined(Q_PROCESSOR_LOONGARCH_64)
++#  define ARCH_PROCESSOR "loongarch64"
++#elif defined(Q_PROCESSOR_LOONGARCH)
++#  define ARCH_PROCESSOR "loongarch"
+ #elif defined(Q_PROCESSOR_MIPS_64)
+ #  define ARCH_PROCESSOR "mips64"
+ #elif defined(Q_PROCESSOR_MIPS)
+diff --git a/src/corelib/global/qprocessordetection.h b/src/corelib/global/qprocessordetection.h
+index a6ead54..2a0382c 100644
+--- a/src/corelib/global/qprocessordetection.h
++++ b/src/corelib/global/qprocessordetection.h
+@@ -228,6 +228,13 @@
+ #  define Q_PROCESSOR_WORDSIZE   8
+ // Q_BYTE_ORDER not defined, use endianness auto-detection
+ 
++#elif defined(_loongarch) || defined(__loongarch__)
++#  define Q_PROCESSOR_LOONGARCH
++#  if defined(__loongarch64)
++#    define Q_PROCESSOR_LOONGARCH_64
++#    define Q_PROCESSOR_WORDSIZE 8
++#  endif
++
+ /*
+     MIPS family, known revisions: I, II, III, IV, 32, 64
+ 
+diff --git a/src/gui/kernel/qguiapplication.cpp b/src/gui/kernel/qguiapplication.cpp
+index a217719..b32f540 100644
+--- a/src/gui/kernel/qguiapplication.cpp
++++ b/src/gui/kernel/qguiapplication.cpp
+@@ -3058,6 +3058,7 @@ void QGuiApplicationPrivate::processTouchEvent(QWindowSystemInterfacePrivate::To
+                 Qt::MouseButton button = Qt::NoButton;
+                 Qt::MouseButtons buttons = Qt::LeftButton;
+                 if (eventType == QEvent::TouchBegin && m_fakeMouseSourcePointId < 0)
++                    || (touchPoints.count() == 1 && m_fakeMouseSourcePointId != touchPoints.first().id()))
+                     m_fakeMouseSourcePointId = touchPoints.first().id();
+                 for (const auto &touchPoint : touchPoints) {
+                     if (touchPoint.id() == m_fakeMouseSourcePointId) {
+diff --git a/src/gui/kernel/qhighdpiscaling.cpp b/src/gui/kernel/qhighdpiscaling.cpp
+index 85ff58c..ebd16d0 100644
+--- a/src/gui/kernel/qhighdpiscaling.cpp
++++ b/src/gui/kernel/qhighdpiscaling.cpp
+@@ -396,10 +396,7 @@ qreal QHighDpiScaling::roundScaleFactor(qreal rawFactor)
+         }
+ 
+         // Check application object if no environment value was set.
+-        if (scaleFactorRoundingPolicy == Qt::HighDpiScaleFactorRoundingPolicy::Unset) {
+-            scaleFactorRoundingPolicy = QGuiApplication::highDpiScaleFactorRoundingPolicy();
+-        } else {
+-            // Make application setting reflect environment
++        if (scaleFactorRoundingPolicy != Qt::HighDpiScaleFactorRoundingPolicy::Unset) {
+             QGuiApplication::setHighDpiScaleFactorRoundingPolicy(scaleFactorRoundingPolicy);
+         }
+     }
+@@ -460,8 +457,6 @@ QDpi QHighDpiScaling::effectiveLogicalDpi(const QPlatformScreen *screen, qreal r
+                          policyText.constData(), values.constData());
+             }
+         }
+-        if (dpiAdjustmentPolicy == DpiAdjustmentPolicy::Unset)
+-            dpiAdjustmentPolicy = DpiAdjustmentPolicy::UpOnly;
+     }
+ 
+     // Apply adjustment policy.
+@@ -539,7 +534,7 @@ void QHighDpiScaling::updateHighDpiScaling()
+             ++i;
+         }
+     }
+-    m_active = m_globalScalingActive || m_screenFactorSet || m_pixelDensityScalingActive;
++    m_active = m_globalScalingActive || m_usePixelDensity;
+ }
+ 
+ /*
+@@ -684,9 +679,7 @@ QDpi QHighDpiScaling::logicalDpi(const QScreen *screen)
+         return QDpi(96, 96);
+ 
+     if (!m_usePixelDensity) {
+-        const qreal screenScaleFactor = screenSubfactor(screen->handle());
+-        const QDpi dpi = QPlatformScreen::overrideDpi(screen->handle()->logicalDpi());
+-        return QDpi{ dpi.first / screenScaleFactor, dpi.second / screenScaleFactor };
++        return screen->handle()->logicalDpi();
+     }
+ 
+     const qreal scaleFactor = rawScaleFactor(screen->handle());
+diff --git a/src/gui/kernel/qhighdpiscaling_p.h b/src/gui/kernel/qhighdpiscaling_p.h
+index 5b02c5d..e4714c9 100644
+--- a/src/gui/kernel/qhighdpiscaling_p.h
++++ b/src/gui/kernel/qhighdpiscaling_p.h
+@@ -159,12 +159,12 @@ inline QVector2D scale(const QVector2D &value, qreal scaleFactor, QPointF /* ori
+ 
+ inline QPointF scale(const QPointF &pos, qreal scaleFactor, QPointF origin = QPointF(0, 0))
+ {
+-     return (pos - origin) * scaleFactor + origin;
++     return (pos - origin) * scaleFactor + origin * scaleFactor;
+ }
+ 
+ inline QPoint scale(const QPoint &pos, qreal scaleFactor, QPoint origin = QPoint(0, 0))
+ {
+-     return (pos - origin) * scaleFactor + origin;
++     return (pos - origin) * scaleFactor + origin * scaleFactor;
+ }
+ 
+ inline QRect scale(const QRect &rect, qreal scaleFactor, QPoint origin = QPoint(0, 0))
+diff --git a/src/gui/kernel/qplatformwindow.cpp b/src/gui/kernel/qplatformwindow.cpp
+index 7207ff4..dfbd7d5 100644
+--- a/src/gui/kernel/qplatformwindow.cpp
++++ b/src/gui/kernel/qplatformwindow.cpp
+@@ -266,6 +266,13 @@ QPoint QPlatformWindow::mapToGlobal(const QPoint &pos) const
+     return result;
+ }
+ 
++QPointF QPlatformWindow::mapFromGlobalF(const QPointF &pos) const
++{
++    const QPoint posPt = pos.toPoint();
++    const QPointF delta = pos - posPt;
++    return mapFromGlobal(posPt) + delta;
++}
++
+ /*!
+     Translates the global screen coordinate \a pos to window
+     coordinates using native methods. This is required for embedded windows,
+diff --git a/src/gui/kernel/qplatformwindow.h b/src/gui/kernel/qplatformwindow.h
+index 7b85090..a92de4e 100644
+--- a/src/gui/kernel/qplatformwindow.h
++++ b/src/gui/kernel/qplatformwindow.h
+@@ -114,6 +114,7 @@ public:
+     virtual bool isForeignWindow() const { return false; };
+     virtual QPoint mapToGlobal(const QPoint &pos) const;
+     virtual QPoint mapFromGlobal(const QPoint &pos) const;
++    QPointF mapFromGlobalF(const QPointF &pos) const;
+ 
+     virtual void propagateSizeHints();
+ 
+diff --git a/src/gui/kernel/qscreen.cpp b/src/gui/kernel/qscreen.cpp
+index 990272b..a5fb80a 100644
+--- a/src/gui/kernel/qscreen.cpp
++++ b/src/gui/kernel/qscreen.cpp
+@@ -410,6 +410,12 @@ QSize QScreen::availableSize() const
+ QRect QScreen::geometry() const
+ {
+     Q_D(const QScreen);
++
++	if (d->platformScreen)
++	{
++    	return QHighDpi::fromNativePixels(d->platformScreen->geometry(), this);
++	}
++
+     return d->geometry;
+ }
+ 
+diff --git a/src/gui/painting/qtransform.cpp b/src/gui/painting/qtransform.cpp
+index e86aff1..9d281f6 100644
+--- a/src/gui/painting/qtransform.cpp
++++ b/src/gui/painting/qtransform.cpp
+@@ -1568,7 +1568,7 @@ QRegion QTransform::map(const QRegion &r) const
+     }
+ 
+     QPainterPath p = map(qt_regionToPath(r));
+-    return p.toFillPolygon(QTransform()).toPolygon();
++    return p.toFillPolygon().toPolygon();
+ }
+ 
+ struct QHomogeneousCoordinate
+diff --git a/src/plugins/platforms/xcb/qxcbconnection_xi2.cpp b/src/plugins/platforms/xcb/qxcbconnection_xi2.cpp
+index 5a36cfa..954a1f4 100644
+--- a/src/plugins/platforms/xcb/qxcbconnection_xi2.cpp
++++ b/src/plugins/platforms/xcb/qxcbconnection_xi2.cpp
+@@ -286,9 +286,11 @@ void QXcbConnection::xi2SetupDevices()
+     m_tabletData.clear();
+ #endif
+     m_scrollingDevices.clear();
+-    m_touchDevices.clear();
+     m_xiMasterPointerIds.clear();
+ 
++    // FIXBUG: #123235 触摸过程中，插拔usb键盘/鼠标导致触摸失效
++    QList<quint16> deviceIds;
++
+     auto reply = Q_XCB_REPLY(xcb_input_xi_query_device, xcb_connection(), XCB_INPUT_DEVICE_ALL);
+     if (!reply) {
+         qCDebug(lcQpaXInputDevices) << "failed to query devices";
+@@ -303,8 +305,21 @@ void QXcbConnection::xi2SetupDevices()
+             continue;
+         }
+         // only slave pointer devices are relevant here
+-        if (deviceInfo->type == XCB_INPUT_DEVICE_TYPE_SLAVE_POINTER)
+-            xi2SetupDevice(deviceInfo, false);
++
++        // FIXBUG: #123235 触摸过程中，插拔usb键盘/鼠标导致触摸失效
++        if (deviceInfo->type == XCB_INPUT_DEVICE_TYPE_SLAVE_POINTER) {
++            if (!m_touchDevices.contains(deviceInfo->deviceid)) {
++                xi2SetupDevice(deviceInfo, false);
++            } 
++            deviceIds.append(deviceInfo->deviceid);
++        }
++    }
++
++    // FIXBUG: #123235 触摸过程中，插拔usb键盘/鼠标导致触摸失效的问题
++    for (const auto &touchDeviceId : m_touchDevices.keys()) {
++        if (!deviceIds.contains(touchDeviceId)) {
++            m_touchDevices.remove(touchDeviceId);
++        }
+     }
+ 
+     if (m_xiMasterPointerIds.size() > 1)
+@@ -593,6 +608,10 @@ void QXcbConnection::xi2HandleEvent(xcb_ge_event_t *event)
+                         fixed1616ToReal(xiDeviceEvent->root_x), fixed1616ToReal(xiDeviceEvent->root_y),xiDeviceEvent->event);
+             if (QXcbWindow *platformWindow = platformWindowFromId(xiDeviceEvent->event))
+                 xi2ProcessTouch(xiDeviceEvent, platformWindow);
++            else { // When the window cannot be matched, delete it from touchPoints
++                if (TouchDeviceData *dev = touchDeviceForId(xiDeviceEvent->sourceid))
++                    dev->touchPoints.remove((xiDeviceEvent->detail % INT_MAX));
++            }
+             break;
+         }
+     } else if (xiEnterEvent && !xi2MouseEventsDisabled() && eventListener) {
+@@ -1251,16 +1270,16 @@ void QXcbConnection::xi2ReportTabletEvent(const void *event, TabletData *tabletD
+             if (Q_LIKELY(useValuators)) {
+                 const qreal value = scaleOneValuator(normalizedValue, physicalScreenArea.x(), physicalScreenArea.width());
+                 global.setX(value);
+-                // mapFromGlobal is ok for nested/embedded windows, but works only with whole-number QPoint;
+-                // so map it first, then add back the sub-pixel position
+-                local.setX(window->mapFromGlobal(QPoint(int(value), 0)).x() + (value - int(value)));
++                //! \note Fix QTBUG-77826
++                local.setX(xcbWindow->mapFromGlobalF(global).x());
+             }
+             break;
+         case QXcbAtom::AbsY:
+             if (Q_LIKELY(useValuators)) {
+                 qreal value = scaleOneValuator(normalizedValue, physicalScreenArea.y(), physicalScreenArea.height());
+                 global.setY(value);
+-                local.setY(window->mapFromGlobal(QPoint(0, int(value))).y() + (value - int(value)));
++                //! \note Fix QTBUG-77826
++                local.setY(xcbWindow->mapFromGlobalF(global).y());
+             }
+             break;
+         case QXcbAtom::AbsPressure:
+diff --git a/src/widgets/kernel/qtooltip.cpp b/src/widgets/kernel/qtooltip.cpp
+index 0f7bc97..84054d4 100644
+--- a/src/widgets/kernel/qtooltip.cpp
++++ b/src/widgets/kernel/qtooltip.cpp
+@@ -63,6 +63,11 @@
+ #include <QtGui/private/qhighdpiscaling_p.h>
+ #include <qtooltip.h>
+ 
++#if 0 // Used to be included in Qt4 for Q_WS_MAC
++# include <private/qcore_mac_p.h>
++#include <private/qt_cocoa_helpers_mac_p.h>
++#endif
++
+ QT_BEGIN_NAMESPACE
+ 
+ /*!
+@@ -312,7 +317,20 @@ void QTipLabel::timerEvent(QTimerEvent *e)
+         || e->timerId() == expireTimer.timerId()){
+         hideTimer.stop();
+         expireTimer.stop();
++#if 0 /* Used to be included in Qt4 for Q_WS_MAC */ && QT_CONFIG(effects)
++        if (QApplication::isEffectEnabled(Qt::UI_FadeTooltip)){
++            // Fade out tip on mac (makes it invisible).
++            // The tip will not be deleted until a new tip is shown.
++
++                        // DRSWAT - Cocoa
++                        macWindowFade(qt_mac_window_for(this));
++            QTipLabel::instance->fadingOut = true; // will never be false again.
++        }
++        else
++            hideTipImmediately();
++#else
+         hideTipImmediately();
++#endif
+     }
+ }
+ 
+@@ -490,14 +508,15 @@ void QToolTip::showText(const QPoint &pos, const QString &text, QWidget *w, cons
+         else if (!QTipLabel::instance->fadingOut){
+             // If the tip has changed, reuse the one
+             // that is showing (removes flickering)
+-            QPoint localPos = pos;
+-            if (w)
+-                localPos = w->mapFromGlobal(pos);
+-            if (QTipLabel::instance->tipChanged(localPos, text, w)){
+-                QTipLabel::instance->reuseTip(text, msecDisplayTime, pos);
+-                QTipLabel::instance->setTipRect(w, rect);
+-                QTipLabel::instance->placeTip(pos, w);
+-            }
++            // QPoint localPos = pos;
++            // if (w)
++            //     localPos = w->mapFromGlobal(pos);
++            // if (QTipLabel::instance->tipChanged(localPos, text, w)){
++            //     QTipLabel::instance->reuseTip(text, msecDisplayTime, pos);
++            //     QTipLabel::instance->setTipRect(w, rect);
++            //     QTipLabel::instance->placeTip(pos, w);
++            // }
++            QTipLabel::instance->hideTip();
+             return;
+         }
+     }
+diff --git a/src/widgets/util/qflickgesture.cpp b/src/widgets/util/qflickgesture.cpp
+index 064be87..e970a85 100644
+--- a/src/widgets/util/qflickgesture.cpp
++++ b/src/widgets/util/qflickgesture.cpp
+@@ -47,12 +47,14 @@
+ #include "qgraphicssceneevent.h"
+ #include "qgraphicsview.h"
+ #endif
++#include "qstylehints.h"
+ #include "qscroller.h"
+ #include <QtGui/qtouchdevice.h>
+ #include "private/qapplication_p.h"
+ #include "private/qevent_p.h"
+ #include "private/qflickgesture_p.h"
+ #include "qdebug.h"
++#include "qtimer.h"
+ 
+ #ifndef QT_NO_GESTURES
+ 
+@@ -68,13 +70,258 @@ QT_BEGIN_NAMESPACE
+ 
+ extern bool qt_sendSpontaneousEvent(QObject *receiver, QEvent *event);
+ 
+-static QMouseEvent *copyMouseEvent(QEvent *e)
++QTimer* PressDelayHandler::m_pressDelayTimer;
++bool PressDelayHandler::m_sendingEvent = false;
++QScopedPointer<QEvent> PressDelayHandler::m_pressDelayEvent;
++QPointer<QObject> PressDelayHandler::m_pressTarget;
++
++PressDelayHandler::PressDelayHandler(QObject *parent)
++    : QObject(parent)
++{ }
++
++PressDelayHandler* PressDelayHandler::create(Qt::MouseButton button)
++{
++    switch (button) {
++    case Qt::LeftButton:
++        return new MousePressDelayHandler(QCoreApplication::instance());
++        break;
++    case Qt::NoButton:
++        return new TouchPressDelayHandler(QCoreApplication::instance());
++    default:
++        break;
++    }
++    return new MousePressDelayHandler(QCoreApplication::instance());
++}
++
++bool PressDelayHandler::shouldEventBeIgnored() const
++{
++    return m_sendingEvent;
++}
++
++bool PressDelayHandler::isDelaying() const
++{
++    return hasSavedDelayEvent();
++}
++
++void PressDelayHandler::pressed(QEvent *e, int delay)
++{
++    if (!hasSavedDelayEvent()) {
++        qFGDebug("QFG: consuming/delaying press");
++        m_pressDelayEvent.reset(copyEvent(e));
++        saveDelayEventInfo(e);
++        startTimer(delay);
++    } else {
++        qFGDebug("QFG: NOT consuming/delaying press");
++    }
++
++}
++
++bool PressDelayHandler::released(QEvent *e, bool scrollerWasActive, bool scrollerIsActive)
++{
++    // stop the timer
++    stopTimer();
++
++    bool result = scrollerWasActive || scrollerIsActive;
++
++    // we still haven't even sent the press, so do it now
++    if (hasSavedDelayEvent() && pressTarget() && !scrollerIsActive) {
++
++        qFGDebug() << "QFG: re-sending press (due to release) for " << pressTarget();
++        sendSpontaneousEvent(m_pressDelayEvent.data(), pressTarget(), UngrabMouseBefore);
++
++        qFGDebug() << "QFG: faking release (due to release) for " << pressTarget();
++        sendSpontaneousEvent(e, pressTarget(), 0);
++
++        result = true; // consume this event
++    } else if (pressTarget() && scrollerIsActive) {
++        // we grabbed the mouse expicitly when the scroller became active, so undo that now
++        qFGDebug() << "QFG: ungrab mouse which grabbed when the scroller became active";
++        sendSpontaneousEvent(nullptr, pressTarget(), UngrabMouseBefore);
++    }
++
++    resetDelayEvent();
++    resetPressTarget();
++    return result;
++}
++
++void PressDelayHandler::scrollerWasIntercepted()
++{
++    qFGDebug("QFG: deleting delayed press, since scroller was only intercepted");
++    if (hasSavedDelayEvent()) {
++        // we still haven't even sent the press, so just throw it away now
++        stopTimer();
++    }
++    resetPressTarget();
++}
++
++void PressDelayHandler::scrollerBecameActive()
++{
++    if (hasSavedDelayEvent()) {
++        // we still haven't even sent the press, so just throw it away now
++        qFGDebug("QFG: deleting delayed mouse press, since scroller is active now");
++        stopTimer();
++        resetDelayEvent();
++        resetPressTarget();
++    } else if (pressTarget()) {
++        // we did send a press, so we need to fake a release now
++        releaseAllPressed();
++        // don't clear the pressTarget just yet, since we need to explicitly ungrab the mouse on release!
++    }
++}
++
++void PressDelayHandler::onDelayTimeout()
++{
++    if (hasSavedDelayEvent() && pressTarget()) {
++        qFGDebug() << "QFG: timer event: re-sending press to " << pressTarget();
++        sendSpontaneousEvent(m_pressDelayEvent.data(), pressTarget(), UngrabMouseBefore);
++    }
++    resetDelayEvent();
++
++    stopTimer();
++}
++
++void PressDelayHandler::stopTimer()
++{
++    if (!m_pressDelayTimer)
++        return;
++    if (!m_pressDelayTimer->isActive())
++        return;
++    m_pressDelayTimer->stop();
++}
++
++void PressDelayHandler::startTimer(int timeout)
++{
++    if (!m_pressDelayTimer)
++        m_pressDelayTimer = new QTimer;
++    if (m_pressDelayTimer->isActive()) {
++        qFGDebug() << "QFG: timer is active, don't start again";
++        return;
++    }
++    m_pressDelayTimer->singleShot(timeout, this, &PressDelayHandler::onDelayTimeout);
++}
++
++void PressDelayHandler::sendSpontaneousEvent(QEvent *e, QObject *target, int flags)
++{
++#if QT_CONFIG(graphicsview)
++    if (flags & UngrabMouseBefore)
++        ungrabMouse(mouseGrabberItem());
++#else
++    Q_UNUSED(flags);
++#endif
++
++    m_sendingEvent = true;
++    sendEvent(e, target);
++    m_sendingEvent = false;
++
++#if QT_CONFIG(graphicsview)
++    if (flags & RegrabMouseAfterwards)
++        grabMouse(mouseGrabberItem());
++#endif
++}
++
++QPointer<QObject> PressDelayHandler::pressTarget() const
++{
++    return m_pressTarget;
++}
++
++void PressDelayHandler::setPressTarget(QObject* pressTarget)
++{
++    m_pressTarget = pressTarget;
++}
++
++void PressDelayHandler::resetPressTarget()
++{
++    m_pressTarget = nullptr;
++}
++
++bool PressDelayHandler::hasSavedDelayEvent() const
++{
++    return !m_pressDelayEvent.isNull();
++}
++
++void PressDelayHandler::resetDelayEvent()
++{
++    m_pressDelayEvent.reset(nullptr);
++}
++
++QGraphicsItem* PressDelayHandler::mouseGrabberItem() const
++{
++    QGraphicsItem *grabber = nullptr;
++
++    QWidget* targetWidget = nullptr;
++    if (pressTarget().data()->isWidgetType()) {
++        targetWidget = dynamic_cast<QWidget*>(pressTarget().data());
++    }
++    else {
++        targetWidget = QApplication::widgetAt(QCursor::pos());
++    }
++    if (!targetWidget)
++        return nullptr;
++
++    if (targetWidget->parentWidget()) {
++        if (QGraphicsView *gv = qobject_cast<QGraphicsView *>(targetWidget->parentWidget())) {
++            if (gv->scene())
++                grabber = gv->scene()->mouseGrabberItem();
++        }
++    }
++    return grabber;
++}
++
++void PressDelayHandler::grabMouse(QGraphicsItem* grabber) const
++{
++    if (!grabber)
++        return;
++
++    // GraphicsView Mouse Handling Workaround #2:
++    // we need to re-grab the mouse after sending a faked mouse
++    // release, since we still need the mouse moves for the gesture
++    // (the scene will clear the item's mouse grabber status on
++    // release).
++    qFGDebug() << "QFG: re-grabbing" << grabber;
++    grabber->grabMouse();
++}
++
++void PressDelayHandler::ungrabMouse(QGraphicsItem* grabber) const
++{
++    if (!grabber)
++        return;
++
++    // GraphicsView Mouse Handling Workaround #1:
++    // we need to ungrab the mouse before re-sending the press,
++    // since the scene had already set the mouse grabber to the
++    // original (and consumed) event's receiver
++    qFGDebug() << "QFG: ungrabbing" << grabber;
++    grabber->ungrabMouse();
++}
++
++MousePressDelayHandler::MousePressDelayHandler(QObject *parent)
++    : PressDelayHandler(parent)
++    , m_mouseButton(Qt::NoButton)
++    , m_mouseEventSource(Qt::MouseEventNotSynthesized)
++{
++    qFGDebug("QFG: create MousePressDelayHandler");
++}
++
++void MousePressDelayHandler::saveDelayEventInfo(QEvent* e)
++{
++    QMouseEvent* me = dynamic_cast<QMouseEvent*>(e);
++    if (!me) {
++        qWarning() << "MousePressDelayHandler handling event not QMouseEvent";
++        return;
++    }
++
++    setPressTarget(QApplication::widgetAt(me->globalPos()));
++    m_mouseButton = me->button();
++    m_mouseEventSource = me->source();
++}
++
++QEvent* MousePressDelayHandler::copyEvent(QEvent *e)
+ {
+     switch (e->type()) {
+     case QEvent::MouseButtonPress:
+     case QEvent::MouseButtonRelease:
+     case QEvent::MouseMove: {
+-        QMouseEvent *me = static_cast<QMouseEvent *>(e);
++        QMouseEvent *me = dynamic_cast<QMouseEvent *>(e);
+         QMouseEvent *cme = new QMouseEvent(me->type(), QPoint(0, 0), me->windowPos(), me->screenPos(),
+                                            me->button(), me->buttons(), me->modifiers(), me->source());
+         return cme;
+@@ -83,10 +330,10 @@ static QMouseEvent *copyMouseEvent(QEvent *e)
+     case QEvent::GraphicsSceneMousePress:
+     case QEvent::GraphicsSceneMouseRelease:
+     case QEvent::GraphicsSceneMouseMove: {
+-        QGraphicsSceneMouseEvent *me = static_cast<QGraphicsSceneMouseEvent *>(e);
++        QGraphicsSceneMouseEvent *me = dynamic_cast<QGraphicsSceneMouseEvent *>(e);
+ #if 1
+         QEvent::Type met = me->type() == QEvent::GraphicsSceneMousePress ? QEvent::MouseButtonPress :
+-                           (me->type() == QEvent::GraphicsSceneMouseRelease ? QEvent::MouseButtonRelease : QEvent::MouseMove);
++                               (me->type() == QEvent::GraphicsSceneMouseRelease ? QEvent::MouseButtonRelease : QEvent::MouseMove);
+         QMouseEvent *cme = new QMouseEvent(met, QPoint(0, 0), QPoint(0, 0), me->screenPos(),
+                                            me->button(), me->buttons(), me->modifiers(), me->source());
+         return cme;
+@@ -118,216 +365,193 @@ static QMouseEvent *copyMouseEvent(QEvent *e)
+     }
+ }
+ 
+-class PressDelayHandler : public QObject
++void MousePressDelayHandler::sendEvent(QEvent *e, QObject* target)
+ {
+-private:
+-    PressDelayHandler(QObject *parent = nullptr)
+-        : QObject(parent)
+-        , pressDelayTimer(0)
+-        , sendingEvent(false)
+-        , mouseButton(Qt::NoButton)
+-        , mouseTarget(nullptr)
+-        , mouseEventSource(Qt::MouseEventNotSynthesized)
+-    { }
++    QMouseEvent* me = dynamic_cast<QMouseEvent*>(e);
++    QWidget* targetWidget = dynamic_cast<QWidget*>(target);
+ 
+-public:
+-    enum {
+-        UngrabMouseBefore = 1,
+-        RegrabMouseAfterwards = 2
+-    };
+-
+-    static PressDelayHandler *instance()
+-    {
+-        static PressDelayHandler *inst = nullptr;
+-        if (!inst)
+-            inst = new PressDelayHandler(QCoreApplication::instance());
+-        return inst;
++    if (!targetWidget) {
++        return;
+     }
+ 
+-    bool shouldEventBeIgnored(QEvent *) const
+-    {
+-        return sendingEvent;
++    if (me) {
++        QMouseEvent copy(me->type(), targetWidget->mapFromGlobal(me->globalPos()),
++                         targetWidget->topLevelWidget()->mapFromGlobal(me->globalPos()), me->screenPos(),
++                         me->button(), me->buttons(), me->modifiers(), me->source());
++        qt_sendSpontaneousEvent(targetWidget, &copy);
+     }
++}
+ 
+-    bool isDelaying() const
+-    {
+-        return !pressDelayEvent.isNull();
+-    }
++void MousePressDelayHandler::releaseAllPressed()
++{
++    QPoint farFarAway(-QWIDGETSIZE_MAX, -QWIDGETSIZE_MAX);
+ 
+-    void pressed(QEvent *e, int delay)
+-    {
+-        if (!pressDelayEvent) {
+-            pressDelayEvent.reset(copyMouseEvent(e));
+-            pressDelayTimer = startTimer(delay);
+-            mouseTarget = QApplication::widgetAt(pressDelayEvent->globalPos());
+-            mouseButton = pressDelayEvent->button();
+-            mouseEventSource = pressDelayEvent->source();
+-            qFGDebug("QFG: consuming/delaying mouse press");
+-        } else {
+-            qFGDebug("QFG: NOT consuming/delaying mouse press");
+-        }
+-        e->setAccepted(true);
+-    }
++    qFGDebug() << "QFG: sending a fake mouse release at far-far-away to " << pressTarget();
++    QMouseEvent re(QEvent::MouseButtonRelease, QPoint(), farFarAway, farFarAway,
++                   m_mouseButton, QApplication::mouseButtons() & ~m_mouseButton,
++                   QApplication::keyboardModifiers(), m_mouseEventSource);
++    sendSpontaneousEvent(&re, pressTarget(), RegrabMouseAfterwards);
++}
+ 
+-    bool released(QEvent *e, bool scrollerWasActive, bool scrollerIsActive)
+-    {
+-        // consume this event if the scroller was or is active
+-        bool result = scrollerWasActive || scrollerIsActive;
++TouchPressDelayHandler::TouchPressDelayHandler(QObject *parent)
++    : PressDelayHandler(parent)
++{
++    qFGDebug("QFG: create TouchPressDelayHandler");
++}
+ 
+-        // stop the timer
+-        if (pressDelayTimer) {
+-            killTimer(pressDelayTimer);
+-            pressDelayTimer = 0;
+-        }
+-        // we still haven't even sent the press, so do it now
+-        if (pressDelayEvent && mouseTarget && !scrollerIsActive) {
+-            QScopedPointer<QMouseEvent> releaseEvent(copyMouseEvent(e));
++void TouchPressDelayHandler::saveDelayEventInfo(QEvent* e)
++{
++    QTouchEvent* te = dynamic_cast<QTouchEvent*>(e);
++    if (!te) {
++        qWarning() << "TouchPressDelayHandler handling event not QTouchEvent";
++    }
++    setPressTarget(te->window());
++    m_touchBeginPoint = te->touchPoints().at(0);
++    m_device = te->device();
++}
+ 
+-            qFGDebug() << "QFG: re-sending mouse press (due to release) for " << mouseTarget;
+-            sendMouseEvent(pressDelayEvent.data(), UngrabMouseBefore);
++void TouchPressDelayHandler::releaseAllPressed()
++{
++    qFGDebug() << "QFG: sending a fake touch cancel to " << pressTarget();
++    QTouchEvent te(QEvent::TouchCancel, m_device, QApplication::keyboardModifiers(),
++                   Qt::TouchPointReleased, QList<QTouchEvent::TouchPoint>{m_touchBeginPoint});
++    te.setWindow(dynamic_cast<QWindow*>(pressTarget().data()));
++    sendSpontaneousEvent(&te, pressTarget(), 0);
++}
+ 
+-            qFGDebug() << "QFG: faking mouse release (due to release) for " << mouseTarget;
+-            sendMouseEvent(releaseEvent.data());
++void TouchPressDelayHandler::sendEvent(QEvent *e, QObject* target)
++{
++    QTouchEvent* te = dynamic_cast<QTouchEvent*>(e);
++    QWindow* targetWindow = dynamic_cast<QWindow*>(target);
+ 
+-            result = true; // consume this event
+-        } else if (mouseTarget && scrollerIsActive) {
+-            // we grabbed the mouse expicitly when the scroller became active, so undo that now
+-            sendMouseEvent(nullptr, UngrabMouseBefore);
+-        }
+-        pressDelayEvent.reset(nullptr);
+-        mouseTarget = nullptr;
+-        return result;
+-    }
+-
+-    void scrollerWasIntercepted()
+-    {
+-        qFGDebug("QFG: deleting delayed mouse press, since scroller was only intercepted");
+-        if (pressDelayEvent) {
+-            // we still haven't even sent the press, so just throw it away now
+-            if (pressDelayTimer) {
+-                killTimer(pressDelayTimer);
+-                pressDelayTimer = 0;
+-            }
+-            pressDelayEvent.reset(nullptr);
+-        }
+-        mouseTarget = nullptr;
++    if (!targetWindow) {
++        return;
++    }
++    if (!te) {
++        return;
+     }
+ 
+-    void scrollerBecameActive()
+-    {
+-        if (pressDelayEvent) {
+-            // we still haven't even sent the press, so just throw it away now
+-            qFGDebug("QFG: deleting delayed mouse press, since scroller is active now");
+-            if (pressDelayTimer) {
+-                killTimer(pressDelayTimer);
+-                pressDelayTimer = 0;
+-            }
+-            pressDelayEvent.reset(nullptr);
+-            mouseTarget = nullptr;
+-        } else if (mouseTarget) {
+-            // we did send a press, so we need to fake a release now
+-
+-            // release all pressed mouse buttons
+-            /* Qt::MouseButtons mouseButtons = QGuiApplication::mouseButtons();
+-            for (int i = 0; i < 32; ++i) {
+-                if (mouseButtons & (1 << i)) {
+-                    Qt::MouseButton b = static_cast<Qt::MouseButton>(1 << i);
+-                    mouseButtons &= ~b;
+-                    QPoint farFarAway(-QWIDGETSIZE_MAX, -QWIDGETSIZE_MAX);
+-
+-                    qFGDebug() << "QFG: sending a fake mouse release at far-far-away to " << mouseTarget;
+-                    QMouseEvent re(QEvent::MouseButtonRelease, QPoint(), farFarAway,
+-                                   b, mouseButtons, QGuiApplication::keyboardModifiers());
+-                    sendMouseEvent(&re);
+-                }
+-            }*/
++    // map to window pos for send to window
++    QTouchEvent::TouchPoint touchPoint = (!te->touchPoints().empty()) ? te->touchPoints().at(0) : QTouchEvent::TouchPoint();
++    const QPointF screenPos = touchPoint.screenPos();
++    const QPointF delta = screenPos - screenPos.toPoint();
++    const QPointF windowPos = targetWindow->mapFromGlobal(screenPos.toPoint()) + delta;
++    const QPointF startPos = targetWindow->mapFromGlobal(touchPoint.startScreenPos().toPoint()) + delta;
++    const QPointF lastPos = targetWindow->mapFromGlobal(touchPoint.lastScreenPos().toPoint()) + delta;
++
++    touchPoint.setPos(windowPos);
++    touchPoint.setStartPos(startPos);
++    touchPoint.setLastPos(lastPos);
++
++    qFGDebug() << "QFG: sending" << te->type() << "event to" << targetWindow;
++    // send touch event to window because there is a grab mechanism for touch events
++    QTouchEvent copy(te->type(), te->device(), te->modifiers(),
++                     te->touchPointStates(), QList<QTouchEvent::TouchPoint>{touchPoint});
++    copy.setWindow(targetWindow);
++    qt_sendSpontaneousEvent(targetWindow, &copy);
++
++    // when Qt::AA_SynthesizeMouseForUnhandledTouchEvents is set,
++    // Qt will send a fake mouse eventif touch event not accept.
++    // The touch event we send here will not send the fake mouse event,
++    // so send it here.
++    if ((qApp->testAttribute(Qt::AA_SynthesizeMouseForUnhandledTouchEvents) && !copy.isAccepted())
++        || copy.type() == QEvent::TouchCancel) {
++        sendMouseEventFromTouch(&copy, targetWindow);
++    }
++}
+ 
+-            QPoint farFarAway(-QWIDGETSIZE_MAX, -QWIDGETSIZE_MAX);
++void TouchPressDelayHandler::sendMouseEventFromTouch(QTouchEvent *te, QWindow *target)
++{
++    if (te->type() == QEvent::TouchCancel) {
++        QPoint farFarAway(-QWIDGETSIZE_MAX, -QWIDGETSIZE_MAX);
++
++        qFGDebug() << "QFG: sending a fake mouse release at far-far-away to " << pressTarget();
++        QMouseEvent fake(QEvent::MouseButtonRelease, QPoint(), farFarAway, farFarAway,
++                       Qt::LeftButton, QApplication::mouseButtons() & ~Qt::LeftButton,
++                       QApplication::keyboardModifiers(), Qt::MouseEventSynthesizedByQt);
++        qt_sendSpontaneousEvent(target, &fake);
++        return;
++    }
+ 
+-            qFGDebug() << "QFG: sending a fake mouse release at far-far-away to " << mouseTarget;
+-            QMouseEvent re(QEvent::MouseButtonRelease, QPoint(), farFarAway, farFarAway,
+-                           mouseButton, QGuiApplication::mouseButtons() & ~mouseButton,
+-                           QGuiApplication::keyboardModifiers(), mouseEventSource);
+-            sendMouseEvent(&re, RegrabMouseAfterwards);
+-            // don't clear the mouseTarget just yet, since we need to explicitly ungrab the mouse on release!
++    QTouchEvent::TouchPoint touchPoint = te->touchPoints().at(0);
++    const QPointF screenPos = touchPoint.screenPos();
++    const QPointF delta = screenPos - screenPos.toPoint();
++    const QPointF pos = target->mapFromGlobal(screenPos.toPoint()) + delta;
++
++    QEvent::Type mouseEventType = QEvent::MouseMove;
++    Qt::MouseButton button = Qt::NoButton;
++    Qt::MouseButtons buttons = Qt::LeftButton;
++
++    switch (touchPoint.state()) {
++    case Qt::TouchPointPressed:
++        if (isDoubleClick()) {
++            mouseEventType = QEvent::MouseButtonDblClick;
++            button = Qt::NoButton;
++            m_mousePressTime = QTime();
+         }
++        else {
++            mouseEventType = QEvent::MouseButtonPress;
++            button = Qt::LeftButton;
++            m_mousePressTime = QTime::currentTime();
++        }
++        break;
++    case Qt::TouchPointReleased:
++        mouseEventType = QEvent::MouseButtonRelease;
++        button = Qt::LeftButton;
++        buttons = Qt::NoButton;
++        break;
++    default:
++        break;
+     }
+ 
+-protected:
+-    void timerEvent(QTimerEvent *e) override
+-    {
+-        if (e->timerId() == pressDelayTimer) {
+-            if (pressDelayEvent && mouseTarget) {
+-                qFGDebug() << "QFG: timer event: re-sending mouse press to " << mouseTarget;
+-                sendMouseEvent(pressDelayEvent.data(), UngrabMouseBefore);
+-            }
+-            pressDelayEvent.reset(nullptr);
+-
+-            if (pressDelayTimer) {
+-                killTimer(pressDelayTimer);
+-                pressDelayTimer = 0;
+-            }
+-        }
++    if (mouseEventType == QEvent::MouseButtonPress) {
++        qFGDebug() << "QFG: send fake move event to" << target;
++        QMouseEvent fake(QEvent::MouseMove, pos, pos, screenPos,
++                         Qt::NoButton, Qt::NoButton,
++                         QApplication::keyboardModifiers(), Qt::MouseEventSynthesizedByQt);
++        qt_sendSpontaneousEvent(target, &fake);
+     }
+ 
+-    void sendMouseEvent(QMouseEvent *me, int flags = 0)
+-    {
+-        if (mouseTarget) {
+-            sendingEvent = true;
++    // will not synthesize QEvent::NonClientAreaMouseButtonDblClick from touch
++    qFGDebug() << "QFG: send fake " << mouseEventType << "to" << target;
++    QMouseEvent fake(mouseEventType, pos, pos, screenPos,
++                     button, buttons, QApplication::keyboardModifiers(), Qt::MouseEventSynthesizedByQt);
++    qt_sendSpontaneousEvent(target, &fake);
++}
+ 
+-#if QT_CONFIG(graphicsview)
+-            QGraphicsItem *grabber = nullptr;
+-            if (mouseTarget->parentWidget()) {
+-                if (QGraphicsView *gv = qobject_cast<QGraphicsView *>(mouseTarget->parentWidget())) {
+-                    if (gv->scene())
+-                        grabber = gv->scene()->mouseGrabberItem();
+-                }
+-            }
++bool TouchPressDelayHandler::isDoubleClick() const
++{
++    // if not save time, return false then save current time
++    if (m_mousePressTime.isNull())
++        return false;
+ 
+-            if (grabber && (flags & UngrabMouseBefore)) {
+-                // GraphicsView Mouse Handling Workaround #1:
+-                // we need to ungrab the mouse before re-sending the press,
+-                // since the scene had already set the mouse grabber to the
+-                // original (and consumed) event's receiver
+-                qFGDebug() << "QFG: ungrabbing" << grabber;
+-                grabber->ungrabMouse();
+-            }
+-#else
+-            Q_UNUSED(flags);
+-#endif // QT_CONFIG(graphicsview)
++    int doubleClickInterval = static_cast<int>(QGuiApplication::styleHints()->mouseDoubleClickInterval());
++    int elapsed = m_mousePressTime.msecsTo(QTime::currentTime());
++    bool doubleClick = elapsed < doubleClickInterval;
+ 
+-            if (me) {
+-                QMouseEvent copy(me->type(), mouseTarget->mapFromGlobal(me->globalPos()),
+-                                 mouseTarget->topLevelWidget()->mapFromGlobal(me->globalPos()), me->screenPos(),
+-                                 me->button(), me->buttons(), me->modifiers(), me->source());
+-                qt_sendSpontaneousEvent(mouseTarget, &copy);
+-            }
++    return doubleClick;
++}
+ 
+-#if QT_CONFIG(graphicsview)
+-            if (grabber && (flags & RegrabMouseAfterwards)) {
+-                // GraphicsView Mouse Handling Workaround #2:
+-                // we need to re-grab the mouse after sending a faked mouse
+-                // release, since we still need the mouse moves for the gesture
+-                // (the scene will clear the item's mouse grabber status on
+-                // release).
+-                qFGDebug() << "QFG: re-grabbing" << grabber;
+-                grabber->grabMouse();
+-            }
+-#endif
+-            sendingEvent = false;
+-        }
++QEvent* TouchPressDelayHandler::copyEvent(QEvent *e)
++{
++    switch (e->type()) {
++    case QEvent::TouchBegin:
++    case QEvent::TouchUpdate:
++    case QEvent::TouchEnd:
++    case QEvent::TouchCancel: {
++        QTouchEvent* te = dynamic_cast<QTouchEvent*>(e);
++        QTouchEvent* copy = new QTouchEvent(te->type(), te->device(), te->modifiers(),
++                                            te->touchPointStates(), te->touchPoints());
++        copy->setWindow(te->window());
++        return copy;
++        break;
++    }
++    default:
++        break;
+     }
+ 
+-
+-private:
+-    int pressDelayTimer;
+-    QScopedPointer<QMouseEvent> pressDelayEvent;
+-    bool sendingEvent;
+-    Qt::MouseButton mouseButton;
+-    QPointer<QWidget> mouseTarget;
+-    Qt::MouseEventSource mouseEventSource;
+-};
+-
++    return nullptr;
++}
+ 
+ /*!
+     \internal
+@@ -350,15 +574,16 @@ QFlickGesture::QFlickGesture(QObject *receiver, Qt::MouseButton button, QObject
+ {
+     d_func()->q_ptr = this;
+     d_func()->receiver = receiver;
+-    d_func()->receiverScroller = (receiver && QScroller::hasScroller(receiver)) ? QScroller::scroller(receiver) : nullptr;
++    d_func()->receiverScroller = (receiver && QScroller::hasScroller(receiver)) ? QScroller::scroller(receiver) : 0;
+     d_func()->button = button;
++    d_func()->pressDelayHandler = PressDelayHandler::create(button);
+ }
+ 
+ QFlickGesture::~QFlickGesture()
+ { }
+ 
+ QFlickGesturePrivate::QFlickGesturePrivate()
+-    : receiverScroller(nullptr), button(Qt::NoButton), macIgnoreWheel(false)
++    : receiverScroller(0), button(Qt::NoButton), macIgnoreWheel(false), pressDelayHandler(nullptr)
+ { }
+ 
+ 
+@@ -415,16 +640,16 @@ QGestureRecognizer::Result QFlickGestureRecognizer::recognize(QGesture *state,
+ #endif
+ 
+     // this is only set for events that we inject into the event loop via sendEvent()
+-    if (PressDelayHandler::instance()->shouldEventBeIgnored(event)) {
++    if (d->pressDelayHandler->shouldEventBeIgnored()) {
+         //qFGDebug() << state << "QFG: ignored event: " << event->type();
+         return Ignore;
+     }
+ 
+-    const QMouseEvent *me = nullptr;
++    const QMouseEvent *me = 0;
+ #if QT_CONFIG(graphicsview)
+-    const QGraphicsSceneMouseEvent *gsme = nullptr;
++    const QGraphicsSceneMouseEvent *gsme = 0;
+ #endif
+-    const QTouchEvent *te = nullptr;
++    const QTouchEvent *te = 0;
+     QPoint globalPos;
+ 
+     // qFGDebug() << "FlickGesture "<<state<<"watched:"<<watched<<"receiver"<<d->receiver<<"event"<<event->type()<<"button"<<button;
+@@ -620,7 +845,7 @@ QGestureRecognizer::Result QFlickGestureRecognizer::recognize(QGesture *state,
+ #if QT_CONFIG(graphicsview)
+          || gsme
+ #endif
+-         ) && scrollerIsActive)
++         || te) && scrollerIsActive)
+         result |= ConsumeEventHint;
+ 
+     // The only problem with this approach is that we consume the
+@@ -632,11 +857,11 @@ QGestureRecognizer::Result QFlickGestureRecognizer::recognize(QGesture *state,
+ #if QT_CONFIG(graphicsview)
+         || gsme
+ #endif
+-        ) {
++        || te) {
+         if (!scrollerWasDragging && !scrollerWasScrolling && scrollerIsActive)
+-            PressDelayHandler::instance()->scrollerBecameActive();
++            d->pressDelayHandler->scrollerBecameActive();
+         else if (scrollerWasScrolling && (scroller->state() == QScroller::Dragging || scroller->state() == QScroller::Inactive))
+-            PressDelayHandler::instance()->scrollerWasIntercepted();
++            d->pressDelayHandler->scrollerWasIntercepted();
+     }
+ 
+     if (!inputType) {
+@@ -644,6 +869,7 @@ QGestureRecognizer::Result QFlickGestureRecognizer::recognize(QGesture *state,
+     } else {
+         switch (event->type()) {
+         case QEvent::MouseButtonPress:
++        case QEvent::TouchBegin:
+ #if QT_CONFIG(graphicsview)
+         case QEvent::GraphicsSceneMousePress:
+ #endif
+@@ -652,24 +878,21 @@ QGestureRecognizer::Result QFlickGestureRecognizer::recognize(QGesture *state,
+                 if (pressDelay > 0) {
+                     result |= ConsumeEventHint;
+ 
+-                    PressDelayHandler::instance()->pressed(event, pressDelay);
++                    d->pressDelayHandler->pressed(event, pressDelay);
+                     event->accept();
+                 }
+             }
+-            Q_FALLTHROUGH();
+-        case QEvent::TouchBegin:
+             q->setHotSpot(globalPos);
+             result |= scrollerIsActive ? TriggerGesture : MayBeGesture;
+             break;
+ 
+         case QEvent::MouseMove:
++        case QEvent::TouchUpdate:
+ #if QT_CONFIG(graphicsview)
+         case QEvent::GraphicsSceneMouseMove:
+ #endif
+-            if (PressDelayHandler::instance()->isDelaying())
++            if (d->pressDelayHandler->isDelaying())
+                 result |= ConsumeEventHint;
+-            Q_FALLTHROUGH();
+-        case QEvent::TouchUpdate:
+             result |= scrollerIsActive ? TriggerGesture : Ignore;
+             break;
+ 
+@@ -677,10 +900,9 @@ QGestureRecognizer::Result QFlickGestureRecognizer::recognize(QGesture *state,
+         case QEvent::GraphicsSceneMouseRelease:
+ #endif
+         case QEvent::MouseButtonRelease:
+-            if (PressDelayHandler::instance()->released(event, scrollerWasDragging || scrollerWasScrolling, scrollerIsActive))
+-                result |= ConsumeEventHint;
+-            Q_FALLTHROUGH();
+         case QEvent::TouchEnd:
++            if (d->pressDelayHandler->released(event, scrollerWasDragging || scrollerWasScrolling, scrollerIsActive))
++                result |= ConsumeEventHint;
+             result |= scrollerIsActive ? FinishGesture : CancelGesture;
+             break;
+ 
+diff --git a/src/widgets/util/qflickgesture_p.h b/src/widgets/util/qflickgesture_p.h
+index 0b47516..a41633d 100644
+--- a/src/widgets/util/qflickgesture_p.h
++++ b/src/widgets/util/qflickgesture_p.h
+@@ -71,12 +71,65 @@ class Q_WIDGETS_EXPORT QFlickGesture : public QGesture
+     Q_DECLARE_PRIVATE(QFlickGesture)
+ 
+ public:
+-    QFlickGesture(QObject *receiver, Qt::MouseButton button, QObject *parent = nullptr);
++    QFlickGesture(QObject *receiver, Qt::MouseButton button, QObject *parent = 0);
+     ~QFlickGesture();
+ 
+     friend class QFlickGestureRecognizer;
+ };
+ 
++class PressDelayHandler : public QObject
++{
++    Q_OBJECT
++public:
++    PressDelayHandler(QObject *parent = nullptr);
++    enum {
++        UngrabMouseBefore = 1,
++        RegrabMouseAfterwards = 2
++    };
++
++    static PressDelayHandler* create(Qt::MouseButton button = Qt::LeftButton);
++
++    bool shouldEventBeIgnored() const;
++    bool isDelaying() const;
++
++    void pressed(QEvent *e, int delay);
++    bool released(QEvent *e, bool scrollerWasActive, bool scrollerIsActive);
++
++    void scrollerWasIntercepted();
++    void scrollerBecameActive();
++
++protected:
++    void sendSpontaneousEvent(QEvent *e, QObject *target, int flags);
++    QPointer<QObject> pressTarget() const;
++    void setPressTarget(QObject* pressTarget);
++    void resetPressTarget();
++
++private slots:
++    void onDelayTimeout();
++private:
++    virtual void saveDelayEventInfo(QEvent* e) = 0;
++    virtual QEvent* copyEvent(QEvent* e) = 0;
++
++    virtual void sendEvent(QEvent *e, QObject* target) = 0;
++    virtual void releaseAllPressed() = 0;
++
++    QGraphicsItem* mouseGrabberItem() const;
++    void grabMouse(QGraphicsItem* grabber) const;
++    void ungrabMouse(QGraphicsItem* grabber) const;
++
++    bool hasSavedDelayEvent() const;
++    void resetDelayEvent();
++    void stopTimer();
++    void startTimer(int timeout);
++
++private:
++    // there will only be one QScroller active at same time
++    static QTimer* m_pressDelayTimer;
++    static bool m_sendingEvent;
++    static QScopedPointer<QEvent> m_pressDelayEvent;
++    static QPointer<QObject> m_pressTarget;
++};
++
+ class QFlickGesturePrivate : public QGesturePrivate
+ {
+     Q_DECLARE_PUBLIC(QFlickGesture)
+@@ -87,6 +140,7 @@ public:
+     QScroller *receiverScroller;
+     Qt::MouseButton button; // NoButton == Touch
+     bool macIgnoreWheel;
++    PressDelayHandler *pressDelayHandler;
+ };
+ 
+ class QFlickGestureRecognizer : public QGestureRecognizer
+@@ -102,6 +156,43 @@ private:
+     Qt::MouseButton button; // NoButton == Touch
+ };
+ 
++class MousePressDelayHandler : public PressDelayHandler
++{
++public:
++    MousePressDelayHandler(QObject *parent = nullptr);
++
++private:
++    void saveDelayEventInfo(QEvent* e) override;
++
++    QEvent* copyEvent(QEvent *e) override;
++    void sendEvent(QEvent *e, QObject* target) override;
++    void releaseAllPressed() override;
++
++    Qt::MouseButton m_mouseButton;
++    Qt::MouseEventSource m_mouseEventSource;
++};
++
++class TouchPressDelayHandler : public PressDelayHandler
++{
++public:
++    TouchPressDelayHandler(QObject *parent = nullptr);
++
++private:
++    void saveDelayEventInfo(QEvent* e) override;
++
++    QEvent* copyEvent(QEvent *e) override;
++    void sendEvent(QEvent *e, QObject* target) override;
++    void releaseAllPressed() override;
++
++    void sendMouseEventFromTouch(QTouchEvent *te, QWindow *target);
++    bool isDoubleClick() const;
++
++    QPointer<QWidget> m_targetWidget;
++    QTouchDevice* m_device;
++    QTouchEvent::TouchPoint m_touchBeginPoint;
++    QTime m_mousePressTime;
++};
++
+ QT_END_NAMESPACE
+ 
+ #endif // QT_NO_GESTURES
+diff --git a/src/widgets/widgets/qcombobox_p.h b/src/widgets/widgets/qcombobox_p.h
+index 45580ba..2cf10db 100644
+--- a/src/widgets/widgets/qcombobox_p.h
++++ b/src/widgets/widgets/qcombobox_p.h
+@@ -276,7 +276,6 @@ protected:
+                const QStyleOptionViewItem &option,
+                const QModelIndex &index) const override {
+         QStyleOptionMenuItem opt = getStyleOption(option, index);
+-        painter->fillRect(option.rect, opt.palette.window());
+         mCombo->style()->drawControl(QStyle::CE_MenuItem, &opt, painter, mCombo);
+     }
+     QSize sizeHint(const QStyleOptionViewItem &option,

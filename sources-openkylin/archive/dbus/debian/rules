@@ -1,0 +1,290 @@
+#!/usr/bin/make -f
+# Copyright © 2002,2003 Colin Walters <walters@verbum.org>
+# Copyright © 2003 Daniel Stone <daniels@debian.org>
+# Copyright © 2006 Sjoerd Simons <sjoerd@debian.org>
+# Copyright © 2011 Michael Biebl <biebl@debian.org>
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+pie,+bindnow
+
+include /usr/share/dpkg/default.mk
+
+%:
+	dh $@ $(dh_options)
+
+libdbusN := $(shell sed -rn 's/Package:[[:space:]]*(libdbus-[0-9-]+)[[:space:]]*$$/\1/p' debian/control | head -n 1)
+libdbus_soname := $(patsubst libdbus-1-%,libdbus-1.so.%,$(libdbusN))
+debug_build_prefix := /usr/lib/dbus-1.0/debug-build
+binaries := $(shell dh_listpackages)
+
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--gc-sections
+
+dh_options = \
+	--builddirectory=debian/build-main \
+	--buildsystem=meson \
+	--with xml-core \
+	--without autoreconf \
+	$(NULL)
+
+common_configure_flags := \
+	--libexecdir=lib/dbus-1.0 \
+	-Dmessage_bus=true \
+	-Dsystem_socket=/run/dbus/system_bus_socket \
+	-Dtools=true \
+	-Dtraditional_activation=true \
+	$(NULL)
+
+
+ifeq ($(DEB_HOST_ARCH),$(DEB_BUILD_ARCH))
+common_configure_flags += --native-file $(CURDIR)/debian/meson-binaries.txt
+else
+common_configure_flags += --cross-file $(CURDIR)/debian/meson-binaries.txt
+endif
+
+normal_configure_flags := \
+	-Ddefault_library=both \
+	$(NULL)
+
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+# Non-bootstrap build on Linux: add Linux-specifics
+common_configure_flags += \
+	-Dapparmor=enabled \
+	-Dlibaudit=enabled \
+	-Dselinux=enabled\
+	-Dsession_socket_dir=/tmp \
+	-Dsystemd=enabled \
+	-Dsystemd_system_unitdir=/usr/lib/systemd/system \
+	-Dtest_socket_dir=/tmp \
+	$(NULL)
+normal_configure_flags += \
+	-Dsystemd_user_unitdir=/usr/lib/systemd/user \
+	-Duser_session=true \
+	$(NULL)
+endif
+
+debug_configure_flags := \
+	-Dasserts=true \
+	-Dchecks=true \
+	-Ddefault_library=both \
+	-Ddoxygen_docs=disabled \
+	-Dducktype_docs=disabled \
+	-Dvalgrind=auto \
+	-Dverbose_mode=true \
+	-Dxml_docs=disabled \
+	--bindir='${debug_build_prefix}/bin' \
+	--libdir='${debug_build_prefix}/lib' \
+	--libexecdir='${debug_build_prefix}/libexec' \
+	$(NULL)
+
+udeb_configure_flags := \
+	$(normal_configure_flags) \
+	-Dapparmor=disabled \
+	-Dasserts=false \
+	-Dchecks=false \
+	-Ddefault_library=shared \
+	-Ddoxygen_docs=disabled \
+	-Dducktype_docs=disabled \
+	-Dinstalled_tests=false \
+	-Dlibaudit=disabled \
+	-Doptimization=s \
+	-Dselinux=disabled \
+	-Dstats=false \
+	-Dsystemd=disabled \
+	-Duser_session=false \
+	-Dverbose_mode=false \
+	-Dxml_docs=disabled \
+	$(NULL)
+
+ifneq ($(filter dbus-tests,$(binaries)),)
+common_configure_flags += -Dinstalled_tests=true
+else
+common_configure_flags += -Dinstalled_tests=false
+endif
+
+# Some features are needed whenever we have build-time *or* installed tests
+ifneq ($(filter nocheck,$(DEB_BUILD_OPTIONS))$(filter dbus-tests,$(binaries)),nocheck)
+debug_configure_flags += -Dintrusive_tests=true
+endif
+
+ifeq ($(filter nodoc,$(DEB_BUILD_PROFILES)),)
+normal_configure_flags += -Dxml_docs=enabled
+else
+normal_configure_flags += -Dxml_docs=disabled
+endif
+
+ifneq ($(filter dbus-1-doc,$(binaries)),)
+normal_configure_flags += -Ddoxygen_docs=enabled
+normal_configure_flags += -Dducktype_docs=enabled
+else
+normal_configure_flags += -Ddoxygen_docs=disabled
+normal_configure_flags += -Dducktype_docs=disabled
+endif
+
+override_dh_auto_configure:
+	dh_auto_configure \
+		-- \
+		$(common_configure_flags) \
+		$(normal_configure_flags) \
+		$(NULL)
+ifneq ($(filter dbus-tests,$(binaries)),)
+	LDFLAGS='$(LDFLAGS) -Wl,-rpath,${debug_build_prefix}/lib' \
+	dh_auto_configure \
+		--builddirectory=debian/build-debug \
+		-- \
+		$(common_configure_flags) \
+		$(debug_configure_flags) \
+		$(NULL)
+endif
+ifneq ($(filter dbus-udeb,$(binaries)),)
+	dh_auto_configure \
+		--builddirectory=debian/build-udeb \
+		-- \
+		$(common_configure_flags) \
+		$(udeb_configure_flags) \
+		$(NULL)
+endif
+
+override_dh_auto_build:
+	dh_auto_build
+ifneq ($(filter dbus-tests,$(binaries)),)
+	dh_auto_build --builddirectory=debian/build-debug
+endif
+ifneq ($(filter dbus-udeb,$(binaries)),)
+	dh_auto_build --builddirectory=debian/build-udeb
+endif
+
+meson_test_flags = \
+	--timeout-multiplier 3 \
+	-v \
+	$(NULL)
+
+handle-test-failure:
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+	@echo "Build-time tests failed, please debug"
+	@false
+else
+	@echo "Ignoring build-time test failure on non-Linux for now"
+endif
+
+test_env = \
+	-u DISPLAY \
+	DBUS_TEST_HOMEDIR=$${HOME} \
+	LD_PRELOAD=libnss_wrapper.so \
+	NSS_WRAPPER_HOSTS=$(CURDIR)/debian/hosts \
+	$(NULL)
+
+override_dh_auto_test-arch:
+ifeq ($(filter nocheck,$(DEB_BUILD_OPTIONS)),)
+	env $(test_env) \
+		dh_auto_test -- $(meson_test_flags) \
+		|| make -f debian/rules handle-test-failure
+ifneq ($(filter dbus-tests,$(binaries)),)
+	env $(test_env) \
+		dh_auto_test --builddirectory=debian/build-debug -- $(meson_test_flags) \
+		|| make -f debian/rules handle-test-failure
+endif
+ifneq ($(filter dbus-udeb,$(binaries)),)
+	env $(test_env) \
+		dh_auto_test --builddirectory=debian/build-udeb -- $(meson_test_flags) \
+		|| make -f debian/rules handle-test-failure
+endif
+endif
+
+override_dh_auto_test-indep:
+	:
+
+override_dh_auto_install:
+ifneq ($(filter dbus-udeb,$(binaries)),)
+	# udeb build
+	dh_auto_install --builddirectory=debian/build-udeb --destdir=$(CURDIR)/debian/tmp-udeb
+	cd $(CURDIR)/debian/tmp-udeb && find | LC_ALL=C sort
+endif
+ifneq ($(filter dbus-tests,$(binaries)),)
+	# debug build
+	dh_auto_install --builddirectory=debian/build-debug --destdir=$(CURDIR)/debian/tmp
+	rm -rfv debian/tmp/etc
+	rm -rfv debian/tmp/usr/include
+	rm -rfv debian/tmp/usr/lib/systemd
+	rm -rfv debian/tmp/usr/lib/sysusers.d
+	rm -rfv debian/tmp/usr/share/dbus-1
+	rm -rfv debian/tmp/usr/share/doc
+	rm -rfv debian/tmp/usr/share/man
+	rm -rfv debian/tmp/usr/share/xml
+	mv debian/tmp/usr/share/installed-tests/dbus \
+		debian/tmp/usr/share/installed-tests/dbus-debug-build
+	sed -i -e \
+		"s,^Exec=,Exec=sh -c 'export PATH=/usr/lib/dbus-1.0/debug-build/bin:\$$PATH; exec \"\$$@\"' sh ," \
+		debian/tmp/usr/share/installed-tests/dbus-debug-build/*.test
+	rm -f debian/tmp/${debug_build_prefix}/libexec/installed-tests/dbus/data/sha-1/Readme.txt
+	cd $(CURDIR)/debian/tmp && find | LC_ALL=C sort
+endif
+	# normal build (do this last so that it overwrites the others)
+	dh_auto_install
+	rm -f debian/tmp/usr/lib/dbus-1.0/installed-tests/dbus/data/sha-1/Readme.txt
+ifeq ($(filter nodoc pkg.dbus.minimal,$(DEB_BUILD_PROFILES)),)
+	# Reproducible build: sed out the generated dates from the man pages.
+	sed -i \
+		-e '/^\.\\\" *Date: .*/d' \
+		-e 's/^\(.TH "[^"]*" "[^"]*" \)"[^"]*"/\1""/' \
+		debian/tmp/usr/share/man/man?/*
+endif
+ifeq ($(filter dbus-tests,$(binaries)),)
+	# noinsttest builds dbus-test-tool but not dbus-tests
+	rm -f debian/tmp/usr/bin/dbus-test-tool
+endif
+ifeq ($(filter dbus-1-doc,$(binaries)),)
+	# nodoc builds still install a bit of documentation
+	rm -fr debian/tmp/usr/share/doc/dbus
+endif
+	# Remove the legacy bus configuration files. We move their old
+	# versions out of the way, include the moved names in the new
+	# bus setup instead of the old names, and replace the old names
+	# with a symlink to the new bus setup so that old dbus-daemons
+	# can still reload their configuration.
+	rm -f debian/tmp/etc/dbus-1/session.conf
+	rm -f debian/tmp/etc/dbus-1/system.conf
+
+ifeq ($(DEB_DISTRIBUTION),UNRELEASED)
+# We can't expect the install files to be fully up to date for a snapshot.
+dh_missing_options += --list-missing
+else
+dh_missing_options += --fail-missing
+endif
+
+override_dh_missing:
+	dh_missing $(dh_missing_options)
+
+# In Ubuntu, we already make D-Bus start on-demand after package installation
+# (see change in dbus.postinst). Therefore, we do not want
+# dh_install{init,systemd} to cause a D-Bus start on package installation.
+# We also prevent D-Bus from being stopped (and then restarted) on upgrade,
+# since it is incompatible with d/p/u/dont-stop-dbus.patch
+override_dh_installinit:
+	dh_installinit -pdbus --no-start --no-stop-on-upgrade
+override_dh_installsystemd:
+	dh_installsystemd -pdbus --no-start --no-stop-on-upgrade
+
+override_dh_installdocs:
+	dh_installdocs --all AUTHORS NEWS README
+
+debian/$(libdbusN).symbols: debian/$(libdbusN).symbols.in
+	sed -e 's/$${DEB_VERSION}/${DEB_VERSION}/g' \
+		< $< > $@
+
+ifeq ($(DEB_DISTRIBUTION),UNRELEASED)
+# We can't expect the symbols file to be fully up to date for a snapshot,
+# so only fail if we broke ABI. This overrides the -c4 below.
+export DPKG_GENSYMBOLS_CHECK_LEVEL = 1
+endif
+
+override_dh_makeshlibs: debian/$(libdbusN).symbols
+	dh_makeshlibs -Ndbus-tests -V --add-udeb=$(libdbusN)-udeb -- -c4
+
+override_dh_shlibdeps:
+ifneq ($(filter dbus-tests,$(binaries)),)
+	dh_shlibdeps -pdbus-tests -l'debian/dbus-tests${debug_build_prefix}/lib'
+endif
+	dh_shlibdeps --remaining-packages
+
+clean:
+	rm -rf debian/tmp-udeb
+	dh $@ $(dh_options)

@@ -1,0 +1,3515 @@
+From: cxc <chenxuechao@kylinos.cn>
+Date: Mon, 20 Jul 2026 15:51:52 +0800
+Subject: =?utf-8?b?Zml4KOW/q+aNt+mUrik6IOazqOWGjOWJjeajgOa1i+WPr+eUqOaApw==?=
+ =?utf-8?b?5bm25pSv5oyB5Yay56qB6YeN6K+V5LiO5pS56ZSu6YeN5rOo5YaM?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+若快捷键被占用则延时重试，键值变化时重新注册
+
+Bug: #659041
+Req: yes
+From: kylin
+Severity: Important
+Changelog-Bug: #659041 【ukui4.24】安装系统后首次启动，通过win+c调用语音输入法不生效
+Change-Id: I939d3ddd1cdda81db5e4bddcc2347a6286f03cda
+---
+ proto/ukui-window-management.xml        | 421 ++++++++++++++++++++++++++++++++
+ src/core/CMakeLists.txt                 |   3 +-
+ src/core/main.cpp                       |  21 +-
+ src/core/shortcut.cpp                   | 116 ++++++++-
+ src/core/shortcut.h                     |   8 +-
+ src/core/voiceInput.cpp                 | 154 ++++++++----
+ src/core/voiceInput.h                   |  16 +-
+ src/recognizer/voiceToStr.cpp           |  85 +++----
+ src/recognizer/voiceToStr.h             |  20 +-
+ src/window/CMakeLists.txt               |  36 ++-
+ src/window/microphoneMuteDialog.cpp     | 129 ----------
+ src/window/microphoneMuteDialog.h       |  58 -----
+ src/window/microphoneMuteDialog.qml     |  57 -----
+ src/window/screenLocator.cpp            | 409 +++++++++++++++++++++++++++++++
+ src/window/screenLocator.h              |  48 ++++
+ src/window/themeIconProvider.cpp        |  11 +-
+ src/window/themeIconProvider.h          |   2 +-
+ src/window/tipDialog.cpp                | 178 ++++++++++++++
+ src/window/tipDialog.h                  |  61 +++++
+ src/window/voiceInputWindow.cpp         | 113 ++-------
+ src/window/voiceInputWindow.h           |  35 +--
+ src/window/voiceInputWindow.qml         | 132 ++++++----
+ src/window/voiceInputWindow.qrc         |   1 -
+ translations/ukui-voice-wing_ar.ts      |  26 --
+ translations/ukui-voice-wing_bo_CN.ts   |  26 --
+ translations/ukui-voice-wing_de.ts      |  26 --
+ translations/ukui-voice-wing_es.ts      |  26 --
+ translations/ukui-voice-wing_fr.ts      |  26 --
+ translations/ukui-voice-wing_kk.ts      |  26 --
+ translations/ukui-voice-wing_ky.ts      |  26 --
+ translations/ukui-voice-wing_mn.ts      |  26 --
+ translations/ukui-voice-wing_ms.ts      |  26 --
+ translations/ukui-voice-wing_th.ts      |  26 --
+ translations/ukui-voice-wing_ug.ts      |  26 --
+ translations/ukui-voice-wing_vi.ts      |  26 --
+ translations/ukui-voice-wing_zh_CN.ts   |  38 ++-
+ translations/ukui-voice-wing_zh_HK.ts   |  38 ++-
+ translations/ukui-voice-wing_zh_Hant.ts |  38 ++-
+ 38 files changed, 1668 insertions(+), 872 deletions(-)
+ create mode 100755 proto/ukui-window-management.xml
+ delete mode 100644 src/window/microphoneMuteDialog.cpp
+ delete mode 100644 src/window/microphoneMuteDialog.h
+ delete mode 100644 src/window/microphoneMuteDialog.qml
+ create mode 100644 src/window/screenLocator.cpp
+ create mode 100644 src/window/screenLocator.h
+ create mode 100644 src/window/tipDialog.cpp
+ create mode 100644 src/window/tipDialog.h
+ delete mode 100644 translations/ukui-voice-wing_ar.ts
+ delete mode 100644 translations/ukui-voice-wing_bo_CN.ts
+ delete mode 100644 translations/ukui-voice-wing_de.ts
+ delete mode 100644 translations/ukui-voice-wing_es.ts
+ delete mode 100644 translations/ukui-voice-wing_fr.ts
+ delete mode 100644 translations/ukui-voice-wing_kk.ts
+ delete mode 100644 translations/ukui-voice-wing_ky.ts
+ delete mode 100644 translations/ukui-voice-wing_mn.ts
+ delete mode 100644 translations/ukui-voice-wing_ms.ts
+ delete mode 100644 translations/ukui-voice-wing_th.ts
+ delete mode 100644 translations/ukui-voice-wing_ug.ts
+ delete mode 100644 translations/ukui-voice-wing_vi.ts
+
+diff --git a/proto/ukui-window-management.xml b/proto/ukui-window-management.xml
+new file mode 100755
+index 0000000..6e6e403
+--- /dev/null
++++ b/proto/ukui-window-management.xml
+@@ -0,0 +1,421 @@
++<?xml version="1.0" encoding="UTF-8"?>
++<protocol name="ukui_window_management">
++  <copyright><![CDATA[
++    SPDX-FileCopyrightText: 2024 KylinSoft Co., Ltd.
++    SPDX-FileCopyrightText: 2024 Hongfei Shang
++
++    SPDX-License-Identifier: MulanPSL-2.0
++  ]]>
++</copyright>
++
++  <interface name="ukui_window_management" version="1">
++    <description summary="application windows management">
++      This interface manages application windows. It provides requests to show and hide the desktop
++      and emits an event every time a window is created so that the client can use it to manage the
++      window.
++    </description>
++
++    <enum name="show_desktop">
++      <entry name="disabled" value="0"/>
++      <entry name="enabled" value="1"/>
++    </enum>
++
++    <request name="show_desktop">
++      <description summary="show/hide the desktop">
++        Tell the compositor to show/hide the desktop.
++      </description>
++      <arg name="state" type="uint" summary="requested state"/>
++    </request>
++
++    <request name="create_window">
++      <arg name="id" type="new_id" interface="ukui_window"/>
++      <arg name="internal_window_uuid" type="string"
++        summary="The internal window uuid of the window to create"/>
++    </request>
++
++    <event name="show_desktop_changed">
++      <description summary="notify the client when the show desktop mode is entered/left">
++        This event will be sent whenever the show desktop mode changes. E.g. when it is entered or
++        left.
++
++        On binding the interface the current state is sent.
++      </description>
++      <arg name="state" type="uint" summary="new state"/>
++    </event>
++
++    <event name="stacking_order_changed">
++      <description summary="notify the client when stacking order changed">
++        This event will be sent when stacking order changed and on bind
++      </description>
++      <arg name="uuids" type="string" summary="internal windows uuid, use ';' separated"/>
++    </event>
++
++    <event name="window_created">
++      <description summary="notify the client that a window was mapped">
++        This event will be sent immediately after a window is mapped.
++      </description>
++      <arg name="uuid" type="string" summary="internal window uuid"/>
++    </event>
++  </interface>
++
++  <interface name="ukui_window" version="1">
++    <description summary="interface to control application windows">
++      Manages and control an application window.
++    </description>
++
++    <enum name="state">
++      <entry name="active" value="0x1"/>
++      <entry name="minimized" value="0x2"/>
++      <entry name="maximized" value="0x4"/>
++      <entry name="fullscreen" value="0x8"/>
++      <entry name="keep_above" value="0x10"/>
++      <entry name="keep_below" value="0x20"/>
++      <entry name="on_all_desktops" value="0x40"/>
++      <entry name="demands_attention" value="0x80"/>
++      <entry name="closeable" value="0x100"/>
++      <entry name="minimizable" value="0x200"/>
++      <entry name="maximizable" value="0x400"/>
++      <entry name="fullscreenable" value="0x800"/>
++      <entry name="shadeable" value="0x1000"/>
++      <entry name="shaded" value="0x2000"/>
++      <entry name="movable" value="0x4000"/>
++      <entry name="resizable" value="0x8000"/>
++      <entry name="virtual_desktop_changeable" value="0x10000"/>
++      <entry name="accept_focus" value="0x20000"/>
++      <entry name="skiptaskbar" value="0x40000"/>
++      <entry name="skipswitcher" value="0x80000"/>
++      <entry name="modality" value="0x100000"/>
++    </enum>
++
++    <request name="set_state">
++      <description summary="set window state">
++        Set window state. Can set multiple states at once.
++
++        Values for state argument are described by ukui_window_management.state and can be used
++        together in a bitfield.
++        The flags bitfield describes which flags are supposed to be set, the
++        state bitfield the value for the set flags.
++
++        The state argument is not a boolean value, but a bitfield, so it is possible to set multiple
++        states at once. Only the states that are set in the flags bitfield will be changed.
++
++        For example:
++
++        If flags was 0x14(keep_above|maximized) and state was 0x04(maximized), the window would be
++        maximized, but not keep above.
++
++        If flags was 0x04(maximized) and state was 0x14(keep_above|maximized), the window would be
++        maximized but not change keep above state.
++      </description>
++      <arg name="flags" type="uint" summary="bitfield of set state flags"/>
++      <arg name="state" type="uint" summary="bitfield of state flags"/>
++    </request>
++
++    <request name="set_startup_geometry">
++      <description summary="set the geometry for a taskbar/desktop entry">
++        Sets the geometry of the taskbar/desktop entry for this window. The geometry is relative to
++        a panel/desktop in particular.
++      </description>
++      <arg name="entry" type="object" interface="wl_surface" summary="the taskbar/desktop entry for the window"/>
++      <arg name="x" type="uint"/>
++      <arg name="y" type="uint"/>
++      <arg name="width" type="uint"/>
++      <arg name="height" type="uint"/>
++    </request>
++
++    <request name="set_minimized_geometry">
++      <description summary="set the geometry for a taskbar entry">
++        Sets the geometry of the taskbar entry for this window. The geometry is relative to a panel
++        in particular.
++      </description>
++      <arg name="panel" type="object" interface="wl_surface"/>
++      <arg name="x" type="uint"/>
++      <arg name="y" type="uint"/>
++      <arg name="width" type="uint"/>
++      <arg name="height" type="uint"/>
++    </request>
++
++    <request name="unset_minimized_geometry">
++      <description summary="set the geometry for a taskbar entry">
++        Remove the task geometry information for a particular panel.
++      </description>
++      <arg name="panel" type="object" interface="wl_surface"/>
++    </request>
++
++    <request name="close">
++      <description summary="close window">
++        Close this window.
++      </description>
++    </request>
++
++    <request name="request_move">
++      <description summary="request move">
++        Request an interactive move for this window. The pointer will move to the center of the
++        window and move with the pointer.
++
++        When mouse button is released, the interactive move ends.
++      </description>
++    </request>
++
++    <request name="request_resize">
++      <description summary="request resize">
++        Request an interactive resize for this window. The pointer will move to window right bottom
++        corner and resize with the pointer.
++
++        When mouse button is released, the interactive resize ends.
++      </description>
++    </request>
++
++    <request name="destroy" type="destructor">
++      <description summary="remove resource for the ukui_window">
++        Removes the resource bound for this ukui_window.
++      </description>
++    </request>
++
++    <request name="get_icon">
++      <description summary="Requests to get the window icon">
++        The compositor will write the window icon into the provided file descriptor. The data is a
++        serialized QIcon with QDataStream.
++      </description>
++      <arg name="fd" type="fd" summary="file descriptor for the icon"/>
++    </request>
++
++    <event name="title_changed">
++      <description summary="window title has been changed">
++        This event will be sent as soon as the window title is changed.
++      </description>
++      <arg name="title" type="string" summary="window title"/>
++    </event>
++
++    <event name="app_id_changed">
++      <description summary="application identifier has been changed">
++        This event will be sent as soon as the application identifier is changed.
++      </description>
++      <arg name="app_id" type="string"/>
++    </event>
++
++    <event name="state_changed">
++      <description summary="window state has been changed">
++        This event will be sent as soon as the window state changes.
++
++        Values for state argument are described by ukui_window_management.state. It contains
++        the whole new state of the window.
++      </description>
++      <arg name="flags" type="uint" summary="bitfield of state flags"/>
++    </event>
++
++
++    <event name="themed_icon_name_changed">
++      <description summary="window's icon name changed">
++        This event will be sent whenever the themed icon name changes. May be null.
++      </description>
++      <arg name="name" type="string" summary="the new themed icon name"/>
++    </event>
++
++    <event name="unmapped">
++      <description summary="window's surface was unmapped">
++        This event will be sent immediately after the window is closed and its surface is unmapped.
++      </description>
++    </event>
++
++    <event name="initial_state">
++      <description summary="All initial known state is submitted">
++        This event will be sent immediately after all initial state been sent to the client. If the
++        Plasma window is already unmapped, the unmapped event will be sent before the initial_state
++        event.
++      </description>
++    </event>
++
++    <event name="parent_window">
++      <description summary="The parent window changed">
++        This event will be sent whenever the parent window of this ukui_window changes. The
++        passed parent is another ukui_window and this ukui_window is a transient window to
++        the parent window. If the parent argument is null, this ukui_window does not have a
++        parent window.
++      </description>
++      <arg name="parent" type="object" interface="ukui_window" summary="The parent window"
++        allow-null="true"/>
++    </event>
++
++    <event name="geometry">
++      <description summary="The geometry of this window in absolute coordinates">
++        This event will be sent whenever the window geometry of this ukui_window changes. The
++        coordinates are in absolute coordinates of the windowing system.
++      </description>
++      <arg name="x" type="int" summary="x position of the ukui_window"/>
++      <arg name="y" type="int" summary="y position of the ukui_window"/>
++      <arg name="width" type="uint" summary="width of the ukui_window"/>
++      <arg name="height" type="uint" summary="height of the ukui_window"/>
++    </event>
++
++    <event name="icon_changed">
++      <description summary="The icon of the window changed">
++        This event will be sent whenever the icon of the window changes, but there is no themed icon
++        name. Common examples are Xwayland windows which have a pixmap based icon.
++
++        The client can request the icon using get_icon.
++      </description>
++    </event>
++
++    <event name="pid_changed">
++      <description summary="process id of application owning the window has changed">
++        This event will be sent when the compositor has set the process id this window belongs to.
++        This should be set once before the initial_state is sent.
++      </description>
++      <arg name="pid" type="uint" summary="process id"/>
++    </event>
++
++
++    <request name="request_enter_virtual_desktop">
++      <description summary="map window on a virtual desktop">
++        Make the window enter a virtual desktop. A window can enter more than one virtual desktop.
++        if the id is empty or invalid, no action will be performed.
++      </description>
++      <arg name="id" type="string" summary="desktop id"/>
++    </request>
++
++    <request name="request_enter_new_virtual_desktop">
++      <description summary="map window on a virtual desktop">RFC: do this with an empty id to
++        request_enter_virtual_desktop?
++        Make the window enter a new virtual desktop. If the server consents the request, it will
++        create a new virtual desktop and assign the window to it.
++      </description>
++    </request>
++
++    <request name="request_leave_virtual_desktop">
++      <description summary="remove a window from a virtual desktop">
++        Make the window exit a virtual desktop. If it exits all desktops it will be considered on
++        all of them.
++      </description>
++      <arg name="id" type="string" summary="desktop id"/>
++    </request>
++
++    <event name="virtual_desktop_entered">
++      <description summary="the window entered a new virtual desktop">
++        This event will be sent when the window has entered a new virtual desktop. The window can be
++        on more than one desktop, or none: then is considered on all of them.
++      </description>
++      <arg name="id" type="string" summary="desktop id"/>
++    </event>
++
++    <event name="virtual_desktop_left">
++      <description summary="the window left a virtual desktop">
++        This event will be sent when the window left a virtual desktop. If the window leaves all
++        desktops, it can be considered on all. If the window gets manually added on all desktops,
++        the server has to send virtual_desktop_left for every previous desktop it was in for the
++        window to be really considered on all desktops.
++      </description>
++      <arg name="is" type="string" summary="desktop id"/>
++    </event>
++
++    <event name="application_menu">
++      <description summary="notify the client that the current appmenu changed">
++        This event will be sent after the application menu for the window has changed.
++      </description>
++      <arg name="service_name" type="string"/>
++      <arg name="object_path" type="string"/>
++    </event>
++
++    <request name="request_enter_activity">
++      <description summary="map window on an activity">
++        Make the window enter an activity. A window can enter more activity. If the id is empty or
++        invalid, no action will be performed.
++      </description>
++      <arg name="id" type="string" summary="activity id"/>
++    </request>
++
++    <request name="request_leave_activity">
++      <description summary="remove a window from an activity">
++        Make the window exit a an activity. If it exits all activities it will be considered on all
++        of them.
++      </description>
++      <arg name="id" type="string" summary="activity id"/>
++    </request>
++
++    <event name="activity_entered">
++      <description summary="the window entered an activity">
++        This event will be sent when the window has entered an activity. The window can be on more
++        than one activity, or none: then is considered on all of them.
++      </description>
++      <arg name="id" type="string" summary="activity id"/>
++    </event>
++
++    <event name="activity_left">
++      <description summary="the window left an activity">
++        This event will be sent when the window left an activity. If the window leaves all
++        activities, it will be considered on all. If the window gets manually added on all
++        activities, the server has to send activity_left for every previous activity it was in for
++        the window to be really considered on all activities.
++      </description>
++      <arg name="id" type="string" summary="activity id"/>
++    </event>
++
++    <request name="send_to_output">
++      <description summary="send window to specified output">
++        Requests this window to be displayed in a specific output.
++      </description>
++      <arg name="output" type="object" interface="wl_output"/>
++    </request>
++
++    <event name="resource_name_changed">
++      <description summary="X11 resource name has changed">
++        This event will be sent when the X11 resource name of the window has changed. This is only
++        set for XWayland windows.
++      </description>
++      <arg name="resource_name" type="string" summary="resource name"/>
++    </event>
++
++    <request name="highlight">
++      <description summary="highlight the window">
++        Tell the compositor to highlight this window.
++      </description>
++    </request>
++
++    <request name="unset_highlight">
++      <description summary="unset highlight window">
++        Tell the compositor to unset highlight window.
++      </description>
++    </request>
++  </interface>
++
++  <interface name="org_ukui_activation_feedback" version="1">
++    <description summary="activation feedback">
++      The activation manager interface provides a way to get notified when an application is about
++      to be activated.
++    </description>
++
++    <request name="destroy" type="destructor">
++      <description summary="destroy the activation manager object">
++        Destroy the activation manager object. The activation objects introduced by this manager
++        object will be unaffected.
++      </description>
++    </request>
++
++    <event name="activation">
++      <description summary="notify that an app is starting">
++        Will be issued when an app is set to be activated. It offers an instance of
++        org_ukui_activation that will tell us the app_id and the extent of the activation.
++      </description>
++      <arg name="id" type="new_id" interface="org_ukui_activation"/>
++    </event>
++  </interface>
++
++  <interface name="org_ukui_activation" version="1">
++    <request name="destroy" type="destructor">
++      <description summary="destroy the org_ukui_activation object">
++        Notify the compositor that the org_ukui_activation object will no longer be used.
++      </description>
++    </request>
++
++    <event name="app_id">
++      <description summary="Offers the app_id"></description>
++      <arg name="app_id" type="string" summary="application id, as described in xdg_activation_v1"/>
++    </event>
++
++    <event name="finished">
++      <description
++        summary="Notifies about activation finished, either by activation or because it got invalidated">
++      </description>
++    </event>
++  </interface>
++</protocol>
+diff --git a/src/core/CMakeLists.txt b/src/core/CMakeLists.txt
+index 0b798e0..1d7c996 100644
+--- a/src/core/CMakeLists.txt
++++ b/src/core/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ message(STATUS "Building ukui-voice-wing core")
+ 
+-find_package(Qt5 COMPONENTS Core Gui DBus REQUIRED)
++find_package(Qt5 COMPONENTS Core Gui Widgets DBus REQUIRED)
+ find_package(KF5GlobalAccel REQUIRED)
+ find_package(PkgConfig REQUIRED)
+ 
+@@ -61,6 +61,7 @@ target_link_libraries(${PROJECT_NAME}
+         ${PROJECT_NAME}-core
+         Qt5::Core
+         Qt5::Gui
++        Qt5::Widgets
+ )
+ 
+ install(TARGETS ${PROJECT_NAME}
+diff --git a/src/core/main.cpp b/src/core/main.cpp
+index 8c6ee5d..63fee9d 100644
+--- a/src/core/main.cpp
++++ b/src/core/main.cpp
+@@ -20,9 +20,7 @@
+ #include <fcntl.h>
+ #include <unistd.h>
+ 
+-#include <QCoreApplication>
+-#include <QDir>
+-#include <QGuiApplication>
++#include <QApplication>
+ #include <QLibraryInfo>
+ #include <QLocale>
+ #include <QStandardPaths>
+@@ -58,7 +56,7 @@ bool acquireProcessLock()
+     return true;
+ }
+ 
+-bool installAppTranslator(QGuiApplication &app)
++bool installAppTranslator(QApplication &app)
+ {
+     auto *translator = new QTranslator(&app);
+ 
+@@ -92,9 +90,20 @@ bool installAppTranslator(QGuiApplication &app)
+ 
+ int main(int argc, char *argv[])
+ {
+-    QGuiApplication app(argc, argv);
+-    installAppTranslator(app);
++#if (QT_VERSION >= QT_VERSION_CHECK(5, 6, 0))
++    QCoreApplication::setAttribute(Qt::AA_EnableHighDpiScaling);
++    QCoreApplication::setAttribute(Qt::AA_UseHighDpiPixmaps);
++#endif
++#if (QT_VERSION >= QT_VERSION_CHECK(5, 14, 0))
++    QGuiApplication::setHighDpiScaleFactorRoundingPolicy(Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
++#endif
++
++    // TipDialog（QMessageBox）需要 QApplication；QML 语音窗仍可正常使用
++    QApplication app(argc, argv);
++    // 后台常驻服务：关闭提示窗等顶层窗口时不应退出进程
++    app.setQuitOnLastWindowClosed(false);
+     Logger::instance().init();
++    installAppTranslator(app);
+     VW_LOG(Logger::Level::Info) << "ukui-voice-wing started";
+ 
+     if (!acquireProcessLock()) {
+diff --git a/src/core/shortcut.cpp b/src/core/shortcut.cpp
+index d7e459a..46530f9 100644
+--- a/src/core/shortcut.cpp
++++ b/src/core/shortcut.cpp
+@@ -19,16 +19,21 @@
+ 
+ #include "shortcut.h"
+ 
+-#include <QDebug>
+ #include <QDateTime>
++#include <QTimer>
+ #include <KF5/KGlobalAccel/KGlobalAccel>
+ #include <QDBusConnectionInterface>
+ #include "configmonitor.h"
++#include "logger.h"
+ 
+ #define DBUS_NAME           "org.kde.kglobalaccel"
+ #define DBUS_PATH           "/component/ukui_voice_wing"
+ #define DBUS_INTERFACE      "org.kde.kglobalaccel.Component"
+ 
++constexpr char kComponentName[] = "ukui-voice-wing";
++constexpr int kShortcutRetryIntervalMs = 200;
++constexpr int kShortcutMaxAttempts = 5;
++
+ static const QKeySequence keySeqFromString(QString keys)
+ {
+     keys.replace("<", "");
+@@ -37,7 +42,8 @@ static const QKeySequence keySeqFromString(QString keys)
+     keys.replace("Super", "Meta", Qt::CaseInsensitive);
+     keys.replace("Start", "Meta", Qt::CaseInsensitive);
+     keys.replace("PrtSc", "Print", Qt::CaseInsensitive);
+-    return QKeySequence::fromString(keys);
++
++    return QKeySequence(keys, QKeySequence::PortableText);
+ }
+ 
+ Shortcut *Shortcut::instance()
+@@ -79,6 +85,8 @@ void Shortcut::onShortcutChanged()
+     if (!m_config->enabled()) {
+         return;
+     }
++    // 键值变化：先卸载旧注册，再按新键值重新注册
++    VW_LOG(Logger::Level::Info) << "Shortcut key changed, re-registering";
+     unregisterShortcut();
+     registerShortcut();
+ }
+@@ -89,18 +97,112 @@ void Shortcut::registerShortcut()
+         return;
+     }
+ 
++    // 尝试注册快捷键,如果失败则重试,最多重试5次,每次间隔200ms
++    tryRegisterShortcut(0);
++}
++
++void Shortcut::tryRegisterShortcut(int attempt)
++{
++    if (m_action != nullptr || !m_config->enabled()) {
++        return;
++    }
++
++    const QKeySequence keySeq = keySeqFromString(m_config->shortcut());
++    if (keySeq.isEmpty()) {
++        VW_LOG(Logger::Level::Error) << "Shortcut sequence is empty, cancel registration:"
++                                     << m_config->shortcut();
++        return;
++    }
++
++    const QString component = QString::fromLatin1(kComponentName);
++    const QString keyText = keySeq.toString(QKeySequence::NativeText);
++
++    // 传入自身 component，避免本组件历史注册被误判为占用
++    if (KGlobalAccel::isGlobalShortcutAvailable(keySeq, component)) {
++        doRegisterShortcut(keySeq);
++        return;
++    }
++
++    // 不可用时查询占用者，判断是否被其他组件占用
++    auto occupants = KGlobalAccel::globalShortcutsByKey(keySeq);
++    if (occupants.isEmpty()) {
++        occupants = KGlobalAccel::getGlobalShortcutsByKey(keySeq);
++    }
++
++    bool blockedByOthers = false;
++    for (const auto &info : occupants) {
++        VW_LOG(Logger::Level::Warning)
++            << "Shortcut" << keyText
++            << "occupied by" << info.uniqueName()
++            << "component" << info.componentUniqueName();
++        if (info.componentUniqueName() != component) {
++            blockedByOthers = true;
++        }
++    }
++
++    // 无占用者（接口误报）或仅本组件占用 → 直接注册
++    if (!blockedByOthers) {
++        VW_LOG(Logger::Level::Info) << "Shortcut" << keyText
++                                    << "not blocked by others, continue registration";
++        doRegisterShortcut(keySeq);
++        return;
++    }
++
++    if (attempt + 1 >= kShortcutMaxAttempts) {
++        VW_LOG(Logger::Level::Error) << "Global shortcut" << keyText
++                                     << "unavailable after" << kShortcutMaxAttempts
++                                     << "attempts, cancel registration";
++        return;
++    }
++
++    VW_LOG(Logger::Level::Info) << "Global shortcut" << keyText
++                                << "unavailable, retry" << (attempt + 1)
++                                << "/" << kShortcutMaxAttempts
++                                << "in" << kShortcutRetryIntervalMs << "ms";
++
++    if (!m_retryTimer) {
++        m_retryTimer = new QTimer(this);
++        m_retryTimer->setSingleShot(true);
++    }
++    m_retryTimer->disconnect();
++    connect(m_retryTimer, &QTimer::timeout, this, [this, attempt]() {
++        tryRegisterShortcut(attempt + 1);
++    });
++    m_retryTimer->start(kShortcutRetryIntervalMs);
++}
++
++void Shortcut::cancelPendingRetry()
++{
++    if (m_retryTimer && m_retryTimer->isActive()) {
++        m_retryTimer->stop();
++    }
++}
++
++void Shortcut::doRegisterShortcut(const QKeySequence &keySeq)
++{
++    if (m_action != nullptr) {
++        return;
++    }
++
+     m_action = new QAction(this);
+-    m_action->setObjectName("ukui-voice-wing");
+-    m_action->setText("ukui-voice-wing");
+-    m_action->setProperty("componentName", QStringLiteral("ukui-voice-wing"));
++    m_action->setObjectName(QString::fromLatin1(kComponentName));
++    m_action->setText(QString::fromLatin1(kComponentName));
++    m_action->setProperty("componentName", QString::fromLatin1(kComponentName));
+ 
+-    QKeySequence keySeq = keySeqFromString(m_config->shortcut());
+-    KGlobalAccel::self()->setGlobalShortcut(m_action, keySeq);
++    // NoAutoloading：键值变化时必须写入新快捷键，避免 Autoloading 恢复旧值
++    const QList<QKeySequence> shortcuts{keySeq};
++    KGlobalAccel::self()->setShortcut(m_action, shortcuts, KGlobalAccel::NoAutoloading);
++    KGlobalAccel::self()->setDefaultShortcut(m_action, shortcuts, KGlobalAccel::NoAutoloading);
+     connectDbus();
++    VW_LOG(Logger::Level::Debug) << "Global shortcut registered:"
++                                 << keySeq.toString(QKeySequence::NativeText);
+ }
+ 
+ void Shortcut::unregisterShortcut()
+ {
++    // 取消进行中的延时重试
++    cancelPendingRetry();
++
+     if (m_action == nullptr) {
+         return;
+     }
+diff --git a/src/core/shortcut.h b/src/core/shortcut.h
+index 302d00c..940aaa3 100644
+--- a/src/core/shortcut.h
++++ b/src/core/shortcut.h
+@@ -22,7 +22,9 @@
+ 
+ #include <QObject>
+ #include <QAction>
++#include <QKeySequence>
+ 
++class QTimer;
+ class ConfigMonitor;
+ 
+ class Shortcut : public QObject
+@@ -39,11 +41,13 @@ private:
+     void onShortcutChanged();
+ 
+     void registerShortcut();
++    void tryRegisterShortcut(int attempt);
++    void doRegisterShortcut(const QKeySequence &keySeq);
++    void cancelPendingRetry();
+     void unregisterShortcut();
+     void connectDbus();
+     void disconnectDbus();
+ 
+-
+ private Q_SLOTS:
+     void onGlobalPressed();
+     void onGlobalRepeated();
+@@ -57,6 +61,8 @@ Q_SIGNALS:
+ private:
+     QAction *m_action = nullptr;
+     bool m_longPressTriggered = false;
++    /** 用于取消进行中的延时重试注册 */
++    QTimer *m_retryTimer = nullptr;
+ 
+     // 使用 ConfigMonitor 替代 QGSettings
+     ConfigMonitor *m_config = nullptr;
+diff --git a/src/core/voiceInput.cpp b/src/core/voiceInput.cpp
+index 0b004f5..80957d7 100644
+--- a/src/core/voiceInput.cpp
++++ b/src/core/voiceInput.cpp
+@@ -33,7 +33,7 @@
+ 
+ #include "voiceToStr.h"
+ #include "voiceInputWindow.h"
+-#include "microphoneMuteDialog.h"
++#include "tipDialog.h"
+ 
+ namespace {
+ 
+@@ -53,19 +53,47 @@ constexpr char kVolumeControlService[] = "org.ukui.volume.control";
+ constexpr char kVolumeControlPath[] = "/org/ukui/volume/control";
+ constexpr char kVolumeControlInterface[] = "org.ukui.volume.control";
+ 
+-bool isInputMuted()
++// type: 0 = input (microphone), consistent with getMute
++constexpr int kVolumeControlDeviceTypeInput = 0;
++
++QDBusInterface volumeControlInterface()
++{
++    return QDBusInterface(QString::fromLatin1(kVolumeControlService),
++                          QString::fromLatin1(kVolumeControlPath),
++                          QString::fromLatin1(kVolumeControlInterface),
++                          QDBusConnection::sessionBus());
++}
++
++bool isValidInputDevice()
++{
++    QDBusInterface iface = volumeControlInterface();
++    if (!iface.isValid()) {
++        VW_LOG(Logger::Level::Error) << "Failed to connect to ukui volume control D-Bus service:"
++                                     << iface.lastError().message();
++        return false;
++    }
++
++    QDBusReply<bool> reply = iface.call(QStringLiteral("isValidDevice"),
++                                        kVolumeControlDeviceTypeInput);
++    if (!reply.isValid()) {
++        VW_LOG(Logger::Level::Error) << "Failed to query input device validity:"
++                                     << reply.error().message();
++        return false;
++    }
++
++    return reply.value();
++}
++
++bool isInputDeviceMuted()
+ {
+-    QDBusInterface iface(QString::fromLatin1(kVolumeControlService),
+-                         QString::fromLatin1(kVolumeControlPath),
+-                         QString::fromLatin1(kVolumeControlInterface),
+-                         QDBusConnection::sessionBus());
++    QDBusInterface iface = volumeControlInterface();
+     if (!iface.isValid()) {
+         VW_LOG(Logger::Level::Error) << "Failed to connect to ukui volume control D-Bus service:"
+                                      << iface.lastError().message();
+         return false;
+     }
+ 
+-    QDBusReply<bool> reply = iface.call(QStringLiteral("getMute"), 0, -1);
++    QDBusReply<bool> reply = iface.call(QStringLiteral("getMute"), kVolumeControlDeviceTypeInput, -1);
+     if (!reply.isValid()) {
+         VW_LOG(Logger::Level::Error) << "Failed to query input mute state:" << reply.error().message();
+         return false;
+@@ -87,9 +115,9 @@ VoiceInput::VoiceInput(QObject *parent)
+ {
+     m_window = new VoiceInputWindow();
+     m_window->hideWindow();
+-
+-    m_muteDialog = new MicrophoneMuteDialog();
+-    m_muteDialog->hide();
++    connect(this, &VoiceInput::isRecognizingChanged, m_window, [this]() {
++        m_window->updateIsRecognizing(m_isRecognizing);
++    });
+ 
+     Shortcut *s = Shortcut::instance();
+     connect(s, &Shortcut::shortcutClicked, this, &VoiceInput::onShortcutClicked);
+@@ -105,7 +133,7 @@ VoiceInput::VoiceInput(QObject *parent)
+             VW_LOG(Logger::Level::Debug) << "VoiceToStr: started";
+         }, Qt::UniqueConnection);
+ 
+-        connect(vt, &VoiceToStr::textRecognizing, m_window, [this](const QString &text) {
++        connect(vt, &VoiceToStr::textRecognizing, this, [this](const QString &text) {
+             VW_LOG(Logger::Level::Debug) << "VoiceToStr: interim ->" << text;
+             if (!text.isEmpty()) {
+                 const QString incremental = text.mid(m_lastInterimLength);
+@@ -115,7 +143,7 @@ VoiceInput::VoiceInput(QObject *parent)
+                 }
+                 m_lastInterimLength = text.length();
+             }
+-            m_window->onTextRecognizing();
++            setIsRecognizing(true);
+         }, Qt::UniqueConnection);
+ 
+         connect(vt, &VoiceToStr::textRecognized, this, [this](const QString &text) {
+@@ -125,16 +153,22 @@ VoiceInput::VoiceInput(QObject *parent)
+                 commitString(text, 1);
+             }
+             m_lastInterimLength = 0;
+-            m_window->onTextRecognized();
++            setIsRecognizing(false);
+         }, Qt::UniqueConnection);
+ 
+-        connect(vt, &VoiceToStr::voiceInputPaused, m_window, [this]() {
++        connect(vt, &VoiceToStr::voiceInputPaused, this, [this]() {
+             VW_LOG(Logger::Level::Debug) << "VoiceToStr: paused/ended";
+-            m_window->onTextRecognized();
++            setIsRecognizing(false);
+         }, Qt::UniqueConnection);
+ 
+-        connect(vt, &VoiceToStr::errorOccurred, m_window, [this](int, const QString &) {
+-            m_window->onTextRecognized();
++        connect(vt, &VoiceToStr::errorOccurred, this, [this](int code, const QString &message) {
++            VW_LOG(Logger::Level::Error) << "VoiceToStr error:" << code << message;
++            setIsRecognizing(false);
++            // 仅在语音输入已激活时弹窗（避免与触发前预检重复提示）
++            if (m_voiceInputActive) {
++                stopVoiceInput();
++                QTimer::singleShot(0, this, [this]() { createTipDialog()->showNoVoiceModel(); });
++            }
+         }, Qt::UniqueConnection);
+     }
+ 
+@@ -239,24 +273,6 @@ bool VoiceInput::hasFocusWindow() const
+     return reply.value();
+ }
+ 
+-QString VoiceInput::appName() const
+-{
+-    QDBusInterface iface(kVoiceWingDBusService, kVoiceWingDBusPath,
+-                         kVoiceWingDBusInterface, QDBusConnection::sessionBus());
+-    if (!iface.isValid()) {
+-        VW_LOG(Logger::Level::Error) << "fcitx5 VoiceWing DBus interface unavailable (AppName)";
+-        return {};
+-    }
+-
+-    QDBusReply<QString> reply = iface.call(QStringLiteral("AppName"));
+-    if (!reply.isValid()) {
+-        VW_LOG(Logger::Level::Error) << "AppName failed:" << reply.error().message();
+-        return {};
+-    }
+-
+-    return reply.value();
+-}
+-
+ void VoiceInput::commitString(const QString &text, int flags)
+ {
+     QDBusInterface iface(kVoiceWingDBusService, kVoiceWingDBusPath,
+@@ -275,50 +291,74 @@ void VoiceInput::commitString(const QString &text, int flags)
+ void VoiceInput::stopVoiceInput()
+ {
+     m_voiceInputActive = false;
+-    m_focusAppName.clear();
+     m_lastInterimLength = 0;
++    setIsRecognizing(false);
+     AudioInput::instance()->stopMonitoring();
+     m_window->hideWindow();
+ 
++    // 释放快捷键：停止识别、断开连接并清理初始化
+     VoiceToStr *vt = VoiceToStr::instance();
+     if (vt) {
+-        vt->stopRecognition();
++        vt->disconnectAndCleanup();
+     }
+ }
+ 
+ void VoiceInput::onFocusChanged()
+ {
+-    VW_LOG(Logger::Level::Info) << "FocusChanged: stop voice input and hide UI";
++    VW_LOG(Logger::Level::Debug) << "FocusChanged: stop voice input and hide UI";
+     stopVoiceInput();
+ }
+ 
++TipDialog *VoiceInput::createTipDialog()
++{
++    if (!m_tipDialog) {
++        m_tipDialog = new TipDialog();
++    }
++    return m_tipDialog;
++}
++
+ void VoiceInput::onShortcutLongPressed()
+ {
+-    VW_LOG(Logger::Level::Info) << "shortcut long pressed, checking default source mute";
+-    if (isInputMuted()) {
+-        VW_LOG(Logger::Level::Info) << "default input device is muted, show mute dialog";
+-        QTimer::singleShot(0, m_muteDialog, [this]() { m_muteDialog->showCentered(); });
++    VW_LOG(Logger::Level::Debug) << "shortcut long pressed, checking input device availability";
++    if (!isValidInputDevice()) {
++        VW_LOG(Logger::Level::Debug) << "no valid input device, show unavailable dialog";
++        QTimer::singleShot(0, this, [this]() { createTipDialog()->showUnavailable(); });
+         return;
+     }
+ 
++    VW_LOG(Logger::Level::Debug) << "checking default source mute";
++    if (isInputDeviceMuted()) {
++        VW_LOG(Logger::Level::Debug) << "default input device is muted, show mute dialog";
++        QTimer::singleShot(0, this, [this]() { createTipDialog()->showMuted(); });
++        return;
++    }
++
++    VW_LOG(Logger::Level::Debug) << "checking focused input window";
+     if (!hasFocusWindow()) {
+         VW_LOG(Logger::Level::Debug) << "no focused input window, show AI ball";
+         callKylinPearlAsync(QStringLiteral("showAIBall"), {true});
+         return;
+     }
+-    m_focusAppName = appName();
+-    VW_LOG(Logger::Level::Info) << "focused input window, appName =" << m_focusAppName
+-                           << ", start voice input";
++
++    // 每次触发都同步初始化并连接 AI 模块；失败则弹窗提示
++    VoiceToStr *vt = VoiceToStr::instance();
++    if (!vt || !vt->initializeAndConnect()) {
++        VW_LOG(Logger::Level::Error) << "AI module init/connect failed, show tip dialog";
++        QTimer::singleShot(0, this, [this]() { createTipDialog()->showNoVoiceModel(); });
++        return;
++    }
++
++    if (!vt->startRecognition()) {
++        VW_LOG(Logger::Level::Error) << "startRecognition failed after init, show tip dialog";
++        vt->disconnectAndCleanup();
++        QTimer::singleShot(0, this, [this]() { createTipDialog()->showNoVoiceModel(); });
++        return;
++    }
+ 
+     m_voiceInputActive = true;
+     m_lastInterimLength = 0;
+     m_window->showWindow();
+     AudioInput::instance()->startMonitoring();
+-
+-    VoiceToStr *vt = VoiceToStr::instance();
+-    if (vt) {
+-        vt->startRecognition();
+-    }
+ }
+ 
+ void VoiceInput::onShortcutReleased()
+@@ -331,3 +371,17 @@ void VoiceInput::onShortcutReleased()
+ 
+     stopVoiceInput();
+ }
++
++bool VoiceInput::isRecognizing() const
++{
++    return m_isRecognizing;
++}
++
++void VoiceInput::setIsRecognizing(bool isRecognizing)
++{
++    if (m_isRecognizing == isRecognizing) {
++        return;
++    }
++    m_isRecognizing = isRecognizing;
++    Q_EMIT isRecognizingChanged();
++}
+diff --git a/src/core/voiceInput.h b/src/core/voiceInput.h
+index 860a24a..0bb040d 100644
+--- a/src/core/voiceInput.h
++++ b/src/core/voiceInput.h
+@@ -21,10 +21,11 @@
+ #define VOICEINPUT_H
+ 
+ #include <QObject>
++#include <QPointer>
+ #include <QVariant>
+ 
+ class VoiceInputWindow;
+-class MicrophoneMuteDialog;
++class TipDialog;
+ 
+ class VoiceInput : public QObject
+ {
+@@ -34,6 +35,11 @@ public:
+ 
+     explicit VoiceInput(QObject *parent = nullptr);
+ 
++    bool isRecognizing() const;
++
++signals:
++    void isRecognizingChanged();
++
+ private Q_SLOTS:
+     void onShortcutClicked();
+     void onShortcutLongPressed();
+@@ -42,9 +48,9 @@ private Q_SLOTS:
+ 
+ private:
+     bool hasFocusWindow() const;
+-    QString appName() const;
+     void commitString(const QString &text, int flags);
+     void stopVoiceInput();
++    void setIsRecognizing(bool isRecognizing);
+     void callDBusServiceAsync(const char *service,
+                               const char *path,
+                               const char *interface,
+@@ -54,12 +60,14 @@ private:
+                                    const QList<QVariant> &arguments = {});
+     void callKylinPearlAsync(const QString &methodName,
+                              const QList<QVariant> &arguments = {});
++    /** 按需创建提示框；关闭后会销毁，QPointer 自动置空，已存在则复用 */
++    TipDialog *createTipDialog();
+ 
+     VoiceInputWindow *m_window = nullptr;
+-    MicrophoneMuteDialog *m_muteDialog = nullptr;
+-    QString m_focusAppName;
++    QPointer<TipDialog> m_tipDialog;
+     int m_lastInterimLength = 0;
+     bool m_voiceInputActive = false;
++    bool m_isRecognizing = false;
+ };
+ 
+ #endif // VOICEINPUT_H
+diff --git a/src/recognizer/voiceToStr.cpp b/src/recognizer/voiceToStr.cpp
+index 7f1dfd8..9334ad5 100644
+--- a/src/recognizer/voiceToStr.cpp
++++ b/src/recognizer/voiceToStr.cpp
+@@ -20,14 +20,8 @@
+ #include "voiceToStr.h"
+ #include "logger.h"
+ 
+-// 麒麟 AI SDK 头文件（需要根据实际安装路径调整）
+-#include <iostream>
+-#include <filesystem>
+-#include <fstream>
+-#include <vector>
+ #include <coreai/speech/recognizer.h>
+ 
+-// 订阅配置变化
+ #include "configmonitor.h"
+ 
+ VoiceToStr *VoiceToStr::instance()
+@@ -39,34 +33,33 @@ VoiceToStr *VoiceToStr::instance()
+ VoiceToStr::VoiceToStr(QObject *parent)
+     : QObject(parent)
+ {
+-    // 订阅 ConfigMonitor：enabled true 时初始化 AI，会话被禁用时清理会话
++    // 功能关闭时清理会话；初始化/连接仅在每次触发语音输入时进行
+     ConfigMonitor *cfg = ConfigMonitor::instance();
+-    if (cfg && cfg->enabled()) {
+-        initAIConfig();
+-    }
+     if (cfg) {
+         connect(cfg, &ConfigMonitor::enabledChanged, this, [this](bool enabled){
+-            if (enabled) {
+-                initAIConfig();
+-            } else {
+-                cleanupSession();
++            if (!enabled) {
++                disconnectAndCleanup();
+             }
+         }, Qt::UniqueConnection);
+     }
+ }
+ 
+-void VoiceToStr::initAIConfig()
++bool VoiceToStr::initializeAndConnect()
+ {
+-    // 如果已经有会话则无需重复初始化
+-    if (m_session) return;
++    // 每次触发都重新初始化并连接，避免复用过期会话
++    cleanupSession();
++    return initAIConfig();
++}
+ 
++bool VoiceToStr::initAIConfig()
++{
+     // 1. 创建会话
+     m_session = speech_recognizer_create_session();
+     if (!m_session) {
+         const QString msg = QStringLiteral("Failed to create speech recognition session");
+         VW_LOG(Logger::Level::Error) << msg;
+         emit errorOccurred(-1, msg);
+-        return;
++        return false;
+     }
+ 
+     // 2. 创建模型配置
+@@ -76,7 +69,7 @@ void VoiceToStr::initAIConfig()
+         VW_LOG(Logger::Level::Error) << msg;
+         cleanupSession();
+         emit errorOccurred(-2, msg);
+-        return;
++        return false;
+     }
+     speech_model_config_set_deploy_type(m_modelConfig, ModelDeployType::OnDevice);
+ 
+@@ -87,7 +80,7 @@ void VoiceToStr::initAIConfig()
+         VW_LOG(Logger::Level::Error) << msg;
+         cleanupSession();
+         emit errorOccurred(-3, msg);
+-        return;
++        return false;
+     }
+     audio_config_set_input_audio_rate(m_audioConfig, 16000);
+ 
+@@ -98,26 +91,28 @@ void VoiceToStr::initAIConfig()
+     // 5. 设置结果回调
+     speech_recognizer_result_set_callback(m_session, onRecognitionResult, this);
+ 
+-    // 7. 初始化会话（同步，通常很快）
++    // 6. 初始化会话并连接 AI 运行时（同步）
+     int initRet = speech_recognizer_init_session(m_session);
+     if (initRet != 0) {
+-        const QString msg = QStringLiteral("Init session failed with code %1").arg(initRet);
++        const QString msg = QStringLiteral("Init/connect AI session failed with code %1").arg(initRet);
+         VW_LOG(Logger::Level::Error) << msg;
+         emit errorOccurred(initRet, msg);
+         cleanupSession();
+-        return;
++        return false;
+     }
++
++    VW_LOG(Logger::Level::Debug) << "AI speech session initialized and connected";
++    return true;
+ }
+ 
+ VoiceToStr::~VoiceToStr()
+ {
+-    cleanupSession();
++    disconnectAndCleanup();
+ }
+ 
+ void VoiceToStr::cleanupSession()
+ {
+     if (m_session) {
+-        // 如果还在识别中，尝试停止
+         if (m_isRecognizing) {
+             speech_recognizer_stop_continuous_recognition_async(m_session);
+             m_isRecognizing = false;
+@@ -132,39 +127,40 @@ void VoiceToStr::cleanupSession()
+     }
+ }
+ 
+-void VoiceToStr::startRecognition()
++bool VoiceToStr::startRecognition()
+ {
+     if (!m_session) {
+-        initAIConfig();
+-        if (!m_session) {
+-            VW_LOG(Logger::Level::Error) << "failed to initialize AI config, cannot start recognition";
+-            return;
+-        }
++        VW_LOG(Logger::Level::Error) << "AI session not initialized, cannot start recognition";
++        return false;
+     }
+ 
+     if (m_isRecognizing) {
+-        VW_LOG(Logger::Level::Warning) << "already recognizing, stop first";
+-        stopRecognition();
++        VW_LOG(Logger::Level::Warning) << "already recognizing, stop continuous recognition first";
++        speech_recognizer_stop_continuous_recognition_async(m_session);
++        m_isRecognizing = false;
+     }
+ 
+-    // 8. 开始异步流式识别
+     speech_recognizer_start_continuous_recognition_async(m_session);
+     m_isRecognizing = true;
+     VW_LOG(Logger::Level::Debug) << "recognition started";
++    return true;
+ }
+ 
+ void VoiceToStr::stopRecognition()
+ {
+-    if (!m_isRecognizing || !m_session) {
+-        return;
++    if (m_isRecognizing && m_session) {
++        speech_recognizer_stop_continuous_recognition_async(m_session);
++        m_isRecognizing = false;
+     }
++}
+ 
+-    // 停止流式识别（异步，无需等待）
+-    speech_recognizer_stop_continuous_recognition_async(m_session);
+-    m_isRecognizing = false;
++void VoiceToStr::disconnectAndCleanup()
++{
++    stopRecognition();
++    cleanupSession();
++    VW_LOG(Logger::Level::Debug) << "AI speech session disconnected and cleaned up";
+ }
+ 
+-// 静态回调：运行在 SDK 内部线程
+ void VoiceToStr::onRecognitionResult(SpeechRecognitionResult *result, void *userData)
+ {
+     VoiceToStr *self = static_cast<VoiceToStr*>(userData);
+@@ -182,7 +178,6 @@ void VoiceToStr::handleRecognitionResult(SpeechRecognitionResult *result)
+         const QString msg = QString::fromUtf8(errMsg ? errMsg : "Unknown error");
+         VW_LOG(Logger::Level::Error) << "recognition error" << errorCode << ":" << msg;
+         emit errorOccurred(errorCode, msg);
+-        // 发生错误时自动停止识别
+         if (m_isRecognizing) {
+             stopRecognition();
+         }
+@@ -193,31 +188,26 @@ void VoiceToStr::handleRecognitionResult(SpeechRecognitionResult *result)
+     const char *text = speech_recognition_result_get_text(result);
+     QString qtext = QString::fromUtf8(text ? text : "");
+ 
+-    // 根据状态发送文本
+     switch (reason) {
+     case SPEECH_RECOGNITION_STARTED:
+         Q_EMIT voiceInputStarted();
+         break;
+ 
+     case SPEECH_RECOGNIZING:
+-        // 中间结果，实时输出
+         if (!qtext.isEmpty())
+             Q_EMIT textRecognizing(qtext);
+         break;
+     case SPEECH_RECOGNIZED:
+-        // 最终结果（经过修正）
+         if (!qtext.isEmpty())
+             Q_EMIT textRecognized(qtext);
+         break;
+     case SPEECH_RECOGNITION_COMPLETED:
+-        // 识别自然结束（通常因为静音或语音结束）
+         VW_LOG(Logger::Level::Debug) << "recognition completed naturally";
+         if (m_isRecognizing) {
+-            Q_EMIT voiceInputPaused(); // 可以在 UI 上显示“识别完成”状态
++            Q_EMIT voiceInputPaused();
+         }
+         break;
+     case SPEECH_ERROR_OCCURRED:
+-        // 已经通过上面的 errorCode 处理，这里做二次清理
+         if (m_isRecognizing)
+             stopRecognition();
+         break;
+@@ -225,4 +215,3 @@ void VoiceToStr::handleRecognitionResult(SpeechRecognitionResult *result)
+         break;
+     }
+ }
+-
+diff --git a/src/recognizer/voiceToStr.h b/src/recognizer/voiceToStr.h
+index d9112b7..15a3765 100644
+--- a/src/recognizer/voiceToStr.h
++++ b/src/recognizer/voiceToStr.h
+@@ -39,10 +39,18 @@ public:
+ 
+     ~VoiceToStr();
+ 
+-    // 开始识别：创建会话、初始化、开始流式识别
+-    void startRecognition();
+-    // 停止识别：停止流式识别，销毁会话
++    /**
++     * 初始化并连接 AI 语音识别模块（每次触发都应调用）。
++     * 若已有会话会先清理再重建；失败返回 false。
++     */
++    bool initializeAndConnect();
++
++    // 开始识别：会话就绪后开始流式识别；失败返回 false
++    bool startRecognition();
++    // 停止识别：停止流式识别
+     void stopRecognition();
++    // 断开连接并清理初始化（释放快捷键时调用）
++    void disconnectAndCleanup();
+ 
+ signals:
+     // 识别开始（可以在 UI 上显示“正在识别”状态）
+@@ -63,8 +71,8 @@ signals:
+ private:
+     explicit VoiceToStr(QObject *parent = nullptr);
+ 
+-
+-    void initAIConfig();
++    /** 创建并初始化识别会话；成功返回 true */
++    bool initAIConfig();
+ 
+     // SDK 回调（静态函数）
+     static void onRecognitionResult(struct _SpeechRecognitionResult *result, void *userData);
+@@ -80,4 +88,4 @@ private:
+     bool m_isRecognizing = false;   // 是否正在识别中
+ };
+ 
+-#endif // VOICETOSTR_H
+\ No newline at end of file
++#endif // VOICETOSTR_H
+diff --git a/src/window/CMakeLists.txt b/src/window/CMakeLists.txt
+index 97838bb..d112782 100644
+--- a/src/window/CMakeLists.txt
++++ b/src/window/CMakeLists.txt
+@@ -2,20 +2,40 @@ message(STATUS "Building ukui-voice-wing window")
+ 
+ set(CMAKE_AUTORCC ON)
+ 
+-find_package(Qt5 COMPONENTS Core Gui Qml Quick QuickControls2 REQUIRED)
++find_package(Qt5 COMPONENTS Core Gui Widgets Qml Quick QuickControls2 REQUIRED)
+ find_package(PkgConfig REQUIRED)
+ 
+ pkg_check_modules(Gsettings REQUIRED IMPORTED_TARGET gsettings-qt)
+ pkg_check_modules(KysdkUkuiWindowHelper REQUIRED IMPORTED_TARGET kysdk-ukuiwindowhelper)
++pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)
++
++set(WAYLAND_PROTOCOL_XML ${CMAKE_SOURCE_DIR}/proto/ukui-window-management.xml)
++set(WAYLAND_PROTOCOL_DIR ${CMAKE_CURRENT_BINARY_DIR}/wayland-protocol)
++
++add_custom_command(
++    OUTPUT
++        ${WAYLAND_PROTOCOL_DIR}/ukui-window-management-client-protocol.h
++        ${WAYLAND_PROTOCOL_DIR}/ukui-window-management-protocol.c
++    COMMAND ${CMAKE_COMMAND} -E make_directory ${WAYLAND_PROTOCOL_DIR}
++    COMMAND wayland-scanner client-header ${WAYLAND_PROTOCOL_XML}
++            ${WAYLAND_PROTOCOL_DIR}/ukui-window-management-client-protocol.h
++    COMMAND wayland-scanner private-code ${WAYLAND_PROTOCOL_XML}
++            ${WAYLAND_PROTOCOL_DIR}/ukui-window-management-protocol.c
++    DEPENDS ${WAYLAND_PROTOCOL_XML}
++    VERBATIM
++)
+ 
+ add_library(${PROJECT_NAME}-window STATIC
+     voiceInputWindow.cpp
+     voiceInputWindow.h
+-    microphoneMuteDialog.cpp
+-    microphoneMuteDialog.h
++    screenLocator.cpp
++    screenLocator.h
++    tipDialog.cpp
++    tipDialog.h
+     themeIconProvider.cpp
+     themeIconProvider.h
+     voiceInputWindow.qrc
++    ${WAYLAND_PROTOCOL_DIR}/ukui-window-management-protocol.c
+ )
+ 
+ set_target_properties(${PROJECT_NAME}-window PROPERTIES
+@@ -26,16 +46,26 @@ set_target_properties(${PROJECT_NAME}-window PROPERTIES
+ target_include_directories(${PROJECT_NAME}-window
+     PUBLIC
+         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
++    PRIVATE
++        ${WAYLAND_PROTOCOL_DIR}
++)
++
++set_source_files_properties(
++    ${WAYLAND_PROTOCOL_DIR}/ukui-window-management-protocol.c
++    PROPERTIES
++        OBJECT_DEPENDS ${WAYLAND_PROTOCOL_DIR}/ukui-window-management-client-protocol.h
+ )
+ 
+ target_link_libraries(${PROJECT_NAME}-window
+     PUBLIC
+         Qt5::Core
+         Qt5::Gui
++        Qt5::Widgets
+         Qt5::Qml
+         Qt5::Quick
+         Qt5::QuickControls2
+         PkgConfig::Gsettings
+         PkgConfig::KysdkUkuiWindowHelper
++        PkgConfig::WaylandClient
+         ${PROJECT_NAME}-log
+ )
+diff --git a/src/window/microphoneMuteDialog.cpp b/src/window/microphoneMuteDialog.cpp
+deleted file mode 100644
+index a7fe703..0000000
+--- a/src/window/microphoneMuteDialog.cpp
++++ /dev/null
+@@ -1,129 +0,0 @@
+-/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
+- * -*- coding: utf-8 -*-
+- *
+- * Copyright (C) 2026 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#include "microphoneMuteDialog.h"
+-#include "themeIconProvider.h"
+-
+-#include <QEvent>
+-#include <QGuiApplication>
+-#include "logger.h"
+-#include <QQmlContext>
+-#include <QQmlError>
+-#include <QProcess>
+-#include <QScreen>
+-
+-MicrophoneMuteDialog::MicrophoneMuteDialog(QWindow *parent)
+-    : QQuickView(parent)
+-{
+-    setFlags(Qt::Window | Qt::WindowTitleHint | Qt::WindowCloseButtonHint | Qt::WindowSystemMenuHint);
+-    setTitle(tr("Microphone Muted"));
+-
+-    setResizeMode(QQuickView::SizeRootObjectToView);
+-    resize(kDialogWidth, kDialogHeight);
+-
+-    m_infoIconSource = ThemeIconHelper::buildIconDataUrl(QStringLiteral("dialog-info"), false);
+-    rootContext()->setContextProperty(QStringLiteral("muteDialog"), this);
+-    setSource(QUrl(QStringLiteral("qrc:/microphoneMuteDialog.qml")));
+-
+-    if (status() == QQuickView::Error) {
+-        for (const QQmlError &error : errors()) {
+-            VW_LOG(Logger::Level::Error) << "Failed to load microphoneMuteDialog.qml:"
+-                                         << error.toString();
+-        }
+-    }
+-
+-    initWindowHelper();
+-}
+-
+-QString MicrophoneMuteDialog::infoIconSource() const
+-{
+-    return m_infoIconSource;
+-}
+-
+-void MicrophoneMuteDialog::initWindowHelper()
+-{
+-    m_windowHelper = new UkuiWindowHelper(this);
+-    m_windowHelper->setWindowRole(UkuiWindowHelper::WindowRole::Dialog);
+-    m_windowHelper->setWindowState(UkuiWindowHelper::State::Closeable | UkuiWindowHelper::State::Focusable
+-                                 | UkuiWindowHelper::State::Activatable | UkuiWindowHelper::State::Movable);
+-    m_windowHelper->setSkipTaskBar(true);
+-    m_windowHelper->setSkipSwitcher(true);
+-}
+-
+-void MicrophoneMuteDialog::updateCenterPosition()
+-{
+-    QScreen *targetScreen = screen();
+-    if (!targetScreen) {
+-        targetScreen = QGuiApplication::primaryScreen();
+-    }
+-    if (!targetScreen) {
+-        return;
+-    }
+-
+-    setScreen(targetScreen);
+-
+-    const QRect geo = targetScreen->availableGeometry();
+-    const int x = geo.x() + (geo.width() - width()) / 2;
+-    const int y = geo.y() + (geo.height() - height()) / 2;
+-    setPosition(x, y);
+-}
+-
+-bool MicrophoneMuteDialog::event(QEvent *event)
+-{
+-    if (event->type() == QEvent::Close) {
+-        hide();
+-        event->accept();
+-        return true;
+-    }
+-    return QQuickView::event(event);
+-}
+-
+-void MicrophoneMuteDialog::showCentered()
+-{
+-    updateCenterPosition();
+-    show();
+-    raise();
+-    requestActivate();
+-}
+-
+-void MicrophoneMuteDialog::onCancelClicked()
+-{
+-    hide();
+-}
+-
+-void MicrophoneMuteDialog::onCloseClicked()
+-{
+-    hide();
+-}
+-
+-void MicrophoneMuteDialog::openSoundSettings()
+-{
+-    const bool started = QProcess::startDetached(
+-        QStringLiteral("/usr/bin/ukui-control-center"),
+-        {QStringLiteral("-m"), QStringLiteral("Audio")});
+-    if (!started) {
+-        VW_LOG(Logger::Level::Error) << "Failed to launch ukui-control-center for sound settings";
+-    }
+-}
+-
+-void MicrophoneMuteDialog::onSettingsClicked()
+-{
+-    openSoundSettings();
+-    hide();
+-}
+diff --git a/src/window/microphoneMuteDialog.h b/src/window/microphoneMuteDialog.h
+deleted file mode 100644
+index 166a730..0000000
+--- a/src/window/microphoneMuteDialog.h
++++ /dev/null
+@@ -1,58 +0,0 @@
+-/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
+- * -*- coding: utf-8 -*-
+- *
+- * Copyright (C) 2026 KylinSoft Co., Ltd.
+- *
+- * This program is free software: you can redistribute it and/or modify
+- * it under the terms of the GNU General Public License as published by
+- * the Free Software Foundation, either version 3 of the License, or
+- * any later version.
+- *
+- * This program is distributed in the hope that it will be useful,
+- * but WITHOUT ANY WARRANTY; without even the implied warranty of
+- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- * GNU General Public License for more details.
+- *
+- * You should have received a copy of the GNU General Public License
+- * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#ifndef MICROPHONEMUTEDIALOG_H
+-#define MICROPHONEMUTEDIALOG_H
+-
+-#include <QQuickView>
+-#include <ukuiwindowhelper.h>
+-
+-class MicrophoneMuteDialog : public QQuickView
+-{
+-    Q_OBJECT
+-    Q_PROPERTY(QString infoIconSource READ infoIconSource NOTIFY infoIconSourceChanged)
+-
+-public:
+-    explicit MicrophoneMuteDialog(QWindow *parent = nullptr);
+-
+-    QString infoIconSource() const;
+-
+-    void showCentered();
+-
+-public slots:
+-    void onCancelClicked();
+-    void onSettingsClicked();
+-    void onCloseClicked();
+-
+-signals:
+-    void infoIconSourceChanged();
+-
+-private:
+-    bool event(QEvent *event) override;
+-    void initWindowHelper();
+-    void updateCenterPosition();
+-    void openSoundSettings();
+-
+-    UkuiWindowHelper *m_windowHelper = nullptr;
+-    QString m_infoIconSource;
+-    static constexpr int kDialogWidth = 420;
+-    static constexpr int kDialogHeight = 160;
+-};
+-
+-#endif // MICROPHONEMUTEDIALOG_H
+diff --git a/src/window/microphoneMuteDialog.qml b/src/window/microphoneMuteDialog.qml
+deleted file mode 100644
+index 3d091c2..0000000
+--- a/src/window/microphoneMuteDialog.qml
++++ /dev/null
+@@ -1,57 +0,0 @@
+-import QtQuick 2.15
+-import QtQuick.Controls 2.15
+-import QtQuick.Layouts 1.15
+-
+-Item {
+-    id: root
+-    anchors.fill: parent
+-
+-    RowLayout {
+-        id: contentRow
+-        anchors.left: parent.left
+-        anchors.right: parent.right
+-        anchors.top: parent.top
+-        anchors.leftMargin: 24
+-        anchors.rightMargin: 24
+-        anchors.topMargin: 20
+-        spacing: 12
+-
+-        Image {
+-            Layout.alignment: Qt.AlignTop
+-            width: 48
+-            height: 48
+-            source: muteDialog.infoIconSource
+-            smooth: true
+-            fillMode: Image.PreserveAspectFit
+-        }
+-
+-        Text {
+-            Layout.fillWidth: true
+-            Layout.alignment: Qt.AlignVCenter
+-            text: qsTr("Microphone is muted. Adjust the input volume to use voice input.")
+-            wrapMode: Text.WordWrap
+-            font.pixelSize: 14
+-            color: "#262626"
+-        }
+-    }
+-
+-    Row {
+-        id: buttonRow
+-        anchors.right: parent.right
+-        anchors.bottom: parent.bottom
+-        anchors.rightMargin: 16
+-        anchors.bottomMargin: 16
+-        spacing: 8
+-
+-        Button {
+-            text: qsTr("Cancel")
+-            onClicked: muteDialog.onCancelClicked()
+-        }
+-
+-        Button {
+-            text: qsTr("Settings")
+-            highlighted: true
+-            onClicked: muteDialog.onSettingsClicked()
+-        }
+-    }
+-}
+diff --git a/src/window/screenLocator.cpp b/src/window/screenLocator.cpp
+new file mode 100644
+index 0000000..e4df71d
+--- /dev/null
++++ b/src/window/screenLocator.cpp
+@@ -0,0 +1,409 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2026 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++/*
++ * 通过 ukui_window_management Wayland 协议，获取当前活动窗口的几何信息，
++ * 并据此判断该窗口落在哪块屏幕上，供语音输入法界面定位使用。
++ *
++ * 整体流程：
++ *   1. 连接 Wayland，绑定 ukui_window_management 全局对象
++ *   2. 监听 window_created，对每个窗口调用 create_window 建立跟踪
++ *   3. 通过 state_changed / geometry / pid_changed 维护窗口状态
++ *   4. screenForActiveWindow() 查询活动窗口坐标，再映射到 QScreen
++ */
++
++#include "screenLocator.h"
++#include "logger.h"
++
++#include <ukui-window-management-client-protocol.h>
++
++#include <algorithm>
++#include <unistd.h>
++
++#include <QGuiApplication>
++#include <QHash>
++#include <QScreen>
++#include <QSocketNotifier>
++
++namespace {
++
++constexpr uint32_t kStateActive = UKUI_WINDOW_STATE_ACTIVE;
++constexpr uint32_t kStateMinimized = UKUI_WINDOW_STATE_MINIMIZED;
++
++// 单个被跟踪窗口的协议状态（仅保留定位所需字段）
++struct WindowState {
++    uint32_t pid = 0;     // 所属进程，用于过滤语音输入法自身窗口
++    uint32_t state = 0;   // 窗口状态位，含 active / minimized 等
++    QRect geometry;       // 合成器坐标系下的绝对几何（多屏时 x/y 可跨屏）
++};
++
++// Wayland 连接及窗口缓存，生命周期与 ScreenLocator 单例一致
++struct WaylandState {
++    wl_display *display = nullptr;
++    wl_registry *registry = nullptr;
++    ukui_window_management *windowManagement = nullptr;
++    QSocketNotifier *notifier = nullptr; // 将 Wayland fd 接入 Qt 事件循环
++
++    uint32_t selfPid = 0;
++    ukui_window *activeWindow = nullptr;           // 最近一次变为 active 的窗口
++    QHash<ukui_window *, WindowState> windows;     // 已 create_window 的窗口表
++};
++
++WaylandState g_wayland;
++
++// 判断窗口是否可作为“当前输入目标”：有坐标、非最小化、非本进程、且处于 active
++bool isActiveWindow(const WindowState &state)
++{
++    if (!state.geometry.isValid()) {
++        return false;
++    }
++    if (state.pid != 0 && state.pid == g_wayland.selfPid) {
++        return false;
++    }
++    if ((state.state & kStateMinimized) != 0) {
++        return false;
++    }
++    return (state.state & kStateActive) != 0;
++}
++
++// 阻塞式同步：确保在查询前收到合成器最新事件
++void syncWayland()
++{
++    if (g_wayland.display == nullptr) {
++        return;
++    }
++    // roundtrip 1：等待 registry 返回全局对象并完成 bind
++    wl_display_roundtrip(g_wayland.display);
++    // roundtrip 2：接收已存在窗口的 window_created 及初始状态
++    wl_display_roundtrip(g_wayland.display);
++}
++
++// registry 回调：发现 ukui_window_management 全局对象并完成 bind
++void registryGlobal(void * /*data*/, wl_registry *registry, uint32_t name, const char *interface, uint32_t version)
++{
++    if (interface == nullptr || strcmp(interface, ukui_window_management_interface.name) != 0) {
++        return;
++    }
++
++    const uint32_t bindVersion = std::min<uint32_t>(version, 1);
++    g_wayland.windowManagement = static_cast<ukui_window_management *>(
++        wl_registry_bind(registry, name, &ukui_window_management_interface, bindVersion));
++}
++
++void registryGlobalRemove(void * /*data*/, wl_registry * /*registry*/, uint32_t /*name*/) {}
++
++const wl_registry_listener kRegistryListener = {
++    registryGlobal,
++    registryGlobalRemove,
++};
++
++// libwayland 要求每个可能被合成器发送的事件都有非空回调，否则直接 abort
++void showDesktopChanged(void * /*data*/, ukui_window_management * /*management*/, uint32_t /*state*/) {}
++
++void stackingOrderChanged(void * /*data*/, ukui_window_management * /*management*/, const char * /*uuids*/) {}
++
++void windowTitleChanged(void * /*data*/, ukui_window * /*window*/, const char * /*title*/) {}
++
++void windowAppIdChanged(void * /*data*/, ukui_window * /*window*/, const char * /*appId*/) {}
++
++void windowThemedIconNameChanged(void * /*data*/, ukui_window * /*window*/, const char * /*name*/) {}
++
++void windowInitialState(void * /*data*/, ukui_window * /*window*/) {}
++
++void windowParentChanged(void * /*data*/, ukui_window * /*window*/, ukui_window * /*parent*/) {}
++
++void windowIconChanged(void * /*data*/, ukui_window * /*window*/) {}
++
++void windowVirtualDesktopEntered(void * /*data*/, ukui_window * /*window*/, const char * /*id*/) {}
++
++void windowVirtualDesktopLeft(void * /*data*/, ukui_window * /*window*/, const char * /*id*/) {}
++
++void windowApplicationMenu(void * /*data*/, ukui_window * /*window*/, const char * /*serviceName*/,
++                          const char * /*objectPath*/) {}
++
++void windowActivityEntered(void * /*data*/, ukui_window * /*window*/, const char * /*id*/) {}
++
++void windowActivityLeft(void * /*data*/, ukui_window * /*window*/, const char * /*id*/) {}
++
++void windowResourceNameChanged(void * /*data*/, ukui_window * /*window*/, const char * /*resourceName*/) {}
++
++// ukui_window 事件：活动状态变化时更新 activeWindow 指针
++void windowStateChanged(void * /*data*/, ukui_window *window, uint32_t state)
++{
++    if (!g_wayland.windows.contains(window)) {
++        return;
++    }
++
++    WindowState &info = g_wayland.windows[window];
++    info.state = state;
++    if (isActiveWindow(info)) {
++        g_wayland.activeWindow = window;
++    } else if (g_wayland.activeWindow == window) {
++        g_wayland.activeWindow = nullptr;
++    }
++}
++
++// 窗口关闭/卸载：销毁协议对象并移出跟踪表
++void windowUnmapped(void * /*data*/, ukui_window *window)
++{
++    if (g_wayland.activeWindow == window) {
++        g_wayland.activeWindow = nullptr;
++    }
++    if (g_wayland.windows.contains(window)) {
++        ukui_window_destroy(window);
++        g_wayland.windows.remove(window);
++    }
++}
++
++// 窗口几何变化：坐标为全局桌面坐标（非相对父窗口）
++void windowGeometry(void * /*data*/, ukui_window *window, int32_t x, int32_t y, uint32_t width, uint32_t height)
++{
++    if (!g_wayland.windows.contains(window)) {
++        return;
++    }
++    g_wayland.windows[window].geometry = QRect(x, y, static_cast<int>(width), static_cast<int>(height));
++}
++
++void windowPidChanged(void * /*data*/, ukui_window *window, uint32_t pid)
++{
++    if (!g_wayland.windows.contains(window)) {
++        return;
++    }
++    g_wayland.windows[window].pid = pid;
++}
++
++const ukui_window_listener kWindowListener = {
++    windowTitleChanged,
++    windowAppIdChanged,
++    windowStateChanged,
++    windowThemedIconNameChanged,
++    windowUnmapped,
++    windowInitialState,
++    windowParentChanged,
++    windowGeometry,
++    windowIconChanged,
++    windowPidChanged,
++    windowVirtualDesktopEntered,
++    windowVirtualDesktopLeft,
++    windowApplicationMenu,
++    windowActivityEntered,
++    windowActivityLeft,
++    windowResourceNameChanged,
++};
++
++// 新窗口映射时：create_window 绑定 uuid，开始接收该窗口事件
++void windowCreated(void * /*data*/, ukui_window_management * /*management*/, const char *uuid)
++{
++    if (g_wayland.windowManagement == nullptr || uuid == nullptr) {
++        return;
++    }
++
++    ukui_window *window = ukui_window_management_create_window(g_wayland.windowManagement, uuid);
++    if (window == nullptr) {
++        return;
++    }
++
++    g_wayland.windows.insert(window, WindowState{});
++    ukui_window_add_listener(window, &kWindowListener, nullptr);
++}
++
++const ukui_window_management_listener kWindowManagementListener = {
++    showDesktopChanged,
++    stackingOrderChanged,
++    windowCreated,
++};
++
++void destroyWayland()
++{
++    if (g_wayland.notifier != nullptr) {
++        g_wayland.notifier->setEnabled(false);
++        delete g_wayland.notifier;
++        g_wayland.notifier = nullptr;
++    }
++
++    for (auto it = g_wayland.windows.constBegin(); it != g_wayland.windows.constEnd(); ++it) {
++        ukui_window_destroy(it.key());
++    }
++    g_wayland.windows.clear();
++    g_wayland.activeWindow = nullptr;
++
++    if (g_wayland.windowManagement != nullptr) {
++        ukui_window_management_destroy(g_wayland.windowManagement);
++        g_wayland.windowManagement = nullptr;
++    }
++    if (g_wayland.registry != nullptr) {
++        wl_registry_destroy(g_wayland.registry);
++        g_wayland.registry = nullptr;
++    }
++    if (g_wayland.display != nullptr) {
++        wl_display_disconnect(g_wayland.display);
++        g_wayland.display = nullptr;
++    }
++}
++
++// 首次调用时建立独立 Wayland 连接（与 Qt 主连接并行）
++bool initWayland()
++{
++    if (g_wayland.display != nullptr) {
++        return g_wayland.windowManagement != nullptr;
++    }
++
++    g_wayland.selfPid = static_cast<uint32_t>(getpid());
++    g_wayland.display = wl_display_connect(nullptr);
++    if (g_wayland.display == nullptr) {
++        VW_LOG(Logger::Level::Warning) << "ScreenLocator: failed to connect wayland display";
++        return false;
++    }
++
++    g_wayland.registry = wl_display_get_registry(g_wayland.display);
++    if (g_wayland.registry == nullptr) {
++        VW_LOG(Logger::Level::Warning) << "ScreenLocator: failed to get registry";
++        return false;
++    }
++
++    wl_registry_add_listener(g_wayland.registry, &kRegistryListener, nullptr);
++    // roundtrip 1：等待 registry 返回全局对象并完成 bind
++    if (wl_display_roundtrip(g_wayland.display) < 0) {
++        VW_LOG(Logger::Level::Warning) << "ScreenLocator: registry roundtrip failed";
++        return false;
++    }
++
++    if (g_wayland.windowManagement == nullptr) {
++        VW_LOG(Logger::Level::Warning) << "ScreenLocator: ukui_window_management global not found";
++        return false;
++    }
++
++    ukui_window_management_add_listener(g_wayland.windowManagement, &kWindowManagementListener, nullptr);
++    // roundtrip 2：接收已存在窗口的 window_created 及初始状态
++    if (wl_display_roundtrip(g_wayland.display) < 0) {
++        VW_LOG(Logger::Level::Warning) << "ScreenLocator: window state roundtrip failed";
++        return false;
++    }
++
++    // 后续窗口变化通过 Qt 事件循环异步 dispatch
++    g_wayland.notifier = new QSocketNotifier(wl_display_get_fd(g_wayland.display), QSocketNotifier::Read);
++    QObject::connect(g_wayland.notifier, &QSocketNotifier::activated, [](int) {
++        if (g_wayland.display != nullptr) {
++            wl_display_dispatch_pending(g_wayland.display);
++        }
++    });
++
++    return true;
++}
++
++// 返回当前活动窗口的全局几何；优先用缓存的 activeWindow，否则遍历窗口表
++QRect queryActiveWindowGeometry()
++{
++    syncWayland();
++
++    if (g_wayland.activeWindow != nullptr) {
++        const WindowState state = g_wayland.windows.value(g_wayland.activeWindow);
++        if (isActiveWindow(state)) {
++            return state.geometry;
++        }
++    }
++
++    for (auto it = g_wayland.windows.constBegin(); it != g_wayland.windows.constEnd(); ++it) {
++        if (isActiveWindow(it.value())) {
++            g_wayland.activeWindow = it.key();
++            return it.value().geometry;
++        }
++    }
++
++    return QRect();
++}
++
++} // namespace
++
++ScreenLocator &ScreenLocator::instance()
++{
++    static ScreenLocator locator;
++    return locator;
++}
++
++ScreenLocator::~ScreenLocator()
++{
++    if (m_ready) {
++        destroyWayland();
++        m_ready = false;
++    }
++}
++
++bool ScreenLocator::ensureInitialized()
++{
++    if (m_initAttempted) {
++        return m_ready;
++    }
++
++    m_initAttempted = true;
++    m_ready = initWayland();
++    if (!m_ready) {
++        VW_LOG(Logger::Level::Warning) << "ScreenLocator: wayland init failed";
++    }
++    return m_ready;
++}
++
++// 将活动窗口全局坐标映射到 QScreen：以窗口左上角判定所在屏，失败则按交集面积最大选取
++QScreen *ScreenLocator::screenForGeometry(const QRect &geometry) const
++{
++    if (!geometry.isValid()) {
++        return nullptr;
++    }
++
++    // 以左上角坐标判定窗口所在屏（跨屏窗口时比中心点更准确）
++    if (QScreen *screen = QGuiApplication::screenAt(geometry.topLeft())) {
++        return screen;
++    }
++
++    QScreen *bestScreen = nullptr;
++    int bestArea = 0;
++    for (QScreen *screen : QGuiApplication::screens()) {
++        const QRect intersection = screen->geometry().intersected(geometry);
++        const int area = intersection.width() * intersection.height();
++        if (area > bestArea) {
++            bestArea = area;
++            bestScreen = screen;
++        }
++    }
++    return bestScreen;
++}
++
++// 对外入口：返回活动窗口所在屏幕，获取失败时回退到主屏
++QScreen *ScreenLocator::screenForActiveWindow()
++{
++    if (!ensureInitialized()) {
++        VW_LOG(Logger::Level::Warning)
++            << "ScreenLocator: wayland unavailable, cannot locate input window";
++        return QGuiApplication::primaryScreen();
++    }
++
++    const QRect windowGeometry = queryActiveWindowGeometry();
++    if (!windowGeometry.isValid()) {
++        VW_LOG(Logger::Level::Info) << "ScreenLocator: no active window from protocol";
++        return QGuiApplication::primaryScreen();
++    }
++
++    if (QScreen *screen = screenForGeometry(windowGeometry)) {
++        return screen;
++    }
++
++    VW_LOG(Logger::Level::Warning)
++        << "ScreenLocator: cannot map geometry to screen, geometry =" << windowGeometry;
++    return QGuiApplication::primaryScreen();
++}
+diff --git a/src/window/screenLocator.h b/src/window/screenLocator.h
+new file mode 100644
+index 0000000..6441c74
+--- /dev/null
++++ b/src/window/screenLocator.h
+@@ -0,0 +1,48 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2026 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef SCREENLOCATOR_H
++#define SCREENLOCATOR_H
++
++#include <QRect>
++
++class QScreen;
++
++class ScreenLocator {
++public:
++    static ScreenLocator &instance();
++
++    // 返回当前活动窗口所在屏幕；Wayland 不可用或无活动窗口时回退到主屏
++    QScreen *screenForActiveWindow();
++
++private:
++    ScreenLocator() = default;
++    ~ScreenLocator();
++
++    ScreenLocator(const ScreenLocator &) = delete;
++    ScreenLocator &operator=(const ScreenLocator &) = delete;
++
++    bool ensureInitialized();
++    QScreen *screenForGeometry(const QRect &geometry) const;
++
++    bool m_ready = false;
++    bool m_initAttempted = false;
++};
++
++#endif // SCREENLOCATOR_H
+diff --git a/src/window/themeIconProvider.cpp b/src/window/themeIconProvider.cpp
+index 92a567a..3a189d1 100644
+--- a/src/window/themeIconProvider.cpp
++++ b/src/window/themeIconProvider.cpp
+@@ -26,8 +26,6 @@
+ 
+ namespace {
+ 
+-static constexpr int ICON_SIZE = 24;
+-
+ QImage applyInvertedColor(const QImage &source)
+ {
+     QImage image = source.convertToFormat(QImage::Format_ARGB32);
+@@ -38,9 +36,6 @@ QImage applyInvertedColor(const QImage &source)
+                 color.setRed(255 - color.red());
+                 color.setGreen(255 - color.green());
+                 color.setBlue(255 - color.blue());
+-                // color.setRed(255);
+-                // color.setGreen(255);
+-                // color.setBlue(255);
+                 image.setPixelColor(x, y, color);
+             }
+         }
+@@ -50,9 +45,9 @@ QImage applyInvertedColor(const QImage &source)
+ 
+ } // namespace
+ 
+-QString ThemeIconHelper::buildIconDataUrl(const QString &iconName, bool invertColors)
++QString ThemeIconHelper::buildIconDataUrl(const QString &iconName, bool invertColors, int size)
+ {
+-    if (iconName.isEmpty()) {
++    if (iconName.isEmpty() || size <= 0) {
+         return QString();
+     }
+ 
+@@ -61,7 +56,7 @@ QString ThemeIconHelper::buildIconDataUrl(const QString &iconName, bool invertCo
+         return QString();
+     }
+ 
+-    QImage sourceImage = sourceIcon.pixmap(ICON_SIZE, ICON_SIZE).toImage();
++    QImage sourceImage = sourceIcon.pixmap(size, size).toImage();
+     if (sourceImage.isNull()) {
+         return QString();
+     }
+diff --git a/src/window/themeIconProvider.h b/src/window/themeIconProvider.h
+index b84f117..41d191e 100644
+--- a/src/window/themeIconProvider.h
++++ b/src/window/themeIconProvider.h
+@@ -25,7 +25,7 @@
+ class ThemeIconHelper
+ {
+ public:
+-    static QString buildIconDataUrl(const QString &iconName, bool invertColors = true);
++    static QString buildIconDataUrl(const QString &iconName, bool invertColors = true, int size = 24);
+ };
+ 
+ #endif // THEMEICONPROVIDER_H
+diff --git a/src/window/tipDialog.cpp b/src/window/tipDialog.cpp
+new file mode 100644
+index 0000000..de8f8ac
+--- /dev/null
++++ b/src/window/tipDialog.cpp
+@@ -0,0 +1,178 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2026 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#include "tipDialog.h"
++
++#include "logger.h"
++#include "screenLocator.h"
++
++#include <QAbstractButton>
++#include <QCloseEvent>
++#include <QLabel>
++#include <QProcess>
++#include <QPushButton>
++#include <QScreen>
++
++namespace {
++
++constexpr int kMessageLabelWidth = 380;
++
++void configureMessageLabel(QMessageBox *box)
++{
++    // QMessageBox 内部文案默认不限宽，长句不换行会导致「1./2.」悬挂缩进失效
++    if (QLabel *label = box->findChild<QLabel *>(QStringLiteral("qt_msgbox_label"))) {
++        label->setWordWrap(true);
++        label->setFixedWidth(kMessageLabelWidth);
++        label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
++    }
++}
++
++} // namespace
++
++TipDialog::TipDialog(QWidget *parent)
++    : QMessageBox(parent)
++{
++    // 关闭后由 closeEvent 销毁；不依赖 QMessageBox 默认路径（可能仅 hide）
++    setAttribute(Qt::WA_DeleteOnClose, false);
++    // 避免关闭弹窗时因「最后一个可退出窗口关闭」导致整个进程退出
++    setAttribute(Qt::WA_QuitOnClose, false);
++    setIcon(QMessageBox::Warning);
++    setStandardButtons(QMessageBox::NoButton);
++
++    m_cancelButton = addButton(tr("Cancel"), QMessageBox::RejectRole);
++    m_actionButton = addButton(tr("Settings"), QMessageBox::AcceptRole);
++    if (QPushButton *actionBtn = qobject_cast<QPushButton *>(m_actionButton)) {
++        setDefaultButton(actionBtn);
++    }
++
++    connect(this, &QMessageBox::buttonClicked, this, &TipDialog::onButtonClicked);
++}
++
++void TipDialog::updatePosition()
++{
++    // 跟随活动窗口所在屏幕，与 VoiceInputWindow 一致
++    QScreen *screen = ScreenLocator::instance().screenForActiveWindow();
++    if (screen == nullptr) {
++        VW_LOG(Logger::Level::Warning) << "TipDialog: 无法获取活动窗口所在屏幕，取消窗口位置重置";
++        return;
++    }
++
++    const QRect screenGeom = screen->geometry();
++
++    const QRect rect(screenGeom.x() + (screenGeom.width() - width()) / 2,
++                     screenGeom.y() + (screenGeom.height() - height()) / 2,
++                     width(),
++                     height());
++    setGeometry(rect);
++
++    VW_LOG(Logger::Level::Debug) << "TipDialog: show on screen" << screen->name()
++                                 << "geometry" << rect;
++}
++
++void TipDialog::closeEvent(QCloseEvent *event)
++{
++    // 不调用 QMessageBox::closeEvent，避免只 hide 不销毁
++    event->accept();
++    deleteLater();
++}
++
++void TipDialog::showCentered(const QString &message,
++                             const QString &actionButtonText,
++                             const QString &controlCenterModule)
++{
++    setTextFormat(Qt::RichText);
++    setText(message);
++    if (m_actionButton) {
++        m_actionButton->setText(actionButtonText);
++    }
++    m_controlCenterModule = controlCenterModule;
++
++    configureMessageLabel(this);
++    adjustSize();
++    // 因QMessageBox的特性，显示位置就在屏幕中心，无法做到跟随活动窗口所在屏幕且设置无效，所以暂不再设置位置
++    // updatePosition();
++    show();
++    raise();
++    activateWindow();
++}
++
++void TipDialog::showTip(const QString &message,
++                        const QString &actionButtonText,
++                        const QString &controlCenterModule)
++{
++    showCentered(message, actionButtonText, controlCenterModule);
++}
++
++void TipDialog::showMuted()
++{
++    showCentered(tr("Microphone is muted. Adjust the input volume to use voice input."),
++                 tr("Settings"),
++                 QStringLiteral("Audio"));
++}
++
++void TipDialog::showUnavailable()
++{
++    showCentered(tr("No available microphone. Voice input is limited. You can check device status in sound device management."),
++                 tr("Settings"),
++                 QStringLiteral("Audio"));
++}
++
++void TipDialog::showNoVoiceModel()
++{
++    // 悬挂缩进：换行后正文与首行文字左对齐
++    const QString message = QStringLiteral(
++        "<p style=\"margin-top:0; margin-bottom:8px;\"><b>%1</b></p>"
++        "<p style=\"margin-top:0; margin-bottom:6px;\">%2</p>"
++        "<p style=\"margin-top:0; margin-bottom:6px; margin-left:20px; text-indent:-20px;\">1.&nbsp;%3</p>"
++        "<p style=\"margin-top:0; margin-bottom:6px; margin-left:20px; text-indent:-20px;\">2.&nbsp;%4</p>"
++        "<p style=\"margin-top:8px; margin-bottom:0; color:#8C8C8C;\">%5</p>")
++        .arg(tr("No voice model is currently available."),
++             tr("How to configure:"),
++             //: Keep the <b> HTML tags around the settings path and model type names.
++             tr("Go to <b>System Settings &gt; AI Model Management &gt; Model Configuration</b> "
++                "and add a <b>\"Cloud Model\"</b>, <b>\"Local Model\"</b>, or <b>\"Custom Model\"</b>."),
++             tr("If models are already configured on this device, make sure they are enabled."),
++             tr("Note: Running a local model may use significant device resources. Please ensure "
++                "the device meets performance requirements."));
++
++    showCentered(message, tr("Configure Now"), QStringLiteral("aisubsystem"));
++}
++
++void TipDialog::openControlCenter(const QString &module)
++{
++    if (module.isEmpty()) {
++        return;
++    }
++
++    const bool started = QProcess::startDetached(
++        QStringLiteral("/usr/bin/ukui-control-center"),
++        {QStringLiteral("-m"), module});
++    if (!started) {
++        VW_LOG(Logger::Level::Error) << "Failed to launch ukui-control-center with module:"
++                                     << module;
++    }
++}
++
++void TipDialog::onButtonClicked(QAbstractButton *button)
++{
++    if (button == m_actionButton) {
++        openControlCenter(m_controlCenterModule);
++    }
++    close();
++}
+diff --git a/src/window/tipDialog.h b/src/window/tipDialog.h
+new file mode 100644
+index 0000000..8655f22
+--- /dev/null
++++ b/src/window/tipDialog.h
+@@ -0,0 +1,61 @@
++/* -*- Mode: C++; indent-tabs-mode: nil; tab-width: 4 -*-
++ * -*- coding: utf-8 -*-
++ *
++ * Copyright (C) 2026 KylinSoft Co., Ltd.
++ *
++ * This program is free software: you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation, either version 3 of the License, or
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
++ */
++
++#ifndef TIPDIALOG_H
++#define TIPDIALOG_H
++
++#include <QMessageBox>
++
++class QAbstractButton;
++class QCloseEvent;
++
++/** 基于 QMessageBox 的提示弹窗（关闭即销毁，下次显示时再创建） */
++class TipDialog : public QMessageBox
++{
++    Q_OBJECT
++
++public:
++    explicit TipDialog(QWidget *parent = nullptr);
++
++    /** 通用展示：正文、操作按钮文案、控制中心 -m 模块名 */
++    void showTip(const QString &message,
++                 const QString &actionButtonText,
++                 const QString &controlCenterModule = QString());
++
++    void showMuted();
++    void showUnavailable();
++    void showNoVoiceModel();
++
++private Q_SLOTS:
++    void onButtonClicked(QAbstractButton *button);
++
++private:
++    void updatePosition();
++    void openControlCenter(const QString &module);
++    void showCentered(const QString &message,
++                      const QString &actionButtonText,
++                      const QString &controlCenterModule);
++    void closeEvent(QCloseEvent *event) override;
++
++    QAbstractButton *m_cancelButton = nullptr;
++    QAbstractButton *m_actionButton = nullptr;
++    QString m_controlCenterModule;
++};
++
++#endif // TIPDIALOG_H
+diff --git a/src/window/voiceInputWindow.cpp b/src/window/voiceInputWindow.cpp
+index 4186ffe..ae0dc1d 100644
+--- a/src/window/voiceInputWindow.cpp
++++ b/src/window/voiceInputWindow.cpp
+@@ -19,6 +19,7 @@
+ 
+ #include "voiceInputWindow.h"
+ #include "themeIconProvider.h"
++#include "screenLocator.h"
+ 
+ #include <QGuiApplication>
+ #include "logger.h"
+@@ -39,15 +40,6 @@ VoiceInputWindow::VoiceInputWindow(QWindow *parent)
+     setColor(Qt::transparent);
+     setResizeMode(QQuickView::SizeRootObjectToView);
+ 
+-    m_loadingDelayTimer = new QTimer(this);
+-    m_loadingDelayTimer->setSingleShot(true);
+-    m_loadingDelayTimer->setInterval(kLoadingDelayMs);
+-    connect(m_loadingDelayTimer, &QTimer::timeout, this, &VoiceInputWindow::startLoadingAnimation);
+-
+-    m_loadingCycleTimer = new QTimer(this);
+-    m_loadingCycleTimer->setInterval(kLoadingIntervalMs);
+-    connect(m_loadingCycleTimer, &QTimer::timeout, this, &VoiceInputWindow::advanceLoadingIcon);
+-
+     m_volumeSampleTimer = new QTimer(this);
+     m_volumeSampleTimer->setInterval(kVolumeSampleIntervalMs);
+     connect(m_volumeSampleTimer, &QTimer::timeout,
+@@ -69,37 +61,18 @@ VoiceInputWindow::VoiceInputWindow(QWindow *parent)
+ 
+ int VoiceInputWindow::hostSize() const
+ {
+-    return m_windowSize + kPulseExpand;
++    return kWindowSize + kPulseExpand;
+ }
+ 
+-int VoiceInputWindow::pulseToken() const
++bool VoiceInputWindow::isRecognizing() const
+ {
+-    return m_pulseToken;
++    return m_isRecognizing;
+ }
+ 
+-void VoiceInputWindow::playRecognizingPulse()
++void VoiceInputWindow::updateIsRecognizing(bool isRecognizing)
+ {
+-    ++m_pulseToken;
+-    Q_EMIT pulseTokenChanged();
+-}
+-
+-void VoiceInputWindow::onTextRecognizing()
+-{
+-    playRecognizingPulse();
+-
+-    if (!kEnableLoadingIcon) {
+-        return;
+-    }
+-
+-    if (!m_isLoadingIcon) {
+-        m_loadingDelayTimer->start();
+-    }
+-}
+-
+-void VoiceInputWindow::onTextRecognized()
+-{
+-    m_loadingDelayTimer->stop();
+-    stopLoadingAnimation();
++    m_isRecognizing = isRecognizing;
++    Q_EMIT isRecognizingChanged();
+ }
+ 
+ QString VoiceInputWindow::iconNameForVolumeLevel(qreal level)
+@@ -119,9 +92,6 @@ QString VoiceInputWindow::iconNameForVolumeLevel(qreal level)
+ 
+ void VoiceInputWindow::onVolumeSampleTimeout()
+ {
+-    if (m_isLoadingIcon) {
+-        return;
+-    }
+     setDisplayIcon(iconNameForVolumeLevel(m_periodMaxVolumeLevel));
+     m_periodMaxVolumeLevel = 0.0;
+ }
+@@ -143,38 +113,9 @@ void VoiceInputWindow::setDisplayIcon(const QString &iconName)
+ 
+ void VoiceInputWindow::restoreDefaultIcon()
+ {
+-    m_isLoadingIcon = false;
+-    m_loadingIndex = 0;
+     setDisplayIcon(m_defaultIconName);
+ }
+ 
+-void VoiceInputWindow::startLoadingAnimation()
+-{
+-    if (m_isLoadingIcon) {
+-        return;
+-    }
+-
+-    m_isLoadingIcon = true;
+-    m_loadingIndex = 0;
+-    advanceLoadingIcon();
+-    m_loadingCycleTimer->start();
+-}
+-
+-void VoiceInputWindow::stopLoadingAnimation()
+-{
+-    m_loadingCycleTimer->stop();
+-    if (!m_isLoadingIcon && m_iconName == m_defaultIconName) {
+-        return;
+-    }
+-    restoreDefaultIcon();
+-}
+-
+-void VoiceInputWindow::advanceLoadingIcon()
+-{
+-    setDisplayIcon(QStringLiteral("ukui-loading-%1-symbolic").arg(m_loadingIndex));
+-    m_loadingIndex = (m_loadingIndex + 1) % kLoadingIconCount;
+-}
+-
+ QColor VoiceInputWindow::parseThemeColor(const QString &value)
+ {
+     QString cleaned = value.trimmed();
+@@ -285,7 +226,6 @@ void VoiceInputWindow::setIconName(const QString &iconName)
+     }
+ 
+     m_defaultIconName = iconName;
+-    stopLoadingAnimation();
+     setDisplayIcon(iconName);
+     Q_EMIT iconNameChanged();
+ }
+@@ -297,38 +237,38 @@ QString VoiceInputWindow::iconSource() const
+ 
+ int VoiceInputWindow::windowSize() const
+ {
+-    return m_windowSize;
++    return kWindowSize;
+ }
+ 
+-void VoiceInputWindow::setWindowSize(int size)
++void VoiceInputWindow::applyWindowGeometry(QScreen *targetScreen, int x, int y)
+ {
+-    if (size <= 0 || m_windowSize == size) {
++    if (!targetScreen) {
+         return;
+     }
+-    m_windowSize = size;
+-    resize(hostSize(), hostSize());
+-    Q_EMIT windowSizeChanged();
+-    if (isVisible()) {
+-        updatePosition();
+-    }
++
++    const QRect rect(x, y, width(), height());
++    setScreen(targetScreen);
++    setGeometry(rect);
++
++    VW_LOG(Logger::Level::Debug)
++        << "VoiceInputWindow: show on screen" << targetScreen->name() << "geometry" << rect;
+ }
+ 
+ void VoiceInputWindow::updatePosition()
+ {
+-    QScreen *targetScreen = screen();
+-    if (!targetScreen) {
+-        targetScreen = QGuiApplication::primaryScreen();
+-    }
++    // 跟随活动窗口所在屏幕，多屏环境下语音球显示在用户正在操作的屏幕上
++    QScreen *targetScreen = ScreenLocator::instance().screenForActiveWindow();
+     if (!targetScreen) {
+         return;
+     }
+ 
+-    setScreen(targetScreen);
++    const QRect available = targetScreen->availableGeometry();
+ 
+-    const QRect geo = targetScreen->availableGeometry();
+-    const int x = geo.x() + (geo.width() - width()) / 2;
+-    const int y = geo.y() + geo.height() - height() - kBottomMargin;
+-    setPosition(x, y);
++    // 协议仅用于确定输入窗口所在屏幕，语音球显示在该屏幕底部居中
++    const int x = available.x() + (available.width() - width()) / 2;
++    const int y = available.y() + available.height() - height() - kBottomMargin;
++
++    applyWindowGeometry(targetScreen, x, y);
+ }
+ 
+ void VoiceInputWindow::showWindow()
+@@ -343,10 +283,9 @@ void VoiceInputWindow::showWindow()
+ 
+ void VoiceInputWindow::hideWindow()
+ {
+-    m_loadingDelayTimer->stop();
+-    stopLoadingAnimation();
+     m_volumeSampleTimer->stop();
+     m_periodMaxVolumeLevel = 0.0;
++    restoreDefaultIcon();
+     hide();
+ }
+ 
+diff --git a/src/window/voiceInputWindow.h b/src/window/voiceInputWindow.h
+index 24e9a56..bbee3f3 100644
+--- a/src/window/voiceInputWindow.h
++++ b/src/window/voiceInputWindow.h
+@@ -23,7 +23,10 @@
+ #include <QColor>
+ #include <QGSettings>
+ #include <QQuickView>
++#include <QString>
+ #include <QTimer>
++
++class QScreen;
+ #include <ukuiwindowhelper.h>
+ 
+ class VoiceInputWindow : public QQuickView
+@@ -31,10 +34,10 @@ class VoiceInputWindow : public QQuickView
+     Q_OBJECT
+     Q_PROPERTY(QString iconName READ iconName WRITE setIconName NOTIFY iconNameChanged)
+     Q_PROPERTY(QString iconSource READ iconSource NOTIFY iconSourceChanged)
+-    Q_PROPERTY(int windowSize READ windowSize WRITE setWindowSize NOTIFY windowSizeChanged)
+-    Q_PROPERTY(int hostSize READ hostSize NOTIFY windowSizeChanged)
++    Q_PROPERTY(int windowSize READ windowSize CONSTANT)
++    Q_PROPERTY(int hostSize READ hostSize CONSTANT)
+     Q_PROPERTY(QColor themeColor READ themeColor NOTIFY themeColorChanged)
+-    Q_PROPERTY(int pulseToken READ pulseToken NOTIFY pulseTokenChanged)
++    Q_PROPERTY(bool isRecognizing READ isRecognizing NOTIFY isRecognizingChanged)
+ 
+ public:
+     explicit VoiceInputWindow(QWindow *parent = nullptr);
+@@ -44,26 +47,22 @@ public:
+     QString iconSource() const;
+ 
+     int windowSize() const;
+-    void setWindowSize(int size);
+     int hostSize() const;
+-    int pulseToken() const;
++    bool isRecognizing() const;
+ 
+     QColor themeColor() const;
+ 
+ public slots:
+     void showWindow();
+     void hideWindow();
+-    void playRecognizingPulse();
+-    void onTextRecognizing();
+-    void onTextRecognized();
++    void updateIsRecognizing(bool isRecognizing);
+     void onVolumeLevelChanged(qreal level);
+ 
+ signals:
+     void iconNameChanged();
+     void iconSourceChanged();
+-    void windowSizeChanged();
+     void themeColorChanged();
+-    void pulseTokenChanged();
++    void isRecognizingChanged();
+ 
+ private:
+     void initThemeColor();
+@@ -71,22 +70,17 @@ private:
+     void updateIconSource();
+     void setDisplayIcon(const QString &iconName);
+     void restoreDefaultIcon();
+-    void startLoadingAnimation();
+-    void stopLoadingAnimation();
+-    void advanceLoadingIcon();
+     void onVolumeSampleTimeout();
+     static QString iconNameForVolumeLevel(qreal level);
+     void onStyleSettingsChanged(const QString &key);
+     static QColor parseThemeColor(const QString &value);
+     void updatePosition();
++    void applyWindowGeometry(QScreen *targetScreen, int x, int y);
+     void initWindowHelper();
+ 
+-    static constexpr bool kEnableLoadingIcon = false;
++    static constexpr int kWindowSize = 40;
+     static constexpr int kBottomMargin = 50;
+     static constexpr int kPulseExpand = 6;
+-    static constexpr int kLoadingDelayMs = 800;
+-    static constexpr int kLoadingIntervalMs = 100;
+-    static constexpr int kLoadingIconCount = 8;
+     static constexpr int kVolumeSampleIntervalMs = 300;
+     static constexpr const char *STYLE_SCHEMA_ID = "org.ukui.style";
+     static constexpr const char *KEY_THEME_COLOR = "themeColor";
+@@ -96,13 +90,8 @@ private:
+     QString m_defaultIconName = QStringLiteral("audio-input-microphone-symbolic");
+     QString m_iconName = QStringLiteral("audio-input-microphone-symbolic");
+     QString m_iconSource;
+-    int m_windowSize = 40;
+-    int m_pulseToken = 0;
+-    int m_loadingIndex = 0;
++    bool m_isRecognizing = false;
+     qreal m_periodMaxVolumeLevel = 0.0;
+-    bool m_isLoadingIcon = false;
+-    QTimer *m_loadingDelayTimer = nullptr;
+-    QTimer *m_loadingCycleTimer = nullptr;
+     QTimer *m_volumeSampleTimer = nullptr;
+     QColor m_themeColor = QColor(58, 140, 255);
+ };
+diff --git a/src/window/voiceInputWindow.qml b/src/window/voiceInputWindow.qml
+index 0830413..014622f 100644
+--- a/src/window/voiceInputWindow.qml
++++ b/src/window/voiceInputWindow.qml
+@@ -5,86 +5,126 @@ Item {
+     width: voiceWindow.hostSize
+     height: voiceWindow.hostSize
+ 
+-    readonly property int pulseEndSize: voiceWindow.windowSize + 6
++    readonly property real pulseScale: (voiceWindow.windowSize + 6) / voiceWindow.windowSize
++    readonly property int pulseDuration: 500
++    readonly property real pulseOpacityHigh: 0.8
++    readonly property real pulseOpacityLow: 0.4
+ 
+-    Item {
+-        id: pulseLayer
+-        anchors.fill: parent
+-        z: 0
++    property bool pulseVisible: false
++
++    function resetPulseRing() {
++        pulseRing.scale = 1.0
++        pulseRing.opacity = pulseOpacityHigh
++    }
++
++    function startPulseIfNeeded() {
++        if (!voiceWindow.isRecognizing) {
++            return
++        }
++        pulseVisible = true
++        if (!pulseCycleAnim.running) {
++            pulseCycleAnim.start()
++        }
+     }
+ 
+     Rectangle {
+-        id: mainCircle
+-        z: 1
++        id: pulseRing
++        z: 0
+         anchors.centerIn: parent
++        transformOrigin: Item.Center
+         width: voiceWindow.windowSize
+         height: width
+         radius: width / 2
+         color: voiceWindow.themeColor
++        opacity: pulseOpacityHigh
++        scale: 1.0
++        visible: pulseVisible
+ 
+-        Image {
+-            anchors.centerIn: parent
+-            width: voiceWindow.windowSize * 0.6
+-            height: width
+-            source: voiceWindow.iconSource
+-            smooth: true
+-            fillMode: Image.PreserveAspectFit
+-        }
+-    }
++        SequentialAnimation {
++            id: pulseCycleAnim
++            loops: 1
+ 
+-    Component {
+-        id: pulseRingComponent
+-        Rectangle {
+-            id: pulseRing
+-            anchors.centerIn: parent
+-            width: voiceWindow.windowSize
+-            height: voiceWindow.windowSize
+-            radius: width / 2
+-            color: voiceWindow.themeColor
+-            opacity: 1.0
++            onStopped: {
++                resetPulseRing()
++                if (voiceWindow.isRecognizing) {
++                    start()
++                } else {
++                    pulseVisible = false
++                }
++            }
+ 
+             ParallelAnimation {
+-                running: true
+                 NumberAnimation {
+                     target: pulseRing
+-                    property: "width"
+-                    from: voiceWindow.windowSize
+-                    to: root.pulseEndSize
+-                    duration: 200
+-                    easing.type: Easing.OutQuad
++                    property: "scale"
++                    from: 1.0
++                    to: root.pulseScale
++                    duration: root.pulseDuration
++                    easing.type: Easing.OutCubic
++                }
++                NumberAnimation {
++                    target: pulseRing
++                    property: "opacity"
++                    from: root.pulseOpacityHigh
++                    to: root.pulseOpacityLow
++                    duration: root.pulseDuration
++                    easing.type: Easing.OutCubic
+                 }
++            }
++
++            ParallelAnimation {
+                 NumberAnimation {
+                     target: pulseRing
+-                    property: "height"
+-                    from: voiceWindow.windowSize
+-                    to: root.pulseEndSize
+-                    duration: 200
+-                    easing.type: Easing.OutQuad
++                    property: "scale"
++                    from: root.pulseScale
++                    to: 1.0
++                    duration: root.pulseDuration
++                    easing.type: Easing.InCubic
+                 }
+                 NumberAnimation {
+                     target: pulseRing
+                     property: "opacity"
+-                    from: 1.0
+-                    to: 0.5
+-                    duration: 200
+-                    easing.type: Easing.OutQuad
++                    from: root.pulseOpacityLow
++                    to: root.pulseOpacityHigh
++                    duration: root.pulseDuration
++                    easing.type: Easing.InCubic
+                 }
+-                onStopped: pulseRing.destroy()
+             }
+         }
+     }
+ 
+-    Connections {
+-        target: voiceWindow
+-        function onPulseTokenChanged() {
+-            pulseRingComponent.createObject(pulseLayer)
++    Rectangle {
++        id: mainCircle
++        z: 1
++        anchors.centerIn: parent
++        width: voiceWindow.windowSize
++        height: width
++        radius: width / 2
++        color: voiceWindow.themeColor
++
++        Image {
++            anchors.centerIn: parent
++            width: voiceWindow.windowSize * 0.6
++            height: width
++            source: voiceWindow.iconSource
++            smooth: true
++            fillMode: Image.PreserveAspectFit
+         }
+     }
+ 
+     Connections {
+         target: voiceWindow
++        function onIsRecognizingChanged() {
++            if (voiceWindow.isRecognizing) {
++                startPulseIfNeeded()
++            } else if (!pulseCycleAnim.running) {
++                pulseVisible = false
++                resetPulseRing()
++            }
++        }
+         function onThemeColorChanged() {
+             mainCircle.color = voiceWindow.themeColor
++            pulseRing.color = voiceWindow.themeColor
+         }
+     }
+ }
+diff --git a/src/window/voiceInputWindow.qrc b/src/window/voiceInputWindow.qrc
+index 64f2e9a..34455ad 100644
+--- a/src/window/voiceInputWindow.qrc
++++ b/src/window/voiceInputWindow.qrc
+@@ -1,6 +1,5 @@
+ <RCC>
+     <qresource prefix="/">
+         <file>voiceInputWindow.qml</file>
+-        <file>microphoneMuteDialog.qml</file>
+     </qresource>
+ </RCC>
+diff --git a/translations/ukui-voice-wing_ar.ts b/translations/ukui-voice-wing_ar.ts
+deleted file mode 100644
+index 7f1ffb9..0000000
+--- a/translations/ukui-voice-wing_ar.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="ar">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>الميكروفون مكتوم</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>الميكروفون مكتوم. اضبط مستوى صوت الإدخال لاستخدام الإدخال الصوتي.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>إلغاء</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>الإعدادات</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_bo_CN.ts b/translations/ukui-voice-wing_bo_CN.ts
+deleted file mode 100644
+index 5de6033..0000000
+--- a/translations/ukui-voice-wing_bo_CN.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="bo_CN">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>སྒྲ་སྐུད་སྒྲ་ཆུང་འགེགས་ཟིན།</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>སྒྲ་སྐུད་སྒྲ་ཆུང་འགེགས་ཟིན་པས། ནང་འདྲེན་སྒྲ་ཚད་སྙོམས་སྒྲིག་རྗེས་སུ་སྐད་གདངས་ནང་འཇུག་གཏོང་ཆོག</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>དོར་བ</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>སྒྲིག་འགོད།</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_de.ts b/translations/ukui-voice-wing_de.ts
+deleted file mode 100644
+index 7353964..0000000
+--- a/translations/ukui-voice-wing_de.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="de">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>Mikrofon stummgeschaltet</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>Das Mikrofon ist stummgeschaltet. Passen Sie die Eingangslautstärke an, um die Spracheingabe zu verwenden.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>Abbrechen</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>Einstellungen</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_es.ts b/translations/ukui-voice-wing_es.ts
+deleted file mode 100644
+index b82c384..0000000
+--- a/translations/ukui-voice-wing_es.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="es">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>Micrófono silenciado</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>El micrófono está silenciado. Ajuste el volumen de entrada para utilizar la entrada por voz.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>Cancelar</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>Configuración</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_fr.ts b/translations/ukui-voice-wing_fr.ts
+deleted file mode 100644
+index 1890dd1..0000000
+--- a/translations/ukui-voice-wing_fr.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="fr">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>Microphone coupé</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>Le microphone est coupé. Réglez le volume d'entrée pour utiliser la saisie vocale.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>Annuler</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>Paramètres</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_kk.ts b/translations/ukui-voice-wing_kk.ts
+deleted file mode 100644
+index 2d06567..0000000
+--- a/translations/ukui-voice-wing_kk.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="kk">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>مىكروفون يىمسىق</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>مىكروفون يىمسىق، كىرىس دىبىرى دەڭگەيىن تەڭشەگەندەن كەيىن داۋىستى كىرگىزۋدى قولدانۋعا بولادى.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>بوس ەتۋ</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>تەڭشەۋلەر</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_ky.ts b/translations/ukui-voice-wing_ky.ts
+deleted file mode 100644
+index 279a681..0000000
+--- a/translations/ukui-voice-wing_ky.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="ky">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>مىكروفون өчүк</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>مىكروفون өچۈك، كىرگىزۈۉ үнүнүн деңгээлин тууралагاندан кийин үн менен киргизүүнү колдонсо болот.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>жокко чыгаруу</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>теңшөөлөр</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_mn.ts b/translations/ukui-voice-wing_mn.ts
+deleted file mode 100644
+index ad68d1e..0000000
+--- a/translations/ukui-voice-wing_mn.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="mn">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>ᠮᠢᠺᠷᠣᠹᠣᠨ ᠳᠤᠭᠤᠢ ᠪᠠᠢᠨ᠎ᠠ</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>ᠮᠢᠺᠷᠣᠹᠣᠨ ᠳᠤᠭᠤᠢ ᠪᠠᠢᠨ᠎ᠠ᠂ ᠣᠷᠣᠭᠤᠯᠬᠤ ᠳᠤᠭᠤᠢ ᠶᠢ ᠲᠣᠭᠲᠠᠭᠠᠨ ᠳᠠᠷᠤᠭᠰᠠᠨ ᠳᠠᠷᠤᠮ᠎ᠠ ᠳᠤᠭᠤᠢ᠎ᠠᠷ ᠣᠷᠣᠭᠤᠯᠬᠤ ᠪᠣᠯᠤᠨ᠎ᠠ᠃</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>ᠦᠬᠡᠢᠰᠬᠡᠬᠦ</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>ᠲᠤᠬᠢᠷᠠᠭᠤᠯᠬᠤ</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_ms.ts b/translations/ukui-voice-wing_ms.ts
+deleted file mode 100644
+index 41f0ff1..0000000
+--- a/translations/ukui-voice-wing_ms.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="ms">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>Mikrofon dibisukan</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>Mikrofon dibisukan. Laraskan kelantangan input untuk menggunakan input suara.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>Batal</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>Tetapan</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_th.ts b/translations/ukui-voice-wing_th.ts
+deleted file mode 100644
+index 7c5c6dd..0000000
+--- a/translations/ukui-voice-wing_th.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="th">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>ไมโครโฟนถูกปิดเสียง</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>ไมโครโฟนถูกปิดเสียง ปรับระดับเสียงเข้าเพื่อใช้การป้อนข้อมูลด้วยเสียง</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>ยกเลิก</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>ไปที่การตั้งค่า</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_ug.ts b/translations/ukui-voice-wing_ug.ts
+deleted file mode 100644
+index 0a08e4f..0000000
+--- a/translations/ukui-voice-wing_ug.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="ug">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>مىكروفون ئۈنسىز</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>مىكروفون ئۈنسىز، كىرگۈزۈش ئاۋاز مىقدارىنى تەڭشىگەندىن كېيىن ئاۋازلىق كىرگۈزۈشنى ئىشلەتكىلى بولىدۇ.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>بىكار قىلىش</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>تەڭشەك</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_vi.ts b/translations/ukui-voice-wing_vi.ts
+deleted file mode 100644
+index b45a2eb..0000000
+--- a/translations/ukui-voice-wing_vi.ts
++++ /dev/null
+@@ -1,26 +0,0 @@
+-<?xml version="1.0" encoding="utf-8"?>
+-<!DOCTYPE TS>
+-<TS version="2.1" language="vi">
+-<context>
+-    <name>MicrophoneMuteDialog</name>
+-    <message>
+-        <source>Microphone Muted</source>
+-        <translation>Micro đã tắt tiếng</translation>
+-    </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+-    <message>
+-        <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+-        <translation>Micro đã tắt tiếng. Hãy điều chỉnh âm lượng đầu vào để sử dụng nhập liệu bằng giọng nói.</translation>
+-    </message>
+-    <message>
+-        <source>Cancel</source>
+-        <translation>Hủy</translation>
+-    </message>
+-    <message>
+-        <source>Settings</source>
+-        <translation>Cài đặt</translation>
+-    </message>
+-</context>
+-</TS>
+diff --git a/translations/ukui-voice-wing_zh_CN.ts b/translations/ukui-voice-wing_zh_CN.ts
+index ef7c924..5875329 100644
+--- a/translations/ukui-voice-wing_zh_CN.ts
++++ b/translations/ukui-voice-wing_zh_CN.ts
+@@ -2,25 +2,47 @@
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_CN">
+ <context>
+-    <name>MicrophoneMuteDialog</name>
++    <name>TipDialog</name>
+     <message>
+-        <source>Microphone Muted</source>
+-        <translation>麦克风已静音</translation>
++        <source>Settings</source>
++        <translation>去设置</translation>
+     </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+     <message>
+         <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+         <translation>麦克风已静音，调整输入音量后可语音输入文字</translation>
+     </message>
++    <message>
++        <source>No available microphone. Voice input is limited. You can check device status in sound device management.</source>
++        <translation>暂无可用麦克风，语音输入功能受限。可前往声音设备管理查看设备状态。</translation>
++    </message>
++    <message>
++        <source>Configure Now</source>
++        <translation>立即配置</translation>
++    </message>
+     <message>
+         <source>Cancel</source>
+         <translation>取消</translation>
+     </message>
+     <message>
+-        <source>Settings</source>
+-        <translation>去设置</translation>
++        <source>No voice model is currently available.</source>
++        <translation>当前无可用语音类模型</translation>
++    </message>
++    <message>
++        <source>How to configure:</source>
++        <translation>配置方式：</translation>
++    </message>
++    <message>
++        <source>Go to &lt;b&gt;System Settings &amp;gt; AI Model Management &amp;gt; Model Configuration&lt;/b&gt; and add a &lt;b&gt;&quot;Cloud Model&quot;&lt;/b&gt;, &lt;b&gt;&quot;Local Model&quot;&lt;/b&gt;, or &lt;b&gt;&quot;Custom Model&quot;&lt;/b&gt;.</source>
++        <extracomment>Keep the &lt;b&gt; HTML tags around the settings path and model type names.</extracomment>
++        <translation>前往 &lt;b&gt;系统设置 &amp;gt; AI模型管理 &amp;gt; 模型配置&lt;/b&gt; 页添加&lt;b&gt;“云端模型”&lt;/b&gt;，&lt;b&gt;“本地模型”&lt;/b&gt;或&lt;b&gt;“自选模型”&lt;/b&gt;。</translation>
++    </message>
++    <message>
++        <source>If models are already configured on this device, make sure they are enabled.</source>
++        <translation>若设备已完成模型的配置，请确认模型是否已开启。</translation>
++    </message>
++    <message>
++        <source>Note: Running a local model may use significant device resources. Please ensure the device meets performance requirements.</source>
++        <translation>注意：运行本地模型可能占用较多设备资源，请确保设备性能符合要求</translation>
+     </message>
+ </context>
+ </TS>
+diff --git a/translations/ukui-voice-wing_zh_HK.ts b/translations/ukui-voice-wing_zh_HK.ts
+index aed2698..06be3ab 100644
+--- a/translations/ukui-voice-wing_zh_HK.ts
++++ b/translations/ukui-voice-wing_zh_HK.ts
+@@ -2,25 +2,47 @@
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_HK">
+ <context>
+-    <name>MicrophoneMuteDialog</name>
++    <name>TipDialog</name>
+     <message>
+-        <source>Microphone Muted</source>
+-        <translation>麥克風已靜音</translation>
++        <source>Settings</source>
++        <translation>前往設定</translation>
+     </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+     <message>
+         <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+         <translation>麥克風已靜音，調整輸入音量後可語音輸入文字</translation>
+     </message>
++    <message>
++        <source>No available microphone. Voice input is limited. You can check device status in sound device management.</source>
++        <translation>暫無可用麥克風，語音輸入功能受限。可前往聲音設備管理查看設備狀態。</translation>
++    </message>
++    <message>
++        <source>Configure Now</source>
++        <translation>立即配置</translation>
++    </message>
+     <message>
+         <source>Cancel</source>
+         <translation>取消</translation>
+     </message>
+     <message>
+-        <source>Settings</source>
+-        <translation>前往設定</translation>
++        <source>No voice model is currently available.</source>
++        <translation>目前無可用語音類模型</translation>
++    </message>
++    <message>
++        <source>How to configure:</source>
++        <translation>配置方式：</translation>
++    </message>
++    <message>
++        <source>Go to &lt;b&gt;System Settings &amp;gt; AI Model Management &amp;gt; Model Configuration&lt;/b&gt; and add a &lt;b&gt;&quot;Cloud Model&quot;&lt;/b&gt;, &lt;b&gt;&quot;Local Model&quot;&lt;/b&gt;, or &lt;b&gt;&quot;Custom Model&quot;&lt;/b&gt;.</source>
++        <extracomment>Keep the &lt;b&gt; HTML tags around the settings path and model type names.</extracomment>
++        <translation>前往 &lt;b&gt;系統設定 &amp;gt; AI模型管理 &amp;gt; 模型配置&lt;/b&gt; 頁新增&lt;b&gt;「雲端模型」&lt;/b&gt;、&lt;b&gt;「本地模型」&lt;/b&gt;或&lt;b&gt;「自選模型」&lt;/b&gt;。</translation>
++    </message>
++    <message>
++        <source>If models are already configured on this device, make sure they are enabled.</source>
++        <translation>若裝置已完成模型配置，請確認模型是否已開啟。</translation>
++    </message>
++    <message>
++        <source>Note: Running a local model may use significant device resources. Please ensure the device meets performance requirements.</source>
++        <translation>注意：執行本地模型可能占用較多裝置資源，請確保裝置效能符合要求</translation>
+     </message>
+ </context>
+ </TS>
+diff --git a/translations/ukui-voice-wing_zh_Hant.ts b/translations/ukui-voice-wing_zh_Hant.ts
+index a2c8462..20cf16d 100644
+--- a/translations/ukui-voice-wing_zh_Hant.ts
++++ b/translations/ukui-voice-wing_zh_Hant.ts
+@@ -2,25 +2,47 @@
+ <!DOCTYPE TS>
+ <TS version="2.1" language="zh_Hant">
+ <context>
+-    <name>MicrophoneMuteDialog</name>
++    <name>TipDialog</name>
+     <message>
+-        <source>Microphone Muted</source>
+-        <translation>麥克風已靜音</translation>
++        <source>Settings</source>
++        <translation>前往設定</translation>
+     </message>
+-</context>
+-<context>
+-    <name>microphoneMuteDialog</name>
+     <message>
+         <source>Microphone is muted. Adjust the input volume to use voice input.</source>
+         <translation>麥克風已靜音，調整輸入音量後可語音輸入文字</translation>
+     </message>
++    <message>
++        <source>No available microphone. Voice input is limited. You can check device status in sound device management.</source>
++        <translation>暫無可用麥克風，語音輸入功能受限。可前往聲音設備管理查看設備狀態。</translation>
++    </message>
++    <message>
++        <source>Configure Now</source>
++        <translation>立即配置</translation>
++    </message>
+     <message>
+         <source>Cancel</source>
+         <translation>取消</translation>
+     </message>
+     <message>
+-        <source>Settings</source>
+-        <translation>前往設定</translation>
++        <source>No voice model is currently available.</source>
++        <translation>目前無可用語音類模型</translation>
++    </message>
++    <message>
++        <source>How to configure:</source>
++        <translation>配置方式：</translation>
++    </message>
++    <message>
++        <source>Go to &lt;b&gt;System Settings &amp;gt; AI Model Management &amp;gt; Model Configuration&lt;/b&gt; and add a &lt;b&gt;&quot;Cloud Model&quot;&lt;/b&gt;, &lt;b&gt;&quot;Local Model&quot;&lt;/b&gt;, or &lt;b&gt;&quot;Custom Model&quot;&lt;/b&gt;.</source>
++        <extracomment>Keep the &lt;b&gt; HTML tags around the settings path and model type names.</extracomment>
++        <translation>前往 &lt;b&gt;系統設定 &amp;gt; AI模型管理 &amp;gt; 模型配置&lt;/b&gt; 頁新增&lt;b&gt;「雲端模型」&lt;/b&gt;、&lt;b&gt;「本地模型」&lt;/b&gt;或&lt;b&gt;「自選模型」&lt;/b&gt;。</translation>
++    </message>
++    <message>
++        <source>If models are already configured on this device, make sure they are enabled.</source>
++        <translation>若裝置已完成模型配置，請確認模型是否已開啟。</translation>
++    </message>
++    <message>
++        <source>Note: Running a local model may use significant device resources. Please ensure the device meets performance requirements.</source>
++        <translation>注意：執行本地模型可能占用較多裝置資源，請確保裝置效能符合要求</translation>
+     </message>
+ </context>
+ </TS>

@@ -1,0 +1,87 @@
+From: Ubuntu Developers <ubuntu-devel-discuss@lists.ubuntu.com>
+Date: Fri, 20 Dec 2019 16:45:51 +0100
+Subject: [PATCH] _extrausers_delgroup
+
+===================================================================
+
+[Changelog]
+  - This patch has been refreshed to fix warning 'implicit function declaration'
+    Hector Cao <hector.cao@canonical.com>
+---
+ src/groupdel.c | 28 ++++++++++++++++++++++++++++
+ 1 file changed, 28 insertions(+)
+
+diff --git a/src/groupdel.c b/src/groupdel.c
+index 3d289fe..dd85af7 100644
+--- a/src/groupdel.c
++++ b/src/groupdel.c
+@@ -33,6 +33,11 @@
+ #endif
+ #include "shadowlog.h"
+ #include "run_part.h"
++
++#include "pwio.h"
++#include "shadowio.h"
++#include "subordinateio.h"
++
+ /*
+  * Global variables
+  */
+@@ -66,6 +71,12 @@ static void open_files (void);
+ static void group_busy (gid_t gid);
+ static void process_flags (int argc, char **argv);
+ 
++#ifndef EXTRAUSERS_OPT
++#define EXTRAUSERS_OPT 100000
++#endif
++
++static bool use_extrausers = false;
++
+ /*
+  * usage - display usage message and exit
+  */
+@@ -83,6 +94,7 @@ usage (int status)
+ 	(void) fputs (_("  -R, --root CHROOT_DIR         directory to chroot into\n"), usageout);
+ 	(void) fputs (_("  -P, --prefix PREFIX_DIR       prefix directory where are located the /etc/* files\n"), usageout);
+ 	(void) fputs (_("  -f, --force                   delete group even if it is the primary group of a user\n"), usageout);
++        (void) fputs (_("      --extrausers              Use the extra users database\n"), usageout);
+ 	(void) fputs ("\n", usageout);
+ 	exit (status);
+ }
+@@ -307,6 +319,7 @@ static void process_flags (int argc, char **argv)
+ 		{"force", no_argument,      NULL, 'f'},
+ 		{"root", required_argument, NULL, 'R'},
+ 		{"prefix", required_argument, NULL, 'P'},
++		{"extrausers", no_argument, NULL, EXTRAUSERS_OPT},
+ 		{NULL, 0, NULL, '\0'}
+ 	};
+ 
+@@ -323,6 +336,9 @@ static void process_flags (int argc, char **argv)
+ 		case 'f':
+ 			check_group_busy = false;
+ 			break;
++		case EXTRAUSERS_OPT:
++			use_extrausers = true;
++			break;
+ 		default:
+ 			usage (E_USAGE);
+ 		}
+@@ -445,6 +461,18 @@ int main (int argc, char **argv)
+ 		exit(1);
+ 	}
+ 
++        if (use_extrausers) {
++               pw_setdbname (EXTRAUSERS_PASSWD_FILE);
++               spw_setdbname (EXTRAUSERS_SHADOW_FILE);
++               gr_setdbname (EXTRAUSERS_GROUP_FILE);
++               /* TODO expose this information in other tools */
++               sub_uid_setdbname(EXTRAUSERS_SUBUID_FILE);
++               sub_gid_setdbname(EXTRAUSERS_SUBGID_FILE);
++#ifdef SHADOWGRP
++               sgr_setdbname (EXTRAUSERS_SHADOWGROUP_FILE);
++#endif
++        }
++
+ 	/*
+ 	 * Do the hard stuff - open the files, delete the group entries,
+ 	 * then close and update the files.

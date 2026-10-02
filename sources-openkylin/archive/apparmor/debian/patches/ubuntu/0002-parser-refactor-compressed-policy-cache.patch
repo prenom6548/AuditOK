@@ -1,0 +1,440 @@
+From: =?utf-8?q?Maxime_B=C3=A9lair?= <maxime.belair@canonical.com>
+Date: Tue, 14 Apr 2026 10:24:37 +0200
+Subject: [PATCH 2/3] parser: refactor compressed policy cache
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Previously, policies used a "normal" cache for uncompressed policies and
+a dedicated compressed/ directory for compressed policies, increasing
+the overall storage footprint.
+
+Now, only a single cache file is present. The parser detects whether
+it's compressed or not through its header, improving disk efficiency,
+which is particularly useful on constrained systems.
+
+Signed-off-by: Maxime Bélair <maxime.belair@canonical.com>
+---
+ parser/parser_interface.c |   2 +-
+ parser/parser_main.c      | 142 +++++-----------------------------------------
+ parser/policy_cache.c     | 140 ++++++++++++++++++++++++++++++++++-----------
+ parser/policy_cache.h     |   9 ++-
+ 4 files changed, 129 insertions(+), 164 deletions(-)
+
+diff --git a/parser/parser_interface.c b/parser/parser_interface.c
+index 2b2928a..fb597e2 100644
+--- a/parser/parser_interface.c
++++ b/parser/parser_interface.c
+@@ -751,7 +751,7 @@ int __sd_serialize_profile(int option, aa_kernel_interface *kernel_interface,
+ 		}
+ 
+ 		if (cache_fd != -1) {
+-			/* Cache always stores raw (uncompressed) policy */
++			/* Write uncompressed policy to the cache FD. It will be compressed later in parser loop if enabled. */
+ 			wsize = write(cache_fd, raw_policy_string.c_str(), raw_policy_size);
+ 			if (wsize < 0) {
+ 				error = -errno;
+diff --git a/parser/parser_main.c b/parser/parser_main.c
+index 96da617..f070771 100644
+--- a/parser/parser_main.c
++++ b/parser/parser_main.c
+@@ -1129,39 +1129,6 @@ static bool do_print_cache_dirs(aa_features *features, const char **cacheloc,
+ 	return true;
+ }
+ 
+-static char* read_policy_file(const char* path, size_t* file_size) {
+-	FILE *file = path ? fopen(path, "rb") : stdin;
+-	char *buffer = NULL, *tmp;
+-	size_t size = 0, capacity = 0;
+-
+-	if (!file)
+-		return NULL;
+-
+-	while (size == capacity) {
+-		capacity = capacity ? capacity * 2 : 4096;
+-		tmp = (char *) realloc(buffer, capacity);
+-		if (!tmp) {
+-			free(buffer);
+-			buffer = NULL;
+-			goto out;
+-		}
+-		buffer = tmp;
+-
+-		size += fread(buffer + size, 1, capacity - size, file);
+-	}
+-
+-	if (ferror(file)) {
+-		free(buffer);
+-		buffer = NULL;
+-	} else {
+-		*file_size = size;
+-	}
+-
+-out:
+-	if (file != stdin)
+-		fclose(file);
+-	return buffer;
+-}
+ 
+ int process_binary(int option, aa_kernel_interface *kernel_interface,
+ 		   const char *profilename)
+@@ -1302,17 +1269,10 @@ int process_profile(int option, aa_kernel_interface *kernel_interface,
+ {
+ 	int retval = 0;
+ 	autofree const char *cachename = NULL;
+-	autofree char *compr_cachename = NULL;
+ 	autofree const char *writecachename = NULL;
+-	autofree const char *compr_writecachename = NULL;
+-
+ 	autofree const char *cachetmpname = NULL;
+-	autofree const char *compr_cachetmpname = NULL;
+-
+-	autoclose int cachetmp = -1, compr_cachetmp = -1;
++	autoclose int cachetmp = -1;
+ 	const char *basename = NULL;
+-	autofree char *compr_basename = NULL;
+-	int tmp;
+ 
+ 	/* per-profile states */
+ 	force_complain = opt_force_complain;
+@@ -1357,34 +1317,8 @@ int process_profile(int option, aa_kernel_interface *kernel_interface,
+ 				autoclose int fd = aa_policy_cache_open(pc, basename, O_RDONLY);
+ 				if (fd != -1)
+ 					pwarn(WARN_CACHE, _("Could not get cachename for '%s'\n"), basename);
+-			} else {
+-				valid_read_cache(cachename);
+-			}
+-			if (zstd_compress_policy == ZSTD_COMPRESS_POLICY) {
+-				if (asprintf(&compr_basename, "compressed/%s", basename) < 0) {
+-					PERROR(_("Cannot allocate memory for compr_basename\n"));
+-					exit(1);
+-				}
+-
+-				compr_cachename = aa_policy_cache_filename(pc, compr_basename);
+-				if (!compr_cachename) {
+-					autoclose int fd = aa_policy_cache_open(pc, compr_basename, O_RDONLY);
+-					if (fd != -1)
+-						pwarn(WARN_CACHE, _("Could not get cachename for '%s'\n"), basename);
+-				} else {
+-					tmp = valid_compressed_cache(compr_cachename);
+-					if (tmp == ZSTD_COMPRESS_NONE) {
+-						zstd_compress_policy = ZSTD_COMPRESS_POLICY;
+-						write_cache = 1;
+-						compr_cachename = NULL;
+-					} else if (tmp == ZSTD_COMPRESS_PRECOMPRESSED) {
+-						zstd_compress_policy = ZSTD_COMPRESS_PRECOMPRESSED;
+-					} else if (tmp == ZSTD_COMPRESS_RECOMPRESS) {
+-						zstd_compress_policy = ZSTD_COMPRESS_POLICY;
+-						write_cache = 1;
+-						compr_cachename = NULL;
+-					}
+-				}
++			} else if (!skip_read_cache) {
++				setup_cache_policy(cachename);
+ 			}
+ 		}
+ 	}
+@@ -1409,10 +1343,9 @@ int process_profile(int option, aa_kernel_interface *kernel_interface,
+ 		skip_cache = 1;
+ 
+ 	if (cachename) {
+-		if (cache_hit(compr_cachename ? compr_cachename : cachename)) {
+-			retval = process_binary(option, kernel_interface,
+-						compr_cachename ? compr_cachename : cachename);
+-			if ((!retval && !(write_cache && !compr_cachename && (zstd_compress_policy == ZSTD_COMPRESS_POLICY))) || skip_bad_cache_rebuild)
++		if (cache_hit(cachename)) {
++			retval = process_binary(option, kernel_interface, cachename);
++			if ((!retval && !(write_cache && zstd_compress_policy == ZSTD_COMPRESS_POLICY)) || skip_bad_cache_rebuild)
+ 				goto out;
+ 		}
+ 	}
+@@ -1456,18 +1389,11 @@ int process_profile(int option, aa_kernel_interface *kernel_interface,
+ 			pwarn(WARN_CACHE, _("Cache write disabled: Cannot create cache file name '%s': %m\n"), basename);
+ 			write_cache = 0;
+ 		}
+-		cachetmp = setup_cache_tmp(&cachetmpname, (char*) writecachename, false);
++		cachetmp = setup_cache_tmp(&cachetmpname, (char*) writecachename);
+ 		if (cachetmp == -1) {
+ 			pwarn(WARN_CACHE, _("Cache write disabled: Cannot create setup tmp cache file '%s': %m\n"), writecachename);
+ 			write_cache = 0;
+ 		}
+-		else if (zstd_compress_policy != ZSTD_COMPRESS_NONE) {
+-			compr_writecachename = cache_filename(pc, 0, compr_basename);
+-			if (!compr_writecachename)
+-				pwarn(WARN_CACHE, _("Cache write disabled: Cannot create compressed cache file name '%s': %m\n"), basename);
+-			compr_cachetmp = setup_cache_tmp(&compr_cachetmpname, (char*) compr_writecachename, true);
+-
+-		}
+ 	}
+ 	/* cache file generated by load_policy */
+ 	retval = load_policy(option, kernel_interface, cachetmp);
+@@ -1475,56 +1401,16 @@ int process_profile(int option, aa_kernel_interface *kernel_interface,
+ 		if (force_complain) {
+ 			pwarn(WARN_CACHE, _("Caching disabled for: '%s' due to force complain\n"), basename);
+ 		} else if (cachetmp == -1) {
+-			unlink(cachetmpname);
+-			if (compr_cachetmpname)
+-				unlink(compr_cachetmpname);
+ 			pwarn(WARN_CACHE, _("Failed to create cache: %s\n"), basename);
+ 		} else {
+-			install_cache(cachetmpname, writecachename);
+-			if (compr_cachetmp != -1) {
+-				/* Compressed cache must be generated there instead of __sd_serialize_profile
+-				 * because else we need to generate a single compressed file. That wouldn't be
+-				 * the case for caches containing several subprofiles in __sd_serialize_profile.
++			if (zstd_compress_policy == ZSTD_COMPRESS_NONE)
++				install_cache(cachetmpname, writecachename);
++			else
++				/* Compressed cache must be built here rather than in
++				 * __sd_serialize_profile so that all subprofiles are
++				 * folded into a single compressed stream.
+ 				 */
+-				size_t uncompressed_size = 0, compressed_buffer_size = 0;
+-				char* uncompressed_buffer = read_policy_file(writecachename, &uncompressed_size);
+-				char* compressed_buffer = NULL;
+-				ssize_t wsize;
+-
+-				if (!uncompressed_buffer) {
+-					PERROR(_("Cannot read cache uncompressed_cache"));
+-					goto out;
+-				}
+-				/* Build kernel stream tail once */
+-				compressed_buffer_size = compress_policy_zstd(uncompressed_buffer, uncompressed_size, &compressed_buffer);
+-				if (compressed_buffer_size == 0) {
+-					pwarn(WARN_CACHE, _("Compression failed, skipping compressed cache\n"));
+-				} else {
+-					/* Write user header (8 bytes) + kernel stream */
+-					struct compr_user_header uhdr = {
+-						.version = COMPR_USER_HDR_VERSION,
+-						.compress_level = (uint8_t)zstd_compress_level,
+-						.padding = {0},
+-					};
+-
+-					wsize = write(compr_cachetmp, &uhdr, sizeof(uhdr));
+-					if (wsize < 0 || (size_t)wsize < sizeof(uhdr)) {
+-						PERROR(_("%s: Unable to write user header to compressed cache\n"), progname);
+-					} else {
+-						wsize = write(compr_cachetmp, compressed_buffer , compressed_buffer_size);
+-						if (wsize < 0) {
+-							PERROR(_("%s: Error compressing policy\n"), progname);
+-						} else if ((size_t) wsize < compressed_buffer_size) {
+-							PERROR(_("%s: Unable to write entire compressed profile entry to cache\n"), progname);
+-						} else {
+-							install_cache(cachetmpname, writecachename);
+-							install_cache(compr_cachetmpname, compr_writecachename);
+-						}
+-					}
+-				}
+-				free(compressed_buffer);
+-				free(uncompressed_buffer);
+-			}
++				install_compressed_cache(cachetmp, cachetmpname, writecachename);
+ 		}
+ 	}
+ out:
+diff --git a/parser/policy_cache.c b/parser/policy_cache.c
+index 232431e..de5c972 100644
+--- a/parser/policy_cache.c
++++ b/parser/policy_cache.c
+@@ -24,6 +24,7 @@
+ #include <stdlib.h>
+ #include <stdarg.h>
+ #include <sys/types.h>
++#include <sys/uio.h>
+ #include <unistd.h>
+ #include <sys/stat.h>
+ 
+@@ -156,6 +157,31 @@ zstd_compress_t is_valid_precompressed_fd(const char *cachename)
+ 	return is_valid_precompressed_profile(buffer, sz, zstd_compress_level);
+ }
+ 
++void setup_cache_policy(const char *cachename)
++{
++	zstd_compress_t tmp = valid_compressed_cache(cachename);
++	if (tmp == ZSTD_COMPRESS_PRECOMPRESSED) {
++		zstd_compress_policy = ZSTD_COMPRESS_PRECOMPRESSED;
++	} else if (tmp == ZSTD_COMPRESS_RECOMPRESS) {
++		if (zstd_compress_policy == ZSTD_COMPRESS_POLICY ||
++		    zstd_compress_policy == ZSTD_COMPRESS_GUESS) {
++			zstd_compress_policy = ZSTD_COMPRESS_POLICY;
++			write_cache = 1;
++		}
++	} else {
++		/* Not a valid compressed cache; check for uncompressed */
++		struct stat stat_bin;
++		if (stat(cachename, &stat_bin) == 0 && stat_bin.st_size > 0 &&
++		    valid_cached_file_version(cachename)) {
++			set_cache_tstamp(stat_bin.st_mtim);
++			if (zstd_compress_policy == ZSTD_COMPRESS_POLICY)
++				write_cache = 1;
++		} else if (!cond_clear_cache) {
++			write_cache = 0;
++		}
++	}
++}
++
+ zstd_compress_t valid_compressed_cache(const char *cachename)
+ {
+ 	struct stat stat_bin;
+@@ -181,26 +207,6 @@ zstd_compress_t valid_compressed_cache(const char *cachename)
+ 	return ZSTD_COMPRESS_NONE;
+ }
+ 
+-void valid_read_cache(const char *cachename)
+-{
+-	struct stat stat_bin;
+-
+-	/* Load a binary cache if it exists and is newest */
+-	if (!skip_read_cache) {
+-		if (stat(cachename, &stat_bin) == 0 &&
+-		    stat_bin.st_size > 0) {
+-			if (valid_cached_file_version(cachename))
+-				set_cache_tstamp(stat_bin.st_mtim);
+-			else if (!cond_clear_cache)
+-				write_cache = 0;
+-		} else {
+-			if (!cond_clear_cache)
+-				write_cache = 0;
+-			pwarn(WARN_DEBUG_CACHE, "%s: Invalid or missing cache file '%s' (%s)\n", progname, cachename, strerror(errno));
+-		}
+-	}
+-}
+-
+ int cache_hit(const char *cachename)
+ {
+ 	if (!mru_skip_cache) {
+@@ -212,26 +218,15 @@ int cache_hit(const char *cachename)
+ 	return false;
+ }
+ 
+-int setup_cache_tmp(const char **cachetmpname, char *cachename, int create_compressed)
++int setup_cache_tmp(const char **cachetmpname, char *cachename)
+ {
+ 	char *tmpname;
+ 	int cache_fd = -1;
+-	char *end;
+ 
+ 	*cachetmpname = NULL;
+ 	if (write_cache) {
+ 		mode_t prev_mask;
+-		if (create_compressed) {
+-			end = strrchr(cachename, '/');
+-			*end = '\0';
+-			if (mkdir(cachename, 0700))
+-				if (errno != EEXIST) {
+-					*end = '/';
+-					perror("Cannot create compressed cache directory\n");
+-					return -1;
+-				}
+-			*end = '/';
+-		}
++
+ 		/* Otherwise, set up to save a cached copy */
+ 		if (asprintf(&tmpname, "%s-XXXXXX", cachename) < 0) {
+ 			perror("asprintf");
+@@ -279,3 +274,82 @@ void install_cache(const char *cachetmpname, const char *cachename)
+ 		}
+ 	}
+ }
++
++char *read_policy_file(const char *path, size_t *file_size)
++{
++	FILE *file = path ? fopen(path, "rb") : stdin;
++	char *buffer = NULL, *tmp;
++	size_t size = 0, capacity = 0;
++
++	if (!file)
++		return NULL;
++
++	while (size == capacity) {
++		capacity = capacity ? capacity * 2 : 4096;
++		tmp = (char *) realloc(buffer, capacity);
++		if (!tmp) {
++			free(buffer);
++			buffer = NULL;
++			goto out;
++		}
++		buffer = tmp;
++		size += fread(buffer + size, 1, capacity - size, file);
++	}
++
++	if (ferror(file)) {
++		free(buffer);
++		buffer = NULL;
++	} else {
++		*file_size = size;
++	}
++
++out:
++	if (file != stdin)
++		fclose(file);
++	return buffer;
++}
++
++void install_compressed_cache(int cachetmp, const char *cachetmpname,
++			      const char *writecachename)
++{
++	size_t uncompressed_size = 0;
++	autofree char *uncompressed = read_policy_file(cachetmpname, &uncompressed_size);
++	if (!uncompressed) {
++		PERROR(_("Cannot read cache file '%s'\n"), cachetmpname);
++		unlink(cachetmpname);
++		return;
++	}
++
++	autofree char *compressed = NULL;
++	size_t compressed_size = compress_policy_zstd(uncompressed, uncompressed_size,
++						      &compressed);
++	if (compressed_size == 0) {
++		pwarn(WARN_CACHE, _("Compression failed, falling back to uncompressed cache\n"));
++		install_cache(cachetmpname, writecachename);
++		return;
++	}
++
++	struct compr_user_header uhdr = {
++		.version = COMPR_USER_HDR_VERSION,
++		.compress_level = (uint8_t)zstd_compress_level,
++		.padding = {0},
++	};
++	struct iovec iov[2] = {
++		{ .iov_base = &uhdr,      .iov_len = sizeof(uhdr) },
++		{ .iov_base = compressed, .iov_len = compressed_size },
++	};
++
++	if (ftruncate(cachetmp, 0) == -1 || lseek(cachetmp, 0, SEEK_SET) != 0) {
++		PERROR(_("%s: Unable to rewind tmp cache file\n"), progname);
++		return;
++	}
++
++	ssize_t wsize = writev(cachetmp, iov, 2);
++	if (wsize < 0 || (size_t)wsize < sizeof(uhdr) + compressed_size) {
++		PERROR(_("%s: Error writing compressed cache\n"), progname);
++		unlink(cachetmpname);
++		return;
++	}
++
++	install_cache(cachetmpname, writecachename);
++}
+diff --git a/parser/policy_cache.h b/parser/policy_cache.h
+index 93907e5..9b0c55b 100644
+--- a/parser/policy_cache.h
++++ b/parser/policy_cache.h
+@@ -45,11 +45,16 @@ void set_cache_tstamp(struct timespec t);
+ void update_mru_tstamp(FILE *file, const char *path);
+ bool valid_cached_file_version(const char *cachename);
+ zstd_compress_t is_valid_precompressed_profile(char* buffer, size_t buffer_size, uint8_t min_compr_level);
++zstd_compress_t is_valid_precompressed_fd(const char *cachename);
++void setup_cache_policy(const char *cachename);
+ char *cache_filename(struct aa_policy_cache *pc, int dir, const char *basename);
+-void valid_read_cache(const char *cachename);
++
+ zstd_compress_t valid_compressed_cache(const char *cachename);
+ int cache_hit(const char *cachename);
+-int setup_cache_tmp(const char **cachetmpname, char *cachename, int create_compressed);
++int setup_cache_tmp(const char **cachetmpname, char *cachename);
+ void install_cache(const char *cachetmpname, const char *cachename);
++char *read_policy_file(const char *path, size_t *file_size);
++void install_compressed_cache(int cachetmp, const char *cachetmpname,
++			      const char *writecachename);
+ 
+ #endif /* __AA_POLICY_CACHE_H */

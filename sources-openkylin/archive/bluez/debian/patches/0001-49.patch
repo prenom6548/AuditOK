@@ -1,0 +1,101 @@
+From: =?utf-8?b?6JSh5rab?= <caitao@kylinos.cn>
+Date: Tue, 25 Aug 2026 07:16:38 +0000
+Subject: =?utf-8?b?ITQ5IOabtOaWsOOAgeS8mOWMluWSjOmAgumFjeiTneeJmeaWh+S7tg==?=
+ =?utf-8?b?5Lyg6L6T5Yqf6IO9?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Merge pull request !49 from 蔡涛/openkylin/huanghe
+---
+ obexd/client/opp.c      | 39 +++++++++++++++++++++++++++++++++++++--
+ obexd/client/transfer.c |  2 ++
+ obexd/src/main.c        |  2 +-
+ 3 files changed, 40 insertions(+), 3 deletions(-)
+
+diff --git a/obexd/client/opp.c b/obexd/client/opp.c
+index c22e919..e11dbc7 100644
+--- a/obexd/client/opp.c
++++ b/obexd/client/opp.c
+@@ -42,6 +42,7 @@ static DBusMessage *opp_send_file(DBusConnection *connection,
+ 	DBusMessage *reply;
+ 	char *filename;
+ 	char *basename;
++	int fileLength = 0;
+ 	GError *err = NULL;
+ 
+ 	if (dbus_message_get_args(message, NULL,
+@@ -50,11 +51,45 @@ static DBusMessage *opp_send_file(DBusConnection *connection,
+ 		return g_dbus_create_error(message,
+ 				ERROR_INTERFACE ".InvalidArguments", NULL);
+ 
+-	basename = g_path_get_basename(filename);
++	fileLength =  strlen(filename);
+ 
+-	transfer = obc_transfer_put(NULL, basename, filename, NULL, 0, &err);
++	if (fileLength > 102400) {
++		return g_dbus_create_error(message,
++				ERROR_INTERFACE ".MaxFileLength", NULL);
++	}
++
++	char *type = (char*)malloc(sizeof(char) * 255);
++	char *file =  (char*)malloc(sizeof(char) * fileLength);
++	int count = 0;
++	int i = 0;
++	for (i = strlen(filename) - 1; i > 0; --i) {
++		if (filename[i] == ' ' && filename[i - 1] == ' ') {
++			int j = 0;
++			for (j = i + 1; j < strlen(filename); j++) {
++				type[count++] = filename[j];
++			}	
++			type[count] = '\0';
++
++			count = 0;
++			for (j = 0; j < i - 1; j++) {
++				file[count++] = filename[j];
++			}
++			file[count] = '\0';
++
++			break;
++		}
++	}
++
++	if (strlen(type)  == 0 && strlen(file)){
++		memcpy(file, filename, fileLength);
++	}
++
++	basename = g_path_get_basename(file);
++	transfer = obc_transfer_put(type, basename, file, NULL, 0, &err);
+ 
+ 	g_free(basename);
++	g_free(file);
++	g_free(type);
+ 
+ 	if (transfer == NULL)
+ 		goto fail;
+diff --git a/obexd/client/transfer.c b/obexd/client/transfer.c
+index 668cefa..e502ed3 100644
+--- a/obexd/client/transfer.c
++++ b/obexd/client/transfer.c
+@@ -615,6 +615,8 @@ struct obc_transfer *obc_transfer_put(const char *type, const char *name,
+ 		goto fail;
+ 	}
+ 
++	transfer->type = g_strdup(type);
++
+ 	transfer->size = st.st_size;
+ 
+ 	return transfer;
+diff --git a/obexd/src/main.c b/obexd/src/main.c
+index df15097..1a5ff48 100644
+--- a/obexd/src/main.c
++++ b/obexd/src/main.c
+@@ -129,7 +129,7 @@ static char *option_noplugin = NULL;
+ 
+ static gboolean option_autoaccept = FALSE;
+ static gboolean option_symlinks = FALSE;
+-static gboolean option_system_bus = FALSE;
++static gboolean option_system_bus = TRUE;
+ 
+ static gboolean parse_debug(const char *key, const char *value,
+ 				gpointer user_data, GError **error)

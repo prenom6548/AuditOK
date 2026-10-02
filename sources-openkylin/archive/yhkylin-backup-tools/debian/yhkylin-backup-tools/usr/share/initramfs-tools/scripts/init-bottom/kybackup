@@ -1,0 +1,535 @@
+#!/bin/bash
+
+# 把这个文件放在 /usr/share/initramfs-tools/scripts/init-bottom/ 目录下。
+# 权限为 0755，在自动更新initrd时，这个脚本就被放到initrd中了，例如，
+# update-initramfs -u
+# 更新后，这个脚本将在initrd 运行到 local-bottom 阶段时自动执行。
+# 此时根分区已经挂载到了${rootmnt}下，可以直接访问该分区的文件。
+
+# PREREQ指定需要在什么脚本之后执行（同目录下的），也就是指定该脚本的依赖，以确定执行顺序。
+# 如果没有依赖，就可以是空字符串。 
+PREREQ="security_set"
+echo "run security_set first"
+
+prereqs()
+{
+	echo "$PREREQ"
+}
+
+case $1 in
+	prereqs)
+		prereqs
+		exit 0
+		;;
+esac
+
+# 上述部分是initramfs脚本的固定格式，不用动它。
+# 除非有依赖，才需要改 PREREQ 的值。
+
+#在V11中，这部分功能放在yhkylin-systembackup-tools包中，这里不在做功能实现
+exit 0
+
+echo $*
+BACKUP_FLAG=backup
+RESTORE_FLAG=restore
+ROLLBACK_FLAG=rollback-backup
+
+#. /scripts/security-functions
+show_text_mesg()
+{
+        echo "$1"
+}
+
+plymouth_is_running()
+{
+        if [ -e "/bin/plymouth" ] && /bin/plymouth --ping; then
+                return 0
+        else
+                return 1
+        fi
+}
+
+show_message()
+{
+        if plymouth_is_running; then
+                /bin/plymouth message --text="$1"
+                show_text_mesg "$1"
+        else
+                show_text_mesg "$1"
+        fi
+}
+
+clear_message()
+{
+        if plymouth_is_running; then
+                plymouth message --text=""
+        fi
+        clear
+}
+
+isEnglish()
+{
+        LOCALFILE="${rootmnt}/etc/default/locale"
+	if [ ! -e "$LOCALFILE" ]; then
+	    return 0
+	fi
+
+        localcontent=`grep -E  "^LANG" $LOCALFILE | grep -i "zh_CN.UTF"`
+
+        #echo "localcontent: $localcontent"
+
+        if [ -z $localcontent ]; then
+                #echo "This is English"
+                return 1
+        else
+                #echo "系统支持中文"
+                return 0
+        fi
+}
+
+isEnglish
+v_isEnglish=$?
+
+myoutput()
+{
+        #echo "v_isEnglish is "$v_isEnglish
+
+        #echo "first para: $1"
+        #echo "second para: $2"
+
+        if [ $v_isEnglish -eq 1 ]; then
+                echo $1
+                #plymouth message --text=$1
+                #echo "English"
+		show_message "$1"
+        else
+                echo $2
+                #plymouth message --text=$2
+                #echo "中文"
+		show_message "$2"
+        fi
+}
+
+loop_wait()
+{
+  #去掉原来的死循环，退出
+  sleep 5
+  reboot -f
+	#while(true)
+	#do
+	#	sleep 1
+	#done
+}
+
+get_is_990_9a0() {
+    local ret=false
+    # 匹配 kirin 990 5g, kirin990, kirin 9006c
+    if egrep -qi 'kirin.?9[09]0' /proc/cpuinfo; then
+        ret=true
+    elif egrep -qi 'PANGU' /proc/cpuinfo; then
+        ret=true
+
+    fi
+    echo $ret
+}
+is_990_9a0=$(get_is_990_9a0)
+
+factory_restore_warnning()
+{
+  if [[ x${is_990_9a0} == x"true" && x${FACTORY_RESTORE} == "xy" ]]; then
+    local is_sure=
+    while :
+    do
+    if plymouth_is_running; then
+        myoutput "You are doing factory restoration. Are you sure to continue? [y/n]" "正在准备进行出厂还原操作，是否继续？[y/n]"
+        is_sure=$(/bin/plymouth watch-keystroke)
+        echo is_sure=$is_sure
+        case $is_sure in
+        y|Y)
+            break;;
+        n|N)
+            # 注意，reboot重启不了，可用reboot -f
+            reboot -f;;
+        *) ;;
+        esac
+    fi
+    done
+  fi
+}
+
+factory_restore_warnning_again()
+{
+  if [[ x${is_990_9a0} == x"true" && x"$FACTORY_RESTORE" = "xy" ]]; then
+    local is_sure=
+    while :
+    do
+    if plymouth_is_running; then
+        myoutput "Please confirm again whether to restore the system to factory defaults. Are you sure to continue? [y/n]" "请再一次确认是否进行系统出厂还原，是否继续？[y/n]"
+        is_sure=$(/bin/plymouth watch-keystroke)
+        echo is_sure=$is_sure
+        case $is_sure in
+        y|Y)
+            break;;
+        n|N)
+            # 注意，reboot重启不了，可用reboot -f
+            reboot -f;;
+        *) ;;
+        esac
+    fi
+    done
+  fi
+}
+
+restore_warnning()
+{
+    local is_sure=
+    while :
+    do
+    if plymouth_is_running; then
+	if [ x"$FACTORY_RESTORE" = "xy" ]; then
+	    myoutput "This operation will delete all data and restore system to factory default state, data may be lost. Are you sure to continue? [y/n]" "本操作将会删除所有用户数据并恢复系统到出厂状态，有数据丢失风险，是否继续？[y/n]"
+	else
+	    myoutput "This operation may delete some data, which may cause data loss. Are you sure to continue? [y/n]" "此操作可能会删除一些数据，造成丢失数据风险，是否继续？[y/n]"
+	fi
+        is_sure=$(/bin/plymouth watch-keystroke)
+        echo is_sure=$is_sure
+        case $is_sure in
+        y|Y)
+            break;;
+        n|N)
+            # 注意，reboot重启不了，可用reboot -f
+            reboot -f;;
+        *) ;;
+        esac
+    fi
+    done
+}
+
+display_result()
+{
+        #myoutput  "返回值: $RET"
+        #sleep 3
+        RET=$1
+
+        if [ $RET -eq 1 ]; then
+                myoutput  "Can't find /etc/.bootinfo." "没有找到/etc/.bootinfo"
+		loop_wait
+        elif [ $RET -eq 2 ]; then
+                myoutput  "Can't open /etc/.bootinfo." "无法打开/etc/.bootinfo"
+		loop_wait
+        elif [ $RET -eq 3 ]; then
+                myoutput  "/etc/.bootinfo is not correct." "/etc/.bootinfo不正确"
+		loop_wait
+        elif [ $RET -eq 4 ]; then
+                myoutput  "The backup disk space is not enough, please delete unnecessary backups." "备份分区空间不足，请删除过期或者不需要的备份"
+		loop_wait
+        elif [ $RET -eq 5 ]; then
+                myoutput  "The backup disk must be /backup" "备份还原分区路径不是/backup"
+		loop_wait
+        elif [ $RET -eq 6 ]; then
+                myoutput  "There are not any good backups，and you can't restore the system." "没有有效的备份，不能还原系统"
+		loop_wait
+        elif [ $RET -eq 7 ]; then
+                myoutput  "The backup does not exist, and you can't restore it." "备份文件不存在，不能还原系统"
+		loop_wait
+        elif [ $RET -eq 8 ]; then
+                myoutput  "Can't start the restore process, please redo it." "不能启动还原进程，请重新还原系统"
+		loop_wait
+        elif [ $RET -eq 9 ]; then
+                myoutput  "Failed to restore the system, please redo it." "还原失败，请重新还原系统"
+		loop_wait
+        elif [ $RET -eq 10 ]; then
+                myoutput  "Can't start the mount process for backup." "不能启动备份还原分区安装进程，请重新启动系统"
+		loop_wait
+        elif [ $RET -eq 11 ]; then
+                myoutput  "Failed to wait for the process for backup." "备份还原分区安装进程等待结束时出错，请重新启动系统"
+		loop_wait
+        elif [ $RET -eq 12 ]; then
+                myoutput  "The backup disk does not exist or it is not mounted." "备份还原分区不存在或没有mount"
+		loop_wait
+        elif [ $RET -eq 13 ]; then
+                myoutput  "Can't start the backup process." "不能启动备份进程，请重新备份系统"
+		loop_wait
+        elif [ $RET -eq 14 ]; then
+                myoutput  "Failed to backup the system." "备份失败，请重新备份系统"
+		loop_wait
+        elif [ $RET -eq 15 ]; then
+                myoutput  "The usage of mount_fstab is not correct." "mount_fstab用法不正确，无法安装系统"
+		loop_wait
+        elif [ $RET -eq 16 ]; then
+                myoutput  "Failed to backup the system because /etc/fstab does not exist." "/etc/fstab不存在，无法备份系统"
+		loop_wait
+        elif [ $RET -eq 17 ]; then
+                myoutput  "Can't open /etc/fstab." "/etc/fstab打开失败，无法备份系统"
+		loop_wait
+        elif [ $RET -eq 18 ]; then
+                myoutput  "Wrong arguments." "调用backup-auto-efi 参数错误"
+		loop_wait
+        elif [ $RET -eq 19 ]; then
+                myoutput  "Wrong with caculate disk size." "计算磁盘大小出错"
+		loop_wait
+        elif [ $RET -eq 20 ]; then
+                myoutput  "Could not create /backup in initrd!" "无法在initrd中创建backup目录"
+		loop_wait
+        elif [ $RET -eq 21 ]; then
+                myoutput  "Could not mount backup partition in initrd!" "无法挂载备份还原分区"
+		loop_wait
+        elif [ $RET -eq 22 ]; then
+                myoutput  "Could not create log directory in /backup!" "无法创建日志目录"
+		loop_wait
+        elif [ $RET -eq 23 ]; then
+                myoutput  "Could not create log file!" "无法创建日志文件"
+		loop_wait
+        fi
+}
+
+# 需要先指定BACKUP_FLAG，例如设置为 BACKUP_FLAG=backup，那么内核参数就可以选择下述两种方式的一种了
+# 1. backup  只要有backup，就表示需要备份
+# 2. backup=0 或者 backup=1 0表示不用备份，1表示需要备份。
+# 当然，还可以选择别的字符串做关键字，但一定要指定BACKUP_FLAG内容。
+#BACKUP_FLAG=
+NEED_BACKUP=
+NEED_RESTORE=
+NEED_ROLLBACK=
+NEED_RETAIN_USERDATA=
+# 针对 BACKUP_FLAG 为简单字符串（非键值对）的情况，可以这样获取内核参数。
+for x in $(cat /proc/cmdline); do
+        case $x in
+            backup)
+                    NEED_BACKUP=y
+                    ;;
+            restore)
+                    NEED_RESTORE=y
+                    ;;
+            restore-retain-userdata)
+		    NEED_RESTORE=y
+		    NEED_RETAIN_USERDATA=y
+                    ;;
+            rollback-backup)
+                    NEED_ROLLBACK=y
+                    ;;
+            factory-restore)
+                    NEED_RESTORE=y
+                    FACTORY_RESTORE=y
+                    ;;
+	    *)
+		    ;;
+	esac
+done
+
+#for x in $(cat /proc/cmdline); do
+#       if [ "$x" = "$BACKUP_FLAG" ]; then
+#               NEED_BACKUP=y
+#       fi
+#done
+#
+#for x in $(cat /proc/cmdline); do
+#       if [ "$x" = "$RESTORE_FLAG" ]; then
+#               NEED_RESTORE=y
+#       fi
+#done
+#for x in $(cat /proc/cmdline); do
+#        if [ "$x" = "$ROLLBACK_FLAG" ]; then
+#                NEED_ROLLBACK=y
+#        fi
+#done
+
+#for x in $(cat /proc/cmdline); do
+#	if [ "$x" = "$BACKUP_FLAG" ]; then
+#		NEED_BACKUP=y
+#	fi
+#done
+#
+#for x in $(cat /proc/cmdline); do
+#	if [ "$x" = "$RESTORE_FLAG" ]; then
+#		NEED_RESTORE=y
+#	fi
+#done
+#for x in $(cat /proc/cmdline); do
+#        if [ "$x" = "$ROLLBACK_FLAG" ]; then
+#                NEED_ROLLBACK=y
+#        fi
+#done
+
+# 然后就可以根据 $NEED_BACKUP 来进行操作了。
+# 如果没有发现需要备份的标记，直接退出脚本，继续启动系统。
+
+if [ "$NEED_BACKUP" = "y" ]; then
+	mkdir /backup
+	#useless: . /scripts/backup  #就是本目录下的backup
+	#useless: mount_fstab  #定义在backup脚本中
+	
+	#如果没有${rootmnt}/etc/fstab，则系统坏了，只能还原而不能备份.
+	if [ ! -e ${rootmnt}/etc/fstab ]; then
+		if [ ! -e /etc/fstab-backup ]; then
+		  #myoutput  "The system has been destroyed and can not be backuped."
+                  myoutput  "/etc/fstab does not exist." "/etc/fstab不存在，无法备份."
+		  loop_wait
+		fi
+	fi
+	if [ ! -e ${rootmnt}/etc/.bootinfo ]; then
+	    if [ ! -e /etc/.bootinfo ]; then
+	        #myoutput  "The system has been destroyed and you can restore it in the next version."
+	        myoutput "/etc/.bootinfo does not exist." "/etc/.bootinfo不存在，无法备份."
+	        loop_wait
+	    fi
+	fi
+
+	mount_fstab_efi ${rootmnt} mount
+	myoutput  "Backuping the system, please wait for a moment." "正在备份系统"
+	#myoutput  "Backuping the system, please wait for a moment."
+	backup-auto-efi --autobackup ${rootmnt} /backup
+
+	RET=$?
+	display_result $RET
+
+	myoutput  "The system has been backuped." "系统备份完成"
+	#myoutput  "The system has been backuped."
+	#mount_fstab ${rootmnt} umount #because root 
+	sleep 3
+	reboot -f 
+fi
+
+if [ "$NEED_RESTORE" = "y" ]; then
+	factory_restore_warnning
+	restore_warnning
+	factory_restore_warnning_again
+	#如果没有${rootmnt}/etc/fstab，则系统坏了，应该能还原，但需要在下一个版本中支持。
+	if [ ! -e ${rootmnt}/etc/fstab ]; then
+	    if [ ! -e /etc/fstab-backup ]; then
+		#myoutput  "The system has been destroyed and you can restore it in the next version."
+		myoutput  "/etc/fstab does not exist." "/etc/fstab不存在，无法还原."
+		loop_wait
+	    fi
+	fi
+	if [ ! -e ${rootmnt}/etc/.bootinfo ]; then
+	    if [ ! -e /etc/.bootinfo ]; then
+		#myoutput  "The system has been destroyed and you can restore it in the next version."
+		# myoutput  "/etc/.bootinfo does not exist." "/etc/.bootinfo不存在，无法还原."
+		# loop_wait
+		echo "/etc/.bootinfo does not exist."
+	    fi
+	fi
+
+	mount_fstab_efi ${rootmnt} mount
+	mkdir /backup
+	myoutput  "Restoring the system, please wait for a moment." "正在还原系统"
+	#myoutput  "Restoring the system, please wait for a moment."
+	mount -o remount,rw ${rootmnt}
+        if [ $? -ne 0 ];then
+                myoutput  "Could not mount filesystem with rw arguments." "错误:无法以读写方式挂载根文件系统."
+                loop_wait
+
+        fi
+	#. /scripts/backup
+	if [ x"$NEED_RETAIN_USERDATA" = "xy" ]; then
+		backup-auto-efi --restoreretainuserdata ${rootmnt} /backup
+	elif [ x"$FACTORY_RESTORE" = "xy" ];then
+                backup-auto-efi --factoryrestore ${rootmnt} /backup
+        else
+                backup-auto-efi --autorestore ${rootmnt} /backup
+        fi
+
+	RET=$?
+	display_result $RET
+
+	if [ ! -e ${rootmnt}/proc ]; then
+	    mkdir ${rootmnt}/proc
+	fi
+
+	if [ ! -e ${rootmnt}/sys ]; then
+	    mkdir ${rootmnt}/sys
+	fi
+
+	if [ ! -e ${rootmnt}/dev ]; then
+	    mkdir ${rootmnt}/dev
+	fi
+
+	if [ ! -e ${rootmnt}/run ]; then
+	    mkdir ${rootmnt}/run
+	fi
+
+	if [ ! -e ${rootmnt}/backup ]; then
+	    mkdir ${rootmnt}/backup
+	fi
+
+	myoutput  "The system has been restored." "系统还原完成"
+	#myoutput  "The system has been restored."
+	#/scripts/mount_fstab ${rootmnt} umount #because root 
+	sleep 3
+	reboot -f
+fi
+
+
+if [ "$NEED_ROLLBACK" = "y" ]; then
+	factory_restore_warnning
+	restore_warnning
+	factory_restore_warnning_again
+	#如果没有${rootmnt}/etc/fstab，则系统坏了，应该能还原，但需要在下一个版本中支持。
+	if [ ! -e ${rootmnt}/etc/fstab ]; then
+	    if [ ! -e /etc/fstab-backup ]; then
+		#myoutput  "The system has been destroyed and you can restore it in the next version."
+		myoutput  "/etc/fstab does not exist." "/etc/fstab不存在，无法还原."
+		loop_wait
+	    fi
+	fi
+	if [ ! -e ${rootmnt}/etc/.bootinfo ]; then
+	    if [ ! -e /etc/.bootinfo ]; then
+		#myoutput  "The system has been destroyed and you can restore it in the next version."
+		myoutput  "/etc/.bootinfo does not exist." "/etc/.bootinfo不存在，无法还原."
+		loop_wait
+	    fi
+	fi
+
+	mount_fstab_efi ${rootmnt} mount
+	mkdir /backup
+	myoutput  "Restoring the system, please wait for a moment." "正在还原系统"
+	#myoutput  "Restoring the system, please wait for a moment."
+	mount -o remount,rw ${rootmnt}
+        if [ $? -ne 0 ];then
+                myoutput  "Could not mount filesystem with rw arguments." "错误:无法以读写方式挂载根文件系统."
+                loop_wait
+
+        fi
+	#. /scripts/backup
+	backup-auto-efi --autorestore ${rootmnt} /backup {01234567-0123-0123-0123-0123456789ab}
+
+	RET=$?
+	display_result $RET
+
+	if [ ! -e ${rootmnt}/proc ]; then
+	    mkdir ${rootmnt}/proc
+	fi
+
+	if [ ! -e ${rootmnt}/sys ]; then
+	    mkdir ${rootmnt}/sys
+	fi
+
+	if [ ! -e ${rootmnt}/dev ]; then
+	    mkdir ${rootmnt}/dev
+	fi
+
+	if [ ! -e ${rootmnt}/run ]; then
+	    mkdir ${rootmnt}/run
+	fi
+
+	if [ ! -e ${rootmnt}/backup ]; then
+	    mkdir ${rootmnt}/backup
+	fi
+
+	myoutput  "The system has been rollbacked." "系统回滚完成"
+	reboot -f
+fi
+
+# 否则
+# TODO 执行mount_fstab_efi ${rootmnt} mount备份操作
+
+# 此时根分区已经挂载在 ${rootmnt} 处了，直接使用 ${rootmnt} 就可以了。
+# 例如查看lsb-release文件
+# cat ${rootmnt}/etc/lsb-release
+# 如果想要根据 UUID 或 LABEL 来确定分区，还可以执行blkid命令。例如，
+# /sbin/blkid -U <UUID>   该命令返回UUID对应的分区设备
+# /sbin/blkid -L <LABEL>  该命令返回LABEL对应的分区设备
+# 如果需要安装一些命令，需要写一个initramfs的hook脚本。
+
+exit 0

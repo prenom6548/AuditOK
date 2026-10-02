@@ -1,0 +1,161 @@
+From: =?utf-8?q?Maxime_B=C3=A9lair?= <maxime.belair@canonical.com>
+Date: Wed, 5 Mar 2025 16:23:20 +0100
+Subject: [PATCH] Initial profiles for os-prober and linux-boot-prober
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+Initial profiles for os-prober and linux-boot-prober and spread tests
+for these profiles.
+
+Signed-off-by: Maxime Bélair <maxime.belair@canonical.com>
+---
+ profiles/apparmor.d/linux-boot-prober      | 47 ++++++++++++++++++++++++++
+ profiles/apparmor.d/os-prober              | 54 ++++++++++++++++++++++++++++++
+ tests/profiles/linux-boot-prober/task.yaml |  7 ++++
+ tests/profiles/os-prober/task.yaml         |  7 ++++
+ 4 files changed, 115 insertions(+)
+ create mode 100644 profiles/apparmor.d/linux-boot-prober
+ create mode 100644 profiles/apparmor.d/os-prober
+ create mode 100644 tests/profiles/linux-boot-prober/task.yaml
+ create mode 100644 tests/profiles/os-prober/task.yaml
+
+diff --git a/profiles/apparmor.d/linux-boot-prober b/profiles/apparmor.d/linux-boot-prober
+new file mode 100644
+index 0000000..fc45a19
+--- /dev/null
++++ b/profiles/apparmor.d/linux-boot-prober
+@@ -0,0 +1,47 @@
++#------------------------------------------------------------------
++# Copyright (C) 2025 Canonical Ltd.
++#
++# Author: Maxime Bélair <maxime.belair@canonical.com>
++#
++# This program is free software; you can redistribute it and/or
++# modify it under the terms of version 2 of the GNU General Public
++# License published by the Free Software Foundation.
++#------------------------------------------------------------------
++#vim ft=apparmor
++
++abi <abi/4.0>,
++
++include <tunables/global>
++
++profile linux-boot-prober /usr/bin/linux-boot-prober flags=(attach_disconnected) {
++  include <abstractions/base>
++  include <abstractions/private-files-strict>
++
++  capability dac_read_search sys_admin,
++
++  mount options=(rprivate, rw) -> /,
++  mount options=(rw, nosuid, nodev) -> /var/lib/os-prober/mount/,
++  umount,
++
++  # linux-boot-prober uses a lot of dependencies: we allow everything
++  # in /usr/bin to avoid breakages on dependency updates
++  file /usr/bin/* ix,
++
++  file /usr/lib/linux-boot-probes/** ix,
++
++  file /usr/sbin/grub-probe ix,
++  file /usr/sbin/blkid ix,
++
++  file /dev/fuse w,
++  file /dev/mapper/control w,
++  file /mounted-map w,
++  file /tmp/os-prober.*/{,*} w,
++  file /var/lib/os-prober/mount/ w,
++
++  # linux-boot-prober may read the whole filesystem
++  file /{,**} r,
++
++  # Site-specific additions and overrides. See local/README for details.
++  include if exists <local/linux-boot-prober>
++
++}
+diff --git a/profiles/apparmor.d/os-prober b/profiles/apparmor.d/os-prober
+new file mode 100644
+index 0000000..7e7fa12
+--- /dev/null
++++ b/profiles/apparmor.d/os-prober
+@@ -0,0 +1,54 @@
++#------------------------------------------------------------------
++#    Copyright (C) 2025 Canonical Ltd.
++#
++#    Author: Maxime Bélair <maxime.belair@canonical.com>
++#
++#    This program is free software; you can redistribute it and/or
++#    modify it under the terms of version 2 of the GNU General Public
++#    License published by the Free Software Foundation.
++#------------------------------------------------------------------
++# vim: ft=apparmor
++
++abi <abi/4.0>,
++
++include <tunables/global>
++
++profile os-prober /usr/bin/os-prober flags=(attach_disconnected) {
++  include <abstractions/base>
++  include <abstractions/private-files-strict>
++
++  capability dac_override dac_read_search sys_admin sys_module sys_rawio,
++
++  mount options=(rprivate, rw) -> /,
++  mount options=(rw, nosuid, nodev) -> /var/lib/os-prober/mount/,
++  umount,
++
++  # This may cause "apparmor mqueue disconnected TODO" messages on some kernels.
++  # This warning is not critical, and newer kernels will fix this issue
++  mqueue getattr,
++
++  # os-prober uses a lot of dependencies (dash, find, grep, head, kmod, ...)
++  # We allow everything in /usr/bin to avoid breakages on dependency updates
++  file /usr/bin/** ix,
++
++  file /usr/lib/os-probes/** ix,
++  file /usr/lib/linux-boot-probes/** ix,
++  file /usr/sbin/blkid ix,
++  file /usr/sbin/lvm ix,
++  file /usr/sbin/grub-probe ix,
++
++  # os-prober may read the whole filesystem
++  file /{,**} r,
++
++  file /dev/fuse w,
++  file /dev/mapper/control w,
++  file /run/blkid/blkid.* wl,
++  file /run/lock/lvm/* wk,
++  file /run/lvm/hints wk,
++  file /tmp/os-prober.*/{,**} w,
++  file /var/lib/os-prober/mount/ w,
++  file /var/lib/os-prober/labels wl,
++
++  # Site-specific additions and overrides. See local/README for details.
++  include if exists <local/os-prober>
++}
+diff --git a/tests/profiles/linux-boot-prober/task.yaml b/tests/profiles/linux-boot-prober/task.yaml
+new file mode 100644
+index 0000000..9e5cafd
+--- /dev/null
++++ b/tests/profiles/linux-boot-prober/task.yaml
+@@ -0,0 +1,7 @@
++summary: smoke test for the linux-boot-prober profile
++environment:
++  # We try to execute linux-boot-prober on the first partition of the system.
++  TEST/simple_test: "df -h|grep /dev/|head -n1|cut -f1 -d' '|sed 's/.$/1/'|xargs linux-boot-prober"
++execute: |
++  eval "$TEST"
++
+diff --git a/tests/profiles/os-prober/task.yaml b/tests/profiles/os-prober/task.yaml
+new file mode 100644
+index 0000000..33418b0
+--- /dev/null
++++ b/tests/profiles/os-prober/task.yaml
+@@ -0,0 +1,7 @@
++summary: smoke test for the os-prober profile
++environment:
++  # simple os-prober test
++  TEST/simple_test: 'os-prober'
++
++execute: |
++  eval $TEST

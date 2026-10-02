@@ -1,0 +1,318 @@
+#!/usr/bin/env node
+const path = require("path");
+const fs = require("fs");
+const crypto = require("crypto");
+const {performance} = require('perf_hooks');
+const CommandLine = require('./lib/CommandLine');
+const CmakeBuild = require("./lib/CMake");
+const Platform = require("./lib/Platform");
+const Utils = require('./lib/Utils');
+const LibraryTool = require("./lib/LibraryTool");
+
+const optionDeclarations = [
+    {
+        name: "source",
+        shortName: "s",
+        type: "string",
+        description: "Specify the source path of `CMakeLists.txt`. Default is the current working directory."
+    },
+    {
+        name: "output",
+        shortName: "o",
+        type: "string",
+        description: "Specifies the output path. Default is [source]/out."
+    },
+    {
+        name: "platform",
+        shortName: "p",
+        type: "string",
+        description: "Specify the current platform. Supported platforms: [\"win\", \"mac\", \"ios\", \"linux\", \"android\", \"web\", \"ohos\"]."
+    },
+    {
+        name: "arch",
+        shortName: "a",
+        type: "string",
+        description: "Builds the specified arch only. Supported arches: [\"x86\", \"x64\", \"arm\", \"arm64\", \"arm64-simulator\", \"wasm\", \"wasm-mt\"]. Ignored if --xcframework is specified."
+    },
+    {
+        name: "debug",
+        shortName: "d",
+        type: "boolean",
+        description: "Build with debug mode enabled."
+    },
+    {
+        name: "incremental",
+        shortName: "i",
+        type: "boolean",
+        description: "Uses incremental build. The build directory will not be removed after the building finished."
+    },
+    {
+        name: "xcframework",
+        shortName: "x",
+        type: "boolean",
+        description: "Merges all arches of the output libraries into one xcframework if the current platform supports it."
+    },
+    {
+        name: "native",
+        shortName: "n",
+        type: "boolean",
+        description: "Use the native generator with cmake to build the library if current platform supports it. Default is true if --xcframework is specified."
+    },
+    {
+        name: "help",
+        shortName: "h",
+        type: "boolean",
+        description: "Print help message."
+    }
+];
+
+function printHelp(cmd) {
+    let output = "";
+    output += "Syntax:   " + cmd + " [cmakeTarget] [options] [-Dcmake_variable=value]... [-Dcmake_variable=value]\n";
+    output += "Examples: " + cmd + " pag -p ios -o ./out/ios\n";
+    output += "Examples: " + cmd + " pag --debug\n";
+    output += "Examples: " + cmd + " pag -DTGFX_USE_WEBP_ENCODE=ON -p mac\n";
+    output += CommandLine.printOptions(optionDeclarations);
+    Utils.log(output);
+}
+
+function getHash(options, cmakeArgs, platform) {
+    let list = [];
+    list.push(options.native ? "native" : "ninja");
+    list.push(options.debug ? "debug" : "release");
+    list.push(platform.name);
+    list.push(platform.toolVersion());
+    if (options.strip) {
+        list.push("strip");
+    }
+    list = list.concat(cmakeArgs);
+    let sourcePath = options.source;
+    let targetName = options.targets[0];
+    let hashConfigFile = path.resolve(sourcePath, targetName + ".hash");
+    let watchConfigFile = path.resolve(sourcePath, "cmake.watch");
+    let xcHashFiles = [];
+
+    let configFile = null;
+    if (fs.existsSync(hashConfigFile)) {
+        configFile = hashConfigFile;
+    } else if (fs.existsSync(watchConfigFile)) {
+        configFile = watchConfigFile;
+    }
+
+    if (configFile) {
+        let config = Utils.readFile(configFile);
+        let files = config.split("\n");
+        for (let file of files) {
+            let trimmed = file.trim();
+            if (!trimmed) {
+                // Skip empty lines to avoid hashing the entire source directory and rebuild every time.
+                continue;
+            }
+            let filePath = path.resolve(sourcePath, trimmed);
+            let fileList = Utils.findFiles(filePath);
+            xcHashFiles = xcHashFiles.concat(fileList);
+        }
+    } else {
+        let shallowFile = path.resolve(sourcePath, ".git/shallow");
+        let commit = "";
+        if (fs.existsSync(shallowFile)) {
+            commit = Utils.readFile(shallowFile).trim();
+        } else {
+            commit = Utils.execSafe("git rev-parse HEAD", sourcePath).trim();
+        }
+        list.push(commit);
+        const gitRoot = Utils.execSafe("git rev-parse --show-toplevel", sourcePath).trim();
+        let diff = Utils.execSafe("git diff --name-only HEAD", sourcePath);
+        if (diff) {
+            let files = diff.split("\n");
+            for (let file of files) {
+                if (!file) {
+                    continue;
+                }
+                let filePath = path.resolve(gitRoot, file.trim());
+                xcHashFiles.push(filePath);
+            }
+        }
+    }
+    let hash = crypto.createHash('md5')
+    let content = list.join("\n");
+    hash.update(content)
+    for (let filePath of xcHashFiles) {
+        hash.update(filePath);
+        let fileContent = Utils.readFile(filePath);
+        if (fileContent) {
+            hash.update(fileContent);
+        }
+    }
+    return hash.digest('hex')
+}
+
+function buildArch(options, cmakeArgs, platform, libraryTool, versionHash, message) {
+    let targetName = options.targets[0];
+    let arch = platform.archs[0];
+    let sourcePath = options.source;
+    let outPath = options.output;
+    let xcHashFile = path.join(outPath, "." + targetName + "." + arch + ".md5");
+    let currentHash = Utils.readFile(xcHashFile);
+    if (versionHash === currentHash) {
+        return false;
+    }
+    Utils.deletePath(xcHashFile);
+    currentHash = versionHash;
+    let cmakeOptions = {};
+    cmakeOptions.targets = [targetName];
+    cmakeOptions.arguments = cmakeArgs;
+    cmakeOptions.incremental = true;
+    cmakeOptions.native = options.native;
+    cmakeOptions.symbols = options.strip;
+    if (message) {
+        Utils.log(message);
+    }
+    let cmake = CmakeBuild.Create(platform);
+    let libraryMap = cmake.build(sourcePath, outPath, cmakeOptions, platform.archs);
+    if (options.strip) {
+        let libraries = libraryMap[arch];
+        for (let library of libraries) {
+            let result = libraryTool.stripAndGenerateSymbolFile(library, arch);
+            if (!result) {
+                libraryTool.stripDebugSymbols(library, arch)
+            }
+        }
+    }
+    if (currentHash) {
+        Utils.writeFile(xcHashFile, currentHash);
+    }
+    return true;
+}
+
+let args = process.argv;
+let execPath = path.resolve(process.argv[1]);
+let isCustomBuild = execPath !== __filename;
+let cmd = "node " + path.basename(args[1]);
+args = args.slice(2);
+let cmakeArgs = [];
+let cmdArgs = [];
+for (let arg of args) {
+    if (arg.indexOf("-D") === 0) {
+        cmakeArgs.push(arg);
+    } else {
+        cmdArgs.push(arg);
+    }
+}
+let options = CommandLine.parse(cmdArgs, optionDeclarations);
+if (!options.source) {
+    if (isCustomBuild) {
+        options.source = path.dirname(execPath);
+    } else {
+        options.source = process.cwd();
+    }
+} else {
+    options.source = path.resolve(options.source);
+}
+if ((!options.targets || options.targets.length === 0) && isCustomBuild) {
+    let basename = path.basename(process.argv[1]);
+    let target = "";
+    if (basename.endsWith("-build") || basename.endsWith("_build")) {
+        target = basename.substring(0, basename.length - 6);
+    } else if (basename.startsWith("build-") || basename.startsWith("build_")) {
+        target = basename.substring(6);
+    }
+    if (target) {
+        options.targets = [target];
+    }
+}
+if (!options.targets || options.targets.length !== 1) {
+    options.help = true;
+}
+if (options.help) {
+    printHelp(cmd);
+    if (options.errors.length > 0) {
+        process.exit(1);
+    }
+    return;
+}
+if (!options.debug) {
+    if (process.env["VENDOR_BUILD_TYPE"] === "Debug") {
+        options.debug = true;
+    }
+}
+let platform = Platform.Create(options.platform, options.debug, true);
+let libraryTool = LibraryTool.Create(platform);
+if (options.xcframework) {
+    options.native = true;
+    delete options.arch;
+}
+if (options.arch) {
+    platform.archs = [options.arch.toLowerCase()];
+}
+let targetName = options.targets[0];
+let buildType = platform.debug ? "debug" : "release";
+if (!options.output) {
+    options.output = path.resolve(options.source, "out", buildType, platform.name);
+} else {
+    options.output = path.resolve(options.output);
+}
+if (!options.debug) {
+    options.strip = libraryTool.stripAndGenerateSymbolFile !== undefined;
+}
+
+function performBuild(targetName, buildType, platform, options, cmakeArgs, libraryTool) {
+    let startMessage = "========================== build " + targetName + "-" + platform.name + "-" +
+        buildType + " start ==========================";
+    let startTime = performance.now();
+    startMessage += "\n[Source] " + options.source;
+    startMessage += "\n[Output] " + options.output;
+    let versionHash = getHash(options, cmakeArgs, platform);
+    let xcHashFile = path.join(options.output, "." + targetName + ".xcframework.md5");
+    let currentXCHash = "";
+    if (options.xcframework) {
+        currentXCHash = Utils.readFile(xcHashFile);
+        if (versionHash === currentXCHash) {
+            return;
+        }
+        Utils.deletePath(xcHashFile);
+    }
+    if (!options.incremental) {
+        Utils.deletePath(path.join(options.output, "build-" + targetName));
+    }
+    let archs = platform.archs;
+    for (let arch of archs) {
+        platform.archs = [arch];
+        if (buildArch(options, cmakeArgs, platform, libraryTool, versionHash, startMessage)) {
+            startMessage = "";
+        }
+    }
+    platform.archs = archs;
+
+    if (options.xcframework) {
+        if (startMessage) {
+            Utils.log(startMessage);
+            startMessage = "";
+        }
+        currentXCHash = versionHash;
+        libraryTool.createXCFramework(options.output, options.output, false, function (library) {
+            let ext = path.extname(library);
+            let name = path.parse(library).name;
+            return ext && name.indexOf(targetName) !== -1;
+        });
+        if (currentXCHash) {
+            Utils.writeFile(xcHashFile, currentXCHash);
+        }
+    }
+
+    if (!options.incremental) {
+        Utils.deletePath(path.join(options.output, "build-" + targetName));
+    }
+
+    let costTime = performance.now() - startTime;
+    let costTimeString = Utils.formatTime(costTime);
+    if (!startMessage) {
+        Utils.log("========================== build " + targetName + "-" + platform.name + "-" +
+            buildType + " end (" + costTimeString + ") ==========================");
+    }
+}
+
+// Use the build lock wrapper to avoid concurrent builds interfering with each other.
+Utils.withBuildLock(options.output, function() {
+    performBuild(targetName, buildType, platform, options, cmakeArgs, libraryTool);
+});

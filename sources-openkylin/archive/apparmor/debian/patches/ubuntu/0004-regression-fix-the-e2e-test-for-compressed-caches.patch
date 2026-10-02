@@ -1,0 +1,31 @@
+From: Ryan Lee <ryan.lee@canonical.com>
+Date: Tue, 14 Apr 2026 18:07:43 -0700
+Subject: [PATCH] regression: fix the e2e test for compressed caches
+
+Because the cache file is sometimes compressed now, we need to decompress
+the cache in the e2e test before checking the before and after.
+
+Signed-off-by: Ryan Lee <ryan.lee@canonical.com>
+---
+ tests/regression/apparmor/e2e.sh | 8 +++++++-
+ 1 file changed, 7 insertions(+), 1 deletion(-)
+
+diff --git a/tests/regression/apparmor/e2e.sh b/tests/regression/apparmor/e2e.sh
+index 911ec99..1a3a25f 100755
+--- a/tests/regression/apparmor/e2e.sh
++++ b/tests/regression/apparmor/e2e.sh
+@@ -36,7 +36,13 @@ load_and_verify() {
+ 
+     echo "profile $prof {}" | genprofile image=$prof --stdin
+ 
+-    cache_md5=$(cat $cache_dir/profile | md5sum | awk '{ print $1 }')
++    # Check for the zstd magic number and decompress the cache if needed
++    if [ $(hexdump -s 8 -n 4 --format "\"%x\"" $cache_dir/profile) = "fd2fb528" ]; then
++        # Skip past our own custom header
++        cache_md5=$(cat $cache_dir/profile | tail -c +9 | zstdcat | md5sum | awk '{ print $1 }')
++    else
++        cache_md5=$(cat $cache_dir/profile | md5sum | awk '{ print $1 }')
++    fi
+ 
+     local matching=0
+     for binary_policy in /sys/kernel/security/apparmor/policy/profiles/$prof*/raw_data; do

@@ -1,0 +1,803 @@
+#!/bin/bash
+#Author Buquan Liu, liubuquan@kylinos.cn, walt_lbq@163.com
+#本程序本质上是对backup-auto/autobackup.cpp的重写.
+#因为采用Qt程序则打包进入内核，相应的库会导致内核超过16M，故改为shell程序.
+
+#出厂备份，在系统安装时由安装器在安装完成后某个时机调用
+#脚本路径：/usr/bin/backup-factory
+#脚本参数1：--factorybackup   固定，代表制作出厂备份点
+#脚本参数2：${rootpath}    	 当前的${rootpath} 参数
+#脚本参数3：出厂备份哈希    	 用于出厂备份的系统哈希，比如 67223273d38e5df31757d7be0089c792902e439715b59e43e01e92f0ceac6785.0这种格式
+#调用样例：/usr/bin/backup-factory --factorybackup ${rootpath}  67223273d38e5df31757d7be0089c792902e439715b59e43e01e92f0ceac6785.0
+
+#backup-factory --factorybackup ${rootpath} 67223273d38e5df31757d7be0089c792902e439715b59e43e01e92f0ceac6785.0
+
+echo $*
+
+#xgs备份还原要保留更多的文件或目录:
+#kybackup/maindialog.cpp, backup-daemon/mountpoint.cpp, backup-daemon/data/backup-auto-efi
+XGS=false
+
+INFO="/etc/.bootinfo"
+METAINFO=".METAINFO"
+KB=1024
+MB=1048576
+GB=1073741824
+
+if [ $# -lt 3 ]; then
+    exit 18
+fi
+
+#是否有/data数据分区
+hasDataPartition=0
+backupORrestore=$1
+rootpath=$2
+factoryHash=$3
+m_mountPath=/data/.backup
+m_default_uuid=$4
+
+m_backuplistPath="${rootpath}${m_mountPath}/snapshots/backuplist.xml"
+
+EXCLUDEFILE="${rootpath}${m_mountPath}/snapshots/.exclude"
+PLOGFILEDIR="${rootpath}${m_mountPath}/log"
+PLOGFILE="$PLOGFILEDIR/grub.log"
+SNAPSHOTDIR="${rootpath}${m_mountPath}/snapshots/"
+LOGFILE="${rootpath}${m_mountPath}/log.txt" #LOGFILE="/tmp/log.txt"
+
+#是否是出厂备份
+m_isFactory=false
+factory_uuid="00000000-0000-0000-0000-000000000000"
+auto_uuid="01234567-0123-0123-0123-0123456789ab"
+PERSONAL_EXCLUDEFILE=".exclude.user.txt"
+PERSONAL_BACKUPFILE=".user.txt"
+m_isRetainUserData=false
+m_PrefixDestPath=""
+m_Position=false
+
+#V11相关参数变量
+#repo仓库位置
+g_repo_factory="${m_mountPath}/repo_factory"
+g_repo_system_update="${rootpath}${m_mountPath}/repo_system_update"
+g_repo_system="${rootpath}${m_mountPath}/repo_system"
+#xml元数据位置
+g_factory_backuplist_xml="${rootpath}${m_mountPath}/snapshots/factory_backuplist.xml"
+g_system_update_backuplist_xml="${rootpath}${m_mountPath}/snapshots/sys_update_backuplist.xml"
+g_system_backuplist_xml="${rootpath}${m_mountPath}/snapshots/sys_backuplist.xml"
+
+#备份点哈希
+m_restore_uuid=""
+m_system_hash=""
+m_etc_hash=""
+m_usr_hash=""
+m_var_hash=""
+m_home_hash=""
+m_others_hash=""
+m_restore_repo=""
+
+
+
+#如果/backup不存在，则创建该目录
+mkdir -p ${rootpath}${m_mountPath}
+if [ $? -ne 0 ]; then
+    echo "Could not create /backup in initrd!"
+    exit 20
+fi
+m_restoreUuid=""
+m_enabled=""
+global_system_usedDisk=0
+m_size=0
+newSize=0
+
+#-----------------------------------------------------------------
+
+#该函数是对backup-daemon/parsebackuplist.cpp中相应函数的替换
+createBackupList() {
+    local backuplistDir="${m_mountPath}/snapshots/"
+
+    if [ ! -e "$backuplistDir" ]; then
+        mkdir -p $backuplistDir
+    fi
+
+    if [ ! -e "$m_backuplistPath" ]; then
+        #echo "$m_backuplistPath file not exist!"
+
+        #第1行'>'会清空后写文件
+        echo "<?xml version='1.0'?>" >$m_backuplistPath
+        #echo "<backupList>" >>$m_backuplistPath
+        #echo "</backupList>" >>$m_backuplistPath
+        echo "<backupList/>" >>$m_backuplistPath #QDomDocument在节点为空时如此生成根节点
+    fi
+}
+
+#-----------------------------------------------------------------
+#see backup-auto/autobackup.cpp
+mountBackup() {
+
+	# 无备份分区时
+	if [ "${m_restoreUuid}xy" = "xy" ]; then
+    	echo "No backup partation. Log for backuping and restoring...."
+		mount -o defaults,bind  ${rootpath}/backup ${m_mountPath}
+		sleep 1
+	else
+		local myuuid="/dev/disk/by-uuid/"$m_restoreUuid
+    		#echo "myuuid: $myuuid"
+
+    		#support lvm by zhangze
+    		tmp_root_dev=$(mount | grep " /root " | cut -d ' ' -f 1)
+    		case "$tmp_root_dev" in
+    		/dev/mapper/*)
+        		eval $(dmsetup splitname --nameprefixes --noheadings --rows "${tmp_root_dev#/dev/mapper/}")
+        		if [ "$DM_VG_NAME" ] && [ "$DM_LV_NAME" ]; then
+            			lvm lvchange -aay -y --sysinit --ignoreskippedcluster "$DM_VG_NAME"
+        		fi
+        		;;
+    		esac
+
+    		#mount $myuuid $m_mountPath
+    		mount -o defaults,rw -U $m_restoreUuid $m_mountPath
+    		if [ $? -ne 0 ]; then
+        		echo "Mount backup failed!"
+        		exit 21
+    		fi
+	fi
+
+    mkdir -p $PLOGFILEDIR
+    if [ $? -ne 0 ]; then
+        echo "Could not create log directory in /backup"
+        exit 22
+    fi
+
+    touch $PLOGFILE
+    if [ $? -ne 0 ]; then
+        echo "Could not create log file"
+        exit 23
+    fi
+
+    echo "Log for backuping and restoring...." > $PLOGFILE
+    createBackupList #创建备份信息
+}
+
+updateStateByComment() {
+    tmpFile=${g_factory_backuplist_xml}".tmp"
+    #echo "tmpFile: $tmpFile"
+    is_first_line=1
+
+    foundComment=0 #是否发现了要修改的comment
+
+    #如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+    IFS_old=$IFS
+    IFS=$'\n'
+    while read line; do
+        #去除了前后空格
+        xxx=$(echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g")
+        echo "xxx: $xxx"
+
+		#用于检测脚本时间，针对同一次备份过程中执行update
+        if [[ "$xxx" =~ "<Comment>" ]]; then
+            if [ $xxx = "<Comment>${m_comment}</Comment>" ]; then
+                foundComment=1 #当前comment是要修改的mycomment
+            else
+                foundComment=0 #当前comment不是要修改的mycomment
+            fi
+        fi
+
+		if [[ "$xxx" =~ "<Size>" ]]; then
+            if [[ $foundComment -eq 1 ]]; then
+                line="        <Size>${newSize}</Size>"
+            fi
+        fi
+
+
+        if [[ "$xxx" =~ "<State>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="        <State>${m_state}</State>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<SystemHash>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="        <SystemHash>${m_system_hash}</SystemHash>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<etc>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <etc>${m_etc_hash}</etc>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<usr>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <usr>${m_usr_hash}</usr>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<var>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <var>${m_var_hash}</var>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<home>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <home>${m_home_hash}</home>"
+            fi
+        fi
+
+        if [ "$is_first_line" -eq 1 ]; then
+            echo "$line" >$tmpFile
+        else
+            echo "$line" >>$tmpFile
+        fi
+
+        is_first_line=0
+
+    done <"$g_factory_backuplist_xml"
+    IFS=$IFS_old
+
+    cp -f $tmpFile ${g_factory_backuplist_xml}
+    rm -f $tmpFile
+}
+
+#参照backup-daemon/backupmanager.cpp, 写日志文件
+writeLogFile() {
+    echo $1 >>$LOGFILE
+}
+
+#参照backup-daemon/mountpoint.cpp
+bFileExists() {
+    local theFile theOldFile
+    theOldFile=$1 #必须以"/"开始，但本身是个相对路径，因为没有加rootpath.
+
+    if [ $rootpath = "/" ]; then
+        theFile=$theOldFile
+    else
+        theFile=$theOldFile
+        theFile="$rootpath""$theFile"
+    fi
+
+    if [ -e "$theFile" ]; then
+        echo "$theOldFile" >>$EXCLUDEFILE
+    fi
+}
+
+
+
+CreateUuid() {
+	local uuid=`cat /proc/sys/kernel/random/uuid|tr -d "\n"`
+	while [ "$uuid" = $factory_uuid -o "$uuid" = $auto_uuid ]
+    do
+    	uuid=`cat /proc/sys/kernel/random/uuid|tr -d "\n"`
+    done
+    echo $uuid
+}
+
+findCommentByUuid() {
+
+	local ret=1
+	local local_uuid=$1
+	local comment0
+	local ret_comment
+
+	#如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+	IFS_old=$IFS
+	IFS=$'\n'
+	while read line;
+	do
+	#去除了前后空格
+		xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+		#echo "xxx: $xxx"
+
+		if [[ "$xxx" =~ "<Comment>" ]]; then
+        	comment0=`echo $xxx | awk -F "<Comment>" '{print $2}' |awk -F "</Comment>" '{print $1}' | tr -d "\n"`
+        fi
+
+        if [[ "$xxx" =~ "<Uuid>" ]]; then
+        	if [ $xxx = "<Uuid>${local_uuid}</Uuid>" ]; then
+            	ret=0
+                ret_comment=$comment0
+                break
+            fi
+        fi
+    done < "$m_backuplistPath";
+    IFS=$IFS_old
+
+	echo $ret_comment
+	return $ret
+}
+
+deleteItemByComment() {
+	local local_comment=$1
+	echo "arg local_comment = $local_comment"
+
+	tmpFile=${m_backuplistPath}".tmp"
+	cp -f ${m_backuplistPath} $tmpFile
+#        echo "tmpFile: $tmpFile"
+
+	local foundComment=0 #是否发现了要修改的comment
+	local i=0
+	local ii=0
+	local iii=0
+	local backupPointTmp=0
+
+	#如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+	IFS_old=$IFS
+	IFS=$'\n'
+	while read line;
+	do
+		let i+=1
+		#去除了前后空格
+		xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+		#echo "xxx: $xxx"
+
+		if [[ "$xxx" =~ "<BackupPoint>" ]]; then
+			backupPointTmp=$i		#记录行号
+		fi
+		if [[ "$xxx" =~ "<Comment>" ]]; then
+			if [ $xxx = "<Comment>$local_comment</Comment>" ]; then
+				foundComment=1 #当前comment是要修改的mycomment
+					ii=$backupPointTmp
+					#echo "delete foundComment = 1"
+			else
+				foundComment=0 #当前comment不是要修改的mycomment
+			fi
+		fi
+		if [[ "$xxx" =~ "</BackupPoint>" ]]; then
+			if [ $foundComment -eq 1 ]; then
+				iii=$i
+				break
+            fi
+        fi
+	done < "$tmpFile";
+	IFS=$IFS_old
+
+#        echo "ii: $ii, iii: $iii"
+
+	if [ $iii -ne 0 ]; then
+		sed -i "${ii},${iii}d" $tmpFile
+        cp -f $tmpFile ${m_backuplistPath}
+    fi
+    rm -f $tmpFile
+}
+
+
+prepare()
+{
+	#出厂备份特定UUID
+    m_uuid="$factory_uuid"
+	#获取当前时间
+    m_time=$(date "+%Y-%m-%d %H:%M:%S" | tr -d "\n")
+    m_comment="出厂备份" #这个是全局变量
+
+    #创建出厂还原repo仓库
+	$(chroot "${rootpath}" /bin/bash -c "ostree --repo=${g_repo_factory} init --mode=bare ")
+	#当前备份状态为未完成
+    state="backup unfinished"
+	
+	#写入文件m_backuplistPath=$m_mountPath"/snapshots/backuplist1.xml"
+	echo "出厂备份点XML元数据文件：${g_factory_backuplist_xml}" >>$PLOGFILE
+    tmpFile=${g_factory_backuplist_xml}".tmp"
+    echo "tmpFile: $tmpFile" >>$PLOGFILE
+    
+
+    #如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+    IFS_old=$IFS
+    IFS=$'\n'
+
+	echo "<backupList>" >>$tmpFile
+	echo "    <BackupPoint>" >>$tmpFile
+    echo "        <Comment>$m_comment</Comment>" >>$tmpFile
+    echo "        <Time>$m_time</Time>" >>$tmpFile
+    echo "        <Uuid>$m_uuid</Uuid>" >>$tmpFile
+    echo "        <Size>0</Size>" >>$tmpFile
+    echo "        <State>$state</State>" >>$tmpFile
+    echo "        <Type>0</Type>" >>$tmpFile
+    echo "        <SystemHash></SystemHash>" >>$tmpFile
+    echo "        <SystemCommitHashMap>" >>$tmpFile
+    echo "            <home></home>" >>$tmpFile
+    echo "            <etc></etc>" >>$tmpFile
+    echo "            <usr></usr>" >>$tmpFile
+    echo "            <var></var>" >>$tmpFile
+	echo "            <others></others>" >>$tmpFile
+    echo "        </SystemCommitHashMap>" >>$tmpFile
+    echo "    </BackupPoint>" >>$tmpFile
+	echo "</backupList>" >>$tmpFile
+	
+    IFS=$IFS_old$
+
+    cp -f $tmpFile ${g_factory_backuplist_xml}
+    rm -f $tmpFile
+
+}
+
+#计算当前系统哈希，并更新xml
+recordSystemHash()
+{
+	m_system_hash=$factoryHash
+	updateXmlByComment ${g_factory_backuplist_xml}
+}
+
+cpOvl()
+{
+	#出产备份，针对用户目录执行全备份，这个阶段，可能有用户数据，也可能只有临时的用户数据
+	mkdir -p ${rootpath}${m_mountPath}/temp
+	cp -aL -P -rf ${rootpath}/data/home  ${rootpath}${m_mountPath}/temp/
+
+	#出厂备份点保存ovl数据
+	rsync -avAHXr --delete  --info=progress2 --no-inc-recursive --ignore-missing-args ${rootpath}/sysroot/ostree/pkgs/ovl-${m_system_hash}/etc-ovl ${rootpath}${m_mountPath}/temp/etc-ovl
+	rsync -avAHXr --delete  --info=progress2 --no-inc-recursive --ignore-missing-args ${rootpath}/sysroot/ostree/pkgs/ovl-${m_system_hash}/usr-ovl ${rootpath}${m_mountPath}/temp/usr-ovl
+	rsync -avAHXr --delete  --info=progress2 --no-inc-recursive --ignore-missing-args ${rootpath}/sysroot/ostree/pkgs/ovl-${m_system_hash}/var-ovl ${rootpath}${m_mountPath}/temp/var-ovl
+
+    #出厂备份点保存用户模式数据
+	mkdir -p ${rootpath}${m_mountPath}/temp/others
+	OVL_FILE="${rootpath}/sysroot/ostree/deploy/kylin/deploy/${m_system_hash}/sysroot/ostree/pkgs/system-ovl.conf"
+
+	echo "find ${rootpath} -name "system-ovl.conf"" >>$PLOGFILE
+	find "${rootpath}" -name "system-ovl.conf" >>$PLOGFILE 2>&1
+
+	if [ -f "$OVL_FILE" ]; then
+		echo "cp -aL -P -rf $OVL_FILE ${rootpath}${m_mountPath}/temp/others" >>$PLOGFILE
+		cp -aL -P -rf $OVL_FILE ${rootpath}${m_mountPath}/temp/others >>$PLOGFILE 2>&1
+	else
+		echo "$OVL_FILE not exists!" >>$PLOGFILE
+	fi
+}
+
+cleanSBCTypeFiles()
+{
+	find ${rootpath}${m_mountPath}/temp/ -type s -exec rm -f {} \;
+	find ${rootpath}${m_mountPath}/temp/ -type b -exec rm -f {} \;
+	find ${rootpath}${m_mountPath}/temp/ -type c -exec rm -f {} \;
+}
+
+commitToRepo()
+{
+	m_home_hash=$(chroot "${rootpath}" /bin/bash -c "ostree --repo=${g_repo_factory} commit -b branch --tree=dir=${m_mountPath}/temp/home -s \"home\" ")
+	echo $m_home_hash
+	echo "m_home_hash :  $m_home_hash" >>$PLOGFILE
+
+	m_etc_hash=$(chroot "${rootpath}" /bin/bash -c "ostree --repo=${g_repo_factory} commit -b branch --tree=dir=${m_mountPath}/temp/etc-ovl -s \"etc-ovl\" ")
+	echo $m_etc_hash
+	echo "m_etc_hash :  $m_etc_hash" >>$PLOGFILE
+
+	m_usr_hash=$(chroot "${rootpath}" /bin/bash -c "ostree --repo=${g_repo_factory} commit -b branch --tree=dir=${m_mountPath}/temp/usr-ovl -s \"usr-ovl\" ")
+	echo $m_usr_hash
+	echo "m_usr_hash :  $m_usr_hash" >>$PLOGFILE
+
+	m_var_hash=$(chroot "${rootpath}" /bin/bash -c "ostree --repo=${g_repo_factory} commit -b branch --tree=dir=${m_mountPath}/temp/var-ovl -s \"var-ovl\" ")
+	echo $m_var_hash
+	echo "m_var_hash :  $m_var_hash" >>$PLOGFILE
+
+	m_others_hash=$(chroot "${rootpath}" /bin/bash -c "ostree --repo=${g_repo_factory} commit -b branch --tree=dir=${m_mountPath}/temp/others -s \"others\" ")
+	echo $m_others_hash
+	echo "m_others_hash :  $m_others_hash" >>$PLOGFILE
+
+	m_state="backup finished"
+
+	size_kb=$(du -s "${rootpath}${g_repo_factory}" | awk '{print $1}')
+	echo "出厂备份大小：$size_kb kb"  >>$PLOGFILE
+	if (( size_kb < 1024 )); then
+		echo "Size: ${size_kb} KB" >>$PLOGFILE
+		m_size=${size_kb}KB
+	elif (( size_kb < 1048576 )); then
+		size_mb=$(echo "scale=2; $size_kb / 1024" | bc)
+		echo "Size: ${size_mb} MB" >>$PLOGFILE
+		m_size=${size_mb}MB
+	else
+		size_gb=$(echo "scale=2; $size_kb / 1048576" | bc)
+		echo "Size: ${size_gb} GB" >>$PLOGFILE
+		m_size=${size_gb}GB
+	fi
+	echo "出厂备份大小：$m_size"  >>$PLOGFILE
+	
+	updateXmlByComment ${g_factory_backuplist_xml}
+}
+
+cleanTmpDir()
+{
+	rm -fr ${rootpath}${m_mountPath}/temp/*
+}
+
+
+updateXmlByComment() {
+    tmpFile=$1".tmp"
+    #echo "tmpFile: $tmpFile"
+    is_first_line=1
+
+    foundComment=0 #是否发现了要修改的comment
+
+    #如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+    IFS_old=$IFS
+    IFS=$'\n'
+    while read line; do
+        #去除了前后空格
+        xxx=$(echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g")
+        echo "xxx: $xxx"
+
+		#用于检测脚本时间，针对同一次备份过程中执行update
+        if [[ "$xxx" =~ "<Comment>" ]]; then
+            if [ $xxx = "<Comment>${m_comment}</Comment>" ]; then
+                foundComment=1 #当前comment是要修改的mycomment
+            else
+                foundComment=0 #当前comment不是要修改的mycomment
+            fi
+        fi
+
+		if [[ "$xxx" =~ "<Size>" ]]; then
+            if [[ $foundComment -eq 1 ]]; then
+                line="        <Size>${m_size}</Size>"
+            fi
+        fi
+
+
+        if [[ "$xxx" =~ "<State>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="        <State>${m_state}</State>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<SystemHash>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="        <SystemHash>${m_system_hash}</SystemHash>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<etc>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <etc>${m_etc_hash}</etc>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<usr>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <usr>${m_usr_hash}</usr>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<var>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <var>${m_var_hash}</var>"
+            fi
+        fi
+		
+		if [[ "$xxx" =~ "<home>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <home>${m_home_hash}</home>"
+            fi
+        fi
+
+		if [[ "$xxx" =~ "<others>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="            <others>${m_others_hash}</others>"
+            fi
+        fi
+
+        if [ "$is_first_line" -eq 1 ]; then
+            echo "$line" >$tmpFile
+        else
+            echo "$line" >>$tmpFile
+        fi
+
+        is_first_line=0
+
+    done <"$1"
+    IFS=$IFS_old
+
+    cp -f $tmpFile $1
+    rm -f $tmpFile
+}
+
+
+checkEnvForSystemRestore()
+{
+	if [ ! -d "${g_repo_system_update}" ] && [ ! -d "${g_repo_system}" ]; then
+		echo "不存在 ${g_repo_system_update}" >>$PLOGFILE
+		echo "不存在 ${g_repo_system}" >>$PLOGFILE
+		exit 32
+	fi
+	#系统还原涉及到两个xml表
+	getLastUsefulBackupPointUuid
+	#根据返回结果获取UUID
+	m_restore_uuid=$lastUsefulBackupPointUuid
+	#m_system_hash=$ret_SystemHash
+	#m_home_hash=$ret_home
+	#m_etc_hash=$ret_etc
+	#m_usr_hash=$ret_usr
+	#m_var_hash=$ret_var
+	
+	echo "要还原的备份点所在repo仓库：m_restore_repo:${m_restore_repo}" >>$PLOGFILE
+	echo "要还原的备份点UUID：m_restore_uuid:${m_restore_uuid}" >>$PLOGFILE
+	echo "要还原的系统哈希：m_system_hash:${m_system_hash}" >>$PLOGFILE
+	echo "要还原的备份点home哈希：m_home_hash:${m_home_hash}" >>$PLOGFILE
+	echo "要还原的备份点etc哈希：m_etc_hash:${m_etc_hash}" >>$PLOGFILE
+	echo "要还原的备份点usr哈希：m_usr_hash:${m_usr_hash}" >>$PLOGFILE
+	echo "要还原的备份点var哈希：m_var_hash:${m_var_hash}" >>$PLOGFILE
+}
+
+
+rsyncFactoryFromTemp()
+{
+	echo "Rsync传输home目录：">>$PLOGFILE
+	rsync -avAHXr --delete  --info=progress2 --no-inc-recursive --ignore-missing-args ${rootpath}${m_mountPath}/temp/home ${rootpath}/data/home >>$PLOGFILE 2>&1
+}
+
+roolback()
+{
+	echo "查看系统部署点：">>$PLOGFILE
+	chroot ${rootmnt} /bin/bash -c "ostree admin status --skip-signatures" >>$PLOGFILE 2>&1
+	num=$(chroot ${rootmnt} /bin/bash -c "ostree admin status --skip-signatures| grep kylin | grep -v refspec |grep -n m_system_hash | awk -F ':' '{print \$1}'  ")
+	#实际操作的行号要减一
+	new_num=$((num - 1))
+	echo "实际回滚时的序列号：$new_num">>$PLOGFILE
+	chroot ${rootmnt} /bin/bash -c "ostree admin set-default $new_num"
+}
+
+updateAfterRestore()
+{
+	echo "执行update-initramfs -u：">>$PLOGFILE
+	chroot ${rootmnt} /bin/bash -c "update-initramfs -u" >>$PLOGFILE 2>&1
+	if [ $? -ne 0 ]; then
+		echo "chroot run 'update-initramfs -u' error!"
+		echo "chroot run 'update-initramfs -u' error!" >>$PLOGFILE
+	else
+		echo "chroot run 'update-initramfs -u' ok!"
+		echo "chroot run 'update-initramfs -u' ok!" >>$PLOGFILE
+		sync
+	fi
+	
+	echo "执行update-grub：">>$PLOGFILE
+	chroot ${rootmnt} /bin/bash -c "update-grub" >>$PLOGFILE 2>&1
+	if [ $? -ne 0 ]; then
+		echo "chroot run 'update-grub' error!"
+		echo "chroot run 'update-grub' error!" >>$PLOGFILE
+	else
+		echo "chroot run 'update-grub' ok!"
+		echo "chroot run 'update-grub' ok!" >>$PLOGFILE
+		sync
+	fi
+	
+	#需要挂载/boot和/boot/efi两个目录
+	echo "执行grub-install：">>$PLOGFILE
+	chroot ${rootmnt} /bin/bash -c "grub-install -v --boot-directory=/boot/ --efi-directory=/boot/efi/ ${device_boot}" >>$PLOGFILE 2>&1
+	if [ $? -ne 0 ]; then
+		echo "chroot run 'grub-install' error!"
+		echo "chroot run 'grub-install' error!" >>$PLOGFILE
+	else
+		echo "chroot run 'grub-install' ok!"
+		echo "chroot run 'grub-install' ok!" >>$PLOGFILE
+		sync
+	fi
+}
+
+resignKsaf()
+{
+	echo "还原完成之后执行全盘打标：">>$PLOGFILE
+	echo 0 > /etc/ksaf/tmp/.status
+	echo 0 > ${rootpath}/etc/ksaf/tmp/.status
+}
+
+
+mountFstabPath()
+{
+	echo "开始挂载分区"
+	name=$1
+	echo $name
+	#RC10系统下，initrd阶段，fstab文件为空，需要找一个ovl下得目录获取fstab
+	#ovlhash=`ls -l ${rootpath}/sysroot/ostree/pkgs/|grep ovl- | tail -1 |awk -F ' ' '{print $9}'`
+	#echo $ovlhash
+	#fstabpath=${rootmnt}/sysroot/ostree/pkgs/${ovlhash}/etc-ovl/etc-upper/fstab
+	
+	#安装器阶段
+	fstabpath=${rootpath}/etc/fstab
+	
+	echo $fstabpath
+	#获取对应分区得UUID
+	Uuid=$(cat ${fstabpath} |grep ${name} |grep UUID |awk  -F ' ' '{print $1}' | awk  -F '=' '{print $2}')
+	echo $Uuid
+	#根据UUID获取对应分区名称
+	devName=`ls -l /dev/disk/by-uuid/|grep ${Uuid} | awk  -F '../..' '{print $2}'`
+	echo $devName
+	devPath=/dev${devName}
+	echo $devPath
+	#挂载对应分区
+	mount ${devPath} ${rootpath}${name}
+}
+
+mountFstabBootPath()
+{
+        echo "开始挂载分区"
+        name=$1
+        echo $name
+        #RC10系统下，initrd阶段，fstab文件为空，需要找一个ovl下得目录获取fstab
+        #ovlhash=`ls -l ${rootmnt}/sysroot/ostree/pkgs/|grep ovl- | tail -1 |awk -F ' ' '{print $9}'`
+        #echo $ovlhash
+        #fstabpath=${rootmnt}/sysroot/ostree/pkgs/${ovlhash}/etc-ovl/etc-upper/fstab
+		
+		#安装器阶段
+		fstabpath=${rootpath}/etc/fstab
+        echo $fstabpath
+        #获取对应分区得UUID
+        Uuid=$(cat ${fstabpath} |grep ${name} |grep UUID |grep -v /boot/efi |awk  -F ' ' '{print $1}' | awk  -F '=' '{print $2}')
+        echo $Uuid
+        #根据UUID获取对应分区名称
+        devName=`ls -l /dev/disk/by-uuid/|grep ${Uuid} | awk  -F '../..' '{print $2}'`
+        echo $devName
+        devPath=/dev${devName}
+        echo $devPath
+        #挂载对应分区
+        mount ${devPath} ${rootpath}${name}
+}
+
+
+mountOtherPath()
+{
+	mount --bind /proc ${rootpath}/proc
+	mount --bind /dev ${rootpath}/dev
+	mount --bind /dev/pts ${rootpath}/dev/pts
+	mount --bind /run ${rootpath}/run
+	mount --bind /sys ${rootpath}/sys
+}
+
+#-----------------------------------------------------------------
+#--------主程序从这里开始-----------------------------------------
+
+if [ "${rootpath}" = "/" ]; then
+    echo "This program is used in boot time"
+#	exit
+fi
+
+#挂载环境分区，用于后面chroot之后使用ostree环境
+mountFstabPath "/data"
+mountFstabPath "/backup"
+
+#挂载环境分区，用于后面chroot之后使用ostree环境
+mountFstabBootPath "/boot"
+mountFstabPath "/boot/efi"
+mountOtherPath
+echo "**************mount**************start" >>$PLOGFILE
+mount >>$PLOGFILE
+echo "**************mount**************end" >>$PLOGFILE
+
+#创建必要的路径  日志路径，snapshot路径
+mkdir -p ${PLOGFILEDIR}
+mkdir -p ${SNAPSHOTDIR}
+
+
+time=$(date "+%y-%m-%d %H:%M:%S" | tr -d "\n")
+echo "" >> $PLOGFILE
+echo "=========================${time}：出场备份开始！=========================" >> $PLOGFILE
+
+echo $PLOGFILE
+echo "参数:" $* >> $PLOGFILE
+echo "m_isRetainUserData=" $m_isRetainUserData >>$PLOGFILE
+
+# 临时关闭安全，因为有些文件安全保护为只读，造成备份还原无法操作
+#sm_status=$(cat /sys/kernel/security/kysec/sm)
+#file_protect=$(cat /sys/kernel/security/kysec/fpro)
+#echo "文件保护状态：${file_protect} sm_status=${sm_status}" >> ${rootpath}/var/log/backup.log
+#echo 0 > /sys/kernel/security/kysec/sm
+#echo 0 > /sys/kernel/security/kysec/fpro
+
+if [ $backupORrestore = "--factorybackup" ]; then
+	#备份前准备
+	prepare		
+	##记录当前系统哈希
+	recordSystemHash	
+	##拷贝ovl到临时目录
+	cpOvl
+	##清理s、b、c类数据
+	cleanSBCTypeFiles
+	##提交到repo仓库，并更新xml
+	commitToRepo
+	#清理临时数据
+	cleanTmpDir
+	#sync落盘数据
+	sync
+    echo "This is factorybackup" >> $PLOGFILE
+
+else
+    echo "Not correct command" >> $PLOGFILE
+    #exit 18
+fi
+
+exit 0

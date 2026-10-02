@@ -1,0 +1,98 @@
+From: =?utf-8?b?Ik1hcmNvIFRyZXZpc2FuIChUcmV2acOxbyki?= <mail@3v1n0.net>
+Date: Tue, 17 Oct 2023 04:04:13 +0200
+Subject: auth: Add KbdintResult definition to define result values explicitly
+
+kbdint result vfunc may return various values, so use an enum to make it
+clearer what each result means without having to dig into the struct
+documentation.
+
+Origin: https://github.com/openssh/openssh-portable/pull/452
+---
+ auth-bsdauth.c |  2 +-
+ auth-pam.c     | 10 +++++-----
+ auth.h         |  5 +++++
+ auth2-chall.c  |  4 ++--
+ 4 files changed, 13 insertions(+), 8 deletions(-)
+
+--- a/auth-bsdauth.c
++++ b/auth-bsdauth.c
+@@ -111,7 +111,7 @@
+ 	authctxt->as = NULL;
+ 	debug3("bsdauth_respond: <%s> = <%d>", responses[0], authok);
+ 
+-	return (authok == 0) ? -1 : 0;
++	return (authok == 0) ? KbdintResultFailure : KbdintResultSuccess;
+ }
+ 
+ static void
+--- a/auth-pam.c
++++ b/auth-pam.c
+@@ -1013,15 +1013,15 @@
+ 	switch (ctxt->pam_done) {
+ 	case 1:
+ 		sshpam_authenticated = 1;
+-		return (0);
++		return KbdintResultSuccess;
+ 	case 0:
+ 		break;
+ 	default:
+-		return (-1);
++		return KbdintResultFailure;
+ 	}
+ 	if (num != 1) {
+ 		error("PAM: expected one response, got %u", num);
+-		return (-1);
++		return KbdintResultFailure;
+ 	}
+ 	if ((buffer = sshbuf_new()) == NULL)
+ 		fatal_f("sshbuf_new failed");
+@@ -1038,10 +1038,10 @@
+ 	}
+ 	if (ssh_msg_send(ctxt->pam_psock, PAM_AUTHTOK, buffer) == -1) {
+ 		sshbuf_free(buffer);
+-		return (-1);
++		return KbdintResultFailure;
+ 	}
+ 	sshbuf_free(buffer);
+-	return (1);
++	return KbdintResultAgain;
+ }
+ 
+ static void
+--- a/auth.h
++++ b/auth.h
+@@ -51,6 +51,7 @@
+ typedef struct Authctxt Authctxt;
+ typedef struct Authmethod Authmethod;
+ typedef struct KbdintDevice KbdintDevice;
++typedef int KbdintResult;
+ 
+ struct Authctxt {
+ 	sig_atomic_t	 success;
+@@ -116,6 +117,10 @@
+ 	int	(*userauth)(struct ssh *, const char *);
+ };
+ 
++#define KbdintResultFailure -1
++#define KbdintResultSuccess 0
++#define KbdintResultAgain 1
++
+ /*
+  * Keyboard interactive device:
+  * init_ctx	returns: non NULL upon success
+--- a/auth2-chall.c
++++ b/auth2-chall.c
+@@ -335,11 +335,11 @@
+ 	free(response);
+ 
+ 	switch (res) {
+-	case 0:
++	case KbdintResultSuccess:
+ 		/* Success! */
+ 		authenticated = authctxt->valid ? 1 : 0;
+ 		break;
+-	case 1:
++	case KbdintResultAgain:
+ 		/* Authentication needs further interaction */
+ 		if (send_userauth_info_request(ssh) == 1)
+ 			authctxt->postponed = 1;

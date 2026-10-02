@@ -1,0 +1,82 @@
+/*!
+    \page widget-bridge-feature.html
+    \title WidgetBridge Feature Access
+
+    \brief WidgetBridge 功能桥接机制说明.
+
+    \section1 背景
+    WidgetBridge 用于在 QML 中访问当前 \c Widget 关联的领域能力对象 (feature object)。
+    ukui-quick 只定义桥接协议，不定义具体业务状态类型；具体状态对象应由宿主应用或插件自身提供。
+
+    \section1 核心接口
+    feature bridge 由以下接口共同完成:
+
+    \list
+    \li WidgetBridge: QML/C++ 查询入口
+    \li WidgetFeatureProvider: feature provider 协议
+    \li WidgetInterface::featureProviders(): 插件侧 provider 注册入口
+    \endlist
+
+    provider 返回的 feature object 必须是 \c QObject 派生对象，生命周期由 provider 自身负责。
+
+    \section1 注册方式
+    \section2 插件侧注册
+    插件动态库可通过实现 WidgetInterface::featureProviders() 返回 provider 列表：
+
+    \code
+    QList<QObject *> TestPlugin::featureProviders()
+    {
+        return {m_featureProvider};
+    }
+    \endcode
+
+    \section2 宿主侧注册
+    宿主应用可在运行时为指定 widget 注册 provider：
+
+    \code
+    WidgetBridge::setFeatureProvider(widget, provider);
+    \endcode
+
+    如果需要清空宿主侧 provider，可调用:
+
+    \code
+    WidgetBridge::clearFeatureProvider(widget);
+    \endcode
+
+    \section1 解析顺序
+    当多个 provider 声明同一个 feature key 时，解析顺序如下:
+
+    \list
+    \li 插件侧 provider 优先于宿主侧 provider
+    \li 同一来源内部，后注册或后返回的 provider 优先
+    \endlist
+
+    因此，宿主侧 provider 更适合作为默认能力补充；插件自身声明的 provider 可以覆盖宿主给出的通用实现。
+
+    \section1 QML 用法
+    \qml
+    import UkuiQuickFramework 1.0
+
+    WidgetItem {
+        readonly property var searchState: WidgetBridge.feature("org.ukui.search.state")
+
+        Component.onCompleted: {
+            console.log("has state feature:", WidgetBridge.hasFeature("org.ukui.search.state"))
+            console.log("available features:", WidgetBridge.availableFeatures)
+        }
+    }
+    \endqml
+
+    当查询失败时，WidgetBridge::feature() 返回 \c nullptr ，并更新 WidgetBridge::lastError。
+
+    \section1 设计边界
+    WidgetBridge 只负责 feature key 到 \c QObject 的映射与查询，不负责:
+
+    \list
+    \li 定义具体业务状态类型
+    \li 统一不同业务模块的数据结构
+    \li 管理 feature object 的内部生命周期
+    \endlist
+
+    具体业务对象建议保留在宿主应用或插件所属仓库内，以降低 ukui-quick 的领域耦合。
+ */

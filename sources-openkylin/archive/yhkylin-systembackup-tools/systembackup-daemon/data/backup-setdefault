@@ -1,0 +1,69 @@
+#!/bin/sh
+
+#bin/sh脚本下，很多指令不生效且会直接导致退出，所以status查询，数字计算等都不可在这类脚本中执行
+#后续可以考虑通过传入参数执行挂载
+
+
+num=$1
+devPathBoot=$2
+devPathData=$3
+
+mountOtherPath()
+{
+	mount --bind /run /root/run
+	mount --bind /sys /root/sys
+	mount --bind /proc /root/proc
+	#mount /dev/nvme0n1p2 /root/boot
+	#mount /dev/nvme0n1p5 /root/data
+	#mount /dev/nvme0n1p4 /root/backup
+
+	mount $devPathBoot /root/boot
+	mount $devPathData /root/data
+}
+
+
+umountOtherPath()
+{
+	umount /root/proc >>$PLOGFILE
+	umount /root/run >>$PLOGFILE
+	umount /root/sys >>$PLOGFILE
+	umount /root/boot >>$PLOGFILE
+	umount /root/data >>$PLOGFILE
+	# umount /root/backup >>$PLOGFILE
+}
+
+#--------主程序从这里开始-----------------------------------------
+#创建必要的路径  日志路径，snapshot路径
+#mkdir -p /root/data/.backup/log
+PLOGFILE=/root/data/.backup/log/grub.log
+#挂载环境分区，用于后面chroot之后使用ostree环境，优先挂载/data，输出日志
+
+mountOtherPath
+echo "**************mount**************start" >>$PLOGFILE
+mount >>$PLOGFILE
+echo "**************mount**************end" >>$PLOGFILE
+
+
+time=$(date "+%y-%m-%d %H:%M:%S" | tr -d "\n")
+echo "" >> $PLOGFILE
+echo "=========================${time}：执行set default ！=========================" >> $PLOGFILE
+
+
+chroot ${rootmnt} /bin/sh -c "/usr/lib/ostree/ostree-remount" >>$PLOGFILE 2>&1
+echo "查看系统部署点：">>$PLOGFILE
+chroot ${rootmnt} /bin/sh -c "ostree admin status --skip-signatures" >>$PLOGFILE 2>&1
+echo "chroot ${rootmnt} /bin/sh -c 'ostree admin set-default ${num}' ">>$PLOGFILE 
+chroot ${rootmnt} /bin/sh -c "ostree admin set-default ${num}"
+echo $? >> $PLOGFILE
+echo "查看系统部署点：">>$PLOGFILE
+chroot ${rootmnt} /bin/sh -c "ostree admin status --skip-signatures" >>$PLOGFILE 2>&1
+echo "==============================================" >> $PLOGFILE
+mount >> $PLOGFILE
+echo "==============================================" >> $PLOGFILE
+
+
+
+#卸载已挂在磁盘
+umountOtherPath
+
+exit 0

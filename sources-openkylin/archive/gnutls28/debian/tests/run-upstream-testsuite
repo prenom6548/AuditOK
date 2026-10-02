@@ -1,0 +1,71 @@
+#! /bin/sh
+
+set -e
+
+export srcdir=`pwd`/tests
+export builddir=`pwd`/nonexist-builddir
+PKGTDIR=`pwd`/b4deb/pkgtest
+
+rm -rf "$PKGTDIR"
+mkdir -p "$PKGTDIR" "$PKGTDIR/top_builddir/tests"
+export top_builddir="$PKGTDIR/top_builddir"
+export abs_top_builddir="$PKGTDIR/top_builddir"
+export FAKETIME="datefudge"
+export FAKETIME_F_OPT="-s"
+export ac_cv_faketime_works="yes"
+
+if [ `dpkg-architecture -qDEB_HOST_ARCH_BITS` = 64 ] ; then
+	export ac_cv_sizeof_time_t=8
+else
+	export ac_cv_sizeof_time_t=4
+fi
+
+cd "$PKGTDIR"
+
+export  CLI=/usr/bin/gnutls-cli \
+	SERV=/usr/bin/gnutls-serv \
+	CERTTOOL=/usr/bin/certtool P11TOOL=/usr/bin/p11tool \
+	PSKTOOL=/usr/bin/psktool DANETOOL=/usr/bin/danetool \
+	DCLI=/usr/bin/gnutls-cli-debug \
+	OCSPTOOL=/usr/bin/ocsptool \
+	GNUTLS_TIMEWRAPPER_CMD=faketime \
+	ENABLE_GOST=1 \
+	PKCS12_ITER_COUNT=600000
+
+# Set the sizeof(time_t) to the correct value for the platform, to ensure we
+# run the correct tests.
+if test -z "${ac_cv_sizeof_time_t}"; then
+	if [ "$(date  --date=@2147483648 +%Y 2>/dev/null)" = "2038" ]; then
+		export ac_cv_sizeof_time_t=8
+	else
+		export ac_cv_sizeof_time_t=4
+	fi
+fi
+
+count=1
+for i in $(find ../../tests/ -type f -name '*.sh' | \
+	grep -Ev 'tests/gnutls-cli-debug.sh|tests/system-override-hash.sh|tests/pkgconfig.sh|tests/system-override-sig.sh|tests/system-override-sig-allowlist.sh|tests/system-override-sig-tls.sh|tests/tls13/prf-early.sh|tests/dtls/dtls.sh|tests/dtls/dtls-resume.sh|tests/cert-tests/tolerate-invalid-time.sh|tests/slow/|tests/protocol-set-allowlist.sh|tests/system-override-hash-allowlist.sh|tests/system-override-curves-allowlist.sh|tests/ktls.sh|tests/ktls_keyupdate.sh' \
+	| env LC_COLLATE=C.UTF-8 sort) ; do
+	echo "running [$count]$i ..."
+	case $(dirname $i) in
+		*/tests/suite)
+			d=suite;;
+		*/tests/cert-tests)
+			d=cert-tests;;
+		*/tests/slow)
+			d=slow;;
+		*)
+			d="";;
+	esac
+	if env srcdir=../../tests/$d sh $i ; then
+		echo SUCCESS [$count]$i
+	else
+		if [ $? = 77 ] ; then
+			echo SKIPPED [$count]$i
+		else
+			echo FAIL [$count]$i
+			false
+		fi
+	fi
+	count=$((${count}+1))
+done

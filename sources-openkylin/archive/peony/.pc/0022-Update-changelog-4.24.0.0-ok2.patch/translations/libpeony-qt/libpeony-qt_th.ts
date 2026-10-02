@@ -1,0 +1,5384 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="th">
+<context>
+    <name>ColorPushButton</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/color-pushbutton.cpp" line="59"/>
+        <source>Label Management ...</source>
+        <translation>การจัดการป้ายชื่อ ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/color-pushbutton.cpp" line="79"/>
+        <source>Remove &quot;%1&quot;</source>
+        <translation>ลบ &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/color-pushbutton.cpp" line="99"/>
+        <source>add  &quot;%1&quot;</source>
+        <translation>เพิ่ม &quot;%1&quot;</translation>
+    </message>
+</context>
+<context>
+    <name>ConnectServerDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.ui" line="14"/>
+        <source>Connect to Sever</source>
+        <translation>เชื่อมต่อกับเซิร์ฟเวอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.ui" line="32"/>
+        <source>Domain</source>
+        <translation>โดเมน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.ui" line="39"/>
+        <source>Password</source>
+        <translation>รหัสผ่าน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.ui" line="55"/>
+        <source>Save Password</source>
+        <translation>บันทึกรหัสผ่าน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.ui" line="62"/>
+        <source>User</source>
+        <translation>ผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.ui" line="82"/>
+        <source>Anonymous</source>
+        <translation>ไม่ระบุตัวตน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.cpp" line="35"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-server-dialog.cpp" line="36"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>DiscControl</name>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccontrol.cpp" line="477"/>
+        <source> is busy!</source>
+        <translation> กำลังใช้งานอยู่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccontrol.cpp" line="516"/>
+        <source>is busy!</source>
+        <translation>กำลังใช้งาน!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccontrol.cpp" line="563"/>
+        <source> not support udf at present.</source>
+        <translation> ขณะนี้ยังไม่รองรับ UDF</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccontrol.cpp" line="570"/>
+        <source>unmount disc failed before udf format.</source>
+        <translation>ไม่สามารถยกเลิกการเชื่อมต่อดิสก์ก่อนการฟอร์แมต udf ได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccontrol.cpp" line="723"/>
+        <source>DVD+RW udf format fail.</source>
+        <translation>การฟอร์แมต udf สำหรับ DVD+RW ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccontrol.cpp" line="755"/>
+        <source>preparation failed before DVD-RW udf format.</source>
+        <translation>การเตรียมการล้มเหลวก่อนการฟอร์แมต udf สำหรับ DVD-RW</translation>
+    </message>
+</context>
+<context>
+    <name>FileLabelModel</name>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="39"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="57"/>
+        <source>Red</source>
+        <translation>แดง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="40"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="58"/>
+        <source>Orange</source>
+        <translation>ส้ม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="41"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="59"/>
+        <source>Yellow</source>
+        <translation>สีเหลือง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="42"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="60"/>
+        <source>Green</source>
+        <translation>สีเขียว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="43"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="61"/>
+        <source>Blue</source>
+        <translation>สีฟ้า</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="44"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="62"/>
+        <source>Purple</source>
+        <translation>สีม่วง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="131"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="447"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="131"/>
+        <location filename="../../libpeony-qt/model/file-label-model.cpp" line="447"/>
+        <source>Label or color is duplicated.</source>
+        <translation>ป้ายหรือสีซ้ำกัน</translation>
+    </message>
+</context>
+<context>
+    <name>FileOperationHelper</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-helper.cpp" line="162"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-helper.cpp" line="177"/>
+        <source>Burn failed</source>
+        <translation>การเบิร์นล้มเหลว</translation>
+    </message>
+</context>
+<context>
+    <name>Format_Dialog</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="20"/>
+        <source>Dialog</source>
+        <translation>กล่องตอบโต้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="32"/>
+        <source>rom_size</source>
+        <translation>ขนาดรอม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="45"/>
+        <source>system</source>
+        <translation>ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="59"/>
+        <source>vfat/fat32</source>
+        <translation>วีเอฟเอต/ไขมัน 32</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="64"/>
+        <source>exfat</source>
+        <translation>เอ็กซ์แฟต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="69"/>
+        <source>ntfs</source>
+        <translation>เอ็นทีเอฟเอส</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="74"/>
+        <source>ext4</source>
+        <translation>ต่อ 4</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="88"/>
+        <source>device_name</source>
+        <translation>ชื่ออุปกรณ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="114"/>
+        <source>clean it total</source>
+        <translation>ล้างทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="127"/>
+        <source>ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="140"/>
+        <source>close</source>
+        <translation>เปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.ui" line="179"/>
+        <source>TextLabel</source>
+        <translation>ฉลากข้อความ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="155"/>
+        <source>Format</source>
+        <translation>รูปแบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="171"/>
+        <source>Rom size:</source>
+        <translation>ขนาดรอม:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="177"/>
+        <source>Filesystem:</source>
+        <translation>ระบบไฟล์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="187"/>
+        <source>Disk name:</source>
+        <translation>ชื่อดิสก์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="217"/>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1438"/>
+        <source>Completely erase(Time is longer, please confirm!)</source>
+        <translation>ลบทั้งหมด(ใช้เวลาค่อนข้างนาน กรุณายืนยัน)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="236"/>
+        <source>Set password</source>
+        <translation>ตั้งรหัสผ่าน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="237"/>
+        <source>Set password for volume based on LUKS (only ext4)</source>
+        <translation>ตั้งรหัสผ่านสำหรับโวลุ่มแบบ LUKS (เฉพาะ ext4)</translation>
+    </message>
+    <message>
+        <source>Formatting to the ext4 file system may cause other users to be unable to read or write to the USB drive</source>
+        <translation type="vanished">การฟอร์แมตเป็นระบบไฟล์ ext4 อาจทำให้ผู้ใช้อื่นไม่สามารถอ่านหรือเขียน USB ไดรฟ์ได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="258"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="259"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="381"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1453"/>
+        <source>Error locking device: Failed to deactivate device: Device or resource busy</source>
+        <translation>ข้อผิดพลาดในการล็อกอุปกรณ์: ปิดการใช้งานอุปกรณ์ไม่สำเร็จ: อุปกรณ์หรือทรัพยากรกำลังถูกใช้งาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="243"/>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="633"/>
+        <source>Warning</source>
+        <translation>เตือนสติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="243"/>
+        <source>Formatting to the ext4 file system may cause other users to be unable to read or write to the device</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="633"/>
+        <source>Device name cannot start with a decimal point, Please re-enter!</source>
+        <translation>ชื่ออุปกรณ์ไม่สามารถเริ่มต้นด้วยจุดทศนิยมได้ กรุณาป้อนใหม่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="645"/>
+        <source>Enter Password:</source>
+        <translation>ป้อนรหัสผ่าน:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="663"/>
+        <source>Password too short, please retype a password more than 6 characters</source>
+        <translation>รหัสผ่านสั้นเกินไป กรุณาพิมพ์รหัสผ่านใหม่ที่มีความยาวมากกว่า 6 ตัวอักษร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="762"/>
+        <source>%1/sec, %2 remaining.</source>
+        <translation>%1/วินาที เหลืออีก %2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="762"/>
+        <source>over one day</source>
+        <translation>มากกว่าหนึ่งวัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="764"/>
+        <source>getting progress...</source>
+        <translation>กำลังรับความคืบหน้า...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1362"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1362"/>
+        <source>Block not existed!</source>
+        <translation>ไม่พบบล็อก!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1409"/>
+        <source>Formatting. Do not close this window</source>
+        <translation>กำลังฟอร์แมต โปรดอย่าปิดหน้าต่างนี้</translation>
+    </message>
+</context>
+<context>
+    <name>KyFileDialogRename</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="116"/>
+        <source>Renaming &quot;%1&quot;</source>
+        <translation>กำลังเปลี่ยนชื่อ &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="117"/>
+        <source>Renaming failed, the reason is: %1</source>
+        <translation>เปลี่ยนชื่อไม่สำเร็จ เนื่องจาก: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="117"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="126"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="135"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="140"/>
+        <source>Filename too long</source>
+        <translation>ชื่อไฟล์ยาวเกินไป</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="121"/>
+        <source>Copying &quot;%1&quot;</source>
+        <translation>กำลังคัดลอก &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="125"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="134"/>
+        <source>To &quot;%1&quot;</source>
+        <translation>ไปยัง &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="126"/>
+        <source>Copying failed, the reason is: %1</source>
+        <translation>การคัดลอกล้มเหลว เนื่องจาก: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="130"/>
+        <source>Moving &quot;%1&quot;</source>
+        <translation>กำลังย้าย &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="135"/>
+        <source>Moving failed, the reason is: %1</source>
+        <translation>การย้ายล้มเหลว เนื่องจาก: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="139"/>
+        <source>File operation error:</source>
+        <translation>ข้อผิดพลาดในการดำเนินการไฟล์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="140"/>
+        <source>The reason is: %1</source>
+        <translation>สาเหตุคือ: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="159"/>
+        <source>Truncation</source>
+        <translation>การตัดสั้น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="160"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="267"/>
+        <source>Save</source>
+        <translation>บันทึก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="219"/>
+        <source>All applications</source>
+        <translation>แอปพลิเคชันทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="222"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="266"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="326"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="223"/>
+        <source>Apply</source>
+        <translation>สมัคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="262"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="312"/>
+        <source>Bytes</source>
+        <translation>ไบต์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="318"/>
+        <source>Front truncation</source>
+        <translation>การตัดสั้นด้านหน้า</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="319"/>
+        <source>Post truncation</source>
+        <translation>การตัดสั้นด้านหลัง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="375"/>
+        <source>Description: Skip copying files of the current type</source>
+        <translation>คำอธิบาย: ข้ามการคัดลอกไฟล์ประเภทนี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="380"/>
+        <source>truncate interval</source>
+        <translation>ช่วงเวลาการตัดสั้น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="381"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="399"/>
+        <source>.</source>
+        <translation> </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="382"/>
+        <source>Explanation: Truncate the portion of the file name that exceeds %1 bytes and select</source>
+        <translation>คำอธิบาย: ตัดทอนส่วนของชื่อไฟล์ที่เกิน %1 ไบต์และเลือก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="400"/>
+        <source>Explanation: When renaming a file name, ensure it is within %1 bytes and </source>
+        <translation>คำอธิบาย: เมื่อเปลี่ยนชื่อไฟล์ ต้องแน่ใจว่ามีขนาดไม่เกิน %1 ไบต์และ </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="391"/>
+        <source>Description: By default, save to &quot;%1/扩展&quot;.</source>
+        <translation>หมายเหตุ: โดยค่าเริ่มต้น ให้บันทึกเป็น %1/extension</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="398"/>
+        <source>modify the name</source>
+        <translation>แก้ไขชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="158"/>
+        <source>Skip</source>
+        <translation>ข้าม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="161"/>
+        <source>Rename</source>
+        <translation>ตั้งชื่อใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-dialog/kyfiledialogrename.cpp" line="327"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+</context>
+<context>
+    <name>MainProgressBar</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="559"/>
+        <source>starting ...</source>
+        <translation>กำลังเริ่มต้น ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="672"/>
+        <source>cancel all file operations</source>
+        <translation>ยกเลิกการดำเนินการไฟล์ทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="505"/>
+        <source>Minimize</source>
+        <translation>น้อยที่สุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="513"/>
+        <source>Close</source>
+        <translation>ปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="516"/>
+        <source>Are you sure to cancel all file operations?</source>
+        <translation>คุณแน่ใจหรือไม่ที่จะยกเลิกการดำเนินการกับไฟล์ทั้งหมด?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="673"/>
+        <source>Are you sure want to cancel all file operations</source>
+        <translation>คุณแน่ใจหรือไม่ว่าต้องการยกเลิกการดำเนินการกับไฟล์ทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="518"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="675"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="496"/>
+        <source>File Operation</source>
+        <translation>การดำเนินการไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="519"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="676"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="560"/>
+        <source>Calculating time</source>
+        <translation>กำลังคำนวณเวลา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="708"/>
+        <source>continue</source>
+        <translation>ดำเนินการต่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="710"/>
+        <source>pause</source>
+        <translation>หยุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="800"/>
+        <source>canceling ...</source>
+        <translation>กำลังยกเลิก ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="803"/>
+        <source>sync ...</source>
+        <translation>กำลังซิงค์ ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="825"/>
+        <source> %1MB/s Est. time left: %2</source>
+        <translation> %1MB/s เวลาที่เหลือโดยประมาณ: %2</translation>
+    </message>
+</context>
+<context>
+    <name>MessageDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1942"/>
+        <source>Peony</source>
+        <translation>พีโอนี่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1961"/>
+        <source>Forcibly pulling out the device may cause data
+ loss or device exceptions!</source>
+        <translation>การถอดอุปกรณ์โดยไม่ปลอดภัยอาจทำให้ข้อมูลสูญหาย
+ หรือเกิดข้อผิดพลาดกับอุปกรณ์!</translation>
+    </message>
+</context>
+<context>
+    <name>OtherButton</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="907"/>
+        <source>Other Queue</source>
+        <translation>คิวอื่น ๆ</translation>
+    </message>
+</context>
+<context>
+    <name>PasswordInputDlg</name>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="2159"/>
+        <source>Peony</source>
+        <translation>พีโอนี่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="2160"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="2161"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::AdvanceSearchBar</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="55"/>
+        <source>Key Words</source>
+        <translation>คำสำคัญ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="58"/>
+        <source>input key words...</source>
+        <translation>ป้อนคำสำคัญ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="59"/>
+        <source>Search Location</source>
+        <translation>ตำแหน่งค้นหา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="61"/>
+        <source>choose search path...</source>
+        <translation>เลือกเส้นทางค้นหา...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="68"/>
+        <source>browse</source>
+        <translation>เบราส์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="69"/>
+        <source>File Type</source>
+        <translation>ประเภทไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="71"/>
+        <source>Choose File Type</source>
+        <translation>เลือกประเภทไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="76"/>
+        <source>Modify Time</source>
+        <translation>แก้ไขเวลา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="78"/>
+        <source>Choose Modify Time</source>
+        <translation>เลือกเวลาการแก้ไข</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="83"/>
+        <source>File Size</source>
+        <translation>ขนาดไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="85"/>
+        <source>Choose file size</source>
+        <translation>เลือกขนาดไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="90"/>
+        <source>show hidden file</source>
+        <translation>แสดงไฟล์ที่ซ่อนไว้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="91"/>
+        <source>go back</source>
+        <translation>กลับ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="92"/>
+        <source>hidden advance search page</source>
+        <translation>ซ่อนหน้าการค้นหาแบบขั้นสูง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="94"/>
+        <source>file name</source>
+        <translation>ชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="95"/>
+        <source>content</source>
+        <translation>เนื้อหา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="100"/>
+        <source>search</source>
+        <translation>ค้นหา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="101"/>
+        <source>start search</source>
+        <translation>เริ่มการค้นหา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="174"/>
+        <source>Select path</source>
+        <translation>เลือกเส้นทาง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="193"/>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="203"/>
+        <source>Operate Tips</source>
+        <translation>คำแนะนำการดำเนินงาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="195"/>
+        <source>Have no key words or search location!</source>
+        <translation>ไม่มีคำสำคัญหรือตำแหน่งการค้นหา!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/advance-search-bar.cpp" line="205"/>
+        <source>Search file name or content at least choose one!</source>
+        <translation>ต้องเลือกค้นหาชื่อไฟล์หรือเนื้อหาอย่างน้อยหนึ่งอย่าง!</translation>
+    </message>
+    <message>
+        <source>all</source>
+        <translation type="obsolete">全部</translation>
+    </message>
+    <message>
+        <source>file folder</source>
+        <translation type="obsolete">文件夹</translation>
+    </message>
+    <message>
+        <source>image</source>
+        <translation type="obsolete">图片</translation>
+    </message>
+    <message>
+        <source>video</source>
+        <translation type="obsolete">视频</translation>
+    </message>
+    <message>
+        <source>audio</source>
+        <translation type="obsolete">音频</translation>
+    </message>
+    <message>
+        <source>wps file</source>
+        <translation type="obsolete">WPS文件</translation>
+    </message>
+    <message>
+        <source>others</source>
+        <translation type="obsolete">其它</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::AdvancedLocationBar</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/advanced-location-bar.cpp" line="264"/>
+        <source>Search File</source>
+        <translation>คันหาไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::AdvancedPermissionsPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="738"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="968"/>
+        <source>Permission refinement settings</source>
+        <translation>การตั้งค่าการกำหนดสิทธิ์แบบละเอียด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="859"/>
+        <source>Permission refinement settings tip</source>
+        <translation>คำแนะนำการปรับการตั้งค่าการอนุญาต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="859"/>
+        <source>Setting ACL permissions will result in a change in the user group permissions for basic permissions. Do you need to continue setting ACL permissions?</source>
+        <translation>การตั้งค่าสิทธิ์ ACL จะทำให้สิทธิ์ของกลุ่มผู้ใช้ในสิทธิ์พื้นฐานเปลี่ยนแปลง คุณต้องการดำเนินการตั้งค่าสิทธิ์ ACL ต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="891"/>
+        <source>User</source>
+        <translation>ผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="891"/>
+        <source>Read</source>
+        <translation>อ่านแล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="891"/>
+        <source>Write</source>
+        <translation>เขียน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="891"/>
+        <source>Executable</source>
+        <translation>ปฏิบัติการได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="981"/>
+        <source>delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="983"/>
+        <source>Inherit permission</source>
+        <translation>สืบทอดสิทธิ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1001"/>
+        <source>Input domain/user name</source>
+        <translation>ป้อนชื่อโดเมน/ชื่อผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1002"/>
+        <source>Add Other User</source>
+        <translation>เพิ่มผู้ใช้เพิ่มเติม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1009"/>
+        <source>Add</source>
+        <translation>เพิ่ม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1031"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1032"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1237"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1244"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1250"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1237"/>
+        <source>Please enter a user name</source>
+        <translation>กรุณากรอกชื่อผู้ใช้ของคุณ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1244"/>
+        <source>User does not exist</source>
+        <translation>ผู้ใช้ไม่มีอยู่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="1250"/>
+        <source>User already exists in list</source>
+        <translation>มีผู้ใช้อยู่ในรายการอยู่แล้ว</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::AllFileLaunchDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="393"/>
+        <source>Choose new application</source>
+        <translation>เลือกแอปพลิเคชันใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="395"/>
+        <source>Choose an Application to open this file</source>
+        <translation>เลือกแอปพลิเคชันเพื่อเปิดไฟล์นี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="402"/>
+        <source>apply now</source>
+        <translation>นำไปใช้ตอนนี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="410"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="415"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::BasicPropertiesPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="385"/>
+        <source>Choose a custom icon</source>
+        <translation>เลือกไอคอนที่กำหนดเอง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="306"/>
+        <source>Type:</source>
+        <translation>ชนิด:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="250"/>
+        <source>Name</source>
+        <translation>ชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="251"/>
+        <source>Location</source>
+        <translation>ที่อยู่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="557"/>
+        <source>symbolLink</source>
+        <translation>ลิงก์สัญลักษณ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="561"/>
+        <source>Folder</source>
+        <translation>โฟลเดอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="313"/>
+        <source>Include:</source>
+        <translation>ประกอบด้วย:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="248"/>
+        <source>Change</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="249"/>
+        <source>Move</source>
+        <translation>เคลื่อนย้าย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="317"/>
+        <source>Open with:</source>
+        <translation>เปิดด้วย:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="321"/>
+        <source>Description:</source>
+        <translation>คำบรรยาย:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="324"/>
+        <source>Select multiple files</source>
+        <translation>เลือกหลายไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="329"/>
+        <source>Size:</source>
+        <translation>ขนาด:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="330"/>
+        <source>Space Usage:</source>
+        <translation>การใช้พื้นที่:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="341"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="348"/>
+        <source>Time Create:</source>
+        <translation>เวลาสร้าง:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="342"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="349"/>
+        <source>Time Modified:</source>
+        <translation>เวลาที่แก้ไข:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="343"/>
+        <source>Time Access:</source>
+        <translation>การเข้าถึงเวลา:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="356"/>
+        <source>Readonly</source>
+        <translation>อ่านได้อย่างเดียว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="357"/>
+        <source>Hidden</source>
+        <translation>ซ่อน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="358"/>
+        <source>Executable</source>
+        <translation>ปฏิบัติการได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="361"/>
+        <source>Readonly (just applied by subfiles)</source>
+        <translation>อ่านอย่างเดียว (ใช้กับไฟล์ย่อยเท่านั้น)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="375"/>
+        <source>Property:</source>
+        <translation>คุณสมบัติ:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="773"/>
+        <source>usershare</source>
+        <translation>การแชร์ผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="910"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1244"/>
+        <source>%1 (%2 Bytes)</source>
+        <translation>%1 (%2 ไบต์)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="388"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="389"/>
+        <source>Images (*.png *.jpg *.jpeg *.svg)</source>
+        <translation>รูปภาพ (.png *.jpg *.jpeg *.svg)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="400"/>
+        <source>Please select a image that is smaller than 1MB.</source>
+        <translation>กรุณาเลือกรูปภาพที่มีขนาดเล็กกว่า 1MB</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1493"/>
+        <source>Choose a new folder:</source>
+        <translation>เลือกโฟลเดอร์ใหม่:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1500"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1505"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1500"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1505"/>
+        <source>cannot move a folder to itself !</source>
+        <translation>ไม่สามารถย้ายโฟลเดอร์ไปยังตัวเองได้!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1238"/>
+        <source>%1 Bytes</source>
+        <translation>%1 ไบต์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1255"/>
+        <source>%1 files, %2 folders</source>
+        <translation>%1 ไฟล์ %2 โฟลเดอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1370"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1372"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1377"/>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1379"/>
+        <source>Can&apos;t get remote file information</source>
+        <translation>ไม่สามารถรีโมทข้อมูลไฟล์จากระยะไกลได้</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::ClipboardUtils</name>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/clipboard-utils.cpp" line="357"/>
+        <source>Can not cut: The source file and the target file are the same</source>
+        <translation>ตัดไม่ได้: ไฟล์ต้นฉบับเป็นไฟล์เดียวกับไฟล์เป้าหมาย</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::ComputerPropertiesPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="113"/>
+        <source>CPU Name:</source>
+        <translation>ชื่อ CPU:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="114"/>
+        <source>CPU Core:</source>
+        <translation>คอร์CPU:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="115"/>
+        <source>Memory Size:</source>
+        <translation>ขนาดความจำ:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="127"/>
+        <source>User Name: </source>
+        <translation>ชื่อผู้ใช้: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="128"/>
+        <source>Desktop: </source>
+        <translation>เดสก์ท็อป: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="136"/>
+        <source>You should mount this volume first</source>
+        <translation>คุณควรเชื่อมต่อโวลุ่มนี้ก่อน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="174"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="441"/>
+        <source>Name: </source>
+        <translation>ชื่อ: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="174"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="174"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="175"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="446"/>
+        <source>Total Space: </source>
+        <translation>พื้นที่รวม: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="176"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="447"/>
+        <source>Used Space: </source>
+        <translation>พื้นที่ที่ใช้ไป: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="181"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="182"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="183"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="188"/>
+        <source>In calculation...</source>
+        <translation>กำลังคำนวณ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="184"/>
+        <source>/root used: </source>
+        <translation>/รูทที่ใช้ไป: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="185"/>
+        <source>/home used: </source>
+        <translation>/โฮมที่ใช้ไป: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="186"/>
+        <source>/usershare used: </source>
+        <translation>/การแชร์ผู้ใช้ที่ใช้ไป: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="192"/>
+        <source>/data/* used: </source>
+        <translation>/ข้อมูล/* ใช้ไป: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="211"/>
+        <source>Unknow (No permission)</source>
+        <translation>ไม่รู้จัก (ไม่มีสิทธิ์การเข้าถึง)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="308"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="448"/>
+        <source>Free Space: </source>
+        <translation>พื้นที่ว่าง: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="309"/>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="450"/>
+        <source>Type: </source>
+        <translation>ประเภท: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="471"/>
+        <source>Kylin Burner</source>
+        <translation>Kylin เบิร์นเนอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="480"/>
+        <source>Open with: 	</source>
+        <translation>เปิดด้วย: 	</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page.cpp" line="488"/>
+        <source>Unknown</source>
+        <translation>ที่ไม่ทราบ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::ConnectServerDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="158"/>
+        <source>Connect to server</source>
+        <translation>เชื่อมต่อกับเซิร์ฟเวอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="186"/>
+        <source>Ip</source>
+        <translation>ไอพี</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="188"/>
+        <source>Port</source>
+        <translation>ท่าเรือ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="189"/>
+        <source>Type</source>
+        <translation>ประเภท</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="203"/>
+        <source>Charset Encoding</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="206"/>
+        <source>Default</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="230"/>
+        <source>Personal Collection server:</source>
+        <translation>เซิร์ฟเวอร์คอลเลกชันส่วนตัว:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="243"/>
+        <source>Add</source>
+        <translation>เพิ่ม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="244"/>
+        <source>Delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="245"/>
+        <source>Connect</source>
+        <translation>เชื่อมต่อ</translation>
+    </message>
+    <message>
+        <source>Ip input error, please re-enter!</source>
+        <translation type="vanished">ข้อผิดพลาดในการกรอกไอพี กรุณากรอกใหม่!</translation>
+    </message>
+    <message>
+        <source>Port input error, please re-enter!</source>
+        <translation type="vanished">ข้อผิดพลาดในการกรอกพอร์ต กรุณากรอกใหม่!</translation>
+    </message>
+    <message>
+        <source>Warning</source>
+        <translation type="vanished">เตือนสติ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::ConnectServerLogin</name>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="611"/>
+        <source>The login user</source>
+        <translation>ผู้ใช้ที่ล็อกอิน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="620"/>
+        <source>Please enter the %1&apos;s user name and password of the server.</source>
+        <translation>กรุณากรอกชื่อผู้ใช้และรหัสผ่านของเซิร์ฟเวอร์ %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="627"/>
+        <source>User&apos;s identity</source>
+        <translation>ตัวตนของผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="628"/>
+        <source>Guest</source>
+        <translation>แขก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="646"/>
+        <source>Name</source>
+        <translation>ชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="647"/>
+        <source>Password</source>
+        <translation>รหัสผ่าน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="649"/>
+        <source>domain</source>
+        <translation>โดเมน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="674"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="675"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="629"/>
+        <source>Registered users</source>
+        <translation>ผู้ใช้ที่ลงทะเบียน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/connect-to-server-dialog.cpp" line="648"/>
+        <source>Remember the password</source>
+        <translation>จดจำรหัสผ่าน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::CreateLinkInternalPlugin</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="159"/>
+        <source>Create Link to Desktop</source>
+        <translation>สร้างลิงก์ไปยังเดสก์ท็อป</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="189"/>
+        <source>Create Link to...</source>
+        <translation>สร้างลิงก์ไปยัง...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="194"/>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="198"/>
+        <source>Choose a Directory to Create Link</source>
+        <translation>เลือกไดเรกทอรีเพื่อสร้างลิงก์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::CreateSharedFileLinkMenuPlugin</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="337"/>
+        <source>Create Link to Desktop</source>
+        <translation>สร้างลิงก์ไปยังเดสก์ท็อป</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::CreateTemplateOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/create-template-operation.cpp" line="95"/>
+        <source>File create error</source>
+        <translation>เกิดข้อผิดพลาดในการสร้างไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/create-template-operation.cpp" line="97"/>
+        <source>Can not create %1: Read-only mode, can not write-in</source>
+        <translation>ไม่สามารถสร้าง %1: โหมดอ่านอย่างเดียว ไม่สามารถเขียนข้อมูลได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/create-template-operation.cpp" line="108"/>
+        <source>NewFile</source>
+        <translation>ไฟล์ใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/create-template-operation.cpp" line="131"/>
+        <source>Create file</source>
+        <translation>สร้างไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/create-template-operation.cpp" line="145"/>
+        <source>NewFolder</source>
+        <translation>โฟลเดอร์ใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/create-template-operation.cpp" line="171"/>
+        <location filename="../../libpeony-qt/file-operation/create-template-operation.cpp" line="212"/>
+        <source>Create file error</source>
+        <translation>ข้อผิดพลาดในการสร้างไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::CustomErrorHandler</name>
+    <message>
+        <location filename="../../libpeony-qt/custom-error-handler.cpp" line="43"/>
+        <source>Is Error Handled?</source>
+        <translation>จัดการข้อผิดพลาดแล้วหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/custom-error-handler.cpp" line="48"/>
+        <source>Error not be handled correctly</source>
+        <translation>ข้อผิดพลาดไม่ได้รับการจัดการอย่างถูกต้อง</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::CustomIconDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1946"/>
+        <source>Change folder icon</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1969"/>
+        <source>Select an icon from the system icons:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1970"/>
+        <source>Custom Icons:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1988"/>
+        <source>Click Browse to load a custom icon</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1990"/>
+        <source>Browse</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1999"/>
+        <source>Restore default</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="2000"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="2001"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DefaultAcitonWidget</name>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="566"/>
+        <source>No default app</source>
+        <translation>ไม่มีแอปพลิเคชันเริ่มต้น</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DefaultOpenWithWidget</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="459"/>
+        <source>No default app</source>
+        <translation>ไม่มีแอปพลิเคชันเริ่มต้น</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DefaultPreviewPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="85"/>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="242"/>
+        <source>Select the file you want to preview</source>
+        <translation>เลือกไฟล์ที่คุณต้องการดูตัวอย่าง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="233"/>
+        <source>Can not preview this file</source>
+        <translation>ไม่สามารถดูตัวอย่างไฟล์นี้ได้</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DefaultPreviewPageFactory</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page-factory.h" line="50"/>
+        <source>Default Preview</source>
+        <translation>การดูตัวอย่างเริ่มต้น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page-factory.h" line="53"/>
+        <source>This is the Default Preview of peony-qt</source>
+        <translation>นี่คือตัวอย่างเริ่มต้นของ พีโอนี่</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DetailsPropertiesPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="181"/>
+        <source>Name:</source>
+        <translation>ชื่อ:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="184"/>
+        <source>File type:</source>
+        <translation>ประเภทไฟล์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="200"/>
+        <source>Location:</source>
+        <translation>ที่ตั้ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="214"/>
+        <source>yyyy-MM-dd, HH:mm:ss</source>
+        <translation>dd-MM-yyyy, HH:mm:ss</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="204"/>
+        <source>Create time:</source>
+        <translation>เวลาสร้าง:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="208"/>
+        <source>Modify time:</source>
+        <translation>เวลาที่แก้ไข:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="211"/>
+        <source>Time Access:</source>
+        <translation>การเข้าถึงเวลา:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="240"/>
+        <source>File size:</source>
+        <translation>ขนาดไฟล์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="247"/>
+        <source>Width:</source>
+        <translation>ความกว้าง:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="250"/>
+        <source>Height:</source>
+        <translation>ความสูง:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="258"/>
+        <source>Owner</source>
+        <translation>เจ้าของ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="259"/>
+        <source>Owner:</source>
+        <translation>เจ้าของ:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="261"/>
+        <source>Computer</source>
+        <translation>คอมพิวเตอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="262"/>
+        <source>Computer:</source>
+        <translation>คอมพิวเตอร์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="318"/>
+        <source>%1 (this computer)</source>
+        <translation>%1 (คอมพิวเตอร์นี้)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="325"/>
+        <source>Unknown</source>
+        <translation>ที่ไม่ทราบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="373"/>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="374"/>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="375"/>
+        <source>Can&apos;t get remote file information</source>
+        <translation>ไม่สามารถรีโมทข้อมูลไฟล์จากระยะไกลได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="390"/>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page.cpp" line="391"/>
+        <source>%1 px</source>
+        <translation>%1 พิกเซล</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DirectoryView::IconView</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/view/icon-view/icon-view.cpp" line="362"/>
+        <source>warn</source>
+        <translation>การแจ้งเตือน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/view/icon-view/icon-view.cpp" line="362"/>
+        <source>This operation is not supported.</source>
+        <translation>การดำเนินการนี้ไม่ได้รับการสนับสนุน</translation>
+    </message>
+    <message>
+        <source>Icon View</source>
+        <translation type="obsolete">图标视图</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DirectoryView::ListView</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/view/list-view/list-view.cpp" line="669"/>
+        <source>warn</source>
+        <translation>การแจ้งเตือน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/view/list-view/list-view.cpp" line="669"/>
+        <source>This operation is not supported.</source>
+        <translation>การดำเนินการนี้ไม่ได้รับการสนับสนุน</translation>
+    </message>
+    <message>
+        <source>List View</source>
+        <translation type="obsolete">列表视图</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::DirectoryViewMenu</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="523"/>
+        <source>Add to bookmark</source>
+        <translation>เพิ่มไปยังบุคมาร์ค</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="754"/>
+        <source>New Folder</source>
+        <translation>สร้างโฟลเดอร์ใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="972"/>
+        <source>Name</source>
+        <translation>ชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="974"/>
+        <source>File Type</source>
+        <translation>ประเภทไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="975"/>
+        <source>File Size</source>
+        <translation>ขนาดไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="375"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="506"/>
+        <source>Open in New Window</source>
+        <translation>เปิดในหน้าใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="359"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="491"/>
+        <source>Open in New Tab</source>
+        <translation>เปิดในแท็บใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="430"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="550"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="649"/>
+        <source>Open</source>
+        <translation>เปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="437"/>
+        <source>Open failed</source>
+        <translation>เปิดล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="437"/>
+        <source>Open directory failed, you have no permission!</source>
+        <translation>เปิดไดเรกทอรีล้มเหลว คุณไม่มีสิทธิ์เข้าถึง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="469"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="574"/>
+        <source>Open with...</source>
+        <translation>เปิดด้วย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="484"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="637"/>
+        <source>More applications...</source>
+        <translation>แอปพลิเคชันเพิ่มเติม...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="620"/>
+        <source>File Manager</source>
+        <translation>ผู้จัดการไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="663"/>
+        <source>Open %1 selected files</source>
+        <translation>เปิดไฟล์ที่เลือกแล้ว %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="716"/>
+        <source>New</source>
+        <translation>สร้างใหม่</translation>
+    </message>
+    <message>
+        <source>Empty File</source>
+        <translation type="vanished">ไฟล์ที่ว่างเปล่า</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="750"/>
+        <source>Folder</source>
+        <translation>โฟลเดอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="762"/>
+        <source>Text Document</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="945"/>
+        <source>View Type</source>
+        <translation>ประเภทวิว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="965"/>
+        <source>Sort By</source>
+        <translation>จัดเรียงตาม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="976"/>
+        <source>Original Path</source>
+        <translation>เส้นทางต้นฉบับ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1016"/>
+        <source>Ascending Order</source>
+        <translation>ลำดับเพิ่ม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1588"/>
+        <source>Clean the Trash</source>
+        <translation>ล้างถังขยะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1773"/>
+        <source>Mount</source>
+        <translation>เมาท์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1989"/>
+        <source>MultiSelect</source>
+        <translation>เลือกหลายรายการ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1015"/>
+        <source>Descending Order</source>
+        <translation>ลำดับลด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1045"/>
+        <source>Folder First</source>
+        <translation>แสดงโฟลเดอร์ก่อน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1054"/>
+        <source>Chinese First</source>
+        <translation>เรียงตามภาษาจีนก่อน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1063"/>
+        <source>Show Hidden</source>
+        <translation>แสดงไฟล์ที่ซ่อน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1157"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1166"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1329"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1623"/>
+        <source>Copy</source>
+        <translation>คัดลอก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1650"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1755"/>
+        <source>File:&quot;%1&quot; is not exist, did you moved or deleted it?</source>
+        <translation>ไม่มีไฟล์: &quot;%1&quot; คุณย้ายหรือลบไปแล้วหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1135"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1616"/>
+        <source>Cut</source>
+        <translation>ต้ด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1221"/>
+        <source>Delete to trash</source>
+        <translation>ลบไปที่ถังขยะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1279"/>
+        <source>Paste</source>
+        <translation>แปะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1074"/>
+        <source>Refresh</source>
+        <translation>รีเฟรช</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1356"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1580"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1699"/>
+        <source>Select All</source>
+        <translation>เลือกทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1404"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1502"/>
+        <source>Properties</source>
+        <translation>ลักษณะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1553"/>
+        <source>format</source>
+        <translation>ฟอร์แมต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1667"/>
+        <source>Restore</source>
+        <translation>เรียกคืน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1234"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1342"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1630"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1648"/>
+        <source>Delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="973"/>
+        <source>Time Modified</source>
+        <translation>เวลาที่แก้ไข</translation>
+    </message>
+    <message>
+        <source>Path</source>
+        <translation type="vanished">เส้นทาง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1019"/>
+        <source>Newest to oldest</source>
+        <translation>จากใหม่ที่สุดไปเก่าสุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1020"/>
+        <source>Oldest to newest</source>
+        <translation>จากเก่าที่สุดไปใหม่ที่สุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1023"/>
+        <source>Files from large to small</source>
+        <translation>ไฟล์จากขนาดใหญ่ไปขนาดเล็ก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1024"/>
+        <source>Files from small to large</source>
+        <translation>ไฟล์จากขนาดเล็กไปขนาดใหญ่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1040"/>
+        <source>Sort Preferences</source>
+        <translation>การตั้งค่าการเรียงลำดับ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1754"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1238"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1250"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1259"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1269"/>
+        <source>Delete forever</source>
+        <translation>ลบอย่างถาวร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1181"/>
+        <source>Rename</source>
+        <translation>ตั้งชื่อใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1366"/>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1660"/>
+        <source>Reverse Select</source>
+        <translation>เลือกแบบย้อนกลับ</translation>
+    </message>
+    <message>
+        <source>&amp;Clean the Trash</source>
+        <translation type="vanished">&amp;ล้างข้อมูลในถังขยะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1708"/>
+        <source>Clean All</source>
+        <translation>ล้างทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1725"/>
+        <source>Open Parent Folder in New Window</source>
+        <translation>เปิดโฟลเดอร์หลักในหน้าต่างใหม่</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::ExtensionsManagerWidget</name>
+    <message>
+        <location filename="../../libpeony-qt/extensions-manager-widget.cpp" line="72"/>
+        <source>Extensions Manager</source>
+        <translation>ผู้จัดการส่วนขยาย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/extensions-manager-widget.cpp" line="76"/>
+        <source>Available extensions</source>
+        <translation>ส่วนขยายที่ใช้งานได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/extensions-manager-widget.cpp" line="78"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/extensions-manager-widget.cpp" line="80"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FMWindow</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/fm-window.cpp" line="93"/>
+        <source>File Manager</source>
+        <translation>ผู้จัดการไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/fm-window.cpp" line="171"/>
+        <source>advanced search</source>
+        <translation>การค้นหาขั้นสูง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/fm-window.cpp" line="174"/>
+        <source>clear record</source>
+        <translation>ล้างประวัติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/fm-window.cpp" line="279"/>
+        <source>Loaing... Press Esc to stop a loading.</source>
+        <translation>กำลังโหลด... กด Esc เพื่อหยุดการโหลด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/fm-window.cpp" line="324"/>
+        <source>Undo</source>
+        <translation>ยกเลิกคำสั่ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/fm-window.cpp" line="331"/>
+        <source>Redo</source>
+        <translation>ทำใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/fm-window.cpp" line="435"/>
+        <source>New Folder</source>
+        <translation>สร้างโฟลเดอร์ใหม่</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileBatchRenameOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-batch-rename-operation.cpp" line="75"/>
+        <source>File Rename error</source>
+        <translation>ข้อผิดพลาดในการเปลี่ยนชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-batch-rename-operation.cpp" line="76"/>
+        <source>Invalid file name %1%2%3 .</source>
+        <translation>ชื่อไฟล์ %1%2%3 ไม่ถูกต้อง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-batch-rename-operation.cpp" line="91"/>
+        <source>File Rename warning</source>
+        <translation>คำเตือนการเปลี่ยนชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-batch-rename-operation.cpp" line="92"/>
+        <source>Are you sure to hidden these files?</source>
+        <translation>คุณแน่ใจหรือไม่ที่จะซ่อนไฟล์เหล่านี้?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-batch-rename-operation.cpp" line="209"/>
+        <location filename="../../libpeony-qt/file-operation/file-batch-rename-operation.cpp" line="246"/>
+        <source>Rename file error</source>
+        <translation>ข้อผิดพลาดในการเปลี่ยนชื่อไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileCopy</name>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="222"/>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="236"/>
+        <source>Error in source or destination file path!</source>
+        <translation>ข้อผิดพลาดในเส้นทางไฟล์ต้นทางหรือปลายทาง!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="245"/>
+        <source>Error when copy file: %1, can not copy special files, skip this file and continue?</source>
+        <translation>ข้อผิดพลาดเมื่อคัดลอกไฟล์: %1 ไม่สามารถคัดลอกไฟล์พิเศษ ข้ามไฟล์นี้และดำเนินการต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="282"/>
+        <source>Can not copy %1, file doesn&apos;t exist. Has the file been renamed or moved?</source>
+        <translation>ไม่สามารถคัดลอก %1 ไฟล์ไม่มีอยู่ ไฟล์ถูกเปลี่ยนชื่อหรือย้ายแล้วหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="304"/>
+        <source>The dest file &quot;%1&quot; has existed!</source>
+        <translation>ไฟล์ปลายทาง &quot;%1&quot; มีอยู่แล้ว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="325"/>
+        <source>Vfat/FAT32 file systems do not support a single file that occupies more than 4 GB space!</source>
+        <translation>ระบบไฟล์ Vfat/FAT32 ไม่รองรับไฟล์เดียวที่ใช้พื้นที่มากกว่า 4 GB!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="350"/>
+        <source>Error writing to file: Input/output error</source>
+        <translation>ข้อผิดพลาดในการเขียนไฟล์: ข้อผิดพลาดอินพุต/เอาต์พุต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="557"/>
+        <source>Failed to create %1. Please ensure if it is in root directory, or if the device supports gphoto2 protocol correctly.</source>
+        <translation>การสร้าง %1 ล้มเหลว กรุณาตรวจสอบว่าอยู่ในไดเรกทอรีรูทหรือไม่ หรืออุปกรณ์รองรับโปรโตคอล gphoto2 อย่างถูกต้องหรือไม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="563"/>
+        <source>Failed to create %1.</source>
+        <translation>การสร้าง %1 ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="453"/>
+        <source>Please check whether the device has been removed!</source>
+        <translation>กรุณาตรวจสอบว่าอุปกรณ์ถูกถอดออกแล้วหรือไม่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="455"/>
+        <source>Write file error: There is no available disk space for device!</source>
+        <translation>ข้อผิดพลาดการเขียนไฟล์: ไม่มีพื้นที่ดิสก์เหลือบนอุปกรณ์!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="551"/>
+        <source>File opening failure</source>
+        <translation>การเปิดไฟล์ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="341"/>
+        <location filename="../../libpeony-qt/file-copy.cpp" line="470"/>
+        <source>operation cancel</source>
+        <translation>การดำเนินการถูกยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileCopyOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="245"/>
+        <source>Create folder %1 failed: %2</source>
+        <translation>การสร้างโฟลเดอร์ %1 ล้มเหลว: %2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="249"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="591"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="991"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1006"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1105"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1194"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1383"/>
+        <source>File copy error</source>
+        <translation>ข้อผิดพลาดในการคัดลอกไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="268"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="302"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="621"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="653"/>
+        <source>The file name exceeds the limit</source>
+        <translation>ชื่อไฟล์เกินขีดจำกัด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="256"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="599"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="609"/>
+        <source>Cannot opening file, permission denied!</source>
+        <translation>ไม่สามารถเปิดไฟล์ได้ ถูกปฏิเสธการเข้าถึง!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="601"/>
+        <source>File:%1 was not found.</source>
+        <translation>ไม่พบไฟล์:%1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1092"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="994"/>
+        <source>Can not copy %1 to %2: Read-only mode, can not write-in</source>
+        <translation>ไม่สามารถคัดลอก %1 ไปยัง %2: โหมดอ่านอย่างเดียว ไม่สามารถเขียนได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1009"/>
+        <source>Can not copy %1 to %2: Permission denied</source>
+        <translation>ไม่สามารถคัดลอก %1 ไปยัง %2: ถูกปฏิเสธการเข้าถึง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1094"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1100"/>
+        <source>%1 no space left on device. Copy file size: %2 GB, Space needed: %3 GB.</source>
+        <translation>%1 ไม่มีพื้นที่เหลือบนอุปกรณ์ ขนาดไฟล์ที่คัดลอก: %2 GB พื้นที่ที่ต้องการ: %3 GB</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1242"/>
+        <source>Link file error</source>
+        <translation>ข้อผิดพลาดในการลิงก์ไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1385"/>
+        <source>Burning does not support replacement</source>
+        <translation>การเบิร์นไม่รองรับการแทนที่</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileDeleteOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-delete-operation.cpp" line="132"/>
+        <location filename="../../libpeony-qt/file-operation/file-delete-operation.cpp" line="190"/>
+        <source>File delete error</source>
+        <translation>ข้อผิดพลาดในการลบไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-delete-operation.cpp" line="230"/>
+        <source>Delete file error</source>
+        <translation>ข้อผิดพลาดในการลบไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-delete-operation.cpp" line="233"/>
+        <source>Invalid Operation! Can not delete &quot;%1&quot;.</source>
+        <translation>การดำเนินการไม่ถูกต้อง! ไม่สามารถลบ &quot;%1&quot;</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileEnumerator</name>
+    <message>
+        <location filename="../../libpeony-qt/file-enumerator.cpp" line="587"/>
+        <source>The password dialog box is canceled</source>
+        <translation>กล่องโต้ตอบรหัสผ่านถูกยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-enumerator.cpp" line="589"/>
+        <source>Message recipient disconnected from message bus without replying!</source>
+        <translation>ผู้รับข้อความตัดการเชื่อมต่อจากบัสข้อความโดยไม่ตอบกลับ!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-enumerator.cpp" line="591"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileInfo</name>
+    <message>
+        <location filename="../../libpeony-qt/file-info.cpp" line="308"/>
+        <source>data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-info.cpp" line="581"/>
+        <source>folder</source>
+        <translation>โฟลเดอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-info.cpp" line="585"/>
+        <location filename="../../libpeony-qt/file-info.cpp" line="593"/>
+        <location filename="../../libpeony-qt/file-info.cpp" line="595"/>
+        <source>file</source>
+        <translation>ไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-info.cpp" line="588"/>
+        <source>text file</source>
+        <translation>ไฟล์ข้อความ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileInfoJob</name>
+    <message>
+        <location filename="../../libpeony-qt/file-info-job.cpp" line="457"/>
+        <source>Bytes</source>
+        <translation>ไบต์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileInfosJob</name>
+    <message>
+        <location filename="../../libpeony-qt/file-infos-job.cpp" line="349"/>
+        <source>Bytes</source>
+        <translation>ไบต์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileItem</name>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="281"/>
+        <source>Warning</source>
+        <translation>เตือนสติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="283"/>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="377"/>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="389"/>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="397"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="363"/>
+        <source>Open Link failed</source>
+        <translation>เปิดลิงก์ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="364"/>
+        <source>File not exist, do you want to delete the link file?</source>
+        <translation>ไฟล์ไม่มีอยู่ คุณต้องการลบไฟล์ลิงก์หรือไม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="378"/>
+        <source>Can not open path &quot;%1&quot;，permission denied.</source>
+        <translation>ไม่สามารถเปิดเส้นทาง &quot;%1&quot; ได้ ถูกปฏิเสธการเข้าถึง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item.cpp" line="388"/>
+        <source>Can not find path &quot;%1&quot;，are you moved or renamed it?</source>
+        <translation>ไม่พบเส้นทาง &quot;%1&quot; คุณย้ายหรือเปลี่ยนชื่อแล้วหรือไม่?</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileItemModel</name>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="396"/>
+        <source>child(ren)</source>
+        <translation>ไฟล์ย่อย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="383"/>
+        <source>Symbol Link, </source>
+        <translation>ลิงก์สัญลักษณ์ </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="309"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="454"/>
+        <source>File Name</source>
+        <translation>ชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="458"/>
+        <source>Delete Date</source>
+        <translation>วันที่ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="460"/>
+        <source>Create Date</source>
+        <translation>วันที่สร้าง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="463"/>
+        <source>Time Modified</source>
+        <translation>เวลาที่แก้ไข</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="467"/>
+        <source>File Size</source>
+        <translation>ขนาดไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="470"/>
+        <source>Original Path</source>
+        <translation>เส้นทางต้นฉบับ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="472"/>
+        <source>Path</source>
+        <translation>เส้นทาง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="815"/>
+        <source>File %1 is existed in space, please not add file repeatly.</source>
+        <translation>ไฟล์ %1 มีอยู่ในพื้นที่แล้ว กรุณาอย่าเพิ่มไฟล์ซ้ำ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="821"/>
+        <source>Operation not supported</source>
+        <translation>การดำเนินการไม่ได้รับการสนับสนุน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/file-item-model.cpp" line="465"/>
+        <source>File Type</source>
+        <translation>ประเภทไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileLabelInternalMenuPlugin</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="246"/>
+        <source>Add File Label</source>
+        <translation>เพิ่มป้ายชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="269"/>
+        <source>Delete All Label</source>
+        <translation>ลบป้ายชื่อทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="284"/>
+        <source>Label Management ...</source>
+        <translation>การจัดการป้ายชื่อ ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="297"/>
+        <source>add  &quot;%1&quot;</source>
+        <translation>เพิ่ม &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="298"/>
+        <source>Remove &quot;%1&quot;</source>
+        <translation>ลบ &quot;%1&quot;</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileLabelWidget</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/menu-plugin-manager.cpp" line="490"/>
+        <source>Label Management ...</source>
+        <translation>การจัดการป้ายชื่อ ...</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileLauchDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="166"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="182"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="197"/>
+        <source>The opening mode of the %1 %2</source>
+        <translation>โหมดการเปิด %1 %2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="166"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="167"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="197"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="198"/>
+        <source>unknown</source>
+        <translation>ที่ไม่ทราบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="167"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="198"/>
+        <source>No application is set to open file &quot;%1 %2&quot;</source>
+        <translation>ไม่มีแอปพลิเคชันตั้งค่าให้เปิดไฟล์ &quot;%1 %2&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="172"/>
+        <source>Still using the last opened application:</source>
+        <translation>ยังคงใช้แอปพลิเคชันที่เปิดล่าสุด:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="182"/>
+        <source>known</source>
+        <translation>ทราบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="185"/>
+        <source>Open application is used by default:</source>
+        <translation>ใช้แอปพลิเคชันเปิดโดยค่าเริ่มต้น:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="206"/>
+        <source>You can search in the Software Center for an application that can open this file, or select an existing application on your computer.</source>
+        <translation>คุณสามารถค้นหาในศูนย์ซอฟต์แวร์เพื่อหาแอปพลิเคชันที่สามารถเปิดไฟล์นี้ หรือเลือกแอปพลิเคชันที่มีอยู่บนคอมพิวเตอร์ของคุณ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="228"/>
+        <source>Other application:</source>
+        <translation>แอปพลิเคชันอื่น:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="230"/>
+        <source>Select application:</source>
+        <translation>เลือกแอปพลิเคชัน:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="279"/>
+        <source>Always open the %1%2 file with this application</source>
+        <translation>เปิดไฟล์ %1%2 ด้วยแอปพลิเคชันนี้เสมอ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="305"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="312"/>
+        <source>Choose other application</source>
+        <translation>เลือกแอปพลิเคชันอื่น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="306"/>
+        <source>Go to the software center to install applications</source>
+        <translation>ไปที่ Software Center เพื่อติดตั้งแอป</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="319"/>
+        <source>Go to application center</source>
+        <translation>ไปที่ศูนย์แอปพลิเคชัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="377"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="378"/>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="456"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="447"/>
+        <source>Desktop files(*.desktop)</source>
+        <translation>ไฟล์เดสก์ท็อป (*.เดสก์ท็อป)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="454"/>
+        <source>Select Open Action</source>
+        <translation>เลือกการดำเนินการเปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-lauch-dialog.cpp" line="455"/>
+        <source>Select</source>
+        <translation>เลือก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileLaunchAction</name>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="240"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="337"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="550"/>
+        <source>Execute Directly</source>
+        <translation>ดำเนินการโดยตรง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="241"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="338"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="551"/>
+        <source>Execute in Terminal</source>
+        <translation>ดำเนินการในเทอร์มินัล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="244"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="342"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="555"/>
+        <source>Detected launching an executable file %1, you want?</source>
+        <translation>ตรวจพบการเปิดไฟล์ปฏิบัติการ %1 คุณต้องการ?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="281"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="403"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="589"/>
+        <source>Open Failed</source>
+        <translation>การเปิดล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="281"/>
+        <source>Can not open %1, file not exist, is it deleted?</source>
+        <translation>ไม่สามารถเปิด %1 ไฟล์ไม่มีอยู่ ถูกลบไปแล้วหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="213"/>
+        <source>No Permission</source>
+        <translation>ไม่มีสิทธิ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="213"/>
+        <source>File is not readable. Please check if file has read permisson.</source>
+        <translation>ไฟล์ไม่สามารถอ่านได้ กรุณาตรวจสอบว่าไฟล์มีสิทธิ์การอ่านหรือไม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="334"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="547"/>
+        <source>By Default App</source>
+        <translation>โดยแอปเริ่มต้น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="341"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="554"/>
+        <source>Launch Options</source>
+        <translation>ตัวเลือกการเปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="385"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="578"/>
+        <source>Open Link failed</source>
+        <translation>เปิดลิงก์ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="386"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="579"/>
+        <source>File not exist, do you want to delete the link file?</source>
+        <translation>ไฟล์ไม่มีอยู่ คุณต้องการลบไฟล์ลิงก์หรือไม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="389"/>
+        <source>Delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="390"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="404"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="590"/>
+        <source>Can not open %1, Please confirm you have the right authority.</source>
+        <translation>ไม่สามารถเปิด %1 ได้ กรุณายืนยันว่าคุณมีสิทธิ์ที่เหมาะสม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="408"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="595"/>
+        <source>Open App failed</source>
+        <translation>การเปิดแอปล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="409"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="596"/>
+        <source>The linked app is changed or uninstalled, so it can not work correctly. 
+Do you want to delete the link file?</source>
+        <translation>แอปที่ลิงก์ไว้ถูกเปลี่ยนแปลงหรือถอนการติดตั้ง จึงไม่สามารถทำงานได้อย่างถูกต้อง 
+คุณต้องการลบไฟล์ลิงก์หรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="427"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="607"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="428"/>
+        <source>File original path not exist, are you deleted or moved it?</source>
+        <translation>เส้นทางเดิมของไฟล์ไม่มีอยู่ คุณลบหรือย้ายไปแล้วหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="607"/>
+        <source>Can not get a default application for opening %1, do you want open it with text format?</source>
+        <translation>ไม่สามารถหาแอปเริ่มต้นสำหรับเปิด %1 ได้ คุณต้องการเปิดในรูปแบบข้อความหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="690"/>
+        <source>Operate Tips</source>
+        <translation>คำแนะนำการดำเนินงาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="706"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="721"/>
+        <source>Sorry, the system currently does not have an application that supports .%1 (%2) files.</source>
+        <translation>ขออภัย ขณะนี้ยังไม่มีแอปที่รองรับ .%1 (%2)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="707"/>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="722"/>
+        <source>Please search the software store for programs that can run %1 applications, or select an existing application on your computer to open it.</source>
+        <translation>ค้นหาโปรแกรมที่เรียกใช้แอป %1 ในร้านซอฟต์แวร์ หรือเลือกโปรแกรมที่มีอยู่บนคอมพิวเตอร์ของคุณเพื่อเปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="736"/>
+        <source>Sorry, the system currently does not have a default application set for opening %1 file format.</source>
+        <translation>ขออภัย ขณะนี้ระบบไม่ได้ตั้งค่าแอปพลิเคชันให้เปิดรูปแบบไฟล์ %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="737"/>
+        <source>Please search the software store for applications that can open this file, or select an existing application in the system.</source>
+        <translation>ค้นหาโปรแกรมประยุกต์ที่สามารถเปิดแฟ้มนี้ในร้านซอฟต์แวร์ หรือเลือกโปรแกรมประยุกต์ที่มีอยู่ในระบบของคุณ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="744"/>
+        <source>Search Software Store</source>
+        <translation>ค้นหาร้านค้าซอฟต์แวร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-launcher/file-launch-action.cpp" line="747"/>
+        <source>Select Application</source>
+        <translation>เลือกแอปพลิเคชัน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileLinkOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-link-operation.cpp" line="46"/>
+        <location filename="../../libpeony-qt/file-operation/file-link-operation.cpp" line="49"/>
+        <source>Symbolic Link</source>
+        <translation>ลิงก์เชิงสัญลักษณ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-link-operation.cpp" line="89"/>
+        <source>Link file error</source>
+        <translation>ข้อผิดพลาดในการลิงก์ไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileMoveOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="221"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="474"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="594"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="934"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="2034"/>
+        <source>Move file error</source>
+        <translation>ข้อผิดพลาดในการย้ายไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="358"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="364"/>
+        <source>%1 no space left on device. Copy file size: %2 GB, Space needed: %3 GB.</source>
+        <translation>%1 ไม่มีพื้นที่เหลือบนอุปกรณ์ ขนาดไฟล์ที่คัดลอก: %2 GB พื้นที่ที่ต้องการ: %3 GB</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="369"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1819"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1967"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1982"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="2221"/>
+        <source>File move error</source>
+        <translation>ข้อผิดพลาดในการย้ายไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="898"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="908"/>
+        <source>Invalid move operation, cannot move a file into its sub directories.</source>
+        <translation>การดำเนินการย้ายไม่ถูกต้อง ไม่สามารถย้ายไฟล์ไปยังไดเรกทอรีย่อยของตัวเองได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="957"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="994"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1066"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1365"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1397"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1541"/>
+        <source>The file name exceeds the limit</source>
+        <translation>ชื่อไฟล์เกินขีดจำกัด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1337"/>
+        <source>Create file error</source>
+        <translation>ข้อผิดพลาดในการสร้างไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1866"/>
+        <source>Can not move %1 to %2: The source file and the target file are the same</source>
+        <translation>ไม่สามารถย้าย %1 ไปยัง %2: ไฟล์ต้นฉบับเป็นไฟล์เดียวกันกับไฟล์เป้าหมาย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1970"/>
+        <source>Can not move %1 to %2: Read-only mode, can not write-in</source>
+        <translation>ไม่สามารถย้าย %1 ไปยัง %2: โหมดอ่านอย่างเดียว ไม่สามารถเขียนได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1985"/>
+        <source>Can not move %1 to %2: Permission denied</source>
+        <translation>ไม่สามารถย้าย %1 ไปยัง %2: ถูกปฏิเสธการเข้าถึง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="946"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1343"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1354"/>
+        <source>Cannot opening file, permission denied!</source>
+        <translation>ไม่สามารถเปิดไฟล์ได้ ถูกปฏิเสธการเข้าถึง!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1345"/>
+        <source>File:%1 was not found.</source>
+        <translation>ไม่พบไฟล์:%1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="899"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="1886"/>
+        <source>Invalid Operation.</source>
+        <translation>การดำเนินการไม่ถูกต้อง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="356"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="2000"/>
+        <source>File delete error</source>
+        <translation>ข้อผิดพลาดในการลบไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="2082"/>
+        <source>Link file error</source>
+        <translation>ข้อผิดพลาดในการลิงก์ไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="2223"/>
+        <source>Burning does not support replacement</source>
+        <translation>การเบิร์นไม่รองรับการแทนที่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="906"/>
+        <location filename="../../libpeony-qt/file-operation/file-move-operation.cpp" line="2002"/>
+        <source>Invalid Operation</source>
+        <translation>การดำเนินการไม่ถูกต้อง</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationAfterProgressPage</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="359"/>
+        <source>&amp;More Details</source>
+        <translation>&amp;รายละเอียดเพิ่มเติม</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationErrorDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="45"/>
+        <source>File Operation Error</source>
+        <translation>ข้อผิดพลาดในการดำเนินการกับไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="53"/>
+        <source>unkwon</source>
+        <translation>ไม่ทราบสาเหตุ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="54"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="55"/>
+        <source>null</source>
+        <translation>ว่าง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="57"/>
+        <source>Error message:</source>
+        <translation>ข้อความผิดพลาด:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="58"/>
+        <source>Source File:</source>
+        <translation>ไฟล์ต้นทาง:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="59"/>
+        <source>Dest File:</source>
+        <translation>ไฟล์ปลายทาง:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="63"/>
+        <source>Ignore</source>
+        <translation>เพิกเฉย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="64"/>
+        <source>Ignore All</source>
+        <translation>เพิกเฉยทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="65"/>
+        <source>Overwrite</source>
+        <translation>เขียนทับ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="66"/>
+        <source>Overwrite All</source>
+        <translation>เขียนทับทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="67"/>
+        <source>Backup</source>
+        <translation>การสำรองข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="68"/>
+        <source>Backup All</source>
+        <translation>สำรองทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="69"/>
+        <source>&amp;Retry</source>
+        <translation>&amp;ลองอีกครั้ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog.cpp" line="70"/>
+        <source>&amp;Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationErrorDialogBase</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialog-base.cpp" line="89"/>
+        <source>Close</source>
+        <translation>ปิด</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationErrorDialogConflict</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="110"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="194"/>
+        <source>Replace</source>
+        <translation>แทน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="120"/>
+        <source>Ignore</source>
+        <translation>เพิกเฉย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="139"/>
+        <source>Do the same</source>
+        <translation>ทำเช่นเดียวกัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="163"/>
+        <source>&lt;p&gt;This location already contains the folder &apos;%1&apos;, Do you want to merge it?&lt;/p&gt;</source>
+        <translation>&lt;p&gt;ตําแหน่งนี้มีโฟลเดอร์ที่มีชื่อ &quot;%1&quot; อยู่แล้วคุณแน่ใจหรือไม่ว่าต้องการรวมเข้าด้วยกัน &lt;/p&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="166"/>
+        <source>&lt;p&gt;This location already contains the file &apos;%1&apos;, Do you want to override it?&lt;/p&gt;</source>
+        <translation>&lt;p&gt;ตำแหน่งนี้มีไฟล์ &apos;%1&apos; อยู่แล้ว คุณต้องการเขียนทับหรือไม่?&lt;/p&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="173"/>
+        <source>Unexpected error from %1 to %2</source>
+        <translation>ข้อผิดพลาดที่ไม่คาดคิดจาก %1 ไปยัง %2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="192"/>
+        <source>Merge</source>
+        <translation>ผสาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="129"/>
+        <source>Backup</source>
+        <translation>การสำรองข้อมูล</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationErrorDialogNotSupported</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="581"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="571"/>
+        <source>Delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="617"/>
+        <source>Make sure the disk is not full or write protected and that the file is not protected</source>
+        <translation>โปรดตรวจสอบว่าดิสก์ไม่เต็มหรือป้องกันการเขียนและไฟล์ไม่ถูกป้องกัน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationErrorDialogNotice</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="495"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="504"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="533"/>
+        <source>Make sure the disk is not full or write protected and that the file is not protected</source>
+        <translation>โปรดตรวจสอบว่าดิสก์ไม่เต็มหรือป้องกันการเขียนและไฟล์ไม่ถูกป้องกัน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationErrorDialogSkip</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="386"/>
+        <source>Skip</source>
+        <translation>ข้าม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="395"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="402"/>
+        <source>Skip all</source>
+        <translation>ข้ามทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="437"/>
+        <source>Make sure the disk is not full or write protected and that the file is not protected</source>
+        <translation>โปรดตรวจสอบว่าดิสก์ไม่เต็มหรือป้องกันการเขียนและไฟล์ไม่ถูกป้องกัน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationErrorDialogWarning</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="302"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="334"/>
+        <source>Make sure the disk is not full or write protected and that the file is not protected</source>
+        <translation>โปรดตรวจสอบว่าดิสก์ไม่เต็มหรือป้องกันการเขียนและไฟล์ไม่ถูกป้องกัน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationInfo</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1205"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1207"/>
+        <source>Symbolic Link</source>
+        <translation>ลิงก์เชิงสัญลักษณ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1274"/>
+        <source>Copy</source>
+        <translation>คัดลอก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1277"/>
+        <source>Move</source>
+        <translation>เคลื่อนย้าย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1282"/>
+        <source>Rename</source>
+        <translation>ตั้งชื่อใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1285"/>
+        <source>Link</source>
+        <translation>ลิงค์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1288"/>
+        <source>Delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1291"/>
+        <source>Delete Permanently</source>
+        <translation>ลบอย่างยั่งยืน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1294"/>
+        <source>Restore</source>
+        <translation>เรียกคืน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1299"/>
+        <source>New</source>
+        <translation>สร้างใหม่</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationManager</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="265"/>
+        <source>Warn</source>
+        <translation>คำเตือน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="265"/>
+        <source>&apos;%1&apos; is occupied，you cannot operate!</source>
+        <translation>&apos;%1&apos; กำลังถูกใช้งาน คุณไม่สามารถดำเนินการได้!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="708"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="299"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="295"/>
+        <source>Delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="307"/>
+        <source>Do you want to put selected %1 item(s) into trash?</source>
+        <translation>คุณต้องการนำรายการที่เลือก %1 รายการไปไว้ในถังขยะหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="309"/>
+        <source>Do not show again</source>
+        <translation>อย่าแสดงซ้ำ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="490"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="492"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="496"/>
+        <source>Insufficient storage space</source>
+        <translation>พื้นที่เก็บข้อมูลไม่เพียงพอ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="505"/>
+        <source>%1 no space left on device. Copy file size: %2 GB, Space needed: %3 GB.</source>
+        <translation>%1 ไม่มีพื้นที่เหลือบนอุปกรณ์ ขนาดไฟล์ที่คัดลอก: %2 GB พื้นที่ที่ต้องการ: %3 GB</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="547"/>
+        <source>Can&apos;t delete.</source>
+        <translation>ไม่สามารถลบได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="548"/>
+        <source>You can&apos;t delete a file whenthe file is doing another operation</source>
+        <translation>คุณไม่สามารถลบไฟล์ได้ขณะที่ไฟล์กำลังถูกดำเนินการอื่นอยู่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="678"/>
+        <source>File Operation is Busy</source>
+        <translation>การดำเนินการกับไฟล์กำลังใช้งานอยู่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="679"/>
+        <source>There have been one or more fileoperation(s) executing before. Youroperation will wait for executinguntil it/them done. If you really want to execute file operations parallelly anyway, you can change the default option &quot;Allow Parallel&quot; in option menu.</source>
+        <translation>มีการดำเนินการกับไฟล์หนึ่งรายการหรือมากกว่ากำลังทำงานอยู่ก่อนแล้ว การดำเนินการของคุณจะรอจนกว่าการดำเนินการนั้น/เหล่านั้นจะเสร็จสิ้น หากคุณต้องการดำเนินการกับไฟล์แบบขนาน คุณสามารถเปลี่ยนตัวเลือกเริ่มต้น &quot;อนุญาตแบบขนาน&quot; ในเมนูตัวเลือกได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="706"/>
+        <source>The long name file is saved to %1</source>
+        <translation>ไฟล์ชื่อยาวถูกบันทึกไปยัง %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="728"/>
+        <source>System will set file starting with &quot;.&quot; as hidden file</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="729"/>
+        <source>ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="730"/>
+        <source>cancel</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1078"/>
+        <source>Undo %1</source>
+        <translation>ไม่ได้ทำ%1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-manager.cpp" line="1086"/>
+        <source>Redo %1</source>
+        <translation>ทำซ้ำ %1</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationPreparePage</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="295"/>
+        <source>counting:</source>
+        <translation>กำลังนับ:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="296"/>
+        <source>state:</source>
+        <translation>สถานะ:</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationProgressPage</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="318"/>
+        <source>&amp;More Details</source>
+        <translation>&amp;รายละเอียดเพิ่มเติม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="329"/>
+        <source>From:</source>
+        <translation>จาก:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="330"/>
+        <source>To:</source>
+        <translation>ถึง:</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileOperationProgressWizard</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="55"/>
+        <source>File Manager</source>
+        <translation>ผู้จัดการไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="59"/>
+        <source>&amp;Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="68"/>
+        <source>Preparing...</source>
+        <translation>กำลังเตรียมตัว...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="71"/>
+        <source>Handling...</source>
+        <translation>กำลังดำเนินการ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="74"/>
+        <source>Clearing...</source>
+        <translation>กำลังล้าง...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="77"/>
+        <source>Rollbacking...</source>
+        <translation>กำลังย้อนกลับ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="81"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="94"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="120"/>
+        <source>File Operation</source>
+        <translation>การดำเนินการไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="95"/>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="121"/>
+        <source>A file operation is running backend...</source>
+        <translation>กำลังมีการดำเนินการกับไฟล์ทำงานอยู่เบื้องหลัง...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="160"/>
+        <source>%1 files, %2</source>
+        <translation>%1ไฟล์ %2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="257"/>
+        <source>%1 done, %2 total, %3 of %4.</source>
+        <translation>เสร็จแล้ว %1 ทั้งหมด %2 %3 จาก %4</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="203"/>
+        <source>clearing: %1, %2 of %3</source>
+        <translation>กำลังล้างข้อมูล: %1 %2 จาก %3</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="248"/>
+        <source>copying...</source>
+        <translation>กำลังคัดลอก...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-wizard.cpp" line="275"/>
+        <source>Syncing...</source>
+        <translation>กำลังซิงค์...</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FilePreviewPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="305"/>
+        <source>Location</source>
+        <translation>ที่อยู่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="313"/>
+        <source>File Type</source>
+        <translation>ประเภทไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="321"/>
+        <source>Size</source>
+        <translation>ขนาด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="329"/>
+        <source>Time Created</source>
+        <translation>เวลาสร้าง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="337"/>
+        <source>Time Modified</source>
+        <translation>เวลาที่แก้ไข</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="345"/>
+        <source>Time Access</source>
+        <translation>เวลาเข้าชม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="355"/>
+        <source>Children Count</source>
+        <translation>รวมไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="365"/>
+        <source>Image resolution</source>
+        <translation>ความละเอียดของภาพ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="373"/>
+        <source>color model</source>
+        <translation>โหมดสี</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="388"/>
+        <source>&lt;a href=&apos;#&apos; style = &apos;text-decoration:none&apos;&gt;Open File&lt;/a&gt;</source>
+        <translation>&lt;a href=&apos;#&apos; style = &apos;text-decoration:none&apos;&gt;เปิดไฟล์&lt;/a&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="389"/>
+        <source>&lt;a href=&apos;#&apos; style = &apos;text-decoration:none&apos;&gt;Open File Directory&lt;/a&gt;</source>
+        <translation>&lt;a href=&apos;#&apos; style = &apos;text-decoration:none&apos;&gt;เปิดไดเรกทอรีไฟล์&lt;/a&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="390"/>
+        <source>&lt;a href=&apos;#&apos; style = &apos;text-decoration:none&apos;&gt;Remove From Space&lt;/a&gt;</source>
+        <translation>&lt;a href=&apos;#&apos; style = &apos;text-decoration:none&apos;&gt;นำออกจากพื้นที่&lt;/a&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="437"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="438"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="444"/>
+        <source>&lt;font color=&apos;gray&apos;&gt;After removal,when files in the space are aggregated and updated,these files will be no longer be displayed&lt;/font&gt;</source>
+        <translation>&lt;font color=&apos;gray&apos;&gt;หลังจากนำออก เมื่อไฟล์ในสเปซถูกรวมและอัปเดต ไฟล์เหล่านี้จะไม่ถูกแสดงอีก&lt;/font&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="445"/>
+        <source>&lt;font color=&apos;gray&apos;&gt;After removal,when files in the space are aggregated and updated,this files will be no longer be displayed&lt;/font&gt;</source>
+        <translation>&lt;font color=&apos;gray&apos;&gt;หลังจากนำออก เมื่อไฟล์ในสเปซถูกรวมและอัปเดต ไฟล์นี้จะไม่ถูกแสดงอีก&lt;/font&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="447"/>
+        <source>Do you want to remove this file?&lt;br&gt;</source>
+        <translation>คุณต้องการนำไฟล์นี้ออกหรือไม่?&lt;br&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="449"/>
+        <source>Do not ask again</source>
+        <translation>อย่าสอบถามอีกครั้ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="533"/>
+        <source>usershare</source>
+        <translation>การแชร์ผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="630"/>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="631"/>
+        <source>%1x%2</source>
+        <translation>%1x%2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="697"/>
+        <location filename="../../libpeony-qt/controls/preview-page/default-preview-page/default-preview-page.cpp" line="698"/>
+        <source>%1 total, %2 hidden</source>
+        <translation>ทั้งหมด %1 ซ่อนอยู่ %2</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileRenameOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="104"/>
+        <source>File Rename error</source>
+        <translation>ข้อผิดพลาดในการเปลี่ยนชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="105"/>
+        <source>Invalid file name %1%2%3 .</source>
+        <translation>ชื่อไฟล์ %1%2%3 ไม่ถูกต้อง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="121"/>
+        <source>Are you sure to hidden this file?</source>
+        <translation>คุณแน่ใจหรือไม่ที่จะซ่อนไฟล์นี้?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="155"/>
+        <source>When change the file suffix, the file may be invalid. Are you sure to change it ?</source>
+        <translation>เมื่อเปลี่ยนนามสกุลไฟล์ ไฟล์อาจใช้งานไม่ได้ คุณแน่ใจหรือไม่ที่จะเปลี่ยน?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="331"/>
+        <source>A file and a directory with the same name cannot replace each other</source>
+        <translation>ไฟล์และไดเรกทอรีที่มีชื่อเดียวกันไม่สามารถแทนที่กันได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="120"/>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="154"/>
+        <source>File Rename warning</source>
+        <translation>คำเตือนการเปลี่ยนชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="246"/>
+        <location filename="../../libpeony-qt/file-operation/file-rename-operation.cpp" line="278"/>
+        <source>Rename file error</source>
+        <translation>ข้อผิดพลาดในการเปลี่ยนชื่อไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileTrashOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="62"/>
+        <source>File trash error</source>
+        <translation>ข้อผิดพลาดในการทิ้งไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="64"/>
+        <source>Can not trash %1: Read-only file system</source>
+        <translation>ไม่สามารถทิ้ง %1: ระบบไฟล์อ่านอย่างเดียว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="118"/>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="141"/>
+        <source>trash:///</source>
+        <translation>กาก:///</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="121"/>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="144"/>
+        <source>Trash file error</source>
+        <translation>ข้อผิดพลาดในการทิ้งไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="124"/>
+        <source>Invalid Operation! Can not trash &quot;%1&quot;.</source>
+        <translation>การดำเนินการไม่ถูกต้อง! ไม่สามารถทิ้ง &quot;%1&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="251"/>
+        <source>An unmanageable conflict exists. Please check the recycle bin.</source>
+        <translation>มีความขัดแย้งที่ไม่สามารถจัดการได้ กรุณาตรวจสอบถังขยะ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::FileUntrashOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-untrash-operation.cpp" line="159"/>
+        <source>Untrash file error</source>
+        <translation>ข้อผิดพลาดในการกู้คืนไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-untrash-operation.cpp" line="404"/>
+        <source>Can not find trashed file %1, might be restored or removed.</source>
+        <translation>ไม่พบไฟล์ที่ทิ้งแล้ว %1 อาจถูกกู้คืนหรือลบไปแล้ว</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::GlobalSettings</name>
+    <message>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="171"/>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="963"/>
+        <source>yyyy/MM/dd</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="172"/>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="955"/>
+        <source>HH:mm:ss</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="952"/>
+        <source>AP hh:mm:ss</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="966"/>
+        <source>yyyy-MM-dd</source>
+        <translation></translation>
+    </message>
+</context>
+<context>
+    <name>Peony::HeaderBar</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="1092"/>
+        <source>Spread</source>
+        <translation>แผ่กระจาย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="1093"/>
+        <source>Minimize</source>
+        <translation>น้อยที่สุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="1094"/>
+        <source>Close</source>
+        <translation>ปิด</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::IDMActionsManager</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="113"/>
+        <source>Rename Spaces</source>
+        <translation>เปลี่ยนชื่อสเปซ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="127"/>
+        <source>Space Name</source>
+        <translation>ชื่อพื้นที่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="128"/>
+        <source>Please input space name</source>
+        <translation>กรุณากรอกชื่อพื้นที่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="130"/>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="172"/>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="362"/>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="493"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="131"/>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="171"/>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="361"/>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="492"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="132"/>
+        <source>Rename Space</source>
+        <translation>เปลี่ยนชื่อสเปซ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="141"/>
+        <source>Failed to rename space %1 to %2, %2 is existed.</source>
+        <translation>การเปลี่ยนชื่อสเปซ %1 เป็น %2 ล้มเหลว มี %2 อยู่แล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="147"/>
+        <source>Edit Space Condition</source>
+        <translation>แก้ไขเงื่อนไขสเปซ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="154"/>
+        <source>Close dynamically</source>
+        <translation>ปิดแบบไดนามิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="156"/>
+        <source>Open dynamically</source>
+        <translation>เปิดแบบไดนามิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="163"/>
+        <source>Delete Spaces</source>
+        <translation>ลบสเปซ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="166"/>
+        <source>Are you sure to delete space %1 ?</source>
+        <translation>คุณแน่ใจหรือไม่ที่จะลบสเปซ %1?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="189"/>
+        <source>Open</source>
+        <translation>เปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="202"/>
+        <source>Open With</source>
+        <translation>เปิดด้วย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="223"/>
+        <source>More applications</source>
+        <translation>แอปพลิเคชันเพิ่มเติม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="229"/>
+        <source>Open The Folder Location</source>
+        <translation>เปิดตำแหน่งโฟลเดอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="276"/>
+        <source>Add File</source>
+        <translation>เพิ่มไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="281"/>
+        <source>Choose file to add into space</source>
+        <translation>เลือกไฟล์เพื่อเพิ่มเข้าไปในช่องว่าง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="297"/>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="339"/>
+        <source>File %1 is existed in space, please not add file repeatly.</source>
+        <translation>ไฟล์ %1 มีอยู่ในพื้นที่แล้ว กรุณาอย่าเพิ่มไฟล์ซ้ำ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="312"/>
+        <source>Move to space</source>
+        <translation>ย้ายไปยังสเปซ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="354"/>
+        <source>Remove From Space</source>
+        <translation>ย้ายออกจากสเปซ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="368"/>
+        <source>&lt;font color=&apos;gray&apos;&gt;After removal,when files in the space are aggregated and updated,these files will be no longer be displayed&lt;/font&gt;</source>
+        <translation>&lt;font color=&apos;gray&apos;&gt;หลังจากนำออก เมื่อไฟล์ในสเปซถูกรวมและอัปเดต ไฟล์เหล่านี้จะไม่ถูกแสดงอีก&lt;/font&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="369"/>
+        <source>&lt;font color=&apos;gray&apos;&gt;After removal,when files in the space are aggregated and updated,this files will be no longer be displayed&lt;/font&gt;</source>
+        <translation>&lt;font color=&apos;gray&apos;&gt;หลังจากนำออก เมื่อไฟล์ในสเปซถูกรวมและอัปเดต ไฟล์นี้จะไม่ถูกแสดงอีก&lt;/font&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="372"/>
+        <source>Do you want to remove selected %1 item(s)?&lt;br&gt;</source>
+        <translation>คุณต้องการนำรายการที่เลือก %1 รายการออกหรือไม่?&lt;br&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="374"/>
+        <source>Do you want to remove this file?&lt;br&gt;</source>
+        <translation>คุณต้องการนำไฟล์นี้ออกหรือไม่?&lt;br&gt;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="376"/>
+        <source>Do not ask again</source>
+        <translation>อย่าสอบถามอีกครั้ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="443"/>
+        <source>Copy</source>
+        <translation>คัดลอก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="466"/>
+        <source>Save As</source>
+        <translation>บันทึกเป็น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="471"/>
+        <source>file</source>
+        <translation>ไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="471"/>
+        <source>All File</source>
+        <translation>ไฟล์ทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="499"/>
+        <source>This location has no write permission.please change the storage location</source>
+        <translation>ตำแหน่งนี้ไม่มีสิทธิ์เขียน กรุณาเปลี่ยนตำแหน่งการจัดเก็บ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/idm-actions-manager.cpp" line="539"/>
+        <source>Properties</source>
+        <translation>ลักษณะ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::ImageMountManager</name>
+    <message>
+        <location filename="../../libpeony-qt/image-mount-manager.cpp" line="156"/>
+        <source>Invalid device path: %1</source>
+        <translation>เส้นทางอุปกรณ์ไม่ถูกต้อง: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/image-mount-manager.cpp" line="221"/>
+        <source>Cannot find loop device for path: %1</source>
+        <translation>ไม่พบลูปอุปกรณ์สำหรับเส้นทาง: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/image-mount-manager.cpp" line="245"/>
+        <source>Failed to unmount filesystem: %1</source>
+        <translation>การยกเลิกการเมาท์ระบบไฟล์ล้มเหลว: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/image-mount-manager.cpp" line="266"/>
+        <source>Failed to delete loop device: %1</source>
+        <translation>การลบลูปอุปกรณ์ล้มเหลว: %1</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::LabelSettings</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="123"/>
+        <source>Name</source>
+        <translation>ชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="124"/>
+        <source>SideBar</source>
+        <translation>แถบด้านข้าง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="125"/>
+        <source>Menu</source>
+        <translation>เมนู</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="133"/>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="187"/>
+        <source>Create New Label</source>
+        <translation>สร้างป้ายชื่อใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="135"/>
+        <source>Delete Label</source>
+        <translation>ลบป้ายชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="145"/>
+        <source>Display the following items in the identification area:</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Display the following items in the identification area: (maximum of 6)</source>
+        <translation type="vanished">แสดงรายการต่อไปนี้ในพื้นที่ระบุตัวตน: (สูงสุด 6 รายการ)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="162"/>
+        <source>Rename</source>
+        <translation>ตั้งชื่อใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="169"/>
+        <source>Edit Color</source>
+        <translation>แก้ไขสี</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="184"/>
+        <source>Delete This Label</source>
+        <translation>ลบป้ายชื่อนี้</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::LocationBar</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/location-bar/location-bar.cpp" line="415"/>
+        <source>Search &quot;%1&quot; in &quot;%2&quot;</source>
+        <translation>ค้นหา &quot;%1&quot; ใน &quot;%2&quot;</translation>
+    </message>
+    <message>
+        <source>File System</source>
+        <translation type="vanished">ระบบไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/location-bar/location-bar.cpp" line="425"/>
+        <source>Search results for all files marked in  &quot;%1&quot;  in &quot;%2&quot;</source>
+        <translation>ผลการค้นหาไฟล์ทั้งหมดที่ทำเครื่องหมาย &quot;%1&quot; ใน &quot;%2&quot;</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/location-bar/location-bar.cpp" line="425"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/location-bar/location-bar.cpp" line="529"/>
+        <source>Open In New Tab</source>
+        <translation>เปิดในแท็บใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/location-bar/location-bar.cpp" line="538"/>
+        <source>Open In New Window</source>
+        <translation>เปิดในวินโดว์ใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/location-bar/location-bar.cpp" line="527"/>
+        <source>Copy Directory</source>
+        <translation>คัดลอกไดเรกทอรี</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::MountOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/mount-operation.cpp" line="107"/>
+        <location filename="../../libpeony-qt/mount-operation.cpp" line="265"/>
+        <source>Operation Cancelled</source>
+        <translation>การดำเนินการถูกยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/mount-operation.cpp" line="213"/>
+        <source>Login failed, unknown username or password error, please re-enter!</source>
+        <translation>เข้าสู่ระบบล้มเหลว ข้อผิดพลาดชื่อผู้ใช้หรือรหัสผ่านไม่รู้จัก กรุณาป้อนใหม่!</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::NavigationToolBar</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/navigation-tool-bar.cpp" line="35"/>
+        <source>Go Back</source>
+        <translation>กลับมา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/navigation-tool-bar.cpp" line="39"/>
+        <source>Go Forward</source>
+        <translation>ไปข้านหน้า</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/navigation-tool-bar.cpp" line="43"/>
+        <source>History</source>
+        <translation>ประวัติศาสตร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/navigation-tool-bar.cpp" line="73"/>
+        <source>Clear History</source>
+        <translation>ล้างประวัติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/navigation-tool-bar.cpp" line="88"/>
+        <source>Cd Up</source>
+        <translation>cd ขึ้นไป</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/navigation-tool-bar.cpp" line="94"/>
+        <source>Refresh</source>
+        <translation>รีเฟรช</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::NewFileLaunchDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="244"/>
+        <source>Choose new application</source>
+        <translation>เลือกแอปพลิเคชันใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="246"/>
+        <source>Choose an Application to open this file</source>
+        <translation>เลือกแอปพลิเคชันเพื่อเปิดไฟล์นี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="253"/>
+        <source>apply now</source>
+        <translation>นำไปใช้ตอนนี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="260"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="264"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::OpenWithPropertiesPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="111"/>
+        <source>How do you want to open &quot;%1%2&quot; files ?</source>
+        <translation>คุณต้องการเปิดไฟล์ &quot;%1%2&quot; อย่างไร?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="116"/>
+        <source>Default open with:</source>
+        <translation>เปิดด้วยค่าเริ่มต้น:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="135"/>
+        <source>Other:</source>
+        <translation>อื่น:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="174"/>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="181"/>
+        <source>Choose other application</source>
+        <translation>เลือกแอปพลิเคชันอื่น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="175"/>
+        <source>Go to the software center to install applications</source>
+        <translation>ไปที่ Software Center เพื่อติดตั้งแอป</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page.cpp" line="188"/>
+        <source>Go to application center</source>
+        <translation>ไปที่ศูนย์แอปพลิเคชัน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::PathEdit</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/navigation-bar/path-bar/path-edit.cpp" line="60"/>
+        <source>Go To</source>
+        <translation>ไปยัง</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::PermissionsPropertiesPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="87"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="173"/>
+        <source>Target: %1</source>
+        <translation>เป้าหมาย: %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="151"/>
+        <source>Read and Write</source>
+        <translation>อ่านและเขียน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="151"/>
+        <source>Readonly</source>
+        <translation>อ่านได้อย่างเดียว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="151"/>
+        <source>Group or User</source>
+        <translation>กลุ่มหรือผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="265"/>
+        <source>(Current User)</source>
+        <translation>(ผู้ใช้ปัจจุบัน)</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="322"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="351"/>
+        <source>The folder containing this file is protected, and only the file owner can modify the file.</source>
+        <translation>โฟลเดอร์ที่แฟ้มนี้อยู่มีการตั้งค่าการป้องกันความปลอดภัย และมีเพียงเจ้าของแฟ้มเท่านั้นที่สามารถปรับเปลี่ยนแฟ้มได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="358"/>
+        <source>Current User</source>
+        <translation>ผู้ใช้ปัจจุบัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="588"/>
+        <source>Permissions modify tip</source>
+        <translation>คำแนะนำการแก้ไขสิทธิ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="588"/>
+        <source>The current file or folder has already set ACL permissions. Modifying user group permissions may cause the permissions set in ACL to be unusable. Do you want to continue modifying user group permissions?</source>
+        <translation>ไฟล์หรือโฟลเดอร์ปัจจุบันได้ตั้งค่าสิทธิ์ ACL ไว้แล้ว การแก้ไขสิทธิ์กลุ่มผู้ใช้อาจทำให้สิทธิ์ที่ตั้งไว้ใน ACL ใช้งานไม่ได้ คุณต้องการแก้ไขสิทธิ์กลุ่มผู้ใช้ต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="606"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="632"/>
+        <source>Permission refinement settings</source>
+        <translation>การตั้งค่าการกำหนดสิทธิ์แบบละเอียด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="633"/>
+        <source>The current user has set advanced sharing. If you still need to modify permissions, advanced sharing may not be available. Do you want to continue setting?</source>
+        <translation>ผู้ใช้ปัจจุบันได้ตั้งค่าการแชร์ขั้นสูงไว้แล้ว หากคุณยังต้องการแก้ไขสิทธิ์ การแชร์ขั้นสูงอาจใช้งานไม่ได้ คุณต้องการตั้งค่าต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="195"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="204"/>
+        <source>Can not get the permission info.</source>
+        <translation>ไม่สามารถรับข้อมูลสิทธิ์ได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="341"/>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="343"/>
+        <source>Others</source>
+        <translation>อื่น ๆ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page.cpp" line="349"/>
+        <source>You can not change the access of this file.</source>
+        <translation>คุณไม่สามารถเปลี่ยนการเข้าถึงไฟล์นี้ได้</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::PropertiesSetDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1797"/>
+        <source>Confirming property settings</source>
+        <translation>กำลังยืนยันการตั้งค่าคุณสมบัติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1805"/>
+        <source>Whether to apply to the current selected option or to selected options and subfolders and subfiles.</source>
+        <translation>นำไปใช้กับตัวเลือกที่เลือกปัจจุบันหรือกับตัวเลือกที่เลือกและโฟลเดอร์ย่อยและไฟล์ย่อย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1816"/>
+        <source>Apply the current selection</source>
+        <translation>นำไปใช้กับการเลือกปัจจุบัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1817"/>
+        <source>Apply the current selection as well as subfolders and subfiles</source>
+        <translation>นำไปใช้กับการเลือกปัจจุบันรวมถึงโฟลเดอร์ย่อยและไฟล์ย่อย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1840"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page.cpp" line="1841"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::PropertiesWindow</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="381"/>
+        <source>Trash</source>
+        <translation>รีไซเคิล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="385"/>
+        <source>Recent</source>
+        <translation>เมื่อไม่นาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="393"/>
+        <source>Selected</source>
+        <translation>ที่เลือก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="393"/>
+        <source> %1 Files</source>
+        <translation> ไฟล์ %1 รายการ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="399"/>
+        <source>usershare</source>
+        <translation>การแชร์ผู้ใช้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="438"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="443"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="449"/>
+        <source>Properties</source>
+        <translation>ลักษณะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="578"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="579"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window.cpp" line="589"/>
+        <source>Restore</source>
+        <translation>เรียกคืน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::RecentAndTrashPropertiesPage</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="144"/>
+        <source>Show confirm dialog while trashing.</source>
+        <translation>แสดงกล่องโต้ตอบยืนยันขณะทิ้ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="175"/>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="181"/>
+        <source>Origin Path: </source>
+        <translation>เส้นทางเดิม: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="216"/>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="250"/>
+        <source>Deletion Date: </source>
+        <translation>วันที่ลบ: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="202"/>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="265"/>
+        <source>Size: </source>
+        <translation>ขนาด: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="109"/>
+        <source>Name</source>
+        <translation>ชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="110"/>
+        <source>Location</source>
+        <translation>ที่อยู่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="259"/>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page.cpp" line="266"/>
+        <source>Original Location: </source>
+        <translation>ตำแหน่งเดิม: </translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SearchBar</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar.cpp" line="47"/>
+        <source>Input the search key of files you would like to find.</source>
+        <translation>ป้อนคำค้นหาของไฟล์ที่คุณต้องการหา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar.cpp" line="83"/>
+        <source>Input search key...</source>
+        <translation>ป้อนคีย์ค้นหา...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar.cpp" line="121"/>
+        <source>advance search</source>
+        <translation>การค้นหาขั้นสูง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar.cpp" line="122"/>
+        <source>clear record</source>
+        <translation>ล้างประวัติ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SearchBarContainer</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.cpp" line="118"/>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.cpp" line="288"/>
+        <source>Search File</source>
+        <translation>คันหาไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.cpp" line="247"/>
+        <source>Clear</source>
+        <translation>ชัดเจน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="166"/>
+        <source>all</source>
+        <translation>ทั้งหมด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="166"/>
+        <source>file folder</source>
+        <translation>โฟลเดอร์ไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="166"/>
+        <source>image</source>
+        <translation>ภาพ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="167"/>
+        <source>video</source>
+        <translation>วิดีโอ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="167"/>
+        <source>text file</source>
+        <translation>ไฟล์ข้อความ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="167"/>
+        <source>audio</source>
+        <translation>เสียง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="167"/>
+        <source>others</source>
+        <translation>อื่นๆ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/search-bar-container.h" line="167"/>
+        <source>wps file</source>
+        <translation>ไฟล์wps</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SharedFileLinkOperation</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/shared-file-link-operation.cpp" line="44"/>
+        <location filename="../../libpeony-qt/file-operation/shared-file-link-operation.cpp" line="47"/>
+        <source>Symbolic Link</source>
+        <translation>ลิงก์เชิงสัญลักษณ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/shared-file-link-operation.cpp" line="80"/>
+        <source>The dest file &quot;%1&quot; has existed!</source>
+        <translation>ไฟล์ปลายทาง &quot;%1&quot; มีอยู่แล้ว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/shared-file-link-operation.cpp" line="86"/>
+        <source>Link file error</source>
+        <translation>ข้อผิดพลาดในการลิงก์ไฟล์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SideBarCloudItem</name>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-cloud-item.cpp" line="40"/>
+        <source>CloudStorage</source>
+        <translation>พื้นที่จัดเก็บข้อมูลบนคลาวด์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-cloud-item.cpp" line="55"/>
+        <source>CloudFile</source>
+        <translation>ไฟล์คลาวด์</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SideBarFavoriteItem</name>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-favorite-item.cpp" line="84"/>
+        <source>Trash</source>
+        <translation>รีไซเคิล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-favorite-item.cpp" line="87"/>
+        <source>Recent</source>
+        <translation>เมื่อไม่นาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-favorite-item.cpp" line="95"/>
+        <source>Quick Access</source>
+        <translation>การเข้าถึงด่วน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-favorite-item.cpp" line="198"/>
+        <source>KmreData</source>
+        <translation>ข้อมูลKmre</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SideBarFileSystemItem</name>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-file-system-item.cpp" line="177"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SideBarMenu</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="74"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="102"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="120"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="148"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="176"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="197"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="418"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="474"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="556"/>
+        <source>Properties</source>
+        <translation>ลักษณะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="161"/>
+        <source>Remove from bookmark</source>
+        <translation>เลิกปักหมุดจากการเข้าถึงด่วน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="274"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="468"/>
+        <source>Unmount</source>
+        <translation>ถอนการติดตั้ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="283"/>
+        <source>Eject</source>
+        <translation>ดันออก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="312"/>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="351"/>
+        <source>Format</source>
+        <translation>รูปแบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/side-bar-menu/side-bar-menu.cpp" line="395"/>
+        <source>burndata</source>
+        <translation>เบิร์นข้อมูล</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SideBarModel</name>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-model.cpp" line="98"/>
+        <source>Network</source>
+        <translation>เน็ตเวิร์ค</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-model.cpp" line="255"/>
+        <source>Create</source>
+        <translation>สร้าง</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SideBarPersonalItem</name>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-personal-item.cpp" line="42"/>
+        <source>Personal</source>
+        <translation>ส่วนตัว</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SideBarSeparatorItem</name>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-separator-item.h" line="68"/>
+        <source>(No Sub Directory)</source>
+        <translation>(ไม่มีไดเรกทอรีย่อย)</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::StatusBar</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/status-bar/status-bar.cpp" line="93"/>
+        <location filename="../../libpeony-qt/controls/status-bar/status-bar.cpp" line="99"/>
+        <source>; %1 folders</source>
+        <translation>; โฟลเดอร์ %1 รายการ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/status-bar/status-bar.cpp" line="94"/>
+        <location filename="../../libpeony-qt/controls/status-bar/status-bar.cpp" line="101"/>
+        <source>; %1 files, %2 total</source>
+        <translation>; ไฟล์ %1 รายการ, ทั้งหมด %2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/status-bar/status-bar.cpp" line="96"/>
+        <source>; %1 folder</source>
+        <translation>; โฟลเดอร์ %1 รายการ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/status-bar/status-bar.cpp" line="97"/>
+        <source>; %1 file, %2</source>
+        <translation>; ไฟล์ %1 รายการ, %2</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/status-bar/status-bar.cpp" line="104"/>
+        <source>%1 selected</source>
+        <translation>เลือกแล้ว %1 รายการ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::SyncThread</name>
+    <message>
+        <location filename="../../libpeony-qt/sync-thread.cpp" line="66"/>
+        <source>Notify</source>
+        <translation>แจ้งเตือน</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::TagManagement</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="397"/>
+        <source>label management</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tag-management.cpp" line="413"/>
+        <source>Mark</source>
+        <translation>มาร์ค</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::ToolBar</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="139"/>
+        <source>Sort Type</source>
+        <translation>ประเภทการเรียงลำดับ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="141"/>
+        <source>File Name</source>
+        <translation>ชื่อไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="147"/>
+        <source>File Type</source>
+        <translation>ประเภทไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="150"/>
+        <source>File Size</source>
+        <translation>ขนาดไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="144"/>
+        <source>Modified Date</source>
+        <translation>วันที่แก้ไข</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="73"/>
+        <source>Open in New window</source>
+        <translation>เปิดในหน้าต่างใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="75"/>
+        <source>Open in new Tab</source>
+        <translation>เปิดในแท็บใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="161"/>
+        <source>Ascending</source>
+        <translation>การเรียงลำดับจากต่ำไปหาสูง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="157"/>
+        <source>Descending</source>
+        <translation>การเรียงลำดับจากสูงไปหาต่ำ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="191"/>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="336"/>
+        <source>Copy</source>
+        <translation>คัดลอก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="194"/>
+        <source>Paste</source>
+        <translation>แปะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="197"/>
+        <source>Cut</source>
+        <translation>ต้ด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="200"/>
+        <source>Trash</source>
+        <translation>รีไซเคิล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="217"/>
+        <source>Clean Trash</source>
+        <translation>ล้างถังขยะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="222"/>
+        <source>Restore</source>
+        <translation>เรียกคืน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="271"/>
+        <source>Options</source>
+        <translation>ตัวเลือก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="274"/>
+        <source>Forbid Thumbnail</source>
+        <translation>ห้ามแสดงภาพย่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="288"/>
+        <source>Show Hidden</source>
+        <translation>แสดงไฟล์ที่ซ่อน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="295"/>
+        <source>Resident in Backend</source>
+        <translation>อยู่ในโหมดพื้นหลังอย่างถาวร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="296"/>
+        <source>Let the program still run after closing the last window. This will reduce the time for the next launch, but it will also consume resources in backend.</source>
+        <translation>ให้โปรแกรมยังคงทำงานหลังจากปิดหน้าต่างสุดท้าย ซึ่งจะลดเวลาในการเปิดครั้งต่อไป แต่จะใช้ทรัพยากรในเบื้องหลัง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/tool-bar/tool-bar.cpp" line="308"/>
+        <source>&amp;Help</source>
+        <translation>&amp;ช่วยเหลือ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::TooltipsManager</name>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="154"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="318"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="490"/>
+        <source>Unknow</source>
+        <translation>ที่ไม่รู้จัก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="235"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="276"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="317"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="489"/>
+        <source>Type: </source>
+        <translation>ประเภท: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="239"/>
+        <source>Duration：</source>
+        <translation>ระยะเวลา:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="241"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="282"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="322"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="493"/>
+        <source>Size: </source>
+        <translation>ขนาด: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="250"/>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="291"/>
+        <source>Loading...</source>
+        <translation>กำลังโหลด...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="280"/>
+        <source>Res: </source>
+        <translation>ความละเอียด: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="321"/>
+        <source>Mod Date: </source>
+        <translation>วันที่แก้ไข: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="483"/>
+        <source>Deleted date: </source>
+        <translation>วันที่ลบ: </translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/tooltips-manager.cpp" line="496"/>
+        <source>Original path: </source>
+        <translation>เส้นทางเดิม: </translation>
+    </message>
+</context>
+<context>
+    <name>Peony::UserShareInfoManager</name>
+    <message>
+        <location filename="../../libpeony-qt/usershare-manager.cpp" line="115"/>
+        <location filename="../../libpeony-qt/usershare-manager.cpp" line="148"/>
+        <source>Warning</source>
+        <translation>เตือนสติ</translation>
+    </message>
+</context>
+<context>
+    <name>Peony::VolumeManager</name>
+    <message>
+        <location filename="../../libpeony-qt/volume-manager.cpp" line="161"/>
+        <source>Error</source>
+        <translation>พลาดผิด</translation>
+    </message>
+</context>
+<context>
+    <name>ProgressBar</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="942"/>
+        <source>starting ...</source>
+        <translation>กำลังเริ่มต้น ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="1042"/>
+        <source>canceling ...</source>
+        <translation>กำลังยกเลิก ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="1044"/>
+        <source>sync ...</source>
+        <translation>กำลังซิงค์ ...</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="1099"/>
+        <source>continue</source>
+        <translation>ดำเนินการต่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="1101"/>
+        <source>pause</source>
+        <translation>หยุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar.cpp" line="1108"/>
+        <source>close</source>
+        <translation>เปิด</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/icon-view-factory.h" line="40"/>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/icon-view-factory.h" line="60"/>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/icon-view-factory.h" line="93"/>
+        <source>Icon View</source>
+        <translation>วิวไอคอน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/icon-view-factory.h" line="46"/>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/icon-view-factory.h" line="99"/>
+        <source>Show the folder children as icons.</source>
+        <translation>แสดงเนื้อหาโฟลเดอร์เป็นไอคอน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/list-view-factory.h" line="42"/>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/list-view-factory.h" line="62"/>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/list-view-factory.h" line="95"/>
+        <source>List View</source>
+        <translation>สำรวจรายการ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/list-view-factory.h" line="48"/>
+        <location filename="../../libpeony-qt/controls/directory-view/directory-view-factory/list-view-factory.h" line="101"/>
+        <source>Show the folder children as rows in a list.</source>
+        <translation>แสดงเนื้อหาโฟลเดอร์เป็นแถวในรายการ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page-factory.h" line="40"/>
+        <source>Basic</source>
+        <translation>พื้นฐาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/basic-properties-page-factory.h" line="46"/>
+        <source>Show the basic file properties, and allow you to modify the access and name.</source>
+        <translation>แสดงคุณสมบัติพื้นฐานของไฟล์ และอนุญาตให้คุณแก้ไขการเข้าถึงและชื่อ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page-factory.h" line="41"/>
+        <source>Permissions</source>
+        <translation>การอนุญาต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/permissions-properties-page-factory.h" line="47"/>
+        <source>Show and modify file&apos;s permission, owner and group.</source>
+        <translation>แสดงและแก้ไขสิทธิ์ของไฟล์ เจ้าของและกลุ่ม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="205"/>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="154"/>
+        <source>The file is too large to be moved to the recycle bin. Do you want to permanently delete it?</source>
+        <translation>ไฟล์มีขนาดใหญ่เกินไปที่จะย้ายไปยังถังขยะ คุณต้องการลบอย่างถาวรหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="209"/>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="157"/>
+        <source>These files are too large to be moved to the recycle bin. Do you want to permanently delete these %1 files?</source>
+        <translation>ไฟล์เหล่านี้มีขนาดใหญ่เกินไปที่จะย้ายไปยังถังขยะ คุณต้องการลบไฟล์เหล่านี้ %1 รายการอย่างถาวรหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="226"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="509"/>
+        <source>Delete</source>
+        <translation>ลบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="398"/>
+        <source>Are you sure you want to empty the Recycle Bin?</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="399"/>
+        <source>Files that are emptied cannot be recovered</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="400"/>
+        <source>Clean</source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <source>Clean the Trash</source>
+        <translation type="vanished">ล้างถังขยะ</translation>
+    </message>
+    <message>
+        <source>Do you want to empty the recycle bin and delete the files permanently? Once it has begun there is no way to restore them.</source>
+        <translation type="vanished">คุณต้องการล้างถังขยะและลบไฟล์อย่างถาวรหรือไม่? เมื่อเริ่มต้นแล้วจะไม่สามารถกู้คืนกลับมาได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page-factory.h" line="41"/>
+        <source>Computer Properties</source>
+        <translation>คุณสมบัติคอมพิวเตอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/computer-properties-page-factory.h" line="47"/>
+        <source>Show the computer properties or items in computer.</source>
+        <translation>แสดงคุณสมบัติคอมพิวเตอร์หรือรายการในคอมพิวเตอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page-factory.h" line="40"/>
+        <source>Trash and Recent</source>
+        <translation>ถังขยะและล่าสุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/recent-and-trash-properties-page-factory.h" line="46"/>
+        <source>Show the file properties or items in trash or recent.</source>
+        <translation>แสดงคุณสมบัติไฟล์หรือรายการในถังขยะหรือล่าสุด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="609"/>
+        <source>Format failed</source>
+        <translation>การฟอร์แมตล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="611"/>
+        <source>YES</source>
+        <translation>ใช่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1105"/>
+        <source>Formatting successful! But failed to set the device name.</source>
+        <translation>การฟอร์แมตสำเร็จ! แต่ตั้งชื่ออุปกรณ์ไม่สำเร็จ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1122"/>
+        <source>qmesg_notify</source>
+        <translation>qmesg_แจ้งเตือน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1137"/>
+        <source>Format</source>
+        <translation>รูปแบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1139"/>
+        <source>Begin Format</source>
+        <translation>เริ่มฟอร์แมต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1142"/>
+        <source>Close</source>
+        <translation>ปิด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1103"/>
+        <source>Format operation has been finished successfully.</source>
+        <translation>การดำเนินการฟอร์แมตเสร็จสมบูรณ์แล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1122"/>
+        <source>Sorry, the format operation is failed!</source>
+        <translation>ขอโทษ การดำเนินการฟอร์แมตล้มเหลว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1135"/>
+        <source>Formatting this volume will erase all data on it. Please backup all retained data before formatting. Do you want to continue ?</source>
+        <translation>การฟอร์แมตโวลุ่มนี้จะลบข้อมูลทั้งหมดบนนั้น กรุณาสำรองข้อมูลที่ต้องการเก็บรักษาทั้งหมดก่อนฟอร์แมต คุณต้องการดำเนินการต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1103"/>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1105"/>
+        <source>format</source>
+        <translation>ฟอร์แมต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="853"/>
+        <location filename="../../libpeony-qt/sync-thread.cpp" line="63"/>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="1022"/>
+        <source>File Manager</source>
+        <translation>ผู้จัดการไฟล์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/global-settings.cpp" line="856"/>
+        <source>Notify</source>
+        <translation>แจ้งเตือน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="175"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1848"/>
+        <source>Force unmount failed</source>
+        <translation>การถอดเมาท์แบบบังคับล้มแล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-net-work-item.cpp" line="143"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="175"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1848"/>
+        <location filename="../../libpeony-qt/windows/format_dialog.cpp" line="607"/>
+        <source>Error: %1
+</source>
+        <translation>ข้อผิดพลาด: %1
+</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-net-work-item.cpp" line="149"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1851"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1901"/>
+        <source>Data synchronization is complete,the device has been unmount successfully!</source>
+        <translation>การซิงโคร์ข้อมูลเสร็จสมบูรณ์แล้ว อุปกรณณ์ได้ถูกถอดเมาท์สำเร็จแล้ว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-net-work-item.cpp" line="138"/>
+        <location filename="../../libpeony-qt/model/side-bar-net-work-item.cpp" line="143"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1880"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1883"/>
+        <source>Unmount failed</source>
+        <translation>การถอดเมานท์ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1868"/>
+        <source>Not authorized to perform operation.</source>
+        <translation>ไม่มีสิทธิ์ในการดำเนินการ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-net-work-item.cpp" line="138"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1880"/>
+        <source>Unable to unmount it, you may need to close some programs, such as: GParted etc.</source>
+        <translation>ไม่สามารถยกถอดเมาท์ได้ คุณอาจจะต้องปิดโปรแกรมบางตัว เช่น: GParted ฯลฯ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1883"/>
+        <source>Error: %1
+Do you want to unmount forcely?</source>
+        <translation>ข้อผิดพลาด: %1 
+คุณต้องการยกเลิกการติดตั้งแบบบังคับหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="228"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="511"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1331"/>
+        <source>Failed to activate device: Incorrect passphrase</source>
+        <translation>ไม่สามารถเปิดใช้งานอุปกรณ์: รหัสผ่านไม่ถูกต้อง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1341"/>
+        <source>The device has been mount successfully!</source>
+        <translation>ติดตั้งอุปกรณ์สำเร็จแล้ว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1536"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1574"/>
+        <source>Eject device failed, the reason may be that the device has been removed, etc.</source>
+        <translation>นำออกอุปกรณ์ล้มเหลว สาเหตุอาจเป็นเพราะอุปกรณ์ถูกถอดออกไปแล้ว เป็นต้น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1542"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1581"/>
+        <source>Data synchronization is complete and the device can be safely unplugged!</source>
+        <translation>การซิงโคร์ข้อมูลเสร็จสมบูรณ์แล้ว อุปกรณ์สามารถถอดออกได้อย่างปลอดภัย!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="2168"/>
+        <source>Password is empty, please re-enter!</source>
+        <translation>รหัสผ่านว่างเปล่า กรุณากรอกรหัสผ่านใหม่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1538"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1576"/>
+        <location filename="../../libpeony-qt/volumeManager.cpp" line="1868"/>
+        <source>Eject failed</source>
+        <translation>การขับออกล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="266"/>
+        <source>favorite</source>
+        <translation>รายการโปรด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="269"/>
+        <source>Favorites</source>
+        <translation>รายการโปรด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="304"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="309"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="405"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="410"/>
+        <source>File is not existed.</source>
+        <translation>ไฟล์ไม่มีอยู่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="317"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="418"/>
+        <source>Share Data</source>
+        <translation>แชร์ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="321"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="422"/>
+        <source>Trash</source>
+        <translation>รีไซเคิล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="325"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="426"/>
+        <source>Recent</source>
+        <translation>เมื่อไม่นาน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="396"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="474"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="494"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="529"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="813"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="371"/>
+        <location filename="../../libpeony-qt/vfs/intelligent-vfs-info-plugin.cpp" line="261"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="252"/>
+        <source>Operation not supported</source>
+        <translation>การดำเนินการไม่ได้รับการสนับสนุน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="466"/>
+        <source>The virtual file system does not support folder creation</source>
+        <translation>ระบบไฟล์เสมือนไม่รองรับการสร้างโฟลเดอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="538"/>
+        <source>Can not create a symbolic file for vfs location</source>
+        <translation>ไม่สามารถสร้างไฟล์สัญลักษณ์สำหรับตำแหน่งระบบไฟล์เสมือนได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="545"/>
+        <source>Symbolic Link</source>
+        <translation>ลิงก์เชิงสัญลักษณ์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="557"/>
+        <source>Can not create symbolic file here, %1</source>
+        <translation>ไม่สามารถสร้างไฟล์สัญลักษณ์ที่นี่, %1</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="566"/>
+        <source>Can not add a file to favorite directory.</source>
+        <translation>ไม่สามารถเพิ่มไฟล์ไปยังไดเรกทอรีรายการโปรด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="624"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="632"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="233"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="269"/>
+        <source>The virtual file system cannot be opened</source>
+        <translation>ไม่สามารถเปิดระบบไฟล์เสมือนได้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="436"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="587"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="603"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="643"/>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-file.cpp" line="659"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="453"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="481"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="496"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="582"/>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-file.cpp" line="600"/>
+        <source>Virtual file directories do not support move and copy operations</source>
+        <translation>ไดเร็กทอรีไฟล์เสมือนไม่รองรับการย้ายและคัดลอก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/favorite-vfs-register.h" line="43"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-register.h" line="42"/>
+        <source>Default favorite vfs of peony</source>
+        <translation>ระบบไฟล์เสมือนที่ชื่นชอบเริ่มต้นของพีโอนี</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page-factory.h" line="38"/>
+        <location filename="../../libpeony-qt/controls/property-page/details-properties-page-factory.h" line="44"/>
+        <source>Details</source>
+        <translation>รายละเอียด</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/mark-properties-page-factory.h" line="40"/>
+        <source>Mark</source>
+        <translation>มาร์ค</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/mark-properties-page-factory.h" line="46"/>
+        <source>mark this file.</source>
+        <translation>ทำมาร์คไฟล์นี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page-factory.h" line="40"/>
+        <source>Open With</source>
+        <translation>เปิดด้วย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/property-page/open-with-properties-page-factory.h" line="46"/>
+        <source>open with.</source>
+        <translation>เปิดด้วย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/sync-thread.cpp" line="33"/>
+        <source>It need to synchronize before operating the device,place wait!</source>
+        <translation>ระบบต้องซิงโครไนซ์ก่อนใช้งานอุปกรณ์ กรุณารอสักครู่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-enumerator.cpp" line="413"/>
+        <source>Unable to discover the file, it may have been removed or deleted.</source>
+        <translation>ไม่สามารถค้นพบไฟล์ อาจถูกย้ายหรือลบไปแล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-enumerator.cpp" line="420"/>
+        <source>permission denied</source>
+        <translation>ไม่มีการยินยอม</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-enumerator.cpp" line="426"/>
+        <source>The path does not exist, please check and try again.</source>
+        <translation>ไม่มีเส้นทาง โปรดตรวจสอบและลองอีกครั้ง</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1458"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1469"/>
+        <location filename="../../libpeony-qt/file-operation/file-copy-operation.cpp" line="1480"/>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="187"/>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="209"/>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="231"/>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="238"/>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="248"/>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="264"/>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="278"/>
+        <source>duplicate</source>
+        <translation>ทำซ้ำ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="404"/>
+        <source>data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-utils.cpp" line="407"/>
+        <location filename="../../libpeony-qt/model/side-bar-file-system-item.cpp" line="266"/>
+        <source>System Disk</source>
+        <translation>ดิสก์ระบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="365"/>
+        <source>label</source>
+        <translation>ป้าย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-file-system-item.cpp" line="194"/>
+        <location filename="../../libpeony-qt/vfs/search-vfs-uri-parser.cpp" line="127"/>
+        <source>Computer</source>
+        <translation>คอมพิวเตอร์</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/model/side-bar-file-system-item.cpp" line="271"/>
+        <source>Data</source>
+        <translation>ข้อมูล</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="680"/>
+        <source>Failed to open file &quot;%1&quot;: insufficient permissions.</source>
+        <translation>ไม่สามารถเปิดไฟล์ &quot;%1&quot; ได้: สิทธิไม่เพียงพอ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-error-dialogs.cpp" line="691"/>
+        <source>File “%1” does not exist. Please check whether the file has been deleted.</source>
+        <translation>ไม่พบไฟล์ &quot;%1&quot; กรุณาตรวจสอบว่าไฟล์ถูกลบไปแล้วหรือไม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccommand.cpp" line="81"/>
+        <source>burn operation has been cancelled</source>
+        <translation>การดำเนินการเบิร์นถูกยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/convenient-utils/disc/disccommand.cpp" line="85"/>
+        <source> is busy!</source>
+        <translation> กำลังใช้งานอยู่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="231"/>
+        <source>Are you sure you want to permanently delete this file? Once deletion begins, the file will not be recoverable.</source>
+        <translation>คุณต้องการลบไฟล์นี้อย่างถาวรใช่หรือไม่? หลังจากเริ่มการลบแล้ว จะไม่สามารถกู้คืนไฟล์ได้อีก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-trash-operation.cpp" line="235"/>
+        <source>Are you sure you want to permanently delete these %1 files? Once deletion begins, these file will not be recoverable.</source>
+        <translation>คุณต้องการลบไฟล์เหล่านี้ %1 ไฟล์อย่างถาวรใช่หรือไม่? หลังจากเริ่มการลบแล้ว จะไม่สามารถกู้คืนไฟล์เหล่านี้ได้อีก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="285"/>
+        <location filename="../../libpeony-qt/vfs/label-vfs-file.cpp" line="439"/>
+        <source>Virtual file directories do not support move operations</source>
+        <translation>ไดเรกทอรีไฟล์เสมือนไม่รองรับการดำเนินการย้าย</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-register.h" line="41"/>
+        <source>test simplify vfs plugin</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-register.h" line="73"/>
+        <location filename="../../libpeony-qt/vfs/intelligent-vfs-info-plugin.h" line="37"/>
+        <source>Default custom vfs info of peony</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/custom-vfs-register.h" line="115"/>
+        <source>Default local vfs info of peony</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/properties-window-factory.h" line="62"/>
+        <source>Show properties plugin window.</source>
+        <translation></translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/intelligent-vfs-info-plugin.cpp" line="45"/>
+        <source>Intelligent Space</source>
+        <translation>พื้นที่อัจฉริยะ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/intelligent-vfs-info-plugin.cpp" line="97"/>
+        <source>New Intelligent Space</source>
+        <translation>พื้นที่อัจฉริยะใหม่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/vfs/intelligent-vfs-info-plugin.cpp" line="251"/>
+        <source>File %1 is existed in space, please not add file repeatly.</source>
+        <translation>ไฟล์ %1 มีอยู่ในพื้นที่แล้ว กรุณาอย่าเพิ่มไฟล์ซ้ำ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/manager-control.cpp" line="36"/>
+        <source>Peony is disabled to start!</source>
+        <translation>ตัวจัดการไฟล์ถูกห้ามไม่ให้เริ่มต้น!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1636"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="213"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="496"/>
+        <source>Are you sure you want to permanently delete this file?</source>
+        <translation>คุณแน่ใจหรือไม่ว่าจะลบไฟล์อย่างถาวร?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1638"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="215"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="498"/>
+        <source>Are you sure you want to permanently delete these %1 files?</source>
+        <translation>คุณแน่ใจหรือไม่ว่าจะลบไฟล์ %1 นี้อย่างถาวร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp" line="1641"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="218"/>
+        <location filename="../../libpeony-qt/convenient-utils/file-operation-utils.cpp" line="501"/>
+        <source> Once deletion begins, the file will not be recoverable.</source>
+        <translation> เมื่อลบอย่างถาวรแล้ว ไฟล์จะไม่สามารถกู้คืนได้</translation>
+    </message>
+</context>
+<context>
+    <name>SpaceSaveDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/space-save-dialog.cpp" line="20"/>
+        <source>Save as space</source>
+        <translation>บันทึกเป็นพื้นที่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/space-save-dialog.cpp" line="28"/>
+        <source>Space Name</source>
+        <translation>ชื่อพื้นที่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/space-save-dialog.cpp" line="31"/>
+        <source>Please input space name</source>
+        <translation>กรุณากรอกชื่อพื้นที่</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/space-save-dialog.cpp" line="42"/>
+        <source>Dynamically Update Space Files</source>
+        <translation>อัปเดตไฟล์พื้นที่แบบไดนามิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/space-save-dialog.cpp" line="52"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/space-save-dialog.cpp" line="54"/>
+        <source>Ok</source>
+        <translation>โอเคร</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/space-save-dialog.cpp" line="119"/>
+        <source>Failed to create space %1,%1 is existed</source>
+        <translation>ไม่สามารถสร้างพื้นที่ %1 ได้, %1 มีอยู่แล้ว</translation>
+    </message>
+</context>
+<context>
+    <name>UdfBurn::UdfAppendBurnDataDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="45"/>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="180"/>
+        <source>AppendBurnData</source>
+        <translation>เพิ่มข้อมูลการเขียน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="58"/>
+        <source>Disc Type:</source>
+        <translation>ประเภทดิสก์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="66"/>
+        <source>Device Name:</source>
+        <translation>ชื่ออุปกรณ์：</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="79"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="81"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="89"/>
+        <source>Unknown</source>
+        <translation>ที่ไม่ทราบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="131"/>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="148"/>
+        <source>Warning</source>
+        <translation>เตือนสติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="131"/>
+        <source>No burn data, please add!</source>
+        <translation>ไม่มีข้อมูลการเขียน กรุณาเพิ่ม!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="148"/>
+        <source>The disc name cannot be set to empty, please re-enter it!</source>
+        <translation>ไม่สามารถตั้งชื่อแผ่นเป็นค่าว่างได้ กรุณากรอกใหม่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="180"/>
+        <source>AppendBurnData operation has been finished successfully.</source>
+        <translation>การดำเนินการเพิ่มข้อมูลการเบิร์นเสร็จสมบูรณ์แล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="186"/>
+        <source>Sorry, the appendBurnData operation is failed!</source>
+        <translation>ขอโทษ การดำเนินการเพิ่มข้อมูลการเบิร์นล้มเหลว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="187"/>
+        <source>Failed</source>
+        <translation>ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="196"/>
+        <source>Burning. Do not close this window</source>
+        <translation>กำลังเบิร์น โปรดอย่าปิดหน้าต่างนี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="205"/>
+        <source>Burning this disc will append datas on it. Do you want to continue ?</source>
+        <translation>การเบิร์นดิสก์นี้จะเป็นการเพิ่มข้อมูลลงในดิสก์ ท่านต้องการดำเนินการต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="206"/>
+        <source>Burn</source>
+        <translation>เบิร์น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="208"/>
+        <source>Begin Burning</source>
+        <translation>เริ่มเบิร์น</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfAppendBurnDataDialog.cpp" line="209"/>
+        <source>Close</source>
+        <translation>ปิด</translation>
+    </message>
+</context>
+<context>
+    <name>UdfBurn::UdfFormatDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="47"/>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="168"/>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="219"/>
+        <source>Format</source>
+        <translation>รูปแบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="60"/>
+        <source>Disc Type:</source>
+        <translation>ประเภทดิสก์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="68"/>
+        <source>Device Name:</source>
+        <translation>ชื่ออุปกรณ์：</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="82"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="86"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="94"/>
+        <source>Unknown</source>
+        <translation>ที่ไม่ทราบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="133"/>
+        <source>Warning</source>
+        <translation>เตือนสติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="133"/>
+        <source>The disc name cannot be set to empty, please re-enter it!</source>
+        <translation>ไม่สามารถตั้งชื่อแผ่นเป็นค่าว่างได้ กรุณากรอกใหม่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="168"/>
+        <source>Format operation has been finished successfully.</source>
+        <translation>การดำเนินการฟอร์แมตเสร็จสมบูรณ์แล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="173"/>
+        <source>Sorry, the format operation is failed!</source>
+        <translation>ขอโทษ การดำเนินการฟอร์แมตล้มเหลว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="174"/>
+        <source>Failed</source>
+        <translation>ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="208"/>
+        <source>Formatting. Do not close this window</source>
+        <translation>กำลังฟอร์แมต โปรดอย่าปิดหน้าต่างนี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="218"/>
+        <source>Formatting this disc will erase all data on it. Please backup all retained data before formatting. Do you want to continue ?</source>
+        <translation>การฟอร์แมตดิสก์นี้จะลบข้อมูลทั้งหมดบนดิสก์ โปรดสำรองข้อมูลที่ต้องการเก็บรักษาทั้งหมดก่อนการฟอร์แมต ท่านต้องการดำเนินการต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="221"/>
+        <source>Begin Format</source>
+        <translation>เริ่มฟอร์แมต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/ky-udf-format-dialog.cpp" line="222"/>
+        <source>Close</source>
+        <translation>ปิด</translation>
+    </message>
+</context>
+<context>
+    <name>UdfFormatDialog</name>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="41"/>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="165"/>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="218"/>
+        <source>Format</source>
+        <translation>รูปแบบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="54"/>
+        <source>Disc Type:</source>
+        <translation>ประเภทดิสก์:</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="62"/>
+        <source>Device Name:</source>
+        <translation>ชื่ออุปกรณ์：</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="76"/>
+        <source>OK</source>
+        <translation>ยืนยัน</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="78"/>
+        <source>Cancel</source>
+        <translation>ยกเลิก</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="86"/>
+        <source>Unknown</source>
+        <translation>ที่ไม่ทราบ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="128"/>
+        <source>Warning</source>
+        <translation>เตือนสติ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="128"/>
+        <source>The disc name cannot be set to empty, please re-enter it!</source>
+        <translation>ไม่สามารถตั้งชื่อแผ่นเป็นค่าว่างได้ กรุณากรอกใหม่!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="165"/>
+        <source>Format operation has been finished successfully.</source>
+        <translation>การดำเนินการฟอร์แมตเสร็จสมบูรณ์แล้ว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="170"/>
+        <source>Sorry, the format operation is failed!</source>
+        <translation>ขอโทษ การดำเนินการฟอร์แมตล้มเหลว!</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="171"/>
+        <source>Failed</source>
+        <translation>ล้มเหลว</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="205"/>
+        <source>Formatting. Do not close this window</source>
+        <translation>กำลังฟอร์แมต โปรดอย่าปิดหน้าต่างนี้</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="217"/>
+        <source>Formatting this disc will erase all data on it. Please backup all retained data before formatting. Do you want to continue ?</source>
+        <translation>การฟอร์แมตดิสก์นี้จะลบข้อมูลทั้งหมดบนดิสก์ โปรดสำรองข้อมูลที่ต้องการเก็บรักษาทั้งหมดก่อนการฟอร์แมต ท่านต้องการดำเนินการต่อหรือไม่?</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="220"/>
+        <source>Begin Format</source>
+        <translation>เริ่มฟอร์แมต</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/windows/udfFormatDialog.cpp" line="221"/>
+        <source>Close</source>
+        <translation>ปิด</translation>
+    </message>
+</context>
+<context>
+    <name>progressBarHelper</name>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar-helper.cpp" line="32"/>
+        <source>Calculating time</source>
+        <translation>กำลังคำนวณเวลา</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar-helper.cpp" line="38"/>
+        <source>%1day%2hrs%3mins%4sec</source>
+        <translation>%1วัน%2ชม%3นาที%4วิ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar-helper.cpp" line="44"/>
+        <source>%1hrs%2mins%3sec</source>
+        <translation>%1ชม%2นาที%3วิ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar-helper.cpp" line="49"/>
+        <source>%1 mins%2sec</source>
+        <translation>%1 นาที%2วิ</translation>
+    </message>
+    <message>
+        <location filename="../../libpeony-qt/file-operation/file-operation-progress-bar-helper.cpp" line="53"/>
+        <source>%1sec</source>
+        <translation>%1วิ</translation>
+    </message>
+</context>
+</TS>

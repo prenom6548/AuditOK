@@ -1,0 +1,508 @@
+From: Georgia Garcia <georgia.garcia@canonical.com>
+Date: Wed, 18 Feb 2026 09:35:24 -0300
+Subject: [PATCH 5/5] tests: add network interface tests
+
+Signed-off-by: Georgia Garcia <georgia.garcia@canonical.com>
+---
+ tests/regression/apparmor/Makefile       |   7 ++
+ tests/regression/apparmor/net_iface.sh   | 190 +++++++++++++++++++++++++++++++
+ tests/regression/apparmor/net_inet.h     |  15 ++-
+ tests/regression/apparmor/net_inet_rcv.c |  36 ++++--
+ tests/regression/apparmor/net_inet_snd.c |  26 ++++-
+ tests/regression/apparmor/task.yaml      |   1 +
+ 6 files changed, 256 insertions(+), 19 deletions(-)
+ create mode 100755 tests/regression/apparmor/net_iface.sh
+
+diff --git a/tests/regression/apparmor/Makefile b/tests/regression/apparmor/Makefile
+index d1b1195..345f399 100644
+--- a/tests/regression/apparmor/Makefile
++++ b/tests/regression/apparmor/Makefile
+@@ -323,6 +323,7 @@ TESTS=aa_exec \
+       mult_mount \
+       named_pipe \
+       namespaces \
++      net_iface \
+       net_inet \
+       net_raw \
+       overlayfs_kernel \
+@@ -464,6 +465,12 @@ mount: mount.c
+ io_uring: io_uring.c
+ 	${CC} ${CFLAGS} ${LDFLAGS} $< -o $@ ${LDLIBS} -luring
+ 
++net_inet_rcv: net_inet_rcv.c net_inet.h
++	${CC} ${CFLAGS} ${LDFLAGS} $^ -o $@ ${LDLIBS}
++
++net_inet_snd: net_inet_snd.c net_inet.h
++	${CC} ${CFLAGS} ${LDFLAGS} $^ -o $@ ${LDLIBS}
++
+ build-dep:
+ 	@if [ `whoami` = "root" ] ;\
+ 	then \
+diff --git a/tests/regression/apparmor/net_iface.sh b/tests/regression/apparmor/net_iface.sh
+new file mode 100755
+index 0000000..a184942
+--- /dev/null
++++ b/tests/regression/apparmor/net_iface.sh
+@@ -0,0 +1,190 @@
++#! /bin/bash
++#Copyright (C) 2022 Canonical, Ltd.
++#
++#This program is free software; you can redistribute it and/or
++#modify it under the terms of the GNU General Public License as
++#published by the Free Software Foundation, version 2 of the
++#License.
++
++#=NAME net_iface
++#=DESCRIPTION
++# This test verifies if network interface mediation is working
++#=END
++
++pwd=`dirname $0`
++pwd=`cd $pwd ; /bin/pwd`
++
++bin=$pwd
++
++. "$bin/prologue.inc"
++
++requires_kernel_features network_v9_skb/iface
++requires_parser_support "network interface=eth0,"
++
++settest net_inet_rcv
++
++sender="$bin/net_inet_snd"
++receiver="$bin/net_inet_rcv"
++
++ipv6_subnet=2001:db8:acad::1/64
++bind_ipv6=2001:db8:acad::cf32
++remote_ipv6=2001:db8:acad::a0f9
++
++bind_ipv4=203.0.113.10
++remote_ipv4=203.0.113.200
++
++interface0=tapaatest0
++interface1=tapaatest1
++
++socat_pids=()
++for iface in $interface0 $interface1; do
++	ip tuntap add dev $iface mode tap
++	sysctl -w net.ipv6.conf.$iface.accept_dad=0 >/dev/null # prevent ipv6 from being tentative
++	ip addr add $bind_ipv4/24 dev $iface
++	ip addr add $remote_ipv4/24 dev $iface
++	ip -6 addr add $bind_ipv6/64 dev $iface
++	ip -6 addr add $remote_ipv6/64 dev $iface
++	ip link set $iface up
++	socat /dev/null,ignoreeof TUN,tun-name=$iface,iff-up=1,tun-type=tap 2>/dev/null &
++	socat_pids+=($!)
++	sleep 0.5
++done
++
++
++cleanup()
++{
++	for pid in ${socat_pids[@]}; do kill $pid; done
++	for iface in $interface0 $interface1; do
++		ip tuntap del dev $iface mode tap
++		ip link show $iface 2>/dev/null
++		if [ $? -eq 0 ]; then
++			echo "Failure removing tap interface $iface"
++		fi
++	done
++}
++
++do_onexit="cleanup"
++
++do_test()
++{
++	local desc="NETWORK IFACE ($1)"
++	shift
++	runchecktest "$desc" "$@"
++}
++
++
++do_tests()
++{
++	prefix="$1"
++	expect_rcv=$2
++	expect_snd=$3
++	bind_ip=$4
++	bind_port=$5
++	remote_ip=$6
++	remote_port=$7
++	protocol=$8
++	iface=$9
++	generate_profile=${10}
++
++	settest net_inet_rcv
++	$generate_profile
++	do_test "$prefix - root" $expect_rcv --bind_ip $bind_ip --bind_port $bind_port --remote_ip $remote_ip --remote_port $remote_port --protocol $protocol --interface $iface --timeout 5 --sender "$sender"
++
++	settest -u "foo" net_inet_rcv
++	$generate_profile
++	do_test "$prefix - user" $expect_rcv --bind_ip $bind_ip --bind_port $bind_port --remote_ip $remote_ip --remote_port $remote_port --protocol $protocol --interface $iface --timeout 5 --sender "$sender"
++
++
++}
++
++bind_port=3456
++while lsof -i:$bind_port >/dev/null; do
++	let bind_port=$bind_port+1
++done
++
++let remote_port=$bind_port+50
++while lsof -i:$remote_port >/dev/null; do
++	let remote_port=$remote_port+1
++done
++
++#TODO: CHANGE XFAILS TO FAIL
++
++for prot in udp tcp; do
++	# make sure both interfaces work
++	generate_profile=""
++	do_tests "ipv4 $prot $interface0 unconfined" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++	do_tests "ipv4 $prot $interface1 unconfined" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface1 "$generate_profile"
++
++	generate_profile="genprofile network $sender:px -- image=$sender network"
++	do_tests "ipv4 $prot $interface0 no conds" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++	generate_profile="genprofile network $sender:px -- image=$sender network"
++	do_tests "ipv4 $prot $interface1 no conds" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface1 "$generate_profile"
++
++	generate_profile="genprofile network;interface=$interface0 $sender:px -- image=$sender network;interface=$interface0"
++	do_tests "ipv4 $prot $interface0 no conds" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++	do_tests "ipv4 $prot $interface1 no conds" xfail xfail $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface1 "$generate_profile"
++
++	#=
++	setsockopt_rules="network;(setopt,getopt);ip=0.0.0.0;port=0;interface=$interface0" # INADDR_ANY
++	rcv_rules="network;ip=$bind_ipv4;interface=$interface0;peer=(ip=none)"
++	snd_rules="network;ip=$remote_ipv4;interface=$interface0;peer=(ip=none)"
++
++	# port range tests
++	let invalid1=$bind_port-1
++	let end_range=$bind_port+10
++	let invalid2=$bind_port+11
++
++	for test_port in $(seq $bind_port $end_range); do
++	    generate_profile="genprofile network;ip=$bind_ipv4;port=$bind_port-$end_range;interface=$interface0 $setsockopt_rules $sender:px -- image=$sender network $setsockopt_rules $snd_rules"
++	    do_tests "ipv4 $prot $interface0 port range $test_port generic perms" pass pass $bind_ipv4 $test_port $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++	    do_tests "ipv4 $prot $interface1 port range $test_port generic perms" xfail xfail $bind_ipv4 $test_port $remote_ipv4 $remote_port $prot $interface1 "$generate_profile"
++	done
++
++	generate_profile="genprofile network;ip=$bind_ipv4;port=$bind_port-$end_range;interface=$interface0 $setsockopt_rules $sender:px -- image=$sender network $setsockopt_rules $snd_rules"
++	do_tests "ipv4 $prot port range $invalid1 generic perms" xfail xfail $bind_ipv4 $invalid1 $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++
++	generate_profile="genprofile network;ip=$bind_ipv4;port=$bind_port-$end_range;interface=$interface0 $setsockopt_rules $sender:px -- image=$sender network $setsockopt_rules $snd_rules"
++	do_tests "ipv4 $prot port range $invalid2 generic perms" xfail xfail $bind_ipv4 $invalid2 $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++	# end of port range tests
++
++	generate_profile="genprofile network;ip=$bind_ipv4;port=$bind_port;interface=$interface0;peer=(ip=$remote_ipv4,port=$remote_port) $setsockopt_rules $rcv_rules $sender:px -- image=$sender network;ip=$remote_ipv4;port=$remote_port;peer=(ip=$bind_ipv4,port=$bind_port) $setsockopt_rules $snd_rules"
++	do_tests "ipv4 $prot $interface0 generic perms" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++	do_tests "ipv4 $prot $interface1 generic perms" xfail xfail $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface1 "$generate_profile"
++
++	generate_profile="genprofile network;(connect,receive,send);ip=$bind_ipv4;port=$bind_port;interface=$interface0;peer=(ip=$remote_ipv4,port=$remote_port) $setsockopt_rules $rcv_rules $sender:px -- image=$sender network;ip=$remote_ipv4;port=$remote_port;peer=(ip=$bind_ipv4,port=$bind_port) $setsockopt_rules $snd_rules"
++	do_tests "ipv4 $prot $interface0 specific perms" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++	do_tests "ipv4 $prot $interface1 specific perms" xfail xfail $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface1 "$generate_profile"
++
++
++	removeprofile
++
++	# ipv6 tests
++	# make sure both interfaces work
++	generate_profile=""
++	do_tests "ipv6 $prot $interface0 unconfined" pass pass $bind_ipv6 $bind_port $remote_ipv6 $remote_port $prot $interface0 "$generate_profile"
++	do_tests "ipv6 $prot $interface1 unconfined" pass pass $bind_ipv6 $bind_port $remote_ipv6 $remote_port $prot $interface1 "$generate_profile"
++
++	generate_profile="genprofile network $sender:px -- image=$sender network"
++	do_tests "ipv6 $prot $interface0 no conds" pass pass $bind_ipv6 $bind_port $remote_ipv6 $remote_port $prot $interface0 "$generate_profile"
++	do_tests "ipv6 $prot $interface1 no conds" pass pass $bind_ipv6 $bind_port $remote_ipv6 $remote_port $prot $interface1 "$generate_profile"
++
++	setsockopt_rules="network;(setopt,getopt);ip=::0;port=0;interface=$interface0" # IN6ADDR_ANY_INIT
++	rcv_rules="network;ip=$bind_ipv6;interface=$interface0;peer=(ip=none)"
++	snd_rules="network;ip=$remote_ipv6;interface=$interface0;peer=(ip=none)"
++
++	generate_profile="genprofile network;ip=$bind_ipv6;port=$bind_port;interface=$interface0;peer=(ip=$remote_ipv6,port=$remote_port) $setsockopt_rules $rcv_rules $sender:px -- image=$sender network;ip=$remote_ipv6;port=$remote_port;interface=$interface0;peer=(ip=$bind_ipv6,port=$bind_port) $setsockopt_rules $snd_rules"
++	do_tests "ipv6 $prot $interface0 generic perms" pass pass $bind_ipv6 $bind_port $remote_ipv6 $remote_port $prot $interface0 "$generate_profile"
++	do_tests "ipv6 $prot $interface1 generic perms" xfail xfail $bind_ipv6 $bind_port $remote_ipv6 $remote_port $prot $interface1 "$generate_profile"
++
++
++	if [ "$(parser_supports 'all,')" = "true" ]; then
++	    generate_profile="genprofile all -- image=$sender all"
++	    do_tests "ipv4 $prot allow all" pass pass $bind_ipv4 $bind_port $remote_ipv4 $remote_port $prot $interface0 "$generate_profile"
++
++	    generate_profile="genprofile all -- image=$sender all"
++	    do_tests "ipv6 $prot allow all" pass pass $bind_ipv6 $bind_port $remote_ipv6 $remote_port $prot $interface0 "$generate_profile"
++	fi
++
++	# needs to be done for the next loop iteration
++	removeprofile
++done
+diff --git a/tests/regression/apparmor/net_inet.h b/tests/regression/apparmor/net_inet.h
+index 414cfd5..48364cc 100644
+--- a/tests/regression/apparmor/net_inet.h
++++ b/tests/regression/apparmor/net_inet.h
+@@ -1,5 +1,7 @@
+-
++#include <stdlib.h>
++#include <string.h>
+ #include <arpa/inet.h>
++#include <net/if.h>
+ 
+ struct ip_address {
+ 	union {
+@@ -9,11 +11,12 @@ struct ip_address {
+ 	uint16_t family;
+ 	uint16_t port;
+ 	uint8_t subnet_mask;
++	char *interface;
+ };
+ 
+ int parse_ipv4_address(const char *ip, const char *port, struct ip_address *result)
+ {
+-	struct in_addr addr;
++	struct in_addr addr = {0};
+ 	if (inet_pton(AF_INET, ip, &addr) == 1) {
+ 		result->family = AF_INET;
+ 		result->address.address_v4 = addr.s_addr;
+@@ -25,7 +28,7 @@ int parse_ipv4_address(const char *ip, const char *port, struct ip_address *resu
+ 
+ int parse_ipv6_address(const char *ip, const char *port, struct ip_address *result)
+ {
+-	struct in6_addr addr;
++	struct in6_addr addr = {0};
+ 	if (inet_pton(AF_INET6, ip, &addr) == 1) {
+ 		result->family = AF_INET6;
+ 		memcpy(result->address.address_v6, addr.s6_addr, 16);
+@@ -43,7 +46,7 @@ int parse_ip(const char *ip, const char *port, struct ip_address *result)
+ 
+ struct sockaddr_in convert_to_sockaddr_in(struct ip_address result)
+ {
+-	struct sockaddr_in sockaddr;
++	struct sockaddr_in sockaddr = {0};
+ 	sockaddr.sin_family = result.family;
+ 	sockaddr.sin_port = result.port;
+ 	sockaddr.sin_addr.s_addr = result.address.address_v4;
+@@ -52,9 +55,11 @@ struct sockaddr_in convert_to_sockaddr_in(struct ip_address result)
+ 
+ struct sockaddr_in6 convert_to_sockaddr_in6(struct ip_address result)
+ {
+-	struct sockaddr_in6 sockaddr;
++	struct sockaddr_in6 sockaddr = {0};
+ 	sockaddr.sin6_family = result.family;
+ 	sockaddr.sin6_port = result.port;
++	if (result.interface)
++		sockaddr.sin6_scope_id = if_nametoindex(result.interface);
+ 	memcpy(sockaddr.sin6_addr.s6_addr, result.address.address_v6, 16);
+ 	return sockaddr;
+ }
+diff --git a/tests/regression/apparmor/net_inet_rcv.c b/tests/regression/apparmor/net_inet_rcv.c
+index 214070a..32a3444 100644
+--- a/tests/regression/apparmor/net_inet_rcv.c
++++ b/tests/regression/apparmor/net_inet_rcv.c
+@@ -12,6 +12,7 @@
+ #include "net_inet.h"
+ 
+ enum protocol {
++	INVALID,
+ 	UDP,
+ 	TCP,
+ 	ICMP
+@@ -25,15 +26,16 @@ struct connection_info {
+ 	char *protocol;
+ 	enum protocol prot;
+ 	int timeout;
+-} net_info;
++	char *interface;
++} net_info = {0};
+ 
+ int receive_bind()
+ {
+ 	int sock;
+-	struct sockaddr_in local;
+-	struct sockaddr_in6 local6;
++	struct sockaddr_in local = {0};
++	struct sockaddr_in6 local6 = {0};
+ 
+-	struct ip_address bind_addr;
++	struct ip_address bind_addr = {0};
+ 
+ 	if (!parse_ip(net_info.bind_ip, net_info.bind_port, &bind_addr)) {
+ 		fprintf(stderr, "FAIL - could not parse bind ip address\n");
+@@ -50,6 +52,9 @@ int receive_bind()
+ 	case ICMP:
+ 		sock = socket(bind_addr.family, SOCK_DGRAM, IPPROTO_ICMP);
+ 		break;
++	default:
++		fprintf(stderr, "FAIL - invalid protocol\n");
++		return -1;
+ 	}
+ 
+ 	if (sock < 0) {
+@@ -61,6 +66,12 @@ int receive_bind()
+ 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &enable, sizeof(int)) < 0)
+ 		perror("FAIL - setsockopt(SO_REUSEADDR) failed");
+ 
++	if (net_info.interface) {
++		bind_addr.interface = net_info.interface;
++		if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, net_info.interface, strlen(net_info.interface)) < 0)
++			perror("FAIL - setsockopt(SO_BINDTODEVICE) failed");
++	}
++
+ 	if (bind_addr.family == AF_INET) {
+ 		local = convert_to_sockaddr_in(bind_addr);
+ 		if (bind(sock, (struct sockaddr *) &local, sizeof(local)) < 0) {
+@@ -224,6 +235,7 @@ static void usage(char *prog_name, char *msg)
+ 	fprintf(stderr, "--remote_port remote port\n");
+ 	fprintf(stderr, "--protocol    protocol: udp or tcp\n");
+ 	fprintf(stderr, "--sender      path of the sender\n");
++	fprintf(stderr, "--interface   connect to specified network interface\n");
+ 	fprintf(stderr, "--timeout     timeout in seconds\n");
+ 	exit(EXIT_FAILURE);
+ }
+@@ -243,10 +255,11 @@ int main(int argc, char *argv[])
+ 		{"protocol",    required_argument, 0,  'p' },
+ 		{"timeout",     required_argument, 0,  't' },
+ 		{"sender",      required_argument, 0,  's' },
++		{"interface",   required_argument, 0,  'n' },
+ 		{0,             0,                 0,  0   }
+ 	};
+ 
+-	while ((opt = getopt_long(argc, argv,"i:o:r:e:p:t:s:", long_options, 0)) != -1) {
++	while ((opt = getopt_long(argc, argv,"i:o:r:e:p:t:s:n:", long_options, 0)) != -1) {
+ 		switch (opt) {
+ 		case 'i':
+ 			net_info.bind_ip = optarg;
+@@ -277,6 +290,9 @@ int main(int argc, char *argv[])
+ 		case 's':
+ 			sender = optarg;
+ 			break;
++		case 'n':
++			net_info.interface = optarg;
++			break;
+ 		default:
+ 			usage(argv[0], "Unrecognized option\n");
+ 		}
+@@ -305,11 +321,12 @@ int main(int argc, char *argv[])
+ 		/* invert remote x local ips to sender */
+ 		execl(sender, sender, net_info.remote_ip, net_info.remote_port,
+ 		      net_info.bind_ip, net_info.bind_port,
+-		      net_info.protocol, NULL);
++		      net_info.protocol, net_info.interface, NULL);
+ 		printf("FAIL %d - execlp %s --bind_ip %s --bind_port %s "
+-		       "--remote_ip %s --remote_port %s --protocol %s - %m\n",
++		       "--remote_ip %s --remote_port %s --protocol %s --interface %s - %m\n",
+ 		       getuid(), sender, net_info.bind_ip, net_info.bind_port,
+-		       net_info.remote_ip, net_info.remote_port, net_info.protocol);
++		       net_info.remote_ip, net_info.remote_port, net_info.protocol,
++		       net_info.interface);
+ 		exit(EXIT_FAILURE);
+ 	}
+ 
+@@ -323,6 +340,9 @@ int main(int argc, char *argv[])
+ 	case ICMP:
+ 		ret = receive_icmp(sockfd);
+ 		break;
++	default:
++		printf("FAIL - Invalid protocol.\n");
++		exit(1);
+ 	}
+ 
+ 	if (ret == -1) {
+diff --git a/tests/regression/apparmor/net_inet_snd.c b/tests/regression/apparmor/net_inet_snd.c
+index 76bac0f..37b47f1 100644
+--- a/tests/regression/apparmor/net_inet_snd.c
++++ b/tests/regression/apparmor/net_inet_snd.c
+@@ -20,7 +20,8 @@ struct connection_info {
+ 	char *remote_ip;
+ 	char *remote_port;
+ 	char *protocol;
+-} net_info;
++	char *interface;
++} net_info = {0};
+ 
+ int send_udp(char *message)
+ {
+@@ -28,13 +29,13 @@ int send_udp(char *message)
+ 	struct sockaddr_in remote, local;
+ 	struct sockaddr_in6 remote6, local6;
+ 
+-	struct ip_address bind_addr;
++	struct ip_address bind_addr = {0};
+ 	if (!parse_ip(net_info.bind_ip, net_info.bind_port, &bind_addr)) {
+ 		fprintf(stderr, "FAIL SND - could not parse bind ip address\n");
+ 		return -1;
+ 	}
+ 
+-	struct ip_address remote_addr;
++	struct ip_address remote_addr = {0};
+ 	if (!parse_ip(net_info.remote_ip, net_info.remote_port, &remote_addr)) {
+ 		fprintf(stderr, "FAIL SND - could not parse remote ip address\n");
+ 		return -1;
+@@ -49,6 +50,12 @@ int send_udp(char *message)
+ 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &enable, sizeof(int)) < 0)
+ 		perror("FAIL SND - setsockopt(SO_REUSEADDR) failed");
+ 
++	if (net_info.interface) {
++		bind_addr.interface = net_info.interface;
++		remote_addr.interface = net_info.interface;
++		if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, net_info.interface, strlen(net_info.interface)) < 0)
++			perror("FAIL - setsockopt(SO_BINDTODEVICE) failed");
++	}
+ 
+ 	if (bind_addr.family == AF_INET) {
+ 		local = convert_to_sockaddr_in(bind_addr);
+@@ -91,13 +98,13 @@ int send_tcp(char *message)
+ 	struct sockaddr_in remote, local;
+ 	struct sockaddr_in6 remote6, local6;
+ 
+-	struct ip_address bind_addr;
++	struct ip_address bind_addr = {0};
+ 	if (!parse_ip(net_info.bind_ip, net_info.bind_port, &bind_addr)) {
+ 		fprintf(stderr, "FAIL SND - could not parse bind ip address\n");
+ 		return -1;
+ 	}
+ 
+-	struct ip_address remote_addr;
++	struct ip_address remote_addr = {0};
+ 	if (!parse_ip(net_info.remote_ip, net_info.remote_port, &remote_addr)) {
+ 		fprintf(stderr, "FAIL SND - could not parse remote ip address\n");
+ 		return -1;
+@@ -113,6 +120,11 @@ int send_tcp(char *message)
+ 	if (setsockopt(sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &enable, sizeof(int)) < 0)
+ 		perror("FAIL SND - setsockopt(SO_REUSEADDR) failed");
+ 
++	if (net_info.interface) {
++		if (setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, net_info.interface, strlen(net_info.interface)) < 0)
++			perror("FAIL - setsockopt(SO_BINDTODEVICE) failed");
++	}
++
+ 	if (bind_addr.family == AF_INET) {
+ 		local = convert_to_sockaddr_in(bind_addr);
+ 		if (bind(sock, (struct sockaddr *) &local, sizeof(local)) < 0) {
+@@ -218,7 +230,7 @@ int main(int argc, char *argv[])
+ 	int send_ret;
+ 
+ 	if (argc < 6) {
+-		printf("Usage: %s bind_ip bind_port remote_ip remote_port proto\n", argv[0]);
++		printf("Usage: %s bind_ip bind_port remote_ip remote_port proto [interface]\n", argv[0]);
+ 		exit(1);
+ 	}
+ 
+@@ -227,6 +239,8 @@ int main(int argc, char *argv[])
+ 	net_info.remote_ip = argv[3];
+ 	net_info.remote_port = argv[4];
+ 	net_info.protocol = argv[5];
++	if (argc == 7)
++		net_info.interface = argv[6];
+ 
+ 	send_ret = -1;
+ 	if (strcmp(net_info.protocol, "udp") == 0)
+diff --git a/tests/regression/apparmor/task.yaml b/tests/regression/apparmor/task.yaml
+index a3c9779..d2ac78d 100644
+--- a/tests/regression/apparmor/task.yaml
++++ b/tests/regression/apparmor/task.yaml
+@@ -44,6 +44,7 @@ environment:
+     TEST/mult_mount: 1
+     TEST/named_pipe: 1
+     TEST/namespaces: 1
++    TEST/net_iface: 1
+     TEST/net_inet: 1
+     TEST/net_raw: 1
+     TEST/nfs: 1

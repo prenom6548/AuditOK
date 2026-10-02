@@ -1,0 +1,71 @@
+#!/bin/sh
+set -e
+
+PowerIgnorePath="/etc/systemd/logind.conf.d/"
+PowerIgnorePathFile="power-ignore.conf"
+touchpad_udev="/etc/udev/hwdb.d/61-keyboard.hwdb"
+dpy=$(echo $DISPLAY)
+if [ ! -d "$PowerIgnorePath" ];then
+  	mkdir $PowerIgnorePath
+fi
+
+if [ ! -f "$PowerIgnorePath$PowerIgnorePathFile" ];then
+  	touch $PowerIgnorePath$PowerIgnorePathFile
+  	echo "[Login]" >> $PowerIgnorePath$PowerIgnorePathFile
+  	echo "HandlePowerKey=ignore" >> $PowerIgnorePath$PowerIgnorePathFile
+fi
+
+if [ -f"$touchpad_udev" ];then
+	rm -rf $touchpad_udev
+fi
+
+srcfile=/usr/share/ukui-settings-daemon/com.kylin.ukui.SettingsDaemon.yaml
+if [ -f $srcfile ]; then
+    mkdir -p /etc/kylin-config/basic/
+    cp $srcfile /etc/kylin-config/basic/
+fi
+
+if [ ! -f "/etc/dconf/profile/user" ]; then
+    mkdir -p /etc/dconf/profile
+    echo "user-db:user\nsystem-db:local" | tee /etc/dconf/profile/user > /dev/null
+fi
+
+if [ ! -d "/etc/dconf/db/local.d" ]; then
+    mkdir -p /etc/dconf/db/local.d
+fi
+
+if [ ! -f "/etc/dconf/db/local" ]; then
+    dconf update
+fi
+
+echo "正在清理UKUI设置守护进程的app-proxy-service插件..."
+
+# 删除架构特定的插件文件和共享库
+for libdir in /usr/lib/*-linux-gnu/; do
+    if [ -d "$libdir" ]; then
+        # 删除插件文件
+        plugin_file="${libdir}ukui-settings-daemon/app-proxy-service.ukui-settings-plugin"
+        if [ -f "$plugin_file" ] || [ -L "$plugin_file" ]; then
+            echo "删除插件文件: $plugin_file"
+            rm -f "$plugin_file"
+        fi
+
+        # 删除共享库文件
+        so_file="${libdir}ukui-settings-daemon/libapp-proxy-service.so"
+        if [ -f "$so_file" ] || [ -L "$so_file" ]; then
+            echo "删除共享库文件: $so_file"
+            rm -f "$so_file"
+        fi
+    fi
+done
+
+schema_file="/usr/share/glib-2.0/schemas/org.ukui.SettingsDaemon.plugins.app-proxy-service.gschema.xml"
+if [ -f "$schema_file" ] || [ -L "$schema_file" ]; then
+    echo "删除GSettings模式文件: $schema_file"
+    rm -f "$schema_file"
+fi
+
+
+glib-compile-schemas /usr/share/glib-2.0/schemas/
+
+#DEBHELPER#

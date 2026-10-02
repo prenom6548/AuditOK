@@ -1,0 +1,3352 @@
+From: luoxueyi <luoxueyi@kylinos.cn>
+Date: Thu, 28 May 2026 14:54:55 +0800
+Subject: Merge tag 'upstream/3.0.0' into openkylin/huanghe
+
+---
+ apt/auth.py                                       | 311 ++++++++++
+ apt/debfile.py                                    |   2 +-
+ data/templates/Blankon.info.in                    | 370 ++++++++++++
+ data/templates/Blankon.mirrors                    |  17 +
+ data/templates/Debian.info.in                     | 119 ++++
+ data/templates/Debian.mirrors                     | 411 +++++++++++++
+ data/templates/Kali.info.in                       |  32 +
+ data/templates/Kali.mirrors                       |   2 +
+ data/templates/Tanglu.info.in                     |  42 ++
+ data/templates/Tanglu.mirrors                     |   3 +
+ data/templates/Ubuntu.info.in                     | 223 +++++++
+ data/templates/Ubuntu.mirrors                     | 691 ++++++++++++++++++++++
+ data/templates/gNewSense.info.in                  |  55 ++
+ data/templates/gNewSense.mirrors                  | 489 +++++++++++++++
+ data/templates/gnewsense.info.in                  |   1 -
+ data/templates/ubuntu.info.in                     |   3 +-
+ python/pkgmanagerprogress.cc                      |   2 -
+ tests/data/aptsources/lsb-release                 |   4 +
+ tests/data/aptsources/os-release                  |  10 +
+ tests/data/test-signed-usable-repo/key.gpg.base64 |  62 ++
+ tests/test_auth.py                                | 314 ++++++++++
+ 21 files changed, 3157 insertions(+), 6 deletions(-)
+ create mode 100644 apt/auth.py
+ create mode 100644 data/templates/Blankon.info.in
+ create mode 100644 data/templates/Blankon.mirrors
+ create mode 100644 data/templates/Debian.info.in
+ create mode 100644 data/templates/Debian.mirrors
+ create mode 100644 data/templates/Kali.info.in
+ create mode 100644 data/templates/Kali.mirrors
+ create mode 100644 data/templates/Tanglu.info.in
+ create mode 100644 data/templates/Tanglu.mirrors
+ create mode 100644 data/templates/Ubuntu.info.in
+ create mode 100644 data/templates/Ubuntu.mirrors
+ create mode 100644 data/templates/gNewSense.info.in
+ create mode 100644 data/templates/gNewSense.mirrors
+ create mode 100644 tests/data/aptsources/lsb-release
+ create mode 100644 tests/data/aptsources/os-release
+ create mode 100644 tests/data/test-signed-usable-repo/key.gpg.base64
+ create mode 100644 tests/test_auth.py
+
+diff --git a/apt/auth.py b/apt/auth.py
+new file mode 100644
+index 0000000..6d50616
+--- /dev/null
++++ b/apt/auth.py
+@@ -0,0 +1,311 @@
++#!/usr/bin/python3
++# auth - authentication key management
++#
++#  Copyright (c) 2004 Canonical
++#  Copyright (c) 2012 Sebastian Heinlein
++#
++#  Author: Michael Vogt <mvo@debian.org>
++#          Sebastian Heinlein <devel@glatzor.de>
++#
++#  This program is free software; you can redistribute it and/or
++#  modify it under the terms of the GNU General Public License as
++#  published by the Free Software Foundation; either version 2 of the
++#  License, or (at your option) any later version.
++#
++#  This program is distributed in the hope that it will be useful,
++#  but WITHOUT ANY WARRANTY; without even the implied warranty of
++#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++#  GNU General Public License for more details.
++#
++#  You should have received a copy of the GNU General Public License
++#  along with this program; if not, write to the Free Software
++#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
++#  USA
++"""Handle GnuPG keys used to trust signed repositories."""
++
++import errno
++import os
++import os.path
++import shutil
++import subprocess
++import sys
++import tempfile
++
++import apt_pkg
++from apt_pkg import gettext as _
++
++
++class AptKeyError(Exception):
++    pass
++
++
++class AptKeyIDTooShortError(AptKeyError):
++    """Internal class do not rely on it."""
++
++
++class TrustedKey:
++
++    """Represents a trusted key."""
++
++    def __init__(self, name: str, keyid: str, date: str) -> None:
++        self.raw_name = name
++        # Allow to translated some known keys
++        self.name = _(name)
++        self.keyid = keyid
++        self.date = date
++
++    def __str__(self) -> str:
++        return f"{self.name}\n{self.keyid} {self.date}"
++
++
++def _call_apt_key_script(*args: str, **kwargs: str | None) -> str:
++    """Run the apt-key script with the given arguments."""
++    conf = None
++    cmd = [apt_pkg.config.find_file("Dir::Bin::Apt-Key", "/usr/bin/apt-key")]
++    cmd.extend(args)
++    env = os.environ.copy()
++    env["LANG"] = "C"
++    env["APT_KEY_DONT_WARN_ON_DANGEROUS_USAGE"] = "1"
++    try:
++        if apt_pkg.config.find_dir("Dir") != "/":
++            # If the key is to be installed into a chroot we have to export the
++            # configuration from the chroot to the apt-key script by using
++            # a temporary APT_CONFIG file. The apt-key script uses apt-config
++            # shell internally
++            conf = tempfile.NamedTemporaryFile(prefix="apt-key", suffix=".conf")
++            conf.write(apt_pkg.config.dump().encode("UTF-8"))
++            conf.flush()
++            env["APT_CONFIG"] = conf.name
++        proc = subprocess.Popen(
++            cmd,
++            env=env,
++            universal_newlines=True,
++            stdin=subprocess.PIPE,
++            stdout=subprocess.PIPE,
++            stderr=subprocess.PIPE,
++        )
++
++        stdin = kwargs.get("stdin", None)
++
++        output, stderr = proc.communicate(stdin)  # type: str, str
++
++        if proc.returncode:
++            raise AptKeyError(
++                "The apt-key script failed with return code %s:\n"
++                "%s\n"
++                "stdout: %s\n"
++                "stderr: %s" % (proc.returncode, " ".join(cmd), output, stderr)
++            )
++        elif stderr:
++            sys.stderr.write(stderr)  # Forward stderr
++
++        return output.strip()
++    finally:
++        if conf is not None:
++            conf.close()
++
++
++def add_key_from_file(filename: str) -> None:
++    """Import a GnuPG key file to trust repositores signed by it.
++
++    Keyword arguments:
++    filename -- the absolute path to the public GnuPG key file
++    """
++    if not os.path.abspath(filename):
++        raise AptKeyError("An absolute path is required: %s" % filename)
++    if not os.access(filename, os.R_OK):
++        raise AptKeyError("Key file cannot be accessed: %s" % filename)
++    _call_apt_key_script("add", filename)
++
++
++def add_key_from_keyserver(keyid: str, keyserver: str) -> None:
++    """Import a GnuPG key file to trust repositores signed by it.
++
++    Keyword arguments:
++    keyid -- the long keyid (fingerprint) of the key, e.g.
++             A1BD8E9D78F7FE5C3E65D8AF8B48AD6246925553
++    keyserver -- the URL or hostname of the key server
++    """
++    tmp_keyring_dir = tempfile.mkdtemp()
++    try:
++        _add_key_from_keyserver(keyid, keyserver, tmp_keyring_dir)
++    except Exception:
++        raise
++    finally:
++        # We are racing with gpg when removing sockets, so ignore
++        # failure to delete non-existing files.
++        def onerror(
++            func: object, path: str, exc_info: tuple[type, Exception, object]
++        ) -> None:
++            if isinstance(exc_info[1], OSError) and exc_info[1].errno == errno.ENOENT:
++                return
++            raise
++
++        shutil.rmtree(tmp_keyring_dir, onerror=onerror)
++
++
++def _add_key_from_keyserver(keyid: str, keyserver: str, tmp_keyring_dir: str) -> None:
++    if len(keyid.replace(" ", "").replace("0x", "")) < (160 / 4):
++        raise AptKeyIDTooShortError("Only fingerprints (v4, 160bit) are supported")
++    # create a temp keyring dir
++    tmp_secret_keyring = os.path.join(tmp_keyring_dir, "secring.gpg")
++    tmp_keyring = os.path.join(tmp_keyring_dir, "pubring.gpg")
++    # default options for gpg
++    gpg_default_options = [
++        "gpg",
++        "--no-default-keyring",
++        "--no-options",
++        "--homedir",
++        tmp_keyring_dir,
++    ]
++    # download the key to a temp keyring first
++    res = subprocess.call(
++        gpg_default_options
++        + [
++            "--secret-keyring",
++            tmp_secret_keyring,
++            "--keyring",
++            tmp_keyring,
++            "--keyserver",
++            keyserver,
++            "--recv",
++            keyid,
++        ]
++    )
++    if res != 0:
++        raise AptKeyError(f"recv from '{keyserver}' failed for '{keyid}'")
++    # FIXME:
++    # - with gnupg 1.4.18 the downloaded key is actually checked(!),
++    #   i.e. gnupg will not import anything that the server sends
++    #   into the keyring, so the below checks are now redundant *if*
++    #   gnupg 1.4.18 is used
++
++    # now export again using the long key id (to ensure that there is
++    # really only this one key in our keyring) and not someone MITM us
++    tmp_export_keyring = os.path.join(tmp_keyring_dir, "export-keyring.gpg")
++    res = subprocess.call(
++        gpg_default_options
++        + [
++            "--keyring",
++            tmp_keyring,
++            "--output",
++            tmp_export_keyring,
++            "--export",
++            keyid,
++        ]
++    )
++    if res != 0:
++        raise AptKeyError("export of '%s' failed", keyid)
++    # now verify the fingerprint, this is probably redundant as we
++    # exported by the fingerprint in the previous command but its
++    # still good paranoia
++    output = subprocess.Popen(
++        gpg_default_options
++        + [
++            "--keyring",
++            tmp_export_keyring,
++            "--fingerprint",
++            "--batch",
++            "--fixed-list-mode",
++            "--with-colons",
++        ],
++        stdout=subprocess.PIPE,
++        universal_newlines=True,
++    ).communicate()[0]
++    got_fingerprint = None
++    for line in output.splitlines():
++        if line.startswith("fpr:"):
++            got_fingerprint = line.split(":")[9]
++            # stop after the first to ensure no subkey trickery
++            break
++    # strip the leading "0x" is there is one and uppercase (as this is
++    # what gnupg is using)
++    signing_key_fingerprint = keyid.replace("0x", "").upper()
++    if got_fingerprint != signing_key_fingerprint:
++        # make the error match what gnupg >= 1.4.18 will output when
++        # it checks the key itself before importing it
++        raise AptKeyError(
++            f"recv from '{keyserver}' failed for '{signing_key_fingerprint}'"
++        )
++    # finally add it
++    add_key_from_file(tmp_export_keyring)
++
++
++def add_key(content: str) -> None:
++    """Import a GnuPG key to trust repositores signed by it.
++
++    Keyword arguments:
++    content -- the content of the GnuPG public key
++    """
++    _call_apt_key_script("adv", "--quiet", "--batch", "--import", "-", stdin=content)
++
++
++def remove_key(fingerprint: str) -> None:
++    """Remove a GnuPG key to no longer trust repositores signed by it.
++
++    Keyword arguments:
++    fingerprint -- the fingerprint identifying the key
++    """
++    _call_apt_key_script("rm", fingerprint)
++
++
++def export_key(fingerprint: str) -> str:
++    """Return the GnuPG key in text format.
++
++    Keyword arguments:
++    fingerprint -- the fingerprint identifying the key
++    """
++    return _call_apt_key_script("export", fingerprint)
++
++
++def update() -> str:
++    """Update the local keyring with the archive keyring and remove from
++    the local keyring the archive keys which are no longer valid. The
++    archive keyring is shipped in the archive-keyring package of your
++    distribution, e.g. the debian-archive-keyring package in Debian.
++    """
++    return _call_apt_key_script("update")
++
++
++def net_update() -> str:
++    """Work similar to the update command above, but get the archive
++    keyring from an URI instead and validate it against a master key.
++    This requires an installed wget(1) and an APT build configured to
++    have a server to fetch from and a master keyring to validate. APT
++    in Debian does not support this command and relies on update
++    instead, but Ubuntu's APT does.
++    """
++    return _call_apt_key_script("net-update")
++
++
++def list_keys() -> list[TrustedKey]:
++    """Returns a list of TrustedKey instances for each key which is
++    used to trust repositories.
++    """
++    # The output of `apt-key list` is difficult to parse since the
++    # --with-colons parameter isn't user
++    output = _call_apt_key_script(
++        "adv", "--with-colons", "--batch", "--fixed-list-mode", "--list-keys"
++    )
++    res = []
++    for line in output.split("\n"):
++        fields = line.split(":")
++        if fields[0] == "pub":
++            keyid = fields[4]
++        if fields[0] == "uid":
++            uid = fields[9]
++            creation_date = fields[5]
++            key = TrustedKey(uid, keyid, creation_date)
++            res.append(key)
++    return res
++
++
++if __name__ == "__main__":
++    # Add some known keys we would like to see translated so that they get
++    # picked up by gettext
++    lambda: _("Ubuntu Archive Automatic Signing Key <ftpmaster@ubuntu.com>")
++    lambda: _("Ubuntu CD Image Automatic Signing Key <cdimage@ubuntu.com>")
++
++    apt_pkg.init()
++    for trusted_key in list_keys():
++        print(trusted_key)
+diff --git a/apt/debfile.py b/apt/debfile.py
+index b3ef733..7345f0e 100644
+--- a/apt/debfile.py
++++ b/apt/debfile.py
+@@ -178,7 +178,7 @@ class DebPackage:
+             # (e.g. scrollkeeper dependecies are provided by rarian-compat)
+             # but only do that if there is no version required in the
+             # dependency (we do not supprot versionized dependencies)
+-            if not oper:
++            if not oper or True:
+                 for ppkg in self._cache.get_providing_packages(
+                     depname, include_nonvirtual=True
+                 ):
+diff --git a/data/templates/Blankon.info.in b/data/templates/Blankon.info.in
+new file mode 100644
+index 0000000..f27c65b
+--- /dev/null
++++ b/data/templates/Blankon.info.in
+@@ -0,0 +1,370 @@
++ChangelogURI: http://arsip.blankonlinux.or.id/blankon/changelogs/pool/%s/%s/%s/%s_%s/changelog
++
++Suite: tambora
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon/
++MatchURI: arsip.blankonlinux.or.id/blankon
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 10.0 'Tambora'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: Blankon-supported Free/Open Source software
++Component: extras
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained Free/Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: extras-restricted
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: tambora
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*10.0
++MatchURI: cdrom:\[Blankon.*10.0
++_Description: CDROM with Blankon 10.0 'Tambora'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: tambora-security
++ParentSuite: tambora
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon/
++MatchURI: arsip.blankonlinux.or.id/blankon
++_Description: Important security updates
++
++Suite: tambora-updates
++ParentSuite: tambora
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: suroboyo
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon/
++MatchURI: arsip.blankonlinux.or.id/blankon
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 9.0 'Suroboyo'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: Blankon-supported Free/Open Source software
++Component: extras
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained Free/Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: extras-restricted
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: suroboyo
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*9.0
++MatchURI: cdrom:\[Blankon.*9.0
++_Description: CDROM with Blankon 9.0 'Suroboyo'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: suroboyo-security
++ParentSuite: suroboyo
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon/
++MatchURI: arsip.blankonlinux.or.id/blankon
++_Description: Important security updates
++
++Suite: suroboyo-updates
++ParentSuite: suroboyo
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: rote
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon/
++MatchURI: arsip.blankonlinux.or.id/blankon
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 8.0 'Rote'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: Blankon-supported Free/Open Source software
++Component: extras
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained Free/Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: extras-restricted
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: rote
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*8.0
++MatchURI: cdrom:\[Blankon.*8.0
++_Description: CDROM with Blankon 8.0 'Rote'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: rote-security
++ParentSuite: rote
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon/
++MatchURI: arsip.blankonlinux.or.id/blankon
++_Description: Important security updates
++
++Suite: rote-updates
++ParentSuite: rote
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: pattimura
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 7.0 'Pattimura'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: Blankon-supported Free/Open Source software
++Component: extras
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained Free/Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: extras-restricted
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: pattimura
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*7.0
++MatchURI: cdrom:\[Blankon.*7.0
++_Description: CDROM with Blankon 7.0 'Pattimura'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: pattimura-security
++ParentSuite: pattimura
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++_Description: Important security updates
++
++Suite: pattimura-updates
++ParentSuite: pattimura
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: ombilin
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 6.0 'Ombilin'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: Blankon-supported Free/Open Source software
++Component: extras
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained Free/Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: extras-restricted
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: ombilin
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*6.0
++MatchURI: cdrom:\[Blankon.*6.0
++_Description: CDROM with Blankon 6.0 'Ombilin'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: ombilin-security
++ParentSuite: ombilin
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++_Description: Important security updates
++
++Suite: ombilin-updates
++ParentSuite: ombilin
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: nanggar
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 5.0 'Nanggar'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: BlankOn-supported Open Source software
++Component: universe
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: multiverse
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: nanggar
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*5.0
++MatchURI: cdrom:\[Blankon.*5.0
++_Description: Cdrom with Blankon 5.0 'Nanggar'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: nanggar-security
++ParentSuite: nanggar
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++_Description: Important security updates
++
++Suite: nanggar-updates
++ParentSuite: nanggar
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: meuligoe
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 4.1 'Meuligoe'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: BlankOn-supported Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++
++Suite: meuligoe
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*4.1
++MatchURI: cdrom:\[Blankon.*4.1
++_Description: Cdrom with Blankon 4.1 'Meuligoe'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: meuligoe-security
++ParentSuite: meuligoe
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++_Description: Important security updates
++
++Suite: meuligoe-updates
++ParentSuite: meuligoe
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: lontara
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: BlankOn 3.0 'Lontara'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: BlankOn-supported Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++
++Suite: lontara
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*3.0
++MatchURI: cdrom:\[Blankon.*3.0
++_Description: Cdrom with Blankon 3.0 'Lontara'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: lontara-security
++ParentSuite: lontara
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++_Description: Important security updates
++
++Suite: lontara-updates
++ParentSuite: lontara
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: konde
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++MirrorsFile-amd64: Blankon.mirrors
++MirrorsFile-i386: Blankon.mirrors
++_Description: Blankon 2.0 'Konde'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: BlankOn-supported Open Source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++
++Suite: konde
++MatchName: .*
++BaseURI: cdrom:\[Blankon.*2.0
++MatchURI: cdrom:\[Blankon.*2.0
++_Description: Cdrom with Blankon 2.0 'Konde'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: konde-security
++ParentSuite: konde
++RepositoryType: deb
++BaseURI: http://arsip.blankonlinux.or.id/blankon-legacy/
++MatchURI: arsip.blankonlinux.or.id/blankon-legacy
++_Description: Important security updates
++
++Suite: konde-updates
++ParentSuite: konde
++RepositoryType: deb
++_Description: Recommended updates
+diff --git a/data/templates/Blankon.mirrors b/data/templates/Blankon.mirrors
+new file mode 100644
+index 0000000..f277c03
+--- /dev/null
++++ b/data/templates/Blankon.mirrors
+@@ -0,0 +1,17 @@
++#LOC:ID
++http://kambing.ui.ac.id/blankon/
++http://mirror.omadata.com/blankon/
++http://repo.ugm.ac.id/repo/blankon/
++http://buaya.klas.or.id/blankon/
++http://bos.fkip.uns.ac.id/blankon
++http://pandawa.ipb.ac.id/blankon/
++http://dl2.foss-id.web.id/blankon/
++http://shol.vlsm.org/blankon/
++http://openstorage.gunadarma.ac.id/blankon/
++http://debian.rab.co.id/blankon/
++http://singo.ub.ac.id/blankon/
++http://ftp.paudni.kemdiknas.go.id/blankon/
++http://blankon.idrepo.or.id/blankon/
++http://mirror.kioss.undip.ac.id/blankon/
++http://repo.unnes.ac.id/repo/blankon/
++http://kartolo.sby.datautama.net.id/blankon/
+diff --git a/data/templates/Debian.info.in b/data/templates/Debian.info.in
+new file mode 100644
+index 0000000..bc86a5e
+--- /dev/null
++++ b/data/templates/Debian.info.in
+@@ -0,0 +1,119 @@
++_ChangelogURI: https://metadata.ftp-master.debian.org/changelogs/%s/%s/%s/%s_%s_changelog
++X-Exclude-Suites: buzz, rex, bo, hamm, slink, potato, woody, experimental
++
++Suite: {series}
++RepositoryType: deb
++BaseURI: https://deb.debian.org/debian/
++MatchURI: ((http|https|ftp)[0-9]*\.([a-z]*\.){{0,1}}|deb\.|httpredir\.)debian\.org
++MirrorsFile: Debian.mirrors
++_Description: Debian {version} '{codename}'
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free-firmware
++_CompDescription: Non-DFSG-compatible Firmware for Hardware Support
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++X-Version: ge 12
++
++Suite: {series}
++RepositoryType: deb
++BaseURI: https://deb.debian.org/debian/
++MatchURI: ((http|https|ftp)[0-9]*\.([a-z]*\.){{0,1}}|deb\.|httpredir\.)debian\.org
++MirrorsFile: Debian.mirrors
++_Description: Debian {version} '{codename}'
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++X-Version: le 11
++
++Suite: {series}-security
++RepositoryType: deb
++BaseURI: https://security.debian.org/
++MatchURI: security\.debian\.org
++ParentSuite: {series}
++_Description: Security updates
++X-Version: ge 11
++
++Suite: {series}/updates
++RepositoryType: deb
++BaseURI: https://security.debian.org/
++MatchURI: security\.debian\.org
++ParentSuite: {series}
++_Description: Security updates
++X-Version: le 10
++
++Suite: {series}-updates
++RepositoryType: deb
++ParentSuite: {series}
++_Description: Recommended updates
++X-Version: ge 7
++
++Suite: {series}-proposed-updates
++RepositoryType: deb
++ParentSuite: {series}
++_Description: Proposed updates
++
++Suite: stable
++RepositoryType: deb
++BaseURI: https://deb.debian.org/debian/
++MatchURI: ((http|https|ftp)[0-9]*\.([a-z]*\.){0,1}|deb\.|httpredir\.)debian\.org
++MirrorsFile: Debian.mirrors
++_Description: Debian current stable release
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free-firmware
++_CompDescription: Non-DFSG-compatible Firmware for Hardware Support
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++
++Suite: testing
++RepositoryType: deb
++BaseURI: https://deb.debian.org/debian/
++MatchURI: ((http|https|ftp)[0-9]*\.([a-z]*\.){0,1}|deb\.|httpredir\.)debian\.org
++MirrorsFile: Debian.mirrors
++_Description: Debian testing
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free-firmware
++_CompDescription: Non-DFSG-compatible Firmware for Hardware Support
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++
++Suite: sid
++RepositoryType: deb
++BaseURI: https://deb.debian.org/debian/
++MatchURI: ((http|https|ftp)[0-9]*\.([a-z]*\.){0,1}|deb\.|httpredir\.)debian\.org
++MirrorsFile: Debian.mirrors
++_Description: Debian 'Sid' (unstable)
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free-firmware
++_CompDescription: Non-DFSG-compatible Firmware for Hardware Support
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++
++Suite: unstable
++RepositoryType: deb
++BaseURI: https://deb.debian.org/debian/
++MatchURI: ((http|https|ftp)[0-9]*\.([a-z]*\.){0,1}|deb\.|httpredir\.)debian\.org
++MirrorsFile: Debian.mirrors
++_Description: Debian 'Sid' (unstable)
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free-firmware
++_CompDescription: Non-DFSG-compatible Firmware for Hardware Support
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
+diff --git a/data/templates/Debian.mirrors b/data/templates/Debian.mirrors
+new file mode 100644
+index 0000000..450b54e
+--- /dev/null
++++ b/data/templates/Debian.mirrors
+@@ -0,0 +1,411 @@
++#LOC:AR
++http://debian.unnoba.edu.ar/debian/
++http://mirror.sitsa.com.ar/debian/
++#LOC:AT
++http://debian.anexia.at/debian/
++http://debian.lagis.at/debian/
++http://debian.mur.at/debian/
++http://debian.sil.at/debian/
++http://ftp.at.debian.org/debian/
++http://ftp.tu-graz.ac.at/mirror/debian/
++http://mirror.alwyzon.net/debian/
++#LOC:AU
++http://debian.mirror.digitalpacific.com.au/debian/
++http://debian.mirror.serversaustralia.com.au/debian/
++http://ftp.au.debian.org/debian/
++http://mirror.aarnet.edu.au/debian/
++http://mirror.amaze.com.au/debian/
++http://mirror.gsl.icu/debian/
++http://mirror.linux.org.au/debian/
++http://mirror.overthewire.com.au/debian/
++http://mirror.realcompute.io/debian/
++http://mirrors.xtom.au/debian/
++#LOC:BD
++http://mirror.limda.net/debian/
++http://mirror.xeonbd.com/debian/
++#LOC:BE
++http://ftp.be.debian.org/debian/
++http://ftp.belnet.be/debian/
++http://mirror.as35701.net/debian/
++#LOC:BG
++http://debian.a1.bg/debian/
++http://debian.ipacct.com/debian/
++http://debian.ludost.net/debian/
++http://debian.mnet.bg/debian/
++http://debian.telecoms.bg/debian/
++http://ftp.bg.debian.org/debian/
++http://ftp.uni-sofia.bg/debian/
++http://mirror.telepoint.bg/debian/
++http://mirrors.netix.net/debian/
++#LOC:BR
++http://alcateia.ufscar.br/debian/
++http://debian.c3sl.ufpr.br/debian/
++http://ftp.br.debian.org/debian/
++#LOC:BY
++http://ftp.by.debian.org/debian/
++http://ftp.byfly.by/debian/
++http://mirror.datacenter.by/debian/
++#LOC:CA
++http://debian.linux.n0c.ca/debian/
++http://debian.mirror.iweb.ca/debian/
++http://debian.mirror.rafal.ca/debian/
++http://ftp.ca.debian.org/debian/
++http://mirror.csclub.uwaterloo.ca/debian/
++http://mirror.dst.ca/debian/
++http://mirror.estone.ca/debian/
++http://mirror.it.ubc.ca/debian/
++http://mirror01-pcl-ott1.accuris.ca/debian/
++#LOC:CH
++http://debian.ethz.ch/debian/
++http://ftp.ch.debian.org/debian/
++http://mirror.init7.net/debian/
++http://mirror.iway.ch/debian/
++http://mirror.metanet.ch/debian/
++http://mirror.sinavps.ch/debian/
++http://mirror1.infomaniak.com/debian/
++http://mirror2.infomaniak.com/debian/
++http://pkg.adfinis.com/debian/
++#LOC:CL
++http://elmirror.cl/debian/
++http://ftp.cl.debian.org/debian/
++http://mirror.hnd.cl/debian/
++http://mirror.insacom.cl/debian/
++http://mirror.ufro.cl/debian/
++#LOC:CN
++http://ftp.cn.debian.org/debian/
++http://mirror.bjtu.edu.cn/debian/
++http://mirror.lzu.edu.cn/debian/
++http://mirror.nju.edu.cn/debian/
++http://mirror.nyist.edu.cn/debian/
++http://mirror.sjtu.edu.cn/debian/
++http://mirrors.163.com/debian/
++http://mirrors.bfsu.edu.cn/debian/
++http://mirrors.huaweicloud.com/debian/
++http://mirrors.jlu.edu.cn/debian/
++http://mirrors.neusoft.edu.cn/debian/
++http://mirrors.tuna.tsinghua.edu.cn/debian/
++http://mirrors.ustc.edu.cn/debian/
++#LOC:CR
++http://debianmirror.una.ac.cr/debian/
++http://mirrors.ucr.ac.cr/debian/
++#LOC:CZ
++http://debian.mirror.web4u.cz/
++http://debian.superhosting.cz/debian/
++http://ftp.cvut.cz/debian/
++http://ftp.cz.debian.org/debian/
++http://ftp.debian.cz/debian/
++http://ftp.zcu.cz/debian/
++http://merlin.fit.vutbr.cz/debian/
++http://mirror-prg.webglobe.com/debian/
++http://mirror.dkm.cz/debian/
++http://mirror.it4i.cz/debian/
++http://mirrors.nic.cz/debian/
++#LOC:DE
++http://artfiles.org/debian/
++http://de.mirrors.clouvider.net/debian/
++http://debian.charite.de/debian/
++http://debian.inf.tu-dresden.de/debian/
++http://debian.mirror.iphh.net/debian/
++http://debian.mirror.lrz.de/debian/
++http://debian.netcologne.de/debian/
++http://drmirror.physi.uni-heidelberg.de/debian/
++http://ftp-stud.hs-esslingen.de/debian/
++http://ftp.de.debian.org/debian/
++http://ftp.fau.de/debian/
++http://ftp.gwdg.de/debian/
++http://ftp.halifax.rwth-aachen.de/debian/
++http://ftp.hosteurope.de/mirror/ftp.debian.org/debian/
++http://ftp.plusline.net/debian/
++http://ftp.tu-chemnitz.de/debian/
++http://ftp.tu-clausthal.de/debian/
++http://ftp.uni-bayreuth.de/debian/
++http://ftp.uni-hannover.de/debian/debian/
++http://ftp.uni-kl.de/debian/
++http://ftp.uni-mainz.de/debian/
++http://ftp.wrz.de/debian/
++http://ftp2.de.debian.org/debian/
++http://mirror.23m.com/debian/
++http://mirror.de.leaseweb.net/debian/
++http://mirror.dogado.de/debian/
++http://mirror.eu.oneandone.net/debian/
++http://mirror.fra.macarne.com/debian/
++http://mirror.informatik.tu-freiberg.de/debian/
++http://mirror.ipb.de/debian/
++http://mirror.netzwerge.de/debian/
++http://mirror.united-gameserver.de/debian/
++http://mirror.wtnet.de/debian/
++http://mirrors.xtom.de/debian/
++http://packages.hs-regensburg.de/debian/
++http://pubmirror.plutex.de/debian/
++#LOC:DK
++http://ftp.dk.debian.org/debian/
++http://mirror.asergo.com/debian/
++http://mirror.one.com/debian/
++http://mirrors.dotsrc.org/debian/
++http://mirrors.rackhosting.com/debian/
++#LOC:EE
++http://mirrors.xtom.ee/debian/
++#LOC:ES
++http://debian.grn.cat/debian/
++http://debian.redimadrid.es/debian/
++http://debian.uvigo.es/debian/
++http://ftp.caliu.cat/debian/
++http://ftp.cica.es/debian/
++http://ftp.es.debian.org/debian/
++http://ftp.udc.es/debian/
++http://repo.ifca.es/debian/
++http://softlibre.unizar.es/debian/
++http://ulises.hostalia.com/debian/
++#LOC:FI
++http://ftp.fi.debian.org/debian/
++http://www.nic.funet.fi/debian/
++#LOC:FR
++http://apt.tetaneutral.net/debian/
++http://deb-mir1.naitways.net/debian/
++http://debian.apt-mirror.de/debian/
++http://debian.obspm.fr/debian/
++http://debian.polytech-lille.fr/debian/
++http://debian.proxad.net/debian/
++http://debian.univ-tlse2.fr/debian/
++http://ftp.ec-m.fr/debian/
++http://ftp.fr.debian.org/debian/
++http://ftp.lip6.fr/pub/linux/distributions/debian/
++http://ftp.u-strasbg.fr/debian/
++http://ftp.univ-pau.fr/linux/mirrors/debian/
++http://miroir.univ-lorraine.fr/debian/
++http://mirror.gitoyen.net/debian/
++http://mirror.ibcp.fr/debian/
++http://mirror.johnnybegood.fr/debian/
++http://mirror.plusserver.com/debian/debian/
++http://mirrors.ircam.fr/pub/debian/
++#LOC:GB
++http://debian.mirror.uk.sargasso.net/debian/
++http://debian.mirrors.uk2.net/debian/
++http://free.hands.com/debian/
++http://ftp.ticklers.org/debian/
++http://ftp.uk.debian.org/debian/
++http://mirror.cov.ukservers.com/debian/
++http://mirror.lchost.net/debian/
++http://mirror.lon.macarne.com/debian/
++http://mirror.mythic-beasts.com/debian/
++http://mirror.ox.ac.uk/debian/
++http://mirror.positive-internet.com/debian/
++http://mirror.vinehost.net/debian/
++http://mirrors.coreix.net/debian/
++http://mirrorservice.org/sites/ftp.debian.org/debian/
++http://uk.mirrors.clouvider.net/debian/
++http://ukdebian.mirror.anlx.net/debian/
++#LOC:GE
++http://debian.grena.ge/debian/
++#LOC:GR
++http://debian.otenet.gr/debian/
++#LOC:HK
++http://ftp.hk.debian.org/debian/
++http://mirror.xtom.com.hk/debian/
++#LOC:HR
++http://debian.carnet.hr/debian/
++http://debian.iskon.hr/debian/
++http://ftp.hr.debian.org/debian/
++#LOC:HU
++http://ftp.bme.hu/debian/
++http://repo.jztkft.hu/debian/
++#LOC:ID
++http://kartolo.sby.datautama.net.id/debian/
++http://kebo.pens.ac.id/debian/
++http://mirror.poliwangi.ac.id/debian/
++http://mirror.unair.ac.id/debian/
++http://mr.heru.id/debian/
++#LOC:IL
++http://debian.interhost.co.il/debian/
++#LOC:IN
++http://mirrors.iitd.ac.in/debian/
++#LOC:IR
++http://archive.debian.petiak.ir/debian/
++http://mirror.aminidc.com/debian/
++http://mirror.iranserver.com/debian/
++#LOC:IS
++http://ftp.is.debian.org/debian/
++http://is.mirror.flokinet.net/debian/
++#LOC:IT
++http://debian.dynamica.it/debian/
++http://debian.mirror.garr.it/debian/
++http://ftp.it.debian.org/debian/
++http://ftp.linux.it/debian/
++http://giano.com.dist.unige.it/debian/
++http://mirror.units.it/debian/
++#LOC:JP
++http://debian-mirror.sakura.ne.jp/debian/
++http://dennou-k.gfd-dennou.org/debian/
++http://dennou-q.gfd-dennou.org/debian/
++http://ftp.jp.debian.org/debian/
++http://ftp.kddilabs.jp/pub/debian/
++http://ftp.nara.wide.ad.jp/debian/
++http://ftp.riken.jp/Linux/debian/debian/
++http://mirrors.xtom.jp/debian/
++http://repo.jing.rocks/debian/
++#LOC:KE
++http://debian.mirror.ac.ke/debian/
++http://debian.mirror.liquidtelecom.com/debian/
++#LOC:KH
++http://mirror.sabay.com.kh/debian/
++#LOC:KR
++http://ftp.kaist.ac.kr/debian/
++http://ftp.kr.debian.org/debian/
++http://ftp.lanet.kr/debian/
++http://mirror.siwoo.org/debian/
++#LOC:KZ
++http://mirror.hoster.kz/debian/
++http://mirror.ps.kz/debian/
++#LOC:LT
++http://debian.mirror.vu.lt/debian/
++http://ftp.lt.debian.org/debian/
++http://mirror.litnet.lt/debian/
++http://mirror.vpsnet.com/debian/
++#LOC:LU
++http://debian.mirror.root.lu/debian/
++#LOC:LV
++http://debian.koyanet.lv/debian/
++http://mirror.cloudhosting.lv/debian/
++#LOC:MA
++http://mirror.marwan.ma/debian/
++#LOC:MD
++http://ftp.md.debian.org/debian/
++http://mirror.as43289.net/debian/
++#LOC:MK
++http://mirror-mk.interspace.com/debian/
++http://mirror.onevip.mk/debian/
++#LOC:NC
++http://debian.nautile.nc/debian/
++http://ftp.nc.debian.org/debian/
++http://mirror.lagoon.nc/debian/
++#LOC:NL
++http://debian.snt.utwente.nl/debian/
++http://ftp.nl.debian.org/debian/
++http://mirror.duocast.net/debian/
++http://mirror.i3d.net/debian/
++http://mirror.nforce.com/debian/
++http://mirror.nl.datapacket.com/debian/
++http://mirror.nl.leaseweb.net/debian/
++http://mirror.seedvps.com/debian/
++http://mirrors.hostiserver.com/debian/
++http://mirrors.xtom.nl/debian/
++http://nl.mirrors.clouvider.net/debian/
++#LOC:NO
++http://ftp.no.debian.org/debian/
++http://ftp.uio.no/debian/
++#LOC:NZ
++http://ftp.nz.debian.org/debian/
++http://linux.purple-cat.net/debian/
++http://mirror.fsmg.org.nz/debian/
++#LOC:PL
++http://ftp.agh.edu.pl/debian/
++http://ftp.icm.edu.pl/pub/Linux/debian/
++http://ftp.pl.debian.org/debian/
++http://ftp.psnc.pl/debian/
++http://ftp.task.gda.pl/debian/
++#LOC:PT
++http://debian.uevora.pt/debian/
++http://ftp.eq.uc.pt/software/Linux/debian/
++http://ftp.pt.debian.org/debian/
++http://ftp.rnl.tecnico.ulisboa.pt/pub/debian/
++http://mirrors.ptisp.pt/debian/
++#LOC:RE
++http://debian.mithril.re/debian/
++http://depot-debian.univ-reunion.fr/debian/
++#LOC:RO
++http://mirror.linux.ro/debian/
++http://mirrors.hosterion.ro/debian/
++http://mirrors.hostico.ro/debian/
++http://mirrors.nav.ro/debian/
++http://mirrors.nxthost.com/debian/
++http://ro.mirror.flokinet.net/debian/
++#LOC:RU
++http://ftp.psn.ru/debian/
++http://ftp.ru.debian.org/debian/
++http://mirror.corbina.net/debian/
++http://mirror.docker.ru/debian/
++http://mirror.hyperdedic.ru/debian/
++http://mirror.mephi.ru/debian/
++http://mirror.truenetwork.ru/debian/
++http://mirrors.powernet.com.ru/debian/
++http://repository.su/debian/
++#LOC:SE
++http://debian.lth.se/debian/
++http://debian.mirror.su.se/debian/
++http://ftp.acc.umu.se/debian/
++http://ftp.se.debian.org/debian/
++http://ftpmirror1.infania.net/debian/
++http://mirror.zetup.net/debian/
++http://mirrors.glesys.net/debian/
++#LOC:SG
++http://mirror.djvg.sg/debian/
++http://mirror.sg.gs/debian/
++#LOC:SI
++http://ftp.si.debian.org/debian/
++#LOC:SK
++http://deb.bbxnet.sk/debian/
++http://ftp.antik.sk/debian/
++http://ftp.debian.sk/debian/
++http://ftp.sk.debian.org/debian/
++#LOC:TH
++http://ftp.debianclub.org/debian/
++http://mirror.applebred.net/debian/
++http://mirror.kku.ac.th/debian/
++#LOC:TR
++http://debian.gnu.gen.tr/debian/
++http://ftp.linux.org.tr/debian/
++http://ftp.tr.debian.org/debian/
++#LOC:TW
++http://debian.cs.nycu.edu.tw/debian/
++http://debian.csie.ncku.edu.tw/debian/
++http://debian.csie.ntu.edu.tw/debian/
++http://ftp.tku.edu.tw/debian/
++http://ftp.tw.debian.org/debian/
++http://opensource.nchc.org.tw/debian/
++http://tw1.mirror.blendbyte.net/debian/
++#LOC:UA
++http://debian.netforce.hosting/debian/
++http://debian.volia.net/debian/
++http://mirror.mirohost.net/debian/
++http://mirror.ukrnames.com/debian/
++#LOC:US
++http://atl.mirrors.clouvider.net/debian/
++http://debian-archive.trafficmanager.net/debian/
++http://debian.cc.lehigh.edu/debian/
++http://debian.cs.binghamton.edu/debian/
++http://debian.csail.mit.edu/debian/
++http://debian.mirror.constant.com/debian/
++http://debian.osuosl.org/debian/
++http://debian.uchicago.edu/debian/
++http://ftp.us.debian.org/debian/
++http://la.mirrors.clouvider.net/debian/
++http://mirror.clarkson.edu/debian/
++http://mirror.cogentco.com/debian/
++http://mirror.dal.nexril.net/debian/
++http://mirror.keystealth.org/debian/
++http://mirror.rustytel.net/debian/
++http://mirror.siena.edu/debian/
++http://mirror.steadfast.net/debian/
++http://mirror.timkevin.us/debian/
++http://mirror.us.leaseweb.net/debian/
++http://mirror.us.oneandone.net/debian/
++http://mirrors.accretive-networks.net/debian/
++http://mirrors.bloomu.edu/debian/
++http://mirrors.lug.mtu.edu/debian/
++http://mirrors.namecheap.com/debian/
++http://mirrors.ocf.berkeley.edu/debian/
++http://mirrors.vcea.wsu.edu/debian/
++http://mirrors.wikimedia.org/debian/
++http://mirrors.xtom.com/debian/
++http://nyc.mirrors.clouvider.net/debian/
++http://plug-mirror.rcac.purdue.edu/debian/
++http://repo.ialab.dsu.edu/debian/
++#LOC:UY
++http://debian.repo.cure.edu.uy/debian/
++#LOC:VN
++http://debian.xtdv.net/debian/
++http://mirror.bizflycloud.vn/debian/
++http://mirrors.bkns.vn/debian/
++#LOC:ZA
++http://debian.saix.net/
++http://ftp.is.co.za/debian/
+diff --git a/data/templates/Kali.info.in b/data/templates/Kali.info.in
+new file mode 100644
+index 0000000..d817c53
+--- /dev/null
++++ b/data/templates/Kali.info.in
+@@ -0,0 +1,32 @@
++_ChangelogURI: http://pkg.kali.org/media/packages/%s/%s/%s/%s/changelog-%s
++
++Suite: kali-rolling
++RepositoryType: deb
++BaseURI: http://http.kali.org/kali/
++MatchURI: (kali\.download|(archive.*|http)\.kali\.org)
++MirrorsFile: Kali.mirrors
++_Description: Kali Rolling
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++
++Suite: kali-dev
++RepositoryType: deb
++BaseURI: http://http.kali.org/kali/
++MatchURI: (kali\.download|(archive.*|http)\.kali\.org)
++MirrorsFile: Kali.mirrors
++_Description: Kali Development Release
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++
++Suite: kali-experimental
++RepositoryType: deb
++ParentSuite: kali-dev
++_Description: Kali Experimental Release
+diff --git a/data/templates/Kali.mirrors b/data/templates/Kali.mirrors
+new file mode 100644
+index 0000000..419fb1e
+--- /dev/null
++++ b/data/templates/Kali.mirrors
+@@ -0,0 +1,2 @@
++http://http.kali.org/kali/
++http://kali.download/kali/
+diff --git a/data/templates/Tanglu.info.in b/data/templates/Tanglu.info.in
+new file mode 100644
+index 0000000..df37083
+--- /dev/null
++++ b/data/templates/Tanglu.info.in
+@@ -0,0 +1,42 @@
++_ChangelogURI: http://changelogs.tanglu.org/changelogs/%s/%s/%s/%s_%s/changelog
++
++Suite: aequorea
++RepositoryType: deb
++BaseURI: http://archive.tanglu.org/tanglu/
++MatchURI: archive.tanglu.org/tanglu
++MirrorsFile: Tanglu.mirrors
++_Description: Tanglu 1.0 'Aequorea'
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++
++Suite: aequorea-updates
++RepositoryType: deb
++ParentSuite: aequorea
++_Description: Recommended updates
++
++Suite: bartholomea
++RepositoryType: deb
++BaseURI: http://archive.tanglu.org/tanglu/
++MatchURI: archive.tanglu.org/tanglu
++MirrorsFile: Tanglu.mirrors
++_Description: Tanglu 2.0 'Bartholomea'
++Component: main
++_CompDescription: Officially supported
++Component: contrib
++_CompDescription: DFSG-compatible Software with Non-Free Dependencies
++Component: non-free
++_CompDescription: Non-DFSG-compatible Software
++
++Suite: bartholomea-security
++RepositoryType: deb
++ParentSuite: bartholomea
++_Description: Security updates
++
++Suite: bartholomea-updates
++RepositoryType: deb
++ParentSuite: bartholomea
++_Description: Recommended updates
+diff --git a/data/templates/Tanglu.mirrors b/data/templates/Tanglu.mirrors
+new file mode 100644
+index 0000000..dd8ab42
+--- /dev/null
++++ b/data/templates/Tanglu.mirrors
+@@ -0,0 +1,3 @@
++#LOC:DE
++http://de.archive.tanglu.org/tanglu/
++http://mirror1.hs-esslingen.de/pub/Mirrors/archive.tanglu.org/tanglu/
+diff --git a/data/templates/Ubuntu.info.in b/data/templates/Ubuntu.info.in
+new file mode 100644
+index 0000000..72c8955
+--- /dev/null
++++ b/data/templates/Ubuntu.info.in
+@@ -0,0 +1,223 @@
++_ChangelogURI: http://changelogs.ubuntu.com/changelogs/pool/%s/%s/%s/%s_%s/changelog
++
++Suite: devel
++RepositoryType: deb
++BaseURI: http://ports.ubuntu.com/ubuntu-ports/
++MatchURI: ports.ubuntu.com/ubuntu-ports
++BaseURI-amd64: http://archive.ubuntu.com/ubuntu
++MatchURI-amd64: archive.ubuntu.com/ubuntu
++BaseURI-i386: http://archive.ubuntu.com/ubuntu
++MatchURI-i386: archive.ubuntu.com/ubuntu
++MirrorsFile-amd64: Ubuntu.mirrors
++MirrorsFile-i386: Ubuntu.mirrors
++_Description: Ubuntu development series
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: Canonical-supported free and open-source software
++Component: universe
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained free and open-source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: multiverse
++ParentComponent: universe
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: devel
++ParentSuite: devel
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Ubuntu development series
++
++Suite: devel
++Official: false
++RepositoryType: deb
++BaseURI: http://extras.ubuntu.com
++MatchURI: extras.ubuntu.com
++_Description: Independent
++Component: main
++_CompDescription: Provided by third-party software developers
++_CompDescriptionLong: Software offered by third party developers.
++
++Suite: devel-security
++ParentSuite: devel
++RepositoryType: deb
++BaseURI: http://ports.ubuntu.com/ubuntu-ports/
++MatchURI: ports.ubuntu.com/ubuntu-ports
++BaseURI-amd64: http://security.ubuntu.com/ubuntu/
++MatchURI-amd64: archive.ubuntu.com/ubuntu|security.ubuntu.com
++BaseURI-i386: http://security.ubuntu.com/ubuntu/
++MatchURI-i386: archive.ubuntu.com/ubuntu|security.ubuntu.com
++_Description: Important security updates
++
++Suite: devel-security
++ParentSuite: devel
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports|security.ubuntu.com
++_Description: Important security updates
++
++Suite: devel-updates
++ParentSuite: devel
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: devel-updates
++ParentSuite: devel
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Recommended updates
++
++Suite: devel-proposed
++ParentSuite: devel
++RepositoryType: deb
++_Description: Pre-released updates
++
++Suite: devel-proposed
++ParentSuite: devel
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Pre-released updates
++
++Suite: devel-backports
++ParentSuite: devel
++RepositoryType: deb
++_Description: Unsupported updates
++
++Suite: devel-backports
++ParentSuite: devel
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Unsupported updates
++
++Suite: {series}
++RepositoryType: deb
++BaseURI: http://ports.ubuntu.com/ubuntu-ports/
++MatchURI: ports.ubuntu.com/ubuntu-ports
++BaseURI-amd64: http://archive.ubuntu.com/ubuntu
++MatchURI-amd64: archive.ubuntu.com/ubuntu
++BaseURI-i386: http://archive.ubuntu.com/ubuntu
++MatchURI-i386: archive.ubuntu.com/ubuntu
++MirrorsFile-amd64: Ubuntu.mirrors
++MirrorsFile-i386: Ubuntu.mirrors
++_Description: Ubuntu {version} '{codename}'
++Component: main
++_CompDescription: Officially supported
++_CompDescriptionLong: Canonical-supported free and open-source software
++Component: universe
++_CompDescription: Community-maintained
++_CompDescriptionLong: Community-maintained free and open-source software
++Component: restricted
++_CompDescription: Non-free drivers
++_CompDescriptionLong: Proprietary drivers for devices
++Component: multiverse
++ParentComponent: universe
++_CompDescription: Restricted software
++_CompDescriptionLong: Software restricted by copyright or legal issues
++
++Suite: {series}
++ParentSuite: {series}
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Ubuntu {version} '{codename}'
++X-Version: ge 11.04
++
++Suite: {series}
++RepositoryType: deb
++MatchName: .*
++BaseURI: cdrom:\[Ubuntu.*{version}
++MatchURI: cdrom:\[Ubuntu.*{version}
++_Description: Installation medium with Ubuntu {version} '{codename}'
++Available: False
++Component: main
++_CompDescription: Officially supported
++Component: restricted
++_CompDescription: Restricted copyright
++
++Suite: {series}
++Official: false
++RepositoryType: deb
++BaseURI: http://archive.canonical.com
++MatchURI: archive.canonical.com
++_Description: Canonical Partners
++Component: partner
++_CompDescription: Software packaged by Canonical for their partners
++_CompDescriptionLong: This software is not part of Ubuntu.
++X-Version: le 20.04, ge 10.10
++
++Suite: {series} 
++Official: false
++RepositoryType: deb
++BaseURI: http://extras.ubuntu.com
++MatchURI: extras.ubuntu.com
++_Description: Independent
++Component: main
++_CompDescription: Provided by third-party software developers
++_CompDescriptionLong: Software offered by third party developers.
++X-Version: le 15.04, ge 10.10
++
++Suite: {series}-security
++ParentSuite: {series}
++RepositoryType: deb
++BaseURI: http://ports.ubuntu.com/ubuntu-ports/
++MatchURI: ports.ubuntu.com/ubuntu-ports
++BaseURI-amd64: http://security.ubuntu.com/ubuntu/
++MatchURI-amd64: archive.ubuntu.com/ubuntu|security.ubuntu.com
++BaseURI-i386: http://security.ubuntu.com/ubuntu/
++MatchURI-i386: archive.ubuntu.com/ubuntu|security.ubuntu.com
++_Description: Important security updates
++
++Suite: {series}-security
++ParentSuite: {series}
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports|security.ubuntu.com
++_Description: Important security updates
++X-Version: ge 11.04
++
++Suite: {series}-updates
++ParentSuite: {series}
++RepositoryType: deb
++_Description: Recommended updates
++
++Suite: {series}-updates
++ParentSuite: {series}
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Recommended updates
++X-Version: ge 11.04
++
++Suite: {series}-proposed
++ParentSuite: {series}
++RepositoryType: deb
++_Description: Pre-released updates
++
++Suite: {series}-proposed
++ParentSuite: {series}
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Pre-released updates
++X-Version: ge 11.04
++
++Suite: {series}-backports
++ParentSuite: {series}
++RepositoryType: deb
++_Description: Unsupported updates
++
++Suite: {series}-backports
++ParentSuite: {series}
++RepositoryType: deb-src
++BaseURI: http://archive.ubuntu.com/ubuntu/
++MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
++_Description: Unsupported updates
++X-Version: ge 11.04
++
+diff --git a/data/templates/Ubuntu.mirrors b/data/templates/Ubuntu.mirrors
+new file mode 100644
+index 0000000..bc2690c
+--- /dev/null
++++ b/data/templates/Ubuntu.mirrors
+@@ -0,0 +1,691 @@
++mirror://mirrors.ubuntu.com/mirrors.txt
++#LOC:AM
++http://mirrors.asnet.am/ubuntu/
++http://ubuntu.mirror.gnc.am/ubuntu/
++#LOC:AR
++http://ubuntu.unc.edu.ar/ubuntu/
++https://mirror.sitsa.com.ar/ubuntu/
++https://mirrors.dc.clear.net.ar/ubuntu/
++https://ubuntu.zero.com.ar/ubuntu/
++#LOC:AT
++http://mirror.easyname.at/ubuntu-archive/
++http://ubuntu.lagis.at/ubuntu/
++http://ubuntu.uni-klu.ac.at/ubuntu/
++https://mirror.alwyzon.net/ubuntu/
++https://ubuntu.anexia.at/ubuntu/
++#LOC:AU
++http://ftp.iinet.net.au/pub/ubuntu/
++http://mirror.aarnet.edu.au/pub/ubuntu/archive/
++http://mirror.internode.on.net/pub/ubuntu/ubuntu/
++http://mirror.netspace.net.au/pub/ubuntu/
++http://mirror.overthewire.com.au/ubuntu/
++https://mirror.datamossa.io/ubuntu/archive/
++https://mirror.gsl.icu/ubuntu/
++https://mirror.internet.asn.au/pub/ubuntu/archive/
++https://mirror.realcompute.io/ubuntu/
++https://ubuntu.mirror.digitalpacific.com.au/archive/
++https://ubuntu.mirror.serversaustralia.com.au/ubuntu/
++#LOC:AZ
++http://aze.archive.ubuntu.com/ubuntu/
++http://mirror.datacenter.az/ubuntu/
++https://mirror.yer.az/ubuntu/archive/
++#LOC:BA
++http://archive.ubuntu.mirror.ba/ubuntu/
++#LOC:BD
++http://mirror.dhakacom.com/ubuntu-archive/
++https://mirror.xeonbd.com/ubuntu-archive/
++#LOC:BE
++http://ftp.belnet.be/ubuntu/
++http://mirror.unix-solutions.be/ubuntu/
++https://mirrors-ubuntu.behostings.com/ubuntu/
++#LOC:BG
++http://mirror.bg.host.ag/ubuntu/
++http://mirrors.neterra.net/ubuntu/
++http://ubuntu.ipacct.com/ubuntu/
++https://mirror.telepoint.bg/ubuntu/
++https://mirrors.storpool.com/ubuntu/archive/
++#LOC:BR
++http://mirror.ufam.edu.br/ubuntu/
++http://mirror.ufscar.br/ubuntu/
++http://mirror.unesp.br/ubuntu/
++http://sft.if.usp.br/ubuntu/
++http://ubuntu-archive.locaweb.com.br/ubuntu/
++http://ubuntu.c3sl.ufpr.br/ubuntu/
++http://ubuntu.mti.mt.gov.br/
++https://mirror.uepg.br/ubuntu/
++#LOC:BW
++http://mirror.retentionrange.co.bw/ubuntu/
++#LOC:BY
++http://ftp.byfly.by/ubuntu/
++http://mirror.datacenter.by/ubuntu/
++#LOC:CA
++http://archive.ubuntu.mirror.rafal.ca/ubuntu/
++http://mirror.ca-tr.kamatera.com/ubuntu/
++http://mirror.its.dal.ca/ubuntu/
++http://mirror.rcg.sfu.ca/mirror/ubuntu/
++http://mirrors.layeronline.com/ubuntu/
++http://ubuntu.linux.n0c.ca/ubuntuarchive/
++http://ubuntu.mirror.rafal.ca/ubuntu/
++https://gpl.savoirfairelinux.net/pub/mirrors/ubuntu/
++https://mirror.0xem.ma/ubuntu/
++https://mirror.csclub.uwaterloo.ca/ubuntu/
++https://mirror.digitaloceans.dev/ubuntu/
++https://mirror.esecuredata.com/ubuntu-archive/
++https://mirror.hep.gg/ubuntu/
++https://mirror.it.ubc.ca/ubuntu/
++https://mirror.reenigne.net/ubuntu/
++https://muug.ca/mirror/ubuntu/
++#LOC:CD
++https://mirrors.united.cd/ubuntu/
++#LOC:CH
++http://archive.ubuntu.csg.uzh.ch/ubuntu/
++http://mirror.infomaniak.ch/ubuntu/
++http://pkg.adfinis.com/ubuntu/
++http://ubuntu.ethz.ch/ubuntu/
++https://mirror.init7.net/ubuntu/
++https://mirror.solnet.ch/ubuntu/
++https://pkg.adfinis-on-exoscale.ch/ubuntu/
++#LOC:CL
++http://mirror.uchile.cl/ubuntu/
++https://elmirror.cl/ubuntu/
++https://mirror.hnd.cl/ubuntu/
++https://mirror.ufro.cl/ubuntu/
++#LOC:CN
++http://ftp.sjtu.edu.cn/ubuntu/
++http://mirror.lzu.edu.cn/ubuntu/
++http://mirrors.aliyun.com/ubuntu/
++http://mirrors.cn99.com/ubuntu/
++http://mirrors.cqu.edu.cn/ubuntu/
++http://mirrors.huaweicloud.com/repository/ubuntu/
++http://mirrors.njupt.edu.cn/ubuntu/
++http://mirrors.sohu.com/ubuntu/
++http://mirrors.yun-idc.com/ubuntu/
++https://mirror.bjtu.edu.cn/ubuntu/
++https://mirror.nju.edu.cn/ubuntu/
++https://mirror.nyist.edu.cn/ubuntu/
++https://mirrors.bfsu.edu.cn/ubuntu/
++https://mirrors.bupt.edu.cn/ubuntu/
++https://mirrors.cloud.tencent.com/ubuntu/
++https://mirrors.jlu.edu.cn/ubuntu/
++https://mirrors.jxust.edu.cn/ubuntu/
++https://mirrors.tuna.tsinghua.edu.cn/ubuntu-ports/
++https://mirrors.tuna.tsinghua.edu.cn/ubuntu/
++https://mirrors.ustc.edu.cn/ubuntu/
++https://mirrors.xjtu.edu.cn/ubuntu/
++https://mirrors.zju.edu.cn/ubuntu/
++https://repo.huaweicloud.com/ubuntu/
++#LOC:CO
++http://mirror.unimagdalena.edu.co/ubuntu/
++http://mirrors.atlas.net.co/ubuntu/
++https://edgeuno-bog2.mm.fcix.net/ubuntu/
++#LOC:CR
++http://ubuntu.ucr.ac.cr/ubuntu/
++#LOC:CY
++http://mirror.library.ucy.ac.cy/linux/ubuntu/archive/
++#LOC:CZ
++http://ftp.cvut.cz/ubuntu/
++http://ftp.linux.cz/pub/linux/ubuntu/
++http://ucho.ignum.cz/ubuntu/
++https://cz.archive.ubuntu.com/ubuntu/
++https://ftp.sh.cvut.cz/ubuntu/
++https://mirror.dkm.cz/ubuntu/
++https://mirror.it4i.cz/ubuntu/
++#LOC:DE
++ftp://ftp.fu-berlin.de/linux/ubuntu/
++ftp://ftp.rrzn.uni-hannover.de/pub/mirror/linux/ubuntu
++http://artfiles.org/ubuntu.com/
++http://ftp-stud.hs-esslingen.de/ubuntu/
++http://ftp.fau.de/ubuntu/
++http://ftp.halifax.rwth-aachen.de/ubuntu/
++http://ftp.hosteurope.de/mirror/archive.ubuntu.com/
++http://ftp.rrzn.uni-hannover.de/pub/mirror/linux/ubuntu/
++http://ftp.rz.tu-bs.de/pub/mirror/ubuntu-packages/
++http://ftp.stw-bonn.de/ubuntu/
++http://ftp.tu-chemnitz.de/pub/linux/ubuntu-ports/
++http://ftp.tu-chemnitz.de/pub/linux/ubuntu/
++http://ftp.tu-ilmenau.de/mirror/ubuntu/
++http://ftp.uni-bayreuth.de/linux/ubuntu/ubuntu/
++http://ftp.uni-kl.de/pub/linux/ubuntu/
++http://ftp.uni-mainz.de/ubuntu/
++http://ftp5.gwdg.de/pub/linux/debian/ubuntu/
++http://mirror.daniel-jost.net/ubuntu/
++http://mirror.eu-fr.kamatera.com/ubuntu/
++http://mirror.funkfreundelandshut.de/ubuntu/
++http://mirror.ipb.de/ubuntu/
++http://mirror.kamp.de/ubuntu/
++http://mirror.liquidrp.de/ubuntu/
++http://mirror.serverloft.eu/ubuntu/ubuntu/
++http://mirror.wtnet.de/ubuntu/
++http://mirror2.tuxinator.org/ubuntu/
++http://packages.oth-regensburg.de/ubuntu/
++http://suse.uni-leipzig.de/pub/releases.ubuntu.com/ubuntu/
++http://ubuntu.mirror.lrz.de/ubuntu/
++http://ubuntu.mirror.tudos.de/ubuntu/
++https://de.mirrors.clouvider.net/ubuntu/
++https://debian.charite.de/ubuntu/
++https://drmirror.physi.uni-heidelberg.de/ubuntu/
++https://ftp.uni-stuttgart.de/ubuntu/
++https://mirror.23m.com/ubuntu/
++https://mirror.creoline.net/ubuntu/
++https://mirror.de.leaseweb.net/ubuntu/
++https://mirror.dogado.de/ubuntu/
++https://mirror.fra.macarne.com/ubuntu/
++https://mirror.informatik.tu-freiberg.de/ubuntu/
++https://mirror.kkg.berlin/ubuntu/
++https://mirror.netcologne.de/ubuntu/
++https://mirror.netzwerge.de/ubuntu/
++https://mirror.scaleuptech.com/ubuntu/
++https://mirror.united-gameserver.de/ubuntu/
++https://mirrors.xtom.de/ubuntu/
++#LOC:DK
++http://ftp.klid.dk/ftp/ubuntu/
++http://mirror.one.com/ubuntu/
++http://mirrors.dotsrc.org/ubuntu/
++https://mirror.asergo.com/ubuntu/
++https://mirror.group.one/ubuntu/
++https://mirror.netsite.dk/ubuntu/archive/
++https://mirrors.c0urier.net/linux/ubuntu/
++#LOC:EC
++http://mirror.cedia.org.ec/ubuntu/
++http://mirror.espol.edu.ec/ubuntu/
++#LOC:EE
++https://archive.ubuntu.apiversa.com/
++https://mirrors.xtom.ee/ubuntu/
++#LOC:ES
++http://dafi.inf.um.es/ubuntu/
++http://ftp.caliu.cat/pub/distribucions/ubuntu/archive/
++http://ftp.udc.es/ubuntu/
++http://mirror.tedra.es/ubuntu/
++http://softlibre.unizar.es/ubuntu/archive/
++http://ubuntu.cica.es/ubuntu/
++http://ubuntu.grn.cat/ubuntu/
++https://ftp.csuc.cat/ubuntu/archive/
++https://labs.eif.urjc.es/mirror/ubuntu/
++https://ubuntu.uvigo.es/
++#LOC:FI
++http://mirrors.nic.funet.fi/ubuntu/
++https://mirror.5i.fi/ubuntu/
++https://ubuntu.web.trex.fi/ubuntu/
++#LOC:FR
++http://distrib-coffee.ipsl.jussieu.fr/pub/linux/ubuntu/
++http://miroir.univ-lorraine.fr/ubuntu/
++http://mirror.plusserver.com/ubuntu/ubuntu/
++http://mirrors.ircam.fr/pub/ubuntu/archive/
++http://ubuntu.mirror.serverloft.de/ubuntu/
++http://ubuntu.univ-nantes.fr/ubuntu/
++http://ubuntu.univ-reims.fr/ubuntu/
++https://ftp.u-picardie.fr/mirror/ubuntu/ubuntu/
++https://mirror.johnnybegood.fr/ubuntu/
++https://mirror.ubuntu.ikoula.com/
++https://ubuntu.lafibre.info/ubuntu/
++https://ubuntu.mirrors.ovh.net/ubuntu/
++https://www-ftp.lip6.fr/pub/linux/distributions/Ubuntu/archive/
++#LOC:GB
++http://archive.ubuntu.com/ubuntu/
++http://mirror.as29550.net/archive.ubuntu.com/
++http://mirror.bytemark.co.uk/ubuntu/
++http://mirror.cov.ukservers.com/ubuntu/
++http://mirror.eu-lo.kamatera.com/ubuntu/
++http://mirror.freethought-internet.co.uk/ubuntu/
++http://mirror.mythic-beasts.com/ubuntu/
++http://mirror.ox.ac.uk/sites/archive.ubuntu.com/ubuntu/
++http://mirror.vorboss.net/ubuntu-archive/
++http://mirrors.coreix.net/ubuntu/
++http://mirrors.melbourne.co.uk/ubuntu/
++http://mirrors.ukfast.co.uk/sites/archive.ubuntu.com/
++http://ubuntu.mirrors.uk2.net/ubuntu/
++http://ubuntu.positive-internet.com/ubuntu/
++http://www.mirrorservice.org/sites/archive.ubuntu.com/ubuntu/
++https://mirror.lon.macarne.com/ubuntu/
++https://mirror.vinehost.net/ubuntu/
++https://uk.mirrors.clouvider.net/ubuntu/
++#LOC:GE
++http://ubuntu.grena.ge/ubuntu/
++#LOC:GL
++http://mirror.greennet.gl/ubuntu/
++#LOC:GR
++http://ftp.cc.uoc.gr/mirrors/linux/ubuntu/packages/
++http://ftp.ntua.gr/ubuntu/
++http://ubuntu.otenet.gr/
++#LOC:HK
++http://hk.mirrors.thegigabit.com/ubuntu/
++http://mirror-hk.koddos.net/ubuntu/
++http://mirror.as.kamatera.com/ubuntu/
++https://mirror.xtom.com.hk/ubuntu/
++#LOC:HR
++http://ubuntu.grad.hr/ubuntu/
++#LOC:HU
++http://repo.jztkft.hu/ubuntu/
++https://mirror.niif.hu/ubuntu/
++https://mirrors.sth.sze.hu/ubuntu/
++https://quantum-mirror.hu/mirrors/pub/ubuntu/
++#LOC:ID
++http://kartolo.sby.datautama.net.id/ubuntu/
++http://kebo.pens.ac.id/ubuntu/
++http://mirror.biznetgio.com/ubuntu/
++http://mirror.cepatcloud.id/ubuntu/
++http://mirror.cloudxchange.id/ubuntu/
++http://mirror.deace.id/ubuntu/
++http://mirror.poliwangi.ac.id/ubuntu/
++http://mirror.unej.ac.id/ubuntu/
++http://repo.ugm.ac.id/ubuntu/
++http://suro.ubaya.ac.id/ubuntu/
++https://buaya.klas.or.id/ubuntu/
++https://cdn.repo.cloudeka.id/ubuntu/
++https://cdn.ubuntu.repo.cloudeka.id/ubuntu/
++https://linux.domainesia.com/ubuntu/ubuntu-archive/
++https://mirror.amscloud.co.id/ubuntu/
++https://mirror.citrahost.com/ubuntu/
++https://mirror.faizuladib.com/ubuntu/
++https://mirror.gi.co.id/ubuntu/
++https://mirror.nevacloud.com/ubuntu/ubuntu-archive/
++https://mirror.papua.go.id/ubuntu/
++https://mirror.repository.id/ubuntu/
++https://mirror.unair.ac.id/ubuntu/
++https://mr.heru.id/ubuntu/
++https://repo.usk.ac.id/ubuntu/
++https://sby.mirror.bignet.id/ubuntu/
++#LOC:IE
++http://ftp.heanet.ie/pub/ubuntu/
++https://mirror.webworld.ie/ubuntu/
++#LOC:IL
++http://mirror.il-jr.kamatera.com/ubuntu/
++http://mirror.il-pt.kamatera.com/ubuntu/
++http://mirror.il-rh.kamatera.com/ubuntu/
++http://mirror.il-ta.kamatera.com/ubuntu/
++http://mirror.il.kamatera.com/ubuntu/
++http://mirror.isoc.org.il/pub/ubuntu/
++http://rep-ubuntu-il.upress.io/ubuntu/
++https://ubuntu-archive.interhost.co.il/ubuntu/
++#LOC:IN
++http://ftp.iitm.ac.in/ubuntu/
++http://mirror.cse.iitk.ac.in/ubuntu/
++http://mirrors.iitd.ac.in/ubuntu/
++http://mirrors.piconets.webwerks.in/ubuntu-mirror/ubuntu/
++http://repos.del.extreme-ix.org/ubuntu/
++https://in.mirror.coganng.com/ubuntu-ports/
++https://in.mirror.coganng.com/ubuntu/
++https://mirror.bharatdatacenter.com/ubuntu/
++https://mirror.nitc.ac.in/ubuntu/
++https://mirrors.nxtgen.com/ubuntu-mirror/ubuntu/
++https://repo.extreme-ix.org/ubuntu/
++https://ubuntu-archive.mirror.net.in/
++https://ubuntu-ports.mirror.net.in/
++#LOC:IR
++http://linuxmirrors.ir/pub/ubuntu/
++http://mirror.aminidc.com/ubuntu/
++http://mirror.faraso.org/ubuntu/
++http://repo.iut.ac.ir/repo/Ubuntu/
++http://ubuntu.byteiran.com/ubuntu/
++https://archive.ubuntu.petiak.ir/ubuntu/
++https://ir.archive.ubuntu.com/ubuntu/
++https://ir.ubuntu.sindad.cloud/ubuntu/
++https://mirror.0-1.cloud/ubuntu/
++https://mirror.iranserver.com/ubuntu/
++https://mirror.rasanegar.com/ubuntu/
++https://mirrors.pardisco.co/ubuntu/
++https://ubuntu-mirror.kimiahost.com/
++https://ubuntu.bardia.tech/
++https://ubuntu.hostiran.ir/ubuntuarchive/
++https://ubuntu.shatel.ir/ubuntu/
++#LOC:IS
++http://ubuntu.hysing.is/ubuntu/
++https://is.mirror.flokinet.net/ubuntu/
++https://mirrors.opensource.is/ubuntu/
++#LOC:IT
++http://giano.com.dist.unige.it/ubuntu/
++https://it1.mirror.vhosting-it.com/ubuntu/
++https://it2.mirror.vhosting-it.com/ubuntu/
++https://ubuntu.mirror.garr.it/ubuntu/
++#LOC:JP
++http://archive.g4t1.pro/ubuntu/
++http://ftp.jaist.ac.jp/pub/Linux/ubuntu/
++http://ftp.riken.jp/Linux/ubuntu/
++http://ftp.tsukuba.wide.ad.jp/Linux/ubuntu/
++http://mirror.fairway.ne.jp/ubuntu/
++http://ubuntutym.u-toyama.ac.jp/ubuntu/
++http://www.ftp.ne.jp/Linux/packages/ubuntu/archive/
++https://ftp.udx.icscoe.jp/Linux/ubuntu/
++https://jp.mirror.coganng.com/ubuntu-ports/
++https://jp.mirror.coganng.com/ubuntu/
++https://linux.yz.yamagata-u.ac.jp/ubuntu/
++https://mirror.nishi.network/ubuntu-ports/
++https://mirror.nishi.network/ubuntu/
++https://repo.jing.rocks/ubuntu-ports/
++https://repo.jing.rocks/ubuntu/
++#LOC:KG
++http://mir.linux.kg/ubuntu/
++#LOC:KH
++https://mirror.sabay.com.kh/ubuntu/
++#LOC:KR
++http://ftp.daum.net/ubuntu/
++https://ftp.kaist.ac.kr/ubuntu-ports/
++https://ftp.kaist.ac.kr/ubuntu/
++https://ftp.lanet.kr/ubuntu-ports/
++https://ftp.lanet.kr/ubuntu/
++https://mirror.elice.io/ubuntu/
++https://mirror.kakao.com/ubuntu/
++https://mirror.morgan.kr/ubuntu/
++https://mirror.siwoo.org/ubuntu/
++https://mirror.yuki.net.uk/ubuntu-ports/
++https://mirror.yuki.net.uk/ubuntu/
++#LOC:KZ
++http://mirror.hoster.kz/ubuntu/
++http://mirror.neolabs.kz/ubuntu/
++http://mirror.ps.kz/ubuntu/
++#LOC:LT
++http://ftp.litnet.lt/ubuntu/
++http://ubuntu-archive.mirror.serveriai.lt/
++http://ubuntu.mirror.vu.lt/ubuntu/
++https://mirror.bacloud.com/ubuntu-mirror/archive/
++https://mirror.vpsnet.com/ubuntu/
++#LOC:LU
++http://ubuntu.mirror.root.lu/ubuntu/
++#LOC:LV
++http://mirror.cloudhosting.lv/ubuntu/
++http://ubuntu-arch.linux.edu.lv/ubuntu/
++https://ubuntu.koyanet.lv/ubuntu/
++#LOC:MA
++https://mirror.marwan.ma/ubuntu/
++#LOC:MD
++http://mirror.as43289.net/ubuntu/
++http://mirrors.mivocloud.com/ubuntu/
++https://mirror.ihost.md/ubuntu/
++#LOC:MG
++http://ubuntu.dts.mg/ubuntu/
++#LOC:MK
++http://mirror-mk.interspace.com/ubuntu/
++http://mirror.onevip.mk/ubuntu/
++http://mirror.t-home.mk/ubuntu/
++#LOC:MM
++https://mirror.ygn.mmix.net.mm/ubuntu/
++#LOC:MN
++http://mirror.datacenter.mn/ubuntu/
++#LOC:MU
++https://ubuntu-mirror.cloud.mu/ubuntu-ports/
++https://ubuntu-mirror.cloud.mu/ubuntu/
++#LOC:MX
++http://mirror.nerdmilio.com/ubuntu/
++#LOC:MY
++http://my.mirrors.thegigabit.com/ubuntu/
++http://ubuntu.tuxuri.com/ubuntu/
++https://mirrors.gbnetwork.com/ubuntu/
++https://mirrors.ipserverone.com/ubuntu/
++#LOC:NA
++http://download.nust.na/pub/ubuntu/ubuntu/
++#LOC:NC
++http://archive.ubuntu.nautile.nc/ubuntu/
++http://ubuntu.lagoon.nc/ubuntu/
++#LOC:NL
++ftp://ftpserv.tudelft.nl/pub/Linux/archive.ubuntu.com/
++http://ftp.nluug.nl/os/Linux/distr/ubuntu/
++http://ftp.snt.utwente.nl/pub/os/linux/ubuntu/
++http://ftp.tudelft.nl/archive.ubuntu.com/
++http://mirror.eu.kamatera.com/ubuntu/
++http://mirror.hostnet.nl/ubuntu/archive/
++http://mirror.i3d.net/pub/ubuntu/
++http://mirror.nforce.com/pub/linux/ubuntu/
++http://mirror.nl.datapacket.com/ubuntu/
++http://mirror.previder.nl/ubuntu/
++http://mirror.serverion.com/ubuntu/
++http://mirror.serverius.net/ubuntu/
++http://mirror.transip.net/ubuntu/ubuntu/
++http://mirror.vpgrp.io/ubuntu/
++http://nl.archive.ubuntu.com/ubuntu/
++http://nl3.archive.ubuntu.com/ubuntu/
++http://osmirror.rug.nl/ubuntu/
++http://ubuntu.mirror.true.nl/ubuntu/
++https://mirror.lyrahosting.com/ubuntuarchive/
++https://mirror.nl.altushost.com/ubuntu/
++https://mirror.nl.leaseweb.net/ubuntu/
++https://mirrors.evoluso.com/ubuntu/
++https://mirrors.hostiserver.com/ubuntu/
++https://mirrors.xtom.nl/ubuntu/
++https://nl.mirrors.clouvider.net/ubuntu/
++https://ubuntu.mirror.intermax.nl/
++https://ubuntu.mirror.wearetriple.com/archive/
++#LOC:NO
++http://ftp.uninett.no/ubuntu/
++http://no.archive.ubuntu.com/ubuntu/
++http://no.mirrors.blix.com/ubuntu/
++http://ubuntu.uib.no/archive/
++https://ubuntu.hi.no/archive/
++#LOC:NP
++http://ntc.net.np/ubuntu/
++http://ubuntu.ntc.net.np/ubuntu/
++#LOC:NZ
++http://ubuntu.mirrors.theom.nz/
++http://ucmirror.canterbury.ac.nz/ubuntu/
++https://mirror.2degrees.nz/ubuntu/
++https://mirror.fsmg.org.nz/ubuntu/
++#LOC:PH
++http://mirror.rise.ph/ubuntu/
++#LOC:PK
++http://mirror.virtury.com/ubuntu/
++#LOC:PL
++http://ftp.agh.edu.pl/ubuntu/
++http://ftp.icm.edu.pl/pub/Linux/ubuntu/
++http://ftp.vectranet.pl/ubuntu/
++http://mirror.chmuri.net/ubuntu/
++http://ubuntu.man.lodz.pl/ubuntu/
++http://ubuntu.task.gda.pl/ubuntu/
++https://ftp.psnc.pl/linux/ubuntu/
++https://mirroronet.pl/pub/mirrors/ubuntu/
++#LOC:PR
++http://mirrors.upr.edu/ubuntu/
++#LOC:PT
++http://archive.ubuntumirror.dei.uc.pt/ubuntu/
++http://cesium.di.uminho.pt/pub/ubuntu-archive/
++http://ftp.rnl.tecnico.ulisboa.pt/pub/ubuntu/archive/
++http://glua.ua.pt/pub/ubuntu/
++http://mirrors.up.pt/ubuntu/
++https://mirror.leitecastro.com/ubuntu/
++https://mirrors.ptisp.pt/ubuntu/
++#LOC:RO
++http://mirrors.nxthost.com/ubuntu/
++http://mirrors.pidginhost.com/ubuntu/
++http://ubuntu.mirrors.linux.ro/archive/
++https://mirror.efect.ro/ubuntu/archive/
++https://mirror.flokinet.net/ubuntu/
++https://mirrors.chroot.ro/ubuntu/
++https://mirrors.hosterion.ro/ubuntu/
++https://mirrors.hostico.ro/ubuntu/archive/
++https://mirrors.layerbridge.com/ubuntu/
++https://mirrors.nav.ro/ubuntu/
++https://ubuntu-mirror.magnetic-it.com/ubuntu/
++https://ubuntu.mirrors.orange.ro/ubuntu/
++#LOC:RS
++http://mirror1.sox.rs/ubuntu/ubuntu/
++https://mirror1.sox.rs/ubuntu/ubuntu/
++#LOC:RU
++http://mirror.corbina.net/ubuntu/
++http://mirror.docker.ru/ubuntu/
++http://mirror.logol.ru/ubuntu/
++http://mirror.timeweb.ru/ubuntu/
++http://mirror.yandex.ru/ubuntu/
++http://mirrors.powernet.com.ru/ubuntu/
++https://mirror.hyperdedic.ru/ubuntu/
++https://mirror.linux-ia64.org/ubuntu/
++https://mirror.neftm.ru/ubuntu/
++https://mirror.truenetwork.ru/ubuntu/
++#LOC:SA
++https://mirrors.isu.net.sa/apt-mirror/
++#LOC:SE
++http://ftp.acc.umu.se/ubuntu/
++http://ftp.lysator.liu.se/ubuntu/
++http://mirror.zetup.net/ubuntu/
++http://ubuntu.mirror.su.se/ubuntu/
++https://ftpmirror1.infania.net/ubuntu/
++https://mirror.bahnhof.net/ubuntu/
++#LOC:SG
++http://0ms.dev/mirrors/ubuntu/
++http://download.nus.edu.sg/mirror/ubuntu/
++http://kambing.uu.sg/ubuntu/
++http://mirror.aktkn.sg/ubuntu/
++http://mirror.sg.gs/ubuntu/
++http://ossmirror.mycloud.services/os/linux/ubuntu/
++https://mirror.coganng.com/ubuntu-ports/
++https://mirror.coganng.com/ubuntu/
++#LOC:SI
++http://ftp.arnes.si/pub/mirrors/ubuntu/
++#LOC:SK
++http://ftp.energotel.sk/pub/linux/ubuntu/
++http://tux.rainside.sk/ubuntu/
++https://mirror.vnet.sk/ubuntu/
++#LOC:TH
++http://ftp.psu.ac.th/pub/ubuntu/
++http://mirror.thaidns.co.th/ubuntu/
++http://mirror1.ku.ac.th/ubuntu/
++http://mirror1.totbb.net/ubuntu/
++http://mirrors.bangmod.cloud/ubuntu/
++http://mirrors.psu.ac.th/ubuntu/
++https://mirror.kku.ac.th/ubuntu/
++https://mirrors.nipa.cloud/ubuntu/
++#LOC:TR
++http://mirror.kapteyan.com.tr/ubuntu/
++http://ubuntu.turhost.com/ubuntu/
++http://ubuntu.vargonen.com/ubuntu/
++https://ftp.linux.org.tr/ubuntu/
++https://kozyatagi.mirror.guzel.net.tr/ubuntu/
++https://mirror.alastyr.com/ubuntu/ubuntu-archive/
++https://mirror.rabisu.com/ubuntu/ubuntu-archive/
++https://mirror.sh.com.tr/ubuntu/
++https://mirror.verinomi.com/ubuntu/ubuntu-archive/
++#LOC:TW
++http://free.nchc.org.tw/ubuntu/
++http://ftp.mirror.tw/pub/ubuntu/ubuntu/
++http://ftp.tku.edu.tw/ubuntu/
++http://ftp.tw.debian.org/ubuntu/
++http://mirror.nwlab.tk/ubuntu/
++http://mirror01.idc.hinet.net/ubuntu/
++http://ubuntu.cs.nctu.edu.tw/ubuntu/
++https://ftp.tc.edu.tw/Linux/ubuntu/
++https://ftp.ubuntu-tw.net/ubuntu/
++https://mirror.ossplanet.net/ubuntu/
++https://mirror.twds.com.tw/ubuntu-ports/
++https://mirror.twds.com.tw/ubuntu/
++https://tw1.mirror.blendbyte.net/ubuntu/
++https://ubuntu.ccns.ncku.edu.tw/ubuntu/
++#LOC:TZ
++http://deb-mirror.habari.co.tz/ubuntu/
++http://mirror.aptus.co.tz/pub/ubuntuarchive/
++#LOC:UA
++http://mirror.mirohost.net/ubuntu/
++http://ubuntu.mirrors.omnilance.com/ubuntu/
++http://ubuntu.org.ua/ubuntu/
++http://ubuntu.volia.net/ubuntu-archive/
++https://ubuntu.netforce.hosting/ubuntu/
++#LOC:UG
++http://mirror.renu.ac.ug/ubuntu/
++#LOC:US
++http://archive.linux.duke.edu/ubuntu/
++http://babylon.cs.uh.edu/mirror-sites/ubuntu/
++http://ftp.usf.edu/pub/ubuntu/
++http://ftp.ussg.iu.edu/linux/ubuntu/
++http://mirror.arizona.edu/ubuntu/
++http://mirror.brightridge.com/ubuntuarchive/
++http://mirror.cc.vt.edu/pub2/ubuntu/
++http://mirror.cogentco.com/pub/linux/ubuntu/
++http://mirror.cs.jmu.edu/pub/ubuntu/
++http://mirror.math.princeton.edu/pub/ubuntu/
++http://mirror.math.ucdavis.edu/ubuntu/
++http://mirror.metrocast.net/ubuntu/
++http://mirror.mrjester.net/ubuntu/archive/
++http://mirror.nodesdirect.com/ubuntu/
++http://mirror.pit.teraswitch.com/ubuntu/
++http://mirror.rustytel.net/ubuntu/
++http://mirror.siena.edu/ubuntu/
++http://mirror.steadfastnet.com/ubuntu/
++http://mirror.team-cymru.com/ubuntu/
++http://mirror.team-cymru.org/ubuntu/
++http://mirror.umd.edu/ubuntu/
++http://mirror.uoregon.edu/ubuntu/
++http://mirror.us-midwest-1.nexcess.net/ubuntu/
++http://mirror.us-ny2.kamatera.com/ubuntu/
++http://mirror.us-sc.kamatera.com/ubuntu/
++http://mirror.us-tx.kamatera.com/ubuntu/
++http://mirror.vcu.edu/pub/gnu+linux/ubuntu/
++http://mirrors.accretive-networks.net/ubuntu/
++http://mirrors.advancedhosters.com/ubuntu/
++http://mirrors.arpnetworks.com/Ubuntu/
++http://mirrors.cat.pdx.edu/ubuntu/
++http://mirrors.cmich.edu/ubuntu/
++http://mirrors.codec-cluster.org/ubuntu/
++http://mirrors.liquidweb.com/ubuntu/
++http://mirrors.lug.mtu.edu/ubuntu/
++http://mirrors.maine.edu/ubuntu/
++http://mirrors.mit.edu/ubuntu/
++http://mirrors.namecheap.com/ubuntu/
++http://mirrors.ocf.berkeley.edu/ubuntu/
++http://mirrors.rit.edu/ubuntu/
++http://mirrors.sonic.net/ubuntu/
++http://mirrors.syringanetworks.net/ubuntu-archive/
++http://mirrors.tripadvisor.com/ubuntu/
++http://mirrors.us.kernel.org/ubuntu/
++http://mirrors.usinternet.com/ubuntu/archive/
++http://mirrors.vcea.wsu.edu/ubuntu/
++http://mirrors.xmission.com/ubuntu/
++http://plug-mirror.rcac.purdue.edu/ubuntu/
++http://pubmirrors.dal.corespace.com/ubuntu/
++http://repo.miserver.it.umich.edu/ubuntu/
++http://ubuntu.cs.utah.edu/ubuntu/
++http://ubuntu.mirror.constant.com/
++http://ubuntu.mirror.frontiernet.net/ubuntu/
++http://ubuntu.mirrors.pair.com/archive/
++http://ubuntu.osuosl.org/ubuntu/
++http://ubuntu.phoenixnap.com/ubuntu/
++http://ubuntu.securedservers.com/
++http://www.club.cc.cmu.edu/pub/ubuntu/
++http://www.gtlib.gatech.edu/pub/ubuntu/
++https://atl.mirrors.clouvider.net/ubuntu/
++https://dal.mirrors.clouvider.net/ubuntu/
++https://la.mirrors.clouvider.net/ubuntu/
++https://lug.mines.edu/mirrors/ubuntu/
++https://mirror.clarkson.edu/ubuntu/
++https://mirror.cs.pitt.edu/ubuntu/archive/
++https://mirror.d.umn.edu/ubuntu/
++https://mirror.dal.nexril.net/ubuntu/
++https://mirror.enzu.com/ubuntu/
++https://mirror.fcix.net/ubuntu/
++https://mirror.hoobly.com/ubuntu/
++https://mirror.lstn.net/ubuntu/
++https://mirror.mia.velocihost.net/ubuntu/
++https://mirror.pilotfiber.com/ubuntu/
++https://mirror.servaxnet.com/ubuntu/
++https://mirror.timkevin.us/ubuntu/
++https://mirror.ubuntu.serverforge.org/
++https://mirror.us.leaseweb.net/ubuntu/
++https://mirrors.bloomu.edu/ubuntu/
++https://mirrors.egr.msu.edu/ubuntu/
++https://mirrors.gigenet.com/ubuntu/
++https://mirrors.iu13.net/ubuntu/
++https://mirrors.ocf.berkeley.edu/ubuntu-ports/
++https://mirrors.sarak.as/ubuntu/
++https://mirrors.tscak.com/ubuntu/
++https://mirrors.wikimedia.org/ubuntu/
++https://mirrors.xtom.com/ubuntu/
++https://nyc.mirrors.clouvider.net/ubuntu/
++https://repo.ialab.dsu.edu/ubuntu/
++https://repos.eggycrew.com/ubuntu/
++https://ubuntu.macarne.com/
++https://ubuntu.mirror.shastacoe.net/ubuntu/
++#LOC:UY
++http://repos.interior.edu.uy/ubuntu/
++https://ubuntu.repo.cure.edu.uy/ubuntu/
++#LOC:UZ
++http://mirror.dc.uz/ubuntu/
++#LOC:VN
++http://mirror.bizflycloud.vn/ubuntu/
++http://mirror.clearsky.vn/ubuntu/
++http://mirror.vietnix.vn/ubuntu/
++http://mirror.viettelcloud.vn/ubuntu/
++http://mirrors.nhanhoa.com/ubuntu/
++http://mirrors.vhost.vn/ubuntu/
++http://opensource.xtdv.net/ubuntu/
++https://mirror.hostingviet.vn/ubuntu/
++https://mirrors.bkns.vn/ubuntu/
++https://mirrors.tino.org/ubuntu/
++#LOC:ZA
++http://mirror.hostafrica.co.za/ubuntu/
++http://ubuntu.mirror.ac.za/ubuntu/
++http://ubuntu.mirror.rain.co.za/ubuntu/
+diff --git a/data/templates/gNewSense.info.in b/data/templates/gNewSense.info.in
+new file mode 100644
+index 0000000..c7636bc
+--- /dev/null
++++ b/data/templates/gNewSense.info.in
+@@ -0,0 +1,55 @@
++_ChangelogURI: http://packages.debian.org/changelogs/pool/%s/%s/%s/%s_%s/changelog
++
++# gNS 3, to be based on Squeeze.
++Suite: parkes
++RepositoryType: deb
++BaseURI: http://archive.gnewsense.org/gnewsense/
++MatchURI: archive.gnewsense.org/gnewsense
++MirrorsFile: gNewSense.mirrors
++Description: gNewSense 3 - "parkes"
++Component: main
++_CompDescription: Main supported software
++_CompDescriptionLong: Core software
++
++Suite: parkes/updates
++RepositoryType: deb
++BaseURI: http://security.gnewsense.org/gnewsense
++MatchURI: security.gnewsense.org/security
++ParentSuite: parkes
++_Description: Security updates
++
++# gNS 2.x, based on hardy
++Suite: deltah
++RepositoryType: deb
++BaseURI: http://archive.gnewsense.org/gnewsense/
++MatchURI: archive.gnewsense.org/gnewsense
++MirrorsFile: gNewSense.mirrors
++_Description: gNewSense "deltah"
++Component: main
++_CompDescription: Main supported software
++_CompDescriptionLong: Core software
++Component: universe
++_CompDescription: Other useful software
++_CompDescriptionLong: Non-core useful software
++
++Suite: deltah-security
++ParentSuite: deltah
++RepositoryType: deb
++BaseURI: http://security.gnewsense.org/gnewsense/
++MatchURI: archive.gnewsense.org/gnewsense|security.gnewsense.org
++_Description: Important security updates
++
++Suite: deltah-updates
++ParentSuite: deltah
++RepositoryType: deb
++BaseURI: http://archive.gnewsense.org/gnewsense/
++MatchURI: archive.gnewsense.org/gnewsense
++_Description: Unsupported updates
++
++Suite: deltah-backports
++ParentSuite: deltah
++RepositoryType: deb
++BaseURI: http://archive.gnewsense.org/gnewsense/
++MatchURI: archive.gnewsense.org/gnewsense
++_Description: Package Backports
++
+diff --git a/data/templates/gNewSense.mirrors b/data/templates/gNewSense.mirrors
+new file mode 100644
+index 0000000..7a8dbaa
+--- /dev/null
++++ b/data/templates/gNewSense.mirrors
+@@ -0,0 +1,489 @@
++
++#LOC:AD
++http://ad.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AE
++http://ae.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AF
++http://af.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AG
++http://ag.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AI
++http://ai.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AL
++http://al.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AM
++http://am.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AN
++http://an.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AO
++http://ao.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AQ
++http://aq.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AR
++http://ar.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AS
++http://as.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AT
++http://at.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AU
++http://au.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AW
++http://aw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AX
++http://ax.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:AZ
++http://az.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BA
++http://ba.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BB
++http://bb.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BD
++http://bd.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BE
++http://be.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BF
++http://bf.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BG
++http://bg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BH
++http://bh.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BI
++http://bi.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BJ
++http://bj.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BM
++http://bm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BN
++http://bn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BO
++http://bo.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BR
++http://br.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BS
++http://bs.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BT
++http://bt.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BV
++http://bv.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BW
++http://bw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BY
++http://by.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:BZ
++http://bz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CA
++http://ca.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CC
++http://cc.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CD
++http://cd.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CF
++http://cf.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CG
++http://cg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CH
++http://ch.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CI
++http://ci.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CK
++http://ck.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CL
++http://cl.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CM
++http://cm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CN
++http://cn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CO
++http://co.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CR
++http://cr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CU
++http://cu.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CV
++http://cv.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CX
++http://cx.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CY
++http://cy.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:CZ
++http://cz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:DE
++http://de.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:DJ
++http://dj.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:DK
++http://dk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:DM
++http://dm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:DO
++http://do.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:DZ
++http://dz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:EC
++http://ec.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:EE
++http://ee.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:EG
++http://eg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:EH
++http://eh.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ER
++http://er.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ES
++http://es.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ET
++http://et.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:FI
++http://fi.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:FJ
++http://fj.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:FK
++http://fk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:FM
++http://fm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:FO
++http://fo.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:FR
++http://fr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GA
++http://ga.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GB
++http://gb.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GD
++http://gd.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GE
++http://ge.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GF
++http://gf.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GG
++http://gg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GH
++http://gh.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GI
++http://gi.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GL
++http://gl.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GM
++http://gm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GN
++http://gn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GP
++http://gp.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GQ
++http://gq.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GR
++http://gr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GS
++http://gs.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GT
++http://gt.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GU
++http://gu.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GW
++http://gw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:GY
++http://gy.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:HK
++http://hk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:HM
++http://hm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:HN
++http://hn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:HR
++http://hr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:HT
++http://ht.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:HU
++http://hu.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ID
++http://id.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IE
++http://ie.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IL
++http://il.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IM
++http://im.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IN
++http://in.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IO
++http://io.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IQ
++http://iq.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IR
++http://ir.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IS
++http://is.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:IT
++http://it.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:JE
++http://je.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:JM
++http://jm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:JO
++http://jo.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:JP
++http://jp.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KE
++http://ke.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KG
++http://kg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KH
++http://kh.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KI
++http://ki.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KM
++http://km.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KN
++http://kn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KP
++http://kp.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KR
++http://kr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KW
++http://kw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KY
++http://ky.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:KZ
++http://kz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LA
++http://la.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LB
++http://lb.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LC
++http://lc.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LI
++http://li.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LK
++http://lk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LR
++http://lr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LS
++http://ls.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LT
++http://lt.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LU
++http://lu.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LV
++http://lv.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:LY
++http://ly.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MA
++http://ma.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MC
++http://mc.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MD
++http://md.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ME
++http://me.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MG
++http://mg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MH
++http://mh.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MK
++http://mk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ML
++http://ml.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MM
++http://mm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MN
++http://mn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MO
++http://mo.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MP
++http://mp.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MQ
++http://mq.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MR
++http://mr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MS
++http://ms.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MT
++http://mt.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MU
++http://mu.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MV
++http://mv.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MW
++http://mw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MX
++http://mx.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MY
++http://my.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:MZ
++http://mz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NA
++http://na.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NC
++http://nc.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NE
++http://ne.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NF
++http://nf.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NG
++http://ng.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NI
++http://ni.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NL
++http://nl.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NO
++http://no.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NP
++http://np.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NR
++http://nr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NU
++http://nu.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:NZ
++http://nz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:OM
++http://om.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PA
++http://pa.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PE
++http://pe.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PF
++http://pf.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PG
++http://pg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PH
++http://ph.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PK
++http://pk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PL
++http://pl.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PM
++http://pm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PN
++http://pn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PR
++http://pr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PS
++http://ps.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PT
++http://pt.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PW
++http://pw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:PY
++http://py.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:QA
++http://qa.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:RE
++http://re.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:RO
++http://ro.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:RS
++http://rs.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:RU
++http://ru.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:RW
++http://rw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SA
++http://sa.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SB
++http://sb.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SC
++http://sc.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SD
++http://sd.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SE
++http://se.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SG
++http://sg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SH
++http://sh.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SI
++http://si.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SJ
++http://sj.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SK
++http://sk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SL
++http://sl.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SM
++http://sm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SN
++http://sn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SO
++http://so.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SR
++http://sr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ST
++http://st.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SV
++http://sv.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SY
++http://sy.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:SZ
++http://sz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TC
++http://tc.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TD
++http://td.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TF
++http://tf.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TG
++http://tg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TH
++http://th.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TJ
++http://tj.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TK
++http://tk.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TL
++http://tl.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TM
++http://tm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TN
++http://tn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TO
++http://to.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TR
++http://tr.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TT
++http://tt.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TV
++http://tv.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TW
++http://tw.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:TZ
++http://tz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:UA
++http://ua.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:UG
++http://ug.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:UM
++http://um.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:US
++http://us.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:UY
++http://uy.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:UZ
++http://uz.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:VA
++http://va.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:VC
++http://vc.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:VE
++http://ve.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:VG
++http://vg.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:VI
++http://vi.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:VN
++http://vn.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:VU
++http://vu.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:WF
++http://wf.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:WS
++http://ws.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:YE
++http://ye.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:YT
++http://yt.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ZA
++http://za.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ZM
++http://zm.archive.gnewsense.org/gnewsense-metad/gnewsense/
++#LOC:ZW
++http://zw.archive.gnewsense.org/gnewsense-metad/gnewsense/
+diff --git a/data/templates/gnewsense.info.in b/data/templates/gnewsense.info.in
+index f2531d4..013b9db 100644
+--- a/data/templates/gnewsense.info.in
++++ b/data/templates/gnewsense.info.in
+@@ -52,4 +52,3 @@ RepositoryType: deb
+ BaseURI: http://archive.gnewsense.org/gnewsense/
+ MatchURI: archive.gnewsense.org/gnewsense
+ _Description: Package Backports
+-
+diff --git a/data/templates/ubuntu.info.in b/data/templates/ubuntu.info.in
+index 6b3179c..1c62841 100644
+--- a/data/templates/ubuntu.info.in
++++ b/data/templates/ubuntu.info.in
+@@ -152,7 +152,7 @@ _CompDescription: Software packaged by Canonical for their partners
+ _CompDescriptionLong: This software is not part of Ubuntu.
+ X-Version: le 20.04, ge 10.10
+ 
+-Suite: {series} 
++Suite: {series}
+ Official: false
+ RepositoryType: deb
+ BaseURI: http://extras.ubuntu.com
+@@ -220,4 +220,3 @@ BaseURI: http://archive.ubuntu.com/ubuntu/
+ MatchURI: archive.ubuntu.com/ubuntu|ports.ubuntu.com/ubuntu-ports
+ _Description: Unsupported updates
+ X-Version: ge 11.04
+-
+diff --git a/python/pkgmanagerprogress.cc b/python/pkgmanagerprogress.cc
+index 9df6051..27025ac 100644
+--- a/python/pkgmanagerprogress.cc
++++ b/python/pkgmanagerprogress.cc
+@@ -63,5 +63,3 @@ PyTypeObject PyPackageManagerProgressFancy_Type =
+    0,                                   // tp_alloc
+    PkgManagerProgressFancyNew,          // tp_new
+ };
+-
+-
+diff --git a/tests/data/aptsources/lsb-release b/tests/data/aptsources/lsb-release
+new file mode 100644
+index 0000000..c4b5944
+--- /dev/null
++++ b/tests/data/aptsources/lsb-release
+@@ -0,0 +1,4 @@
++DISTRIB_ID=Ubuntu
++DISTRIB_RELEASE=16.04
++DISTRIB_CODENAME=xenial
++DISTRIB_DESCRIPTION="Ubuntu 16.04.1 LTS"
+diff --git a/tests/data/aptsources/os-release b/tests/data/aptsources/os-release
+new file mode 100644
+index 0000000..95a5bcd
+--- /dev/null
++++ b/tests/data/aptsources/os-release
+@@ -0,0 +1,10 @@
++NAME="KDE neon"
++VERSION="16.04 LTS"
++ID=neon
++ID_LIKE="ubuntu debian"
++PRETTY_NAME="KDE neon User Edition on 16.04 LTS"
++VERSION_ID="16.04"
++HOME_URL="http://neon.kde.org/"
++SUPPORT_URL="http://neon.kde.org/"
++BUG_REPORT_URL="http://bugs.kde.org/"
++UBUNTU_CODENAME=xenial
+diff --git a/tests/data/test-signed-usable-repo/key.gpg.base64 b/tests/data/test-signed-usable-repo/key.gpg.base64
+new file mode 100644
+index 0000000..3bdec88
+--- /dev/null
++++ b/tests/data/test-signed-usable-repo/key.gpg.base64
+@@ -0,0 +1,62 @@
++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
++qipSuMIYrosA
+diff --git a/tests/test_auth.py b/tests/test_auth.py
+new file mode 100644
+index 0000000..811cbb9
+--- /dev/null
++++ b/tests/test_auth.py
+@@ -0,0 +1,314 @@
++#!/usr/bin/python3
++
++import contextlib
++import errno
++import itertools
++import os
++import shutil
++import sys
++import tempfile
++import time
++import unittest
++from http.server import HTTPServer
++from http.server import SimpleHTTPRequestHandler as HTTPRequestHandler
++
++import apt_pkg
++import testcommon
++
++import apt.auth
++
++WHEEZY_KEYID = "8B48AD6246925553"
++WHEEZY_KEYDATE = "1335553717"
++WHEEZY_KEY = """-----BEGIN PGP PUBLIC KEY BLOCK-----
++Version: GnuPG v1.4.12 (GNU/Linux)
++
++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
++DHcut3Yey8o=
++=id4q
++-----END PGP PUBLIC KEY BLOCK-----"""
++
++
++def normalize_key(keystr):
++    """Remove the Version: header from a key block"""
++    lines = keystr.split("\n")
++    if lines[1].startswith("Version:"):
++        return lines[:1] + lines[2:]
++    return lines
++
++
++class TestAuthKeys(testcommon.TestCase):
++
++    """Test handling of keys for signed repositories."""
++
++    def setUp(self):
++        testcommon.TestCase.setUp(self)
++
++        self.tmpdir = tempfile.mkdtemp()
++        self.addCleanup(shutil.rmtree, self.tmpdir)
++        apt_pkg.config.set("Dir", self.tmpdir)
++        apt_pkg.config.set("Dir::Bin::Apt-key", "fakeroot-apt-key")
++        apt_pkg.config.set("Dir::Etc", "etc/apt/")
++        trustedparts_dir = apt_pkg.config.find_dir("Dir::Etc::Trustedparts")
++        confparts_dir = apt_pkg.config.find_dir("Dir::Etc::parts")
++        self.assertTrue(trustedparts_dir.startswith(self.tmpdir))
++        os.makedirs(trustedparts_dir)
++        os.makedirs(confparts_dir)
++        shutil.copy("fakeroot-apt-key", self.tmpdir)
++
++    @contextlib.contextmanager
++    def _discard_stderr(self):
++        stderr_fd = sys.stderr.fileno()
++        stderr_save = os.dup(stderr_fd)
++        try:
++            devnull = os.open("/dev/null", os.O_WRONLY)
++            try:
++                os.dup2(devnull, stderr_fd)
++                yield
++            finally:
++                os.close(devnull)
++        finally:
++            os.dup2(stderr_save, stderr_fd)
++            os.close(stderr_save)
++
++    def testAddAndExportKey(self):
++        """Add an example key."""
++        apt.auth.add_key(WHEEZY_KEY)
++        # Strip the headers from the keys to avoid test errors because
++        # the exported key used a differenct GnuPG version than the
++        # original example key
++        self.assertEqual(
++            normalize_key(apt.auth.export_key(WHEEZY_KEYID)), normalize_key(WHEEZY_KEY)
++        )
++
++    def testAddAndListKey(self):
++        """Add an example key and test if it is correctly returned by
++        list_keys()
++        """
++        apt.auth.add_key(WHEEZY_KEY)
++        ret = apt.auth.list_keys()
++        self.assertEqual(len(ret), 1)
++        key = ret[0]
++        self.assertEqual(
++            key.name,
++            "Debian Archive Automatic Signing Key (7.0/wheezy) "
++            "<ftpmaster@debian.org>",
++        )
++        self.assertEqual(key.keyid, WHEEZY_KEYID)
++        self.assertEqual(key.date, WHEEZY_KEYDATE)
++
++    def testAddKeyFromFile(self):
++        """Test adding a key from file."""
++        keyfd, keyname = tempfile.mkstemp()
++        self.addCleanup(os.close, keyfd)
++        os.write(keyfd, WHEEZY_KEY.encode("UTF-8"))
++
++        apt.auth.add_key_from_file(keyname)
++
++        ret = apt.auth.list_keys()
++        self.assertEqual(len(ret), 1)
++        key = ret[0]
++        self.assertEqual(
++            key.name,
++            "Debian Archive Automatic Signing Key (7.0/wheezy) "
++            "<ftpmaster@debian.org>",
++        )
++        self.assertEqual(key.keyid, WHEEZY_KEYID)
++        self.assertEqual(key.date, WHEEZY_KEYDATE)
++
++    def test_add_key_from_keyserver_too_short(self):
++        """Ensure that short keyids are not imported"""
++        with self.assertRaises(apt.auth.AptKeyIDTooShortError):
++            apt.auth.add_key_from_keyserver(WHEEZY_KEYID, "hkp://localhost:19191")
++        with self.assertRaises(apt.auth.AptKeyIDTooShortError):
++            apt.auth.add_key_from_keyserver(
++                "0101010178F7FE5C3E65D8AF8B48AD624692555", "hkp://localhost:19191"
++            )
++        with self.assertRaises(apt.auth.AptKeyIDTooShortError):
++            apt.auth.add_key_from_keyserver(
++                "0x0101010178F7FE5C3E65D8AF8B48AD624692555", "hkp://localhost:19191"
++            )
++        with self.assertRaises(apt.auth.AptKeyIDTooShortError):
++            apt.auth.add_key_from_keyserver(
++                "0101 0101 78F7 FE5C 3E65 D8AF 8B48 AD62 4692 555",
++                "hkp://localhost:19191",
++            )
++
++    def test_add_key_from_server_mitm(self):
++        """Verify that the key fingerprint is verified after download"""
++        self._start_keyserver()
++        self.addCleanup(self._stop_keyserver)
++        with self.assertRaises(apt.auth.AptKeyError) as cm:
++            with self._discard_stderr():
++                apt.auth.add_key_from_keyserver(
++                    "0101010178F7FE5C3E65D8AF8B48AD6246925553",
++                    "hkp://localhost:%d" % self.keyserver_port,
++                )
++        self.assertTrue(
++            str(cm.exception).startswith(
++                "recv from 'hkp://localhost:%d' failed for '%s'"
++                % (self.keyserver_port, "0101010178F7FE5C3E65D8AF8B48AD6246925553")
++            ),
++            cm.exception,
++        )
++
++    def testAddKeyFromServer(self):
++        """Install a GnuPG key from a remote server."""
++        self._start_keyserver()
++        self.addCleanup(self._stop_keyserver)
++
++        with self._discard_stderr():
++            apt.auth.add_key_from_keyserver(
++                "0xa1bD8E9D78F7FE5C3E65D8AF8B48AD6246925553",
++                "hkp://localhost:%d" % self.keyserver_port,
++            )
++
++        ret = apt.auth.list_keys()
++        self.assertEqual(len(ret), 1)
++        key = ret[0]
++        self.assertEqual(
++            key.name,
++            "Debian Archive Automatic Signing Key (7.0/wheezy) "
++            "<ftpmaster@debian.org>",
++        )
++        self.assertEqual(key.keyid, WHEEZY_KEYID)
++        self.assertEqual(key.date, WHEEZY_KEYDATE)
++
++    def _start_keyserver(self):
++        """Start a fake keyserver on http://localhost:19191
++        If port 19191 is unavailable, try successive ports until one is.
++        Store the port actually in use in self.keyserver_port.
++        Thanks pitti.
++        """
++        dir = tempfile.mkdtemp()
++        self.addCleanup(shutil.rmtree, dir)
++        os.mkdir(os.path.join(dir, "pks"))
++        with open(os.path.join(dir, "pks", "lookup"), "w") as key_file:
++            key_file.write(WHEEZY_KEY)
++
++        keyserver_pipe = os.pipe()
++        self.keyserver_pid = os.fork()
++        if self.keyserver_pid == 0:
++            os.close(keyserver_pipe[0])
++            # quiesce server log
++            os.dup2(os.open("/dev/null", os.O_WRONLY), sys.stderr.fileno())
++            os.chdir(dir)
++            for port in itertools.count(19191):
++                try:
++                    httpd = HTTPServer(("localhost", port), HTTPRequestHandler)
++                    break
++                except OSError as e:
++                    if e.errno != errno.EADDRINUSE:
++                        raise
++            keyserver_write = os.fdopen(keyserver_pipe[1], "w")
++            print(port, file=keyserver_write)
++            keyserver_write.close()
++            httpd.serve_forever()
++            os._exit(0)
++
++        os.close(keyserver_pipe[1])
++        keyserver_read = os.fdopen(keyserver_pipe[0])
++        self.keyserver_port = int(keyserver_read.readline())
++        keyserver_read.close()
++
++        # temporarily disable proxy, as gnupg does not get along with that
++        # (LP #789049)
++        self.orig_proxy = os.environ.get("http_proxy")
++        try:
++            del os.environ["http_proxy"]
++        except KeyError:
++            pass
++
++        # wait a bit until server is ready
++        time.sleep(0.5)
++
++    def _stop_keyserver(self):
++        """Stop fake keyserver"""
++        assert self.keyserver_pid
++
++        os.kill(self.keyserver_pid, 15)
++        os.wait()
++
++        # restore proxy
++        if self.orig_proxy is not None:
++            os.environ["http_proxy"] = self.orig_proxy
++
++
++if __name__ == "__main__":
++    unittest.main()

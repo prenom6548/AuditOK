@@ -1,0 +1,132 @@
+/*
+ * Copyright (C) 2020, KylinSoft Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#ifndef NOTIFICATIONS_ADAPTOR_H
+#define NOTIFICATIONS_ADAPTOR_H
+
+#include <QtCore/QObject>
+#include <QtDBus/QtDBus>
+QT_BEGIN_NAMESPACE
+class QByteArray;
+template <class T> class QList;
+template <class Key, class Value> class QMap;
+class QString;
+class QStringList;
+class QVariant;
+QT_END_NAMESPACE
+
+/*
+ * Adaptor class for interface org.freedesktop.Notifications
+ */
+class NotificationsAdaptor : public QDBusAbstractAdaptor
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.freedesktop.Notifications")
+    Q_CLASSINFO(
+        "D-Bus Introspection",
+        ""
+        "  <interface name=\"org.freedesktop.Notifications\">\n"
+        "    <method name=\"CloseNotification\">\n"
+        "      <arg direction=\"in\" type=\"u\" name=\"id\"/>\n"
+        "    </method>\n"
+        "    <method name=\"GetCapabilities\">\n"
+        "      <arg direction=\"out\" type=\"as\"/>\n"
+        "    </method>\n"
+        "    <method name=\"GetServerInformation\">\n"
+        "      <arg direction=\"out\" type=\"s\" name=\"name\"/>\n"
+        "      <arg direction=\"out\" type=\"s\" name=\"vendor\"/>\n"
+        "      <arg direction=\"out\" type=\"s\" name=\"version\"/>\n"
+        "      <arg direction=\"out\" type=\"s\" name=\"specVersion\"/>\n"
+        "    </method>\n"
+        "    <method name=\"Notify\">\n"
+        "      <arg direction=\"out\" type=\"u\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"u\" name=\"replacesId\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"as\"/>\n"
+        "      <arg direction=\"in\" type=\"a{sv}\"/>\n"
+        "      <annotation value=\"QVariantMap\" name=\"org.qtproject.QtDBus.QtTypeName.In6\"/>\n"
+        "      <arg direction=\"in\" type=\"i\"/>\n"
+        "    </method>\n"
+        "    <method name=\"NotifyPy\">\n"
+        "      <arg direction=\"out\" type=\"u\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"i\" name=\"replacesId\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"av\"/>\n"
+        "      <arg direction=\"in\" type=\"a{sv}\"/>\n"
+        "      <annotation value=\"QVariantMap\" name=\"org.qtproject.QtDBus.QtTypeName.In6\"/>\n"
+        "      <arg direction=\"in\" type=\"i\"/>\n"
+        "    </method>\n"
+        "    <method name=\"NotifySimple\">\n"
+        "      <arg direction=\"out\" type=\"u\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"u\" name=\"replacesId\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"s\"/>\n"
+        "      <arg direction=\"in\" type=\"i\"/>\n"
+        "    </method>\n"
+        "    <signal name=\"ActionInvoked\"/>\n"
+        "    <signal name=\"NotificationClosed\"/>\n"
+        "  </interface>\n"
+        "")
+public:
+    NotificationsAdaptor(QObject *parent);
+    virtual ~NotificationsAdaptor();
+
+public:         // PROPERTIES
+public Q_SLOTS: // METHODS
+    void CloseNotification(uint id);
+    QStringList GetCapabilities();
+    void GetServerInformation(QString &name, QString &vendor, QString &version, QString &specVersion);
+    uint Notify(
+        const QString &in0,
+        uint replacesId,
+        const QString &in2,
+        const QString &in3,
+        const QString &in4,
+        const QStringList &in5,
+        const QVariantMap &in6,
+        int in7);
+    uint NotifyPy(
+        const QString &in0,
+        int replacesId,
+        const QString &in2,
+        const QString &in3,
+        const QString &in4,
+        const QVariantList &in5,
+        const QVariantMap &in6,
+        int in7);
+    uint NotifySimple(
+        const QString &appName,
+        uint replacesId,
+        const QString &appIcon,
+        const QString &summary,
+        const QString &body,
+        int expireTimeout);
+
+Q_SIGNALS: // SIGNALS
+    void ActionInvoked(uint in0, const QString &in1);
+    void NotificationClosed(uint in0, uint in1);
+};
+
+#endif

@@ -1,0 +1,88 @@
+#ifndef ID_TABLES_H
+#define ID_TABLES_H
+
+#include <stdio.h>
+#include <biometric_common.h>
+#include <biometric_stroge.h>
+#include <biometric_version.h>
+
+#define BIO_NAME			"bio_drv_fidoukey"
+#define BIO_FULL_NAME       ("fidokey")
+
+
+static const struct usb_id bio_drv_fido_id_table[] = {
+	{ .idVendor = 0x0483, .idProduct = 0xa2ac, .description = "STMicroelectronics" },
+    { .idVendor = 0x0483, .idProduct = 0xa2ca, .description = "STMicroelectronics" },
+    { .idVendor = 0x0483, .idProduct = 0xcdab, .description = "STMicroelectronics" },
+    { .idVendor = 0x058b, .idProduct = 0x022d, .description = "Infineon Technologies" },
+    { .idVendor = 0x06cb, .idProduct = 0xa2ac, .description = "Kensington" },
+    { .idVendor = 0x096e, .idProduct = 0x0850, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0852, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0853, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0854, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0856, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0858, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x085a, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x085b, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0866, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0867, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x096e, .idProduct = 0x0880, .description = "FS ePass FIDO by Feitian Technologies Co., Ltd." },
+    { .idVendor = 0x1050, .idProduct = 0x0113, .description = "YubiKey NEO FIDO by Yubico AB" },
+    { .idVendor = 0x1050, .idProduct = 0x0114, .description = "YubiKey NEO OTP+FIDO by Yubico AB" },
+    { .idVendor = 0x1050, .idProduct = 0x0115, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0116, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0120, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0121, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0200, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0402, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0403, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0406, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0407, .description = "YubiKey" },
+    { .idVendor = 0x1050, .idProduct = 0x0410, .description = "YubiKey" },
+    { .idVendor = 0x10c4, .idProduct = 0x8acf, .description = "Silicon Laboratories" },
+    { .idVendor = 0x1209, .idProduct = 0x5070, .description = "SoloKeys" },
+    { .idVendor = 0x1209, .idProduct = 0x50b0, .description = "SoloKeys" },
+    { .idVendor = 0x1209, .idProduct = 0x53c1, .description = "SoloKeys" },
+    { .idVendor = 0x1209, .idProduct = 0xbeee, .description = "SoloKeys" },
+    { .idVendor = 0x18d1, .idProduct = 0x5026, .description = "Google Titan U2F" },
+    { .idVendor = 0x1a44, .idProduct = 0x00bb, .description = "VASCO SecureClick" },
+    { .idVendor = 0x1d50, .idProduct = 0x60fc, .description = "OnlyKey" },
+    { .idVendor = 0x1e0d, .idProduct = 0xf1ae, .description = "Neowave Keydo" },
+    { .idVendor = 0x1e0d, .idProduct = 0xf1d0, .description = "Neowave Keydo" },
+    { .idVendor = 0x1ea8, .idProduct = 0xf025, .description = "Thethis Key" },
+    { .idVendor = 0x1ea8, .idProduct = 0xfc25, .description = "ExcelSecu FIDO2" },
+    { .idVendor = 0x1fc9, .idProduct = 0xf143, .description = "GoTrust Idem Key" },
+    { .idVendor = 0x20a0, .idProduct = 0x4287, .description = "Nitrokey" },
+    { .idVendor = 0x20a0, .idProduct = 0x42b1, .description = "Nitrokey" },
+    { .idVendor = 0x20a0, .idProduct = 0x42b2, .description = "Nitrokey" },
+    { .idVendor = 0x20a0, .idProduct = 0x42b3, .description = "Nitrokey" },
+    { .idVendor = 0x20a0, .idProduct = 0x42d4, .description = "Nitrokey" },
+    { .idVendor = 0x24dc, .idProduct = 0x0101, .description = "Safetech SafeKey" },
+    { .idVendor = 0x24dc, .idProduct = 0x0501, .description = "Safetech SafeKey" },
+    { .idVendor = 0x2581, .idProduct = 0xf1d0, .description = "Happlink" },
+    { .idVendor = 0x2abe, .idProduct = 0x1002, .description = "Bluink Key" },
+    { .idVendor = 0x2c97, .idProduct = 0x0000, .description = "Ledger Blue" },
+    { .idVendor = 0x2c97, .idProduct = 0x0011, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x0001, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x0004, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x1011, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x0015, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x1015, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x4011, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x4015, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x0015, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x0015, .description = "Ledger Nano" },
+    { .idVendor = 0x2c97, .idProduct = 0x0015, .description = "Ledger Nano" },
+    { .idVendor = 0x2ccf, .idProduct = 0x0880, .description = "Hypersecu HyperFIDO" },
+    { .idVendor = 0x311f, .idProduct = 0x4a1a, .description = "TrustKey" },
+    { .idVendor = 0x311f, .idProduct = 0x4c2a, .description = "TrustKey" },
+    { .idVendor = 0x311f, .idProduct = 0x5c2f, .description = "TrustKey" },
+    { .idVendor = 0x311f, .idProduct = 0xa7f9, .description = "TrustKey" },
+    { .idVendor = 0x311f, .idProduct = 0xf47c, .description = "TrustKey" },
+    { .idVendor = 0x32a3, .idProduct = 0x3201, .description = "Idem Key" },
+    { .idVendor = 0x4c4d, .idProduct = 0xf703, .description = "Longmai mFIDO" },
+    { .idVendor = 0x534c, .idProduct = 0x0001, .description = "SatoshiLabs TREZOR" },
+    { 0, 0, NULL },
+};
+
+#endif // ID_TABLES_H

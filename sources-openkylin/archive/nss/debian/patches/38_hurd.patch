@@ -1,0 +1,67 @@
+From: openKylin Developers <packaging@lists.openkylin.top>
+Date: Tue, 2 Jun 2026 18:36:01 +0800
+Subject: _hurd
+
+## 38_hurd.patch by  <glandium@debian.org>
+##
+## All lines beginning with `## DP:' are a description of the patch.
+## DP: Fix FTBFS on Hurd because of MAXPATHLEN
+---
+ nss/cmd/shlibsign/shlibsign.c | 21 ++++++++++++++++-----
+ nss/lib/freebl/unix_rand.c    |  4 ++++
+ 2 files changed, 20 insertions(+), 5 deletions(-)
+
+diff --git a/nss/cmd/shlibsign/shlibsign.c b/nss/cmd/shlibsign/shlibsign.c
+index b47d59d..5e8dc2f 100644
+--- a/nss/cmd/shlibsign/shlibsign.c
++++ b/nss/cmd/shlibsign/shlibsign.c
+@@ -1545,7 +1545,6 @@ main(int argc, char **argv)
+ #ifdef USES_LINKS
+     int ret;
+     struct stat stat_buf;
+-    char link_buf[MAXPATHLEN + 1];
+     char *link_file = NULL;
+ #endif
+ 
+@@ -1815,10 +1814,22 @@ main(int argc, char **argv)
+     }
+     if (S_ISLNK(stat_buf.st_mode)) {
+         char *dirpath, *dirend;
+-        ret = readlink(input_file, link_buf, sizeof(link_buf) - 1);
+-        if (ret < 0) {
+-            perror(input_file);
+-            goto cleanup;
++        char *link_buf = NULL;
++        size_t size = 64;
++        while (1) {
++            link_buf = realloc(link_buf, size);
++            if (!link_buf) {
++                perror(input_file);
++                goto cleanup;
++            }
++            ret = readlink(input_file, link_buf, size - 1);
++            if (ret < 0) {
++                perror(input_file);
++                goto cleanup;
++            }
++            if (ret < size - 1)
++                break;
++            size *= 2;
+         }
+         link_buf[ret] = 0;
+         link_file = mkoutput(input_file);
+diff --git a/nss/lib/freebl/unix_rand.c b/nss/lib/freebl/unix_rand.c
+index 219a0bb..589af1b 100644
+--- a/nss/lib/freebl/unix_rand.c
++++ b/nss/lib/freebl/unix_rand.c
+@@ -756,6 +756,10 @@ RNG_FileForRNG(const char *fileName)
+ #define _POSIX_PTHREAD_SEMANTICS
+ #include <dirent.h>
+ 
++#ifndef PATH_MAX
++#define PATH_MAX 1024
++#endif
++
+ PRBool
+ ReadFileOK(char *dir, char *file)
+ {

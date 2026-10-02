@@ -1,0 +1,1226 @@
+/*
+ * Peony-Qt's Library
+ *
+ * Copyright (C) 2020, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Yue Lan <lanyue@kylinos.cn>
+ *
+ */
+
+#include "properties-window.h"
+
+#include "properties-window-tab-page-plugin-iface.h"
+
+#include "basic-properties-page-factory.h"
+#include "permissions-properties-page-factory.h"
+#include "computer-properties-page-factory.h"
+#include "recent-and-trash-properties-page-factory.h"
+#include "mark-properties-page-factory.h"
+#include "open-with-properties-page-factory.h"
+#include "details-properties-page-factory.h"
+#include "thumbnail-manager.h"
+#include "file-utils.h"
+#include "file-watcher.h"
+#include "vfs-plugin-manager.h"
+#include "volume-manager.h"
+#include "volumeManager.h"
+#include "xatom-helper.h"
+//#include "properties-window-factory.h"
+#include "global-settings.h"
+#include "manager-control.h"
+
+#include <QToolBar>
+#include <QPushButton>
+#include <QProcess>
+#include <QDebug>
+#include <QStatusBar>
+
+#include <QList>
+#include <QStringList>
+#include <QString>
+#include <QHBoxLayout>
+#include <QSpacerItem>
+#include <QTimer>
+#include <QPainter>
+#include <QStyleOptionTab>
+#include <QApplication>
+#include <KWindowSystem>
+#include <QGSettings>
+
+#include <QPainterPath>
+
+#include <glib/gstdio.h>
+#include <gio/gdesktopappinfo.h>
+#include <pwd.h>
+
+#include <QApplication>
+#include <QGSettings>
+#include <QtConcurrent>
+
+#include "file-info-job.h"
+
+#ifdef KY_SDK_WAYLANDHELPER
+#include <kysdk/applications/ukuistylehelper/ukuistylehelper.h>
+#include <ukuiwindowhelper/ukuiwindowhelper.h>
+#endif
+#include <QX11Info>
+
+#ifdef KY_SDK_QT_WIDGETS
+#include <kysdk/applications/ktabbar.h>
+#endif
+
+using namespace Peony;
+
+#define WINDOW_NOT_OPEN -1
+//single properties-window
+//static QHash<QString,PropertiesWindow> openPropertiesWindow = nullptr;
+static QList<PropertiesWindow *> *openedPropertiesWindows = nullptr;
+//plugin manager
+
+static PropertiesWindowPluginManager *global_instance = nullptr;
+
+PropertiesWindowPluginManager *PropertiesWindowPluginManager::getInstance()
+{
+    if (!global_instance)
+        global_instance = new PropertiesWindowPluginManager;
+    return global_instance;
+}
+
+void PropertiesWindowPluginManager::setOpenFromDesktop()
+{
+    unregisterFactory(MarkPropertiesPageFactory::getInstance());
+}
+
+void PropertiesWindowPluginManager::setOpenFromPeony()
+{
+    registerFactory(MarkPropertiesPageFactory::getInstance());
+}
+
+void PropertiesWindowPluginManager::release()
+{
+    deleteLater();
+}
+
+PropertiesWindowPluginManager::PropertiesWindowPluginManager(QObject *parent) : QObject(parent)
+{
+    //register internal factories.
+    registerFactory(BasicPropertiesPageFactory::getInstance());
+    registerFactory(PermissionsPropertiesPageFactory::getInstance());
+    registerFactory(ComputerPropertiesPageFactory::getInstance());
+    registerFactory(RecentAndTrashPropertiesPageFactory::getInstance());
+    registerFactory(MarkPropertiesPageFactory::getInstance());
+    registerFactory(OpenWithPropertiesPageFactory::getInstance());
+    registerFactory(DetailsPropertiesPageFactory::getInstance());
+
+    QString pluginPath = PLUGIN_INSTALL_DIRS + QString("/libpeony-share.so");
+    QPluginLoader pluginLoader(pluginPath);
+
+    QObject *plugin = pluginLoader.instance();
+    /*
+     * Register libpeony-share for peony-qt-desktop.Because it will
+     * not load without peony open
+    */
+    if (plugin  && pluginLoader.metaData().value("MetaData").toObject().value("version").toString() == VERSION) {
+        PropertiesWindowTabPagePluginIface *propertiesWindowTabPageFactory = dynamic_cast<PropertiesWindowTabPagePluginIface*>(plugin);
+        registerFactory(propertiesWindowTabPageFactory);
+    }
+}
+
+PropertiesWindowPluginManager::~PropertiesWindowPluginManager()
+{
+    for (auto factory : m_factory_hash) {
+        factory->closeFactory();
+    }
+    m_factory_hash.clear();
+}
+
+
+bool PropertiesWindowPluginManager::registerFactory(PropertiesWindowTabPagePluginIface *factory)
+{
+    m_mutex.lock();
+    auto id = factory->name();
+    if (m_factory_hash.value(id)) {
+        m_mutex.unlock();
+        return false;
+    }
+
+    m_factory_hash.insert(id, factory);
+    m_sorted_factory_map.insert(-factory->tabOrder(), id);
+    m_mutex.unlock();
+    return true;
+}
+
+bool PropertiesWindowPluginManager::unregisterFactory(PropertiesWindowTabPagePluginIface *factory)
+{
+    m_mutex.lock();
+    auto id = factory->name();
+    if (m_factory_hash.value(id)) {
+        m_factory_hash.remove(id);
+
+        int current = 0;
+        for (auto i = m_sorted_factory_map.begin(); i != m_sorted_factory_map.end(); ++i) {
+            if (i.value() == id) {
+                current = i.key();
+                break;
+            }
+        }
+        m_sorted_factory_map.remove(current);
+        m_mutex.unlock();
+        return true;
+    }
+
+    m_mutex.unlock();
+    return false;
+}
+
+const QStringList PropertiesWindowPluginManager::getFactoryNames()
+{
+    QStringList list;
+    for (auto factoryId : m_sorted_factory_map) {
+        list << factoryId;
+    }
+    return list;
+}
+
+PropertiesWindowTabPagePluginIface *PropertiesWindowPluginManager::getFactory(const QString &id)
+{
+    return m_factory_hash.value(id);
+}
+
+/*!
+ * init PropertiesWindows`s static member
+ * \brief PropertiesWindow::s_windowWidth
+ */
+const qint32 PropertiesWindow::s_windowWidth        = 440;
+const qint32 PropertiesWindow::s_windowHeightFolder = 587;
+const qint32 PropertiesWindow::s_windowHeightOther  = 651;
+const QSize  PropertiesWindow::s_bottomButtonSize   = QSize(96, 36);
+
+PropertiesWindow::PropertiesWindow(const QStringList &uris, QWidget *parent) : QMainWindow(parent)
+{
+    if (uris.count() == 0) {
+        m_destroyThis = true;
+        return;
+    }
+
+    //将uri编码统一解码,解决uri的不一致问题。from bug:53504
+    for (QString uri : uris) {
+        uri = FileUtils::urlDecode(uri);
+
+        if (uri.startsWith("favorite://")) {
+            rebuildUriBySchema(uri);
+
+        } else if (uri.startsWith("kmre://")) {
+            if (!handleKMREUri(uri)) {
+                m_destroyThis = true;
+                return;
+            }
+
+        } else if (uri.startsWith("network://")) {
+            m_destroyThis = true;
+            return;
+        }else if(uri.startsWith("label://")){
+            uri = FileUtils::getTargetUri(uri);/* 转化为真实的路径 */
+        }
+        //fix bug:70565,将已被编码的字符串解码后从新编码，保证在属性窗口中的编码中特殊字符为%xx形式。
+        //编码时排除'()',防止 FileUtils::handleDesktopFileName 方法匹配不到(),避免出现bug:53504.
+        if (!uri.startsWith("idm://")) {
+            m_uris.append(uri.toUtf8().toPercentEncoding(":/()"));
+        } else {
+            m_uris.append(uri);
+        }
+    }
+
+//    m_uris = uris;
+    m_uris.removeDuplicates();
+    qDebug() << __FUNCTION__ << m_uris.count() << m_uris;
+    setWindowOpacity(0);
+
+    if (qApp->property("showProperties").isValid() && qApp->property("showProperties").toBool()) {
+        PropertiesWindowPluginManager::getInstance()->setOpenFromDesktop();
+        qApp->setProperty("showProperties", false);
+    } else {
+        PropertiesWindowPluginManager::getInstance()->setOpenFromPeony();
+    }
+
+    //FIX:BUG #31635
+    if (m_uris.contains("computer:///")) {
+        QtConcurrent::run([=]() {
+            gotoAboutComputer();
+        });
+        m_uris.removeAt(m_uris.indexOf("computer:///"));
+    }
+
+    this->notDir();
+
+    if (!m_uris.isEmpty() && !PropertiesWindow::checkUriIsOpen(m_uris, this)) {
+        this->init();
+    } else {
+        m_destroyThis = true;
+    }
+
+    connect(qApp, &QApplication::fontChanged, [=](){
+        QFont font = qApp->font();
+        for (auto widget : qApp->allWidgets()) {
+            widget->setFont(font);
+        }
+    });
+
+    // if (QGSettings::isSchemaInstalled("org.ukui.style")) {
+    //     QGSettings *settings = new QGSettings("org.ukui.style", QByteArray(), this);
+    //     connect(settings, &QGSettings::changed, this, [=](const QString &key) {
+    //         if("iconThemeName" == key)
+    //         {
+    //             if (!m_uris.isEmpty()) {
+    //                 this->setWindowTitleTextAndIcon();
+    //             }
+    //         }
+    //     });
+    // }
+
+   this->onVolumeRemoveClosePropertiesPage();
+}
+
+void PropertiesWindow::init()
+{
+    this->setContextMenuPolicy(Qt::CustomContextMenu);
+    this->setAttribute(Qt::WA_DeleteOnClose);
+    this->setContentsMargins(0, 0, 0, 0);
+    this->setAttribute(Qt::WA_TranslucentBackground);
+    if (QX11Info::isPlatformX11()) {
+        MotifWmHints hints;
+        hints.flags = MWM_HINTS_FUNCTIONS|MWM_HINTS_DECORATIONS;
+        hints.functions = MWM_FUNC_ALL;
+        hints.decorations = MWM_DECOR_BORDER;
+        XAtomHelper::getInstance()->setWindowMotifHint(window()->winId(), hints);
+        //KWindowSystem::setState(this->winId(), NET::SkipTaskbar|NET::SkipPager);
+    } else {
+#ifdef KY_SDK_WAYLANDHELPER
+        auto windowHelper = new UkuiWindowHelper(this);
+        windowHelper->removeTitleBar();
+        //windowHelper->setSkipTaskBar(true);
+#endif
+    }
+
+    //only show close button
+    //this->setWindowFlags(this->windowFlags() & ~Qt::WindowMinMaxButtonsHint & ~Qt::WindowSystemMenuHint);
+
+    this->setWindowTitleTextAndIcon();
+
+
+    if (m_notDir) {
+        //如果含有文件夹，那么高度是600，如果是其他文件，那么高度是652
+        //If there are folders, the height is 600, if it is other files, the height is 652
+        this->setFixedSize(PropertiesWindow::s_windowWidth, PropertiesWindow::s_windowHeightOther);
+    } else {
+        this->setFixedSize(PropertiesWindow::s_windowWidth, PropertiesWindow::s_windowHeightFolder);
+    }
+    this->initStatusBar();
+
+    this->initTabPage(m_uris);
+
+    QTimer::singleShot(400, Qt::PreciseTimer, this, [=]{
+        //fix bug:58167
+        setFocus(Qt::OtherFocusReason);
+        setWindowOpacity(1);
+    });
+}
+
+/*!
+ * recent:///  : 最近
+ * trash:///   : 回收站
+ *
+ * \brief PropertiesWindow::setWindowTitleText
+ */
+void PropertiesWindow::setWindowTitleTextAndIcon()
+{
+    HeaderBar *headerBar = new HeaderBar(this);
+    this->addToolBar(Qt::ToolBarArea::TopToolBarArea, headerBar);
+
+    connect(headerBar, &HeaderBar::buttonClicked, this, [=](const HeaderBar::ButtonType buttonType) {
+        switch (buttonType) {
+            case HeaderBar::ButtonType::Spread_Button: {
+                if (this->width() < 600) {
+                    this->setFixedWidth(600);
+                } else {
+                    this->setFixedWidth(PropertiesWindow::s_windowWidth);
+                }
+                break;
+            }
+            case HeaderBar::ButtonType::Minimize_Button: {
+                KWindowSystem::minimizeWindow(this->winId());
+                this->showMinimized();
+                break;
+            }
+            case HeaderBar::ButtonType::Close_Button: {
+                this->close();
+                break;
+            }
+        }
+    });
+
+    QString windowTitle = "";
+    m_iconName = "system-file-manager";
+
+    /**
+     * \brief Trash 和 Recent 情况下，uris中只有一个uri - In the case of Trash and Recent, there is only one uri in the uris
+     */
+    if (m_uris.contains("trash:///")) {
+        windowTitle = tr("Trash");
+        m_iconName = m_fileInfo.get()->iconName();
+
+    } else if (m_uris.contains("recent:///")) {
+        windowTitle = tr("Recent");
+        m_iconName = m_fileInfo.get()->iconName();
+
+    } else {
+        qint32 fileNum = m_uris.count();
+
+        if (fileNum > 1) {
+            //use default icon
+            windowTitle = tr("Selected") + QString(tr(" %1 Files")).arg(fileNum);
+        } else {
+            qDebug() << __FILE__ << __FUNCTION__ << "fileInfo is null :" << (m_fileInfo.get() == nullptr);
+            if (m_fileInfo) {
+                //fix bug:#82320
+                if (QRegExp("^file:///data/usershare(/{,1})$").exactMatch(m_fileInfo->uri())) {
+                    windowTitle = tr("usershare");
+                } else {
+                    windowTitle = m_fileInfo.get()->displayName();
+                }  
+                //fix bug#182415, fix show Unknown-icon issue, but basic info icon is correct
+                m_iconName = FileUtils::getFileIconName(m_fileInfo.get()->uri(), true);
+                if (m_iconName.isEmpty()) {
+                    m_iconName = FileUtils::getFileIconName(m_fileInfo.get()->uri(), false);
+                }
+
+                if(m_fileInfo->unixDeviceFile().startsWith("/dev/sr")
+                        && (m_iconName.endsWith(".ico"))){/* 规范光盘图标，与竞品对比，光盘图标使用的是"media-optical",linkto bug#174770 */
+                    m_iconName = "media-optical";
+                }
+
+                if (!m_fileInfo->unixDeviceFile().isEmpty() && (m_fileInfo->unixDeviceFile().startsWith("/dev/sd")
+                                                                || m_fileInfo->unixDeviceFile().startsWith("/dev/dm"))) {
+                    std::shared_ptr<Volume> volume = nullptr;
+                    QString targetUri = FileUtils::getTargetUri(m_fileInfo->uri());
+                    if (!targetUri.isEmpty()) {
+                        volume = VolumeManager::getVolumeFromUri(targetUri.toUtf8().constData());
+                        if (volume) {
+                            m_iconName = volume->iconName();
+                        }
+                    }
+
+                    qDebug() << __LINE__ << __func__ << m_iconName << m_fileInfo->uri();
+
+                    if (m_iconName == "drive-harddisk-usb") {
+                        double size = FileUtils::getDeviceSize(m_fileInfo->unixDeviceFile().toUtf8().constData());
+                        if (size > 128) {
+                            m_iconName = "drive-harddisk-usb";
+                        } else {
+                            m_iconName = "drive-removable-media-usb";
+                        }
+                    }
+                }
+
+                if("computer:///ukui-data-volume" == m_fileInfo->uri()){
+                    windowTitle = tr("Data");
+                    m_iconName = "drive-harddisk";
+                }
+
+                if ("computer:///root.link" == m_fileInfo->uri()) {
+                    windowTitle = tr("System Disk");
+                }
+            }
+        }
+    }
+
+    windowTitle += " " + tr("Properties");
+
+    if (m_iconName == "application-x-desktop") {
+        m_iconName = getIconName();
+    }
+
+    const QByteArray id("org.ukui.style");
+    if (QGSettings::isSchemaInstalled(id)) {
+        QGSettings *styleSettings = new QGSettings(id, QByteArray(), this);
+        connect(styleSettings, &QGSettings::changed, this, [=](const QString &key){
+            if (key == "iconThemeName") {
+                setWindowIcon(QIcon::fromTheme(m_iconName, QIcon::fromTheme("unknown")));
+                headerBar->setIcon(m_iconName);
+            }
+        });
+    }
+
+    this->setWindowTitle(windowTitle);
+    headerBar->setTitle(windowTitle);
+    /**
+     * @bug #267587: [Window Manager] Youhong Layout Reader has no icon in the upper left corner of the properties popup window.
+     *
+     * prioritize getting icons from the cache
+     *
+     * @author: Renyg <renyangguang@kylinos.cn>
+     * @date:   2024-09-26
+     */
+    QIcon cachedThumb;
+    if (m_fileInfo) {
+        cachedThumb = ThumbnailManager::getInstance()->tryGetThumbnail(m_fileInfo->uri());
+    }
+    if (!cachedThumb.isNull()) {
+        qDebug() << __FILE__ << __FUNCTION__ << "tryGetThumbnail icon is not null";
+        this->setWindowIcon(cachedThumb);
+        headerBar->setIcon(cachedThumb);
+        return;
+    }
+
+    QIcon icon = QIcon::fromTheme(m_iconName, QIcon::fromTheme("unknown"));
+    if (icon.name() == "unknown") {
+        QFileInfo iconInfo(m_iconName);
+        if (iconInfo.exists()) {
+            // Get the filename without suffix
+            QString iconNameWithoutSuffix = iconInfo.completeBaseName();
+            qDebug() << __FILE__ << __FUNCTION__ << m_iconName << " iconNameWithoutSuffix: " << iconNameWithoutSuffix;
+            icon = QIcon::fromTheme(iconNameWithoutSuffix, QIcon::fromTheme("unknown"));
+            m_iconName = iconNameWithoutSuffix;
+        }
+    }
+    this->setWindowIcon(icon);
+    headerBar->setIcon(icon);
+
+    // 与 BasicPropertiesPage 一致：缩略图缓存未命中时触发生成，桌面仅开属性窗口时亦可填入缓存并刷新标题栏
+    if (m_uris.count() == 1 && m_fileInfo) {
+        if (!m_propertiesThumbnailWatcher) {
+            m_propertiesThumbnailWatcher = std::make_shared<FileWatcher>(QStringLiteral("thumbnail:///"));
+            connect(m_propertiesThumbnailWatcher.get(), &FileWatcher::fileChanged, this,
+                    [this, headerBar](const QString &thumbUri) {
+                if (!m_fileInfo || thumbUri != m_fileInfo->uri()) {
+                    return;
+                }
+                const QIcon thumb = ThumbnailManager::getInstance()->tryGetThumbnail(thumbUri);
+                if (thumb.isNull()) {
+                    return;
+                }
+                setWindowIcon(thumb);
+                headerBar->setIcon(thumb);
+            });
+        }
+        ThumbnailManager::getInstance()->createThumbnail(m_fileInfo->uri(), m_propertiesThumbnailWatcher);
+    }
+    return;
+}
+
+void PropertiesWindow::notDir()
+{
+    //FIXME:请尝试使用非阻塞方式获取 FIleInfo - Please try to obtain FIleInfo in a non-blocking way
+    bool first = true;
+    QStringList targetUris;
+    for (QString uri : m_uris) {
+        auto fileInfo = FileInfo::fromUri(uri);
+        FileInfoJob *fileInfoJob = new FileInfoJob(fileInfo);
+        fileInfoJob->setAutoDelete();
+        fileInfoJob->querySync();
+
+        if (first) {
+            //使用第一个文件信息确认所在目录等基本信息。
+            //在最近文件夹中多选状态下，文件所在位置将会不准确，因为最近文件夹中的文件来自于不同的位置。
+            m_fileInfo = fileInfo;
+            first = false;
+        }
+
+        if (fileInfo.get()->isDir() && m_notDir) {
+            m_notDir = false;
+        }
+
+        if (uri.startsWith("recent://")) {
+            if (fileInfo->targetUri() != "") {
+                targetUris.append(fileInfo->targetUri());
+            }
+        }
+    }
+
+    if (targetUris.count() > 0)
+        m_uris = targetUris;
+}
+
+void PropertiesWindow::show()
+{
+    if (m_destroyThis) {
+        this->close();
+        return;
+    }
+
+    return QWidget::show();
+}
+
+void PropertiesWindow::gotoAboutComputer()
+{
+    QProcess p;
+    p.setProgram("/usr/bin/ukui-control-center");
+    //-m About para to show about computer infos, related to bug#88258
+    p.setArguments(QStringList()<<"-m" << "About");
+#if (QT_VERSION >= QT_VERSION_CHECK(5, 10, 0))
+    p.startDetached();
+#else
+    p.startDetached("/usr/bin/ukui-control-center", QStringList()<<"-m" << "About");
+#endif
+    p.waitForFinished(-1);
+}
+
+/*!
+ *
+ * \brief PropertiesWindow::initStatusBar
+ */
+void PropertiesWindow::initStatusBar()
+{
+    QToolBar *bottomToolBar = new QToolBar(this);
+    bottomToolBar->setMovable(false);
+    bottomToolBar->setMinimumHeight(64);
+    bottomToolBar->setContentsMargins(0, 0, 0, 12);
+    bottomToolBar->setStyleSheet("QToolBar{border-color: transparent;border: none;}");
+
+    QWidget *container = new QWidget(bottomToolBar);
+    container->setContentsMargins(0, 0, 0, 0);
+    container->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    //use HBox-layout
+    QHBoxLayout *bottomToolLayout = new QHBoxLayout(container);
+    bottomToolLayout->setSpacing(16);
+    bottomToolLayout->setContentsMargins(24, 0, 24, 12);
+
+    QPushButton *okButton = new QPushButton(tr("Ok"), container);
+    QPushButton *cancelButton = new QPushButton(tr("Cancel"), container);
+
+    okButton->setMinimumSize(PropertiesWindow::s_bottomButtonSize);
+    cancelButton->setMinimumSize(PropertiesWindow::s_bottomButtonSize);
+    okButton->setProperty("isImportant", true);
+    cancelButton->setProperty("useButtonPalette", true);
+
+    //task#100231 trash page OK button set as restore
+    //fix bug#143817, trash properties issue
+    if (m_uris.first().startsWith("trash:///") && m_uris.first() != "trash:///")
+        okButton->setText(tr("Restore"));
+
+    bottomToolLayout->addStretch(1);
+    bottomToolLayout->addWidget(cancelButton);
+    bottomToolLayout->addWidget(okButton);
+
+    container->setLayout(bottomToolLayout);
+
+    bottomToolBar->addWidget(container);
+    this->addToolBar(Qt::ToolBarArea::BottomToolBarArea, bottomToolBar);
+
+    //set cancelButton event process
+    connect(cancelButton, &QPushButton::clicked, this, &QMainWindow::close);
+    connect(okButton, &QPushButton::clicked, this, &PropertiesWindow::saveAllChanged);
+}
+
+void PropertiesWindow::initTabPage(const QStringList &uris)
+{
+    if(uris.isEmpty())
+        return;
+
+    m_window = new PropertiesWindowPrivate(uris, this);
+    m_window->tabBar()->setStyle(new tabStyle);
+    //Warning: 不要设置tab高度，否则会导致tab页切换上下跳动
+    //Do not set the tab height, otherwise it will cause the tab page to switch up and down
+    //window->tabBar()->setMinimumHeight(72);
+    this->setCentralWidget(m_window);
+}
+
+bool PropertiesWindow::checkUriIsOpen(QStringList &uris, PropertiesWindow *newWindow)
+{
+    if (!openedPropertiesWindows) {
+        openedPropertiesWindows = new QList<PropertiesWindow *>();
+        qDebug() << __FILE__ << __FUNCTION__ << "new->openedPropertiesWindows";
+    }
+    //1.对uris进行排序 - Sort uris
+    std::sort(uris.begin(), uris.end(), [](QString a, QString b) {
+        return a < b;
+    });
+
+    //2.检查是否已经打开 - Check if it is open
+    qint64 index = PropertiesWindow::getOpenUriIndex(uris);
+    if (index != WINDOW_NOT_OPEN) {
+        openedPropertiesWindows->at(index)->raise();
+        openedPropertiesWindows->at(index)->activateWindow();
+        return true;
+    }
+
+    openedPropertiesWindows->append(newWindow);
+
+    return false;
+}
+
+qint64 PropertiesWindow::getOpenUriIndex(QStringList &uris)
+{
+    //strong !
+    if (!openedPropertiesWindows)
+        return WINDOW_NOT_OPEN;
+
+    quint64 index = 0;
+    for (PropertiesWindow *window : *openedPropertiesWindows) {
+        if (window->getUris() == uris) {
+            //当前的uris已经存在打开的窗口 - The current uris already exists in the open window
+            return index;
+        }
+        index++;
+    }
+
+    return WINDOW_NOT_OPEN;
+}
+
+void PropertiesWindow::removeThisWindow(qint64 index)
+{
+    if (index == WINDOW_NOT_OPEN)
+        return;
+
+    if (!openedPropertiesWindows)
+        return;
+
+    openedPropertiesWindows->removeAt(index);
+
+    if (openedPropertiesWindows->count() == 0) {
+        delete openedPropertiesWindows;
+        openedPropertiesWindows = nullptr;
+        qDebug() << __FILE__ << __FUNCTION__ << "delete->openedPropertiesWindows";
+    }
+
+}
+
+QString PropertiesWindow::getIconName()
+{
+    if (m_fileInfo == nullptr)
+        return "application-x-desktop";
+
+    QString realPath;
+    bool startWithTrash = m_fileInfo->uri().startsWith("trash:///");
+    bool startWithRecent = m_fileInfo->uri().startsWith("recent:///");
+
+    if (startWithTrash) {
+        realPath = QStandardPaths::standardLocations(QStandardPaths::HomeLocation).first()
+                   + "/.local/share/Trash/files/"
+                   + m_fileInfo->displayName();
+    } else if (startWithRecent) {
+        realPath = m_fileInfo->targetUri();
+    } else {
+        realPath = m_fileInfo->uri();
+    }
+
+    auto _desktop_file = g_desktop_app_info_new_from_filename(QUrl(realPath).path().toUtf8().constData());
+    if (_desktop_file) {
+        return QString(g_desktop_app_info_get_string(_desktop_file, "Icon"));
+    }
+    //在找不到图标时，返回默认图标 - When the icon is not found, return to the default icon
+    return "application-x-desktop";
+}
+
+void PropertiesWindow::closeEvent(QCloseEvent *event)
+{
+    /**
+     * \brief 如果当前uris窗口已经打开，那么不能移除全局的记录，只需要关闭当前窗口即可
+     * If the current uris window is already open, then the global record cannot be removed, just close the current window
+     */
+    if (m_destroyThis)
+        return;
+
+    PropertiesWindow::removeThisWindow(PropertiesWindow::getOpenUriIndex(this->getUris()));
+}
+
+/*!
+ * save all changed settings when 'ok' is clicked
+ * \brief PropertiesWindow::saveAllChanged
+ */
+void PropertiesWindow::saveAllChanged()
+{
+    qDebug() << "PropertiesWindow::saveAllChanged()" << "count" << m_openTabPage.count();
+    if (!m_openTabPage.count() == 0) {
+        for (auto tabPage : m_openTabPage) {
+            tabPage->saveAllChange();
+        }
+    }
+
+    this->close();
+}
+
+QString PropertiesWindow::rebuildUriBySchema(QString &uri)
+{
+    QUrl url(uri);
+
+    if (!url.isValid()) {
+        return uri;
+    }
+    QMap<QString, QString> queryMap;
+    QStringList queryList = url.query().split("&");
+
+    for (QString str : queryList) {
+        QStringList query = str.split("=");
+        queryMap.insert(query.first(), query.last());
+    }
+
+    QString schema = queryMap.value("schema");
+
+    if (schema.isEmpty()) {
+        return uri;
+    }
+
+    uri.replace(0, QString("favorite").length(), schema);
+    //删除uri '?'及之后的信息
+    uri.remove(uri.lastIndexOf("?"), (url.query().length() + 1));
+
+    return uri;
+}
+
+bool PropertiesWindow::handleKMREUri(QString &uri)
+{
+//    bool kmreIsInstalled = false;
+//    for (VFSPluginIface *vfs : VFSPluginManager::getInstance()->registeredPlugins()) {
+//        if (vfs->uriScheme() == "kmre://") {
+//            kmreIsInstalled = true;
+//            break;
+//        }
+//    }
+//
+//    if (!kmreIsInstalled) {
+//        return false;
+//    }
+
+    if (uri == "kmre:///") {
+        uid_t uid = geteuid();
+        struct passwd *pw = getpwuid(uid);
+        if (!pw) {
+            return false;
+        }
+        uri = QString("file:///var/lib/kmre/data/kmre-%1-%2").arg(QString::number(uid)).arg(QString(pw->pw_name));
+
+    } else if (uri.contains("&real-path:")) {
+        //kmre:///picture&real-path:/var/lib
+        uri = "file://" + uri.split("&real-path:").last();
+
+    } else {
+
+    }
+
+    return true;
+}
+
+void PropertiesWindow::paintEvent(QPaintEvent *event)
+{
+    QPainter painter(this);
+    painter.fillRect(this->rect(), this->palette().base());
+
+    QWidget::paintEvent(event);
+}
+
+void PropertiesWindow::onVolumeRemoveClosePropertiesPage()
+{
+    QString unixDevice;
+    if (m_uris.count() == 1 && m_uris.at(0).startsWith("computer:///")) {
+        unixDevice = FileUtils::getUnixDevice(m_uris.first());
+
+        connect(Experimental_Peony::VolumeManager::getInstance(), &Experimental_Peony::VolumeManager::volumeRemove, this, [=](const QString &removeDevice){
+            qDebug() << __func__ << removeDevice;
+            if (unixDevice == removeDevice) {
+                saveAllChanged();
+            }
+        });
+    }
+}
+
+#ifdef KY_SDK_QT_WIDGETS
+class TabBar : public kdk::KTabBar
+{
+public:
+    explicit TabBar(QWidget *parent) : kdk::KTabBar(kdk::KTabBarStyle::SegmentDark, parent)
+    {
+
+    }
+
+protected:
+    QSize minimumTabSizeHint(int index) const
+    {
+        return QTabBar::minimumTabSizeHint(index);
+    }
+    QSize tabSizeHint(int index) const
+    {
+        return QTabBar::tabSizeHint(index);
+    }
+};
+#endif
+
+void PropertiesWindow::setOpenTabPage(const QString &className)
+{
+    int index = -1;
+    for(auto &page : m_openTabPage) {
+        if (page->metaObject()->className() == className) {
+            index = m_openTabPage.indexOf(page);
+            break;
+        }
+    }
+    m_window->setCurrentIndex(index);
+}
+
+//properties window
+PropertiesWindowPrivate::PropertiesWindowPrivate(const QStringList &uris, QWidget *parent) : QTabWidget(parent)
+{
+#ifdef KY_SDK_QT_WIDGETS
+    auto tabbar = new TabBar(nullptr);
+    setTabBar(tabbar);
+#endif
+    setTabsClosable(false);
+    setMovable(false);
+    setContentsMargins(0, 0, 0, 0);
+    //重写subElementRect设置居中
+    setStyle(new tabWidgetStyle);
+
+    //监听悬浮事件
+    this->tabBar()->setAttribute(Qt::WA_Hover, true);
+    auto manager = PropertiesWindowPluginManager::getInstance();
+    auto names = manager->getFactoryNames();
+    int index = 0;
+    for (QString name : names) {
+        auto factory = manager->getFactory(name);
+        // Check SMB share permission, skip share plugins if disabled
+        if (!MANAGER_CONTROL->checkSmbSharePermission()) {
+            // Try to cast to QObject to get the actual class name
+            QObject *obj = dynamic_cast<QObject*>(factory);
+            if (obj && QString(obj->metaObject()->className()).contains("SharePropertiesPagePlugin")) {
+                qDebug() << "SMB share plugin disabled, skipping properties tab:" << obj->metaObject()->className();
+                continue;
+            }
+        }
+        if (factory->supportUris(uris)) {
+            auto tabPage = factory->createTabPage(uris);
+            tabPage->setParent(this);
+            addTab(tabPage, factory->name());
+            setTabToolTip(index, factory->name());
+            ++index;
+
+            (qobject_cast<PropertiesWindow *>(parent))->addTabPage(tabPage);
+        }
+    }
+}
+
+void tabStyle::drawControl(QStyle::ControlElement element, const QStyleOption *option, QPainter *painter,
+                           const QWidget *widget) const
+{
+#ifdef KY_SDK_QT_WIDGETS
+    return qApp->style()->drawControl(element, option, painter, widget);
+#endif
+    /**
+     * FIX:需要修复颜色不能跟随主题的问题
+     * \brief
+     */
+    if (element == CE_TabBarTab) {
+        if (const QStyleOptionTab *tab = qstyleoption_cast<const QStyleOptionTab *>(option)) {
+            //设置按钮的左右上下偏移
+            QRect rect = tab->rect;
+            //左侧移动1px
+            rect.setLeft(rect.x() + 1);
+            //右侧移动1px
+            rect.setRight((rect.x() + rect.width())-2);
+            QPainterPath path;
+            const qreal radius = 6;
+            if(tab->position == QStyleOptionTab::Beginning)
+            {
+                path.moveTo(rect.topRight());
+                path.lineTo(rect.topLeft() + QPointF(radius, 0));
+                path.quadTo(rect.topLeft(), rect.topLeft() + QPointF(0, radius));
+                path.lineTo(rect.bottomLeft() - QPointF(0, radius));
+                path.quadTo(rect.bottomLeft(), rect.bottomLeft() + QPointF(radius, 0));
+                path.lineTo(rect.bottomRight());
+                path.lineTo(rect.topRight());
+
+            }
+            else if(tab->position == QStyleOptionTab::End)
+            {
+                path.moveTo(rect.topRight() - QPointF(radius, 0));
+                path.lineTo(rect.topLeft());
+                path.lineTo(rect.bottomLeft() );
+                path.lineTo(rect.bottomRight() - QPointF(radius, 0));
+                path.quadTo(rect.bottomRight(), rect.bottomRight() + QPointF(0, -radius));
+                path.lineTo(rect.topRight() + QPointF(0, radius));
+                path.quadTo(rect.topRight(), rect.topRight() + QPointF(-radius, -0));
+
+            }
+            else if(tab->position == QStyleOptionTab::OnlyOneTab)
+            {
+                path.addRoundedRect(rect, radius, radius);
+            }
+            else
+            {
+                path.addRect(rect);
+            }
+            const QPalette &palette = widget->palette();
+
+            //未选中时文字颜色 - Text color when not selected
+            painter->setPen(palette.color(QPalette::ButtonText));
+
+            if (tab->state & QStyle::State_Sunken) {
+                painter->save();
+                QColor color = palette.color(QPalette::Button).lighter(70);
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(color);
+
+                painter->setRenderHint(QPainter::Antialiasing);  // 反锯齿;
+                painter->drawPath(path);
+                painter->restore();
+            } else if (tab->state & QStyle::State_Selected) {
+                painter->save();
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(palette.brush(QPalette::Highlight));
+
+                painter->setRenderHint(QPainter::Antialiasing);  // 反锯齿;
+                painter->drawPath(path);
+                painter->restore();
+
+                //选中时文字颜色 - Text color when selected
+                painter->setPen(palette.color(QPalette::BrightText));
+            } else if (tab->state & QStyle::State_MouseOver) {
+                painter->save();
+                //QColor color = palette.color(QPalette::Highlight).lighter(140);
+                QColor color = palette.color(QPalette::Button).lighter(90);
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(color);
+
+                painter->setRenderHint(QPainter::Antialiasing);  // 反锯齿;
+                painter->drawPath(path);
+                painter->restore();
+                //选中时文字颜色 - Text color when selected
+                painter->setPen(palette.color(QPalette::BrightText));
+            } else {
+                painter->save();
+                painter->setPen(Qt::NoPen);
+                painter->setBrush(palette.color(QPalette::Button));
+
+                painter->setRenderHint(QPainter::Antialiasing);  // 反锯齿;
+                painter->drawPath(path);
+                painter->restore();
+            }
+
+            painter->drawText(rect, tab->text, QTextOption(Qt::AlignCenter));
+
+            return;
+        }
+    }
+    if (element == CE_TabBarTabLabel) {
+        qApp->style()->drawControl(element, option, painter, widget);
+    }
+}
+
+QSize tabStyle::sizeFromContents(QStyle::ContentsType ct, const QStyleOption *opt, const QSize &contentsSize,
+                                 const QWidget *widget) const
+{
+    QSize barSize = QProxyStyle::sizeFromContents(ct, opt, contentsSize, widget);
+
+    if (ct == QStyle::CT_TabBarTab) {
+        barSize.transpose();
+        const QStyleOptionTab *tab = qstyleoption_cast<const QStyleOptionTab *>(opt);
+        //解决按钮不能自适应的问题
+        int fontWidth = tab->fontMetrics.width(tab->text);
+        //宽度统一加上30px
+        barSize.setWidth(fontWidth + 30);
+
+        //46 - 8 - 8 = 30;
+        barSize.setHeight(36);
+    }
+
+    return barSize;
+}
+
+QRect tabWidgetStyle::subElementRect(SubElement element, const QStyleOption *option, const QWidget *widget) const
+{
+    switch(element)
+    {
+        case SE_TabWidgetTabBar:
+        {
+            //解决QTabBar设置为居中
+            if (const QStyleOptionTabWidgetFrame *twf = qstyleoption_cast<const QStyleOptionTabWidgetFrame *>(option))
+            {
+                QRect rect = QRect(QPoint(0, 0), twf->tabBarSize);
+                if (twf->rect.size().width() > twf->tabBarSize.width()) {
+                    rect.moveLeft((twf->rect.size() - twf->leftCornerWidgetSize - twf->rightCornerWidgetSize - twf->tabBarSize).width() / 2);
+                } else {
+                    rect.setWidth(twf->rect.size().width());
+                    rect.moveLeft(0);
+                }
+                return rect;
+            }
+            break;
+
+        }
+    default:
+        break;
+
+    }
+    return QProxyStyle::subElementRect(element, option, widget);
+}
+
+HeaderBar::HeaderBar(QWidget *parent) : QToolBar(parent)
+{
+    setContextMenuPolicy(Qt::CustomContextMenu);
+
+    setStyleSheet("QToolBar{border-color: transparent;border:none;}");
+
+    setFixedHeight(40);
+    setContentsMargins(0, 0, 0, 0);
+    setMovable(false);
+
+    initUI();
+}
+
+void HeaderBar::initUI()
+{
+    QWidget *mainWidget = new QWidget(this);
+    mainWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    QHBoxLayout *layout = new QHBoxLayout(this);
+    layout->setAlignment(Qt::AlignVCenter);
+    layout->setSpacing(0);
+    layout->setContentsMargins(8, 2, 8, 2);
+
+    mainWidget->setLayout(layout);
+
+    m_iconLabel = new QLabel(this);
+    m_titleLabel = new QLabel(this);
+
+    setBackgroundRole(QPalette::Window);
+    m_titleLabel->setProperty("isWindowLabel", true);
+
+    m_iconLabel->setFixedSize(24, 24);
+    m_titleLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+
+    QToolButton *spreadButton = new QToolButton(this);
+    QToolButton *minimizeButton = new QToolButton(this);
+    QToolButton *closeButton = new QToolButton(this);
+
+    spreadButton->setIconSize(QSize(16, 16));
+    minimizeButton->setIconSize(QSize(16, 16));
+    closeButton->setIconSize(QSize(16, 16));
+
+    spreadButton->setIcon(QIcon::fromTheme("window-minimize-symbolic"));
+    minimizeButton->setIcon(QIcon::fromTheme("window-minimize-symbolic"));
+    closeButton->setIcon(QIcon::fromTheme("window-close-symbolic"));
+
+    spreadButton->setToolTip(tr("Spread"));
+    spreadButton->setAccessibleName(tr("Spread"));
+    minimizeButton->setToolTip(tr("Minimize"));
+    minimizeButton->setAccessibleName(tr("Minimize"));
+    closeButton->setToolTip(tr("Close"));
+    closeButton->setAccessibleName(tr("Close"));
+
+    auto palette = qApp->palette();
+    palette.setColor(QPalette::Highlight, QColor("#E54A50"));
+    closeButton->setPalette(palette);
+
+    layout->addWidget(m_iconLabel, 1, Qt::AlignLeft);
+    layout->addWidget(m_titleLabel, 10, Qt::AlignLeft);
+    layout->addWidget(spreadButton, 1, Qt::AlignRight);
+    layout->addWidget(minimizeButton, 1, Qt::AlignRight);
+    layout->addWidget(closeButton, 1, Qt::AlignRight);
+
+    m_buttonList.append(spreadButton);
+    m_buttonList.append(minimizeButton);
+    m_buttonList.append(closeButton);
+
+    for (QToolButton *button : m_buttonList) {
+        button->setFixedSize(30, 30);
+        button->setAutoRaise(true);
+
+        button->setProperty("isWindowButton", 1);
+        button->setProperty("useIconHighlightEffect", 0x2);
+    }
+    closeButton->setProperty("isWindowButton", 2);
+    closeButton->setProperty("useIconHighlightEffect", 0x8);
+
+    this->addWidget(mainWidget);
+
+    spreadButton->hide();
+
+    connect(spreadButton, &QToolButton::clicked, this, [=] {
+        Q_EMIT buttonClicked(ButtonType::Spread_Button);
+        m_titleLabel->setText(m_title);
+        resetTitle();
+    });
+
+    connect(minimizeButton, &QToolButton::clicked, this, [=] {
+        Q_EMIT buttonClicked(ButtonType::Minimize_Button);
+    });
+
+    connect(closeButton, &QToolButton::clicked, this, [=] {
+        Q_EMIT buttonClicked(ButtonType::Close_Button);
+    });
+}
+
+void HeaderBar::setTitle(const QString &title)
+{
+    m_title = title;
+    m_titleLabel->setText(m_title);
+    m_titleLabel->setToolTip(m_title);
+}
+
+void HeaderBar::setIcon(const QIcon &icon)
+{
+    const QIcon fallback = QIcon::fromTheme(QStringLiteral("text-x-generic"));
+    const QIcon use = icon.isNull() ? fallback : icon;
+    m_iconLabel->setPixmap(use.pixmap(24, 24));
+}
+
+void HeaderBar::setIcon(const QString &iconName)
+{
+    const QIcon fallback = QIcon::fromTheme(QStringLiteral("text-x-generic"));
+    if (iconName.isEmpty()) {
+        m_iconLabel->setPixmap(fallback.pixmap(24, 24));
+        return;
+    }
+    QString path = iconName;
+    if (path.startsWith(QLatin1String("file:"), Qt::CaseInsensitive)) {
+        const QString local = QUrl(path).toLocalFile();
+        if (!local.isEmpty()) {
+            path = local;
+        }
+    }
+    QIcon icon;
+    const QFileInfo fi(path);
+    const bool loadFromPath = fi.isAbsolute()
+                              || path.startsWith(QStringLiteral(":/"))
+                              || path.startsWith(QStringLiteral("qrc:/"));
+    if (loadFromPath) {
+        icon = QIcon(path);
+        if (icon.isNull()) {
+            icon = fallback;
+        }
+    } else {
+        icon = QIcon::fromTheme(path, fallback);
+    }
+    m_iconLabel->setPixmap(icon.pixmap(24, 24));
+}
+
+void HeaderBar::paintEvent(QPaintEvent *event)
+{
+    resetTitle();
+    QToolBar::paintEvent(event);
+}
+
+void HeaderBar::resetTitle()
+{
+    quint32 titleLength = m_titleLabel->fontMetrics().width(m_title);
+    //左右边距8，组件间距4，按钮组件36px宽 (8*2 + 4*4 + 36*4) = 176
+    quint32 labelLength = this->width() - 176;
+
+    if (titleLength > labelLength) {
+        QString title = m_titleLabel->fontMetrics().elidedText(m_title ,Qt::ElideMiddle ,labelLength);
+        m_titleLabel->setText(title);
+    }
+}

@@ -1,0 +1,203 @@
+From: =?utf-8?b?5bem5b+X5aiB?= <zuozhiwei@kylinos.cn>
+Date: Mon, 20 May 2024 07:52:01 +0000
+Subject: =?utf-8?b?ITM0IGZpeCDku7vliqHmoI/lpJrlsY/mmL7npLogLyDlo7Dpn7PlupQ=?=
+ =?utf-8?b?55So6I635Y+W5bGP5bmV5Y+v55So5Yy65Z+f5o6l5Y+j5pu/5o2iIE1lcmdlIHB1?=
+ =?utf-8?b?bGwgcmVxdWVzdCAhMzQgZnJvbSB6aG91eW9uZy9vcGVua3lsaW4vbmlsZQ==?=
+
+---
+ .../ukmedia_main_widget.cpp                        | 108 ++++++++++++++-------
+ .../ukmedia_main_widget.h                          |  18 ++++
+ 2 files changed, 91 insertions(+), 35 deletions(-)
+
+diff --git a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+index d575480..0694ac5 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+@@ -117,6 +117,7 @@ void UkmediaMainWidget::initSystemTrayIcon()
+     QIcon settingsIcon = QIcon::fromTheme(settingsIconStr);
+     m_pSoundPreferenceAction->setIcon(settingsIcon);
+     soundSystemTrayIcon->setVisible(true);
++    initPanelGSettings();
+     int nOutputValue = paVolumeToValue(m_pVolumeControl->getSinkVolume());
+ 
+     bool outputStatus = m_pVolumeControl->getSinkMute();
+@@ -1319,48 +1320,79 @@ QPixmap UkmediaMainWidget::drawDarkColoredPixmap(const QPixmap &source)
+     return QPixmap::fromImage(img);
+ }
+ 
+-/*
+- * 完整模式界面的显示
+- */
+-void UkmediaMainWidget::advancedWidgetShow()
++void UkmediaMainWidget::initPanelGSettings()
+ {
+-    kdk::WindowManager::setSkipSwitcher(this->windowHandle(),true);
+-    #define MARGIN 8
+-    QDBusInterface iface("org.ukui.panel",
+-                         "/panel/position",
+-                         "org.ukui.panel",
+-                         QDBusConnection::sessionBus());
+-    QDBusReply<QVariantList> reply=iface.call("GetPrimaryScreenGeometry");
+-    QVariantList position_list=reply.value();
++    const QByteArray id(PANEL_SETTINGS);
++    if (QGSettings::isSchemaInstalled(id)) {
++        if (m_panelGSettings == nullptr) {
++            m_panelGSettings = new QGSettings(id);
++        }
++        if (m_panelGSettings->keys().contains(PANEL_POSITION_KEY)) {
++            m_panelPosition = m_panelGSettings->get(PANEL_POSITION_KEY).toInt();
++        }
++        if (m_panelGSettings->keys().contains(PANEL_SIZE_KEY)) {
++            m_panelSize = m_panelGSettings->get(PANEL_SIZE_KEY).toInt();
++        }
++        connect(m_panelGSettings, &QGSettings::changed, this, [&] (const QString &key) {
++            if (key == PANEL_POSITION_KEY) {
++                m_panelPosition = m_panelGSettings->get(PANEL_POSITION_KEY).toInt();
++            }
++            if (key == PANEL_SIZE_KEY) {
++                m_panelSize = m_panelGSettings->get(PANEL_SIZE_KEY).toInt();
++            }
++            if (this->isVisible()) {
++                advancedWidgetShow();
++            }
++        });
++    }
++}
+ 
+-    /*
+-     * 通过这个dbus接口获取到的6个参数分别为 ：可用屏幕大小的x坐标、y坐标、宽度、高度，任务栏位置
+-    */
+-     QRect rect;
+-    switch(reply.value().at(4).toInt()){
+-    case 1:
+-        rect = QRect(position_list.at(0).toInt()+position_list.at(2).toInt()-this->width()-MARGIN,
+-                    position_list.at(1).toInt()+MARGIN,
+-                    this->width(),this->height());
++QRect UkmediaMainWidget::caculatePosition()
++{
++    QRect availableGeo = QGuiApplication::screenAt(QCursor::pos())->geometry();
++    int x, y;
++    int margin = 8;
++
++    switch (m_panelPosition)
++    {
++    case PanelPosition::Top:
++    {
++        x = availableGeo.x() + availableGeo.width() - this->width() - margin;
++        y = availableGeo.y() + m_panelSize + margin;
++    }
+         break;
+-    case 2:
+-        rect = QRect(position_list.at(0).toInt()+MARGIN,
+-                     position_list.at(1).toInt()+reply.value().at(3).toInt()-this->height()-MARGIN,
+-                     this->width(),this->height());
++    case PanelPosition::Bottom:
++    {
++        x = availableGeo.x() + availableGeo.width() - this->width() - margin;
++        y = availableGeo.y() + availableGeo.height() - m_panelSize - this->height() - margin;
++    }
+         break;
+-    case 3:
+-        rect = QRect(position_list.at(0).toInt()+position_list.at(2).toInt()-this->width()-MARGIN,
+-                     position_list.at(1).toInt()+reply.value().at(3).toInt()-this->height()-MARGIN,
+-                     this->width(),this->height());
++    case PanelPosition::Left:
++    {
++        x = availableGeo.x() + m_panelSize + margin;
++        y = availableGeo.y() + availableGeo.height() - this->height() - margin;
++    }
+         break;
+-    default:
+-        rect = QRect(position_list.at(0).toInt()+position_list.at(2).toInt()-this->width()-MARGIN,
+-                     position_list.at(1).toInt()+reply.value().at(3).toInt()-this->height()-MARGIN,
+-                     this->width(),this->height());
++    case PanelPosition::Right:
++    {
++        x = availableGeo.x() + availableGeo.width() - m_panelSize - this->width() - margin;
++        y = availableGeo.y() + availableGeo.height() - this->height() - margin;
++    }
+         break;
+     }
+ 
++    return QRect(x, y, this->width(), this->height());
++}
++
++/*
++ * 完整模式界面的显示
++ */
++void UkmediaMainWidget::advancedWidgetShow()
++{
++    kdk::WindowManager::setSkipSwitcher(this->windowHandle(),true);
++    QRect rect = caculatePosition();
+     QString platform = QGuiApplication::platformName();
++    qDebug() << "platform:" << platform;
+     if(!platform.startsWith(QLatin1String("wayland"),Qt::CaseInsensitive)){
+         this->setGeometry(rect);
+         this->showNormal();
+@@ -3703,8 +3735,14 @@ bool UkmediaMainWidget::setAppInputDevice(QString appName, int cardIndex, QStrin
+     return true;
+ }
+ 
+-
+-
+ UkmediaMainWidget::~UkmediaMainWidget()
+ {
++    if (m_panelGSettings) {
++        delete m_panelGSettings;
++        m_panelGSettings = nullptr;
++    }
++    if (soundSystemTrayIcon) {
++        delete soundSystemTrayIcon;
++        soundSystemTrayIcon = nullptr;
++    }
+ }
+diff --git a/ukui-volume-control-applet-qt/ukmedia_main_widget.h b/ukui-volume-control-applet-qt/ukmedia_main_widget.h
+index 6821cd9..d66e064 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_main_widget.h
++++ b/ukui-volume-control-applet-qt/ukmedia_main_widget.h
+@@ -120,6 +120,11 @@ extern "C" {
+ #define OUTPUT_VOLUME 43909
+ #define MIC_VOLUME 65536
+ 
++//任务栏多屏显示声音应用获取屏幕可用区域接口
++#define PANEL_SETTINGS      "org.ukui.panel.settings"
++#define PANEL_SIZE_KEY      "panelsize"
++#define PANEL_POSITION_KEY  "panelposition"
++
+ const QByteArray TRANSPARENCY_GSETTINGS = "org.ukui.control-center.personalise";
+ 
+ static const gchar *iconNameOutputs[] = {
+@@ -157,6 +162,13 @@ public:
+     explicit UkmediaMainWidget(QMainWindow *parent = nullptr);
+     ~UkmediaMainWidget();
+ 
++    enum PanelPosition{
++        Bottom = 0, //!< The bottom side of the screen.
++        Top,    //!< The top side of the screen.
++        Left,   //!< The left side of the screen.
++        Right   //!< The right side of the screen.
++    };
++
+     void UkmediaDbusRegister(); //注册Dbus信号
+     void initSystemTrayIcon(); //初始化系统托盘
+     void initWidget(); //初始化弹出框
+@@ -270,6 +282,8 @@ public Q_SLOTS:
+     bool setDefaultInputMuteState(bool mute);
+     bool setDefaultOutputDevice(QString deviceName);
+     bool setDefaultInputDevice(QString deviceName);
++    void initPanelGSettings();
++    QRect caculatePosition(); //任务栏多屏显示声音应用获取屏幕可用区域接口
+     void advancedWidgetShow(); //显示advance widget
+ 
+     QStringList getAppList();
+@@ -424,6 +438,10 @@ private:
+     QString m_sessionControllerPropertiesInterface;
+ 
+     QDBusUnixFileDescriptor m_inhibitFileDescriptor;
++
++    QGSettings *m_panelGSettings = nullptr;
++    int m_panelPosition;
++    int m_panelSize;
+ };
+ 
+ #endif // UKMEDIAMAINWIDGET_H

@@ -1,0 +1,3695 @@
+From: =?utf-8?b?5p6X6Zu35YuH?= <linleiyong@kylinos.cn>
+Date: Tue, 14 Apr 2026 09:50:55 +0800
+Subject: 2.4.9-ok1.1
+
+---
+ README                                             |   3 -
+ agent/agent.h                                      |   3 +-
+ agent/cache.c                                      | 358 +++++++++++++----
+ agent/divert-tpm2.c                                |   9 +
+ agent/gpg-agent.c                                  | 433 +++++++++++++--------
+ agent/trustlist.c                                  |  12 +-
+ autogen.sh                                         |   6 +-
+ common/Makefile.am                                 |   2 -
+ common/compliance.c                                |  13 +-
+ common/compliance.h                                |   4 +-
+ common/homedir.c                                   |   2 +-
+ configure.ac                                       |   6 +-
+ dirmngr/dirmngr.c                                  |   8 -
+ dirmngr/dirmngr.h                                  |   1 -
+ dirmngr/ks-engine-hkp.c                            | 101 +++--
+ dirmngr/ldap-parse-uri.c                           |   2 +-
+ doc/Makefile.am                                    |  19 +-
+ doc/dirmngr.texi                                   |  13 +-
+ doc/examples/README                                |   2 +
+ doc/examples/systemd-user/README                   |  66 ++++
+ doc/examples/systemd-user/dirmngr.service          |   8 +
+ doc/examples/systemd-user/dirmngr.socket           |  11 +
+ doc/examples/systemd-user/gpg-agent-browser.socket |  13 +
+ doc/examples/systemd-user/gpg-agent-extra.socket   |  13 +
+ doc/examples/systemd-user/gpg-agent-ssh.socket     |  22 ++
+ doc/examples/systemd-user/gpg-agent.service        |   8 +
+ doc/examples/systemd-user/gpg-agent.socket         |  16 +
+ doc/examples/systemd-user/keyboxd.service          |   8 +
+ doc/examples/systemd-user/keyboxd.socket           |  11 +
+ doc/gpg.texi                                       |  75 ++--
+ g10/Makefile.am                                    |  27 +-
+ g10/armor.c                                        |  20 +-
+ g10/encrypt.c                                      |   5 +
+ g10/filter.h                                       |   2 +
+ g10/gpg.c                                          |  77 ++--
+ g10/import.c                                       |  46 +--
+ g10/internal-keydb.c                               | 118 ++++++
+ g10/keygen.c                                       |  42 +-
+ g10/main.h                                         |   2 +-
+ g10/mainproc.c                                     |  37 +-
+ g10/mdfilter.c                                     |  15 +-
+ g10/misc.c                                         |  13 +-
+ g10/openfile.c                                     |  12 +-
+ g10/options.h                                      |   6 +
+ g10/packet.h                                       |   2 +
+ g10/parse-packet.c                                 |  44 ++-
+ g10/plaintext.c                                    |  28 +-
+ kbx/keyboxd.c                                      |  79 +++-
+ regexp/Makefile.am                                 |   8 +-
+ scd/scdaemon.c                                     |   9 +
+ tests/openpgp/Makefile.am                          |   8 +-
+ tests/openpgp/encrypt.scm                          |   2 +-
+ tests/openpgp/import-incomplete.scm                |  67 ++++
+ .../import-incomplete/primary+revocation.asc       |   9 +
+ .../primary+subkey+sub-revocation.asc              |  10 +
+ .../import-incomplete/primary+subkey+sub-sig.asc   |  10 +
+ .../openpgp/import-incomplete/primary+uid-sig.asc  |  10 +
+ tests/openpgp/import-incomplete/primary+uid.asc    |  10 +
+ tests/openpgp/issue7539-message.asc                |   8 +
+ tests/openpgp/issue7539-signer.asc                 |   9 +
+ tests/openpgp/issue7539.scm                        |  29 ++
+ tests/openpgp/quick-key-manipulation.scm           |  13 +
+ tpm2d/tpm2.c                                       |  22 +-
+ 63 files changed, 1548 insertions(+), 499 deletions(-)
+ create mode 100644 doc/examples/systemd-user/README
+ create mode 100644 doc/examples/systemd-user/dirmngr.service
+ create mode 100644 doc/examples/systemd-user/dirmngr.socket
+ create mode 100644 doc/examples/systemd-user/gpg-agent-browser.socket
+ create mode 100644 doc/examples/systemd-user/gpg-agent-extra.socket
+ create mode 100644 doc/examples/systemd-user/gpg-agent-ssh.socket
+ create mode 100644 doc/examples/systemd-user/gpg-agent.service
+ create mode 100644 doc/examples/systemd-user/gpg-agent.socket
+ create mode 100644 doc/examples/systemd-user/keyboxd.service
+ create mode 100644 doc/examples/systemd-user/keyboxd.socket
+ create mode 100644 g10/internal-keydb.c
+ create mode 100755 tests/openpgp/import-incomplete.scm
+ create mode 100644 tests/openpgp/import-incomplete/primary+revocation.asc
+ create mode 100644 tests/openpgp/import-incomplete/primary+subkey+sub-revocation.asc
+ create mode 100644 tests/openpgp/import-incomplete/primary+subkey+sub-sig.asc
+ create mode 100644 tests/openpgp/import-incomplete/primary+uid-sig.asc
+ create mode 100644 tests/openpgp/import-incomplete/primary+uid.asc
+ create mode 100644 tests/openpgp/issue7539-message.asc
+ create mode 100644 tests/openpgp/issue7539-signer.asc
+ create mode 100644 tests/openpgp/issue7539.scm
+
+diff --git a/README b/README
+index 2ab08df..7b5b183 100644
+--- a/README
++++ b/README
+@@ -141,9 +141,6 @@
+   Only public keys and X.509 certificates are managed by the keyboxd;
+   private keys are still stored as separate files.
+ 
+-  Since version 2.4.1 the keyboxd will be used by default for a fresh
+-  install; i.e. if a ~/.gnupg directory did not yet exist.
+-
+   Note that there is no automatic migration; if the use-keyboxd option
+   is enabled keys are not taken from pubring.kbx.  To migrate existing
+   keys to the keyboxd do this:
+diff --git a/agent/agent.h b/agent/agent.h
+index 6a61f48..6faacb8 100644
+--- a/agent/agent.h
++++ b/agent/agent.h
+@@ -428,6 +428,7 @@ void *get_agent_daemon_notify_event (void);
+ #endif
+ void agent_sighup_action (void);
+ int map_pk_openpgp_to_gcry (int openpgp_algo);
++void agent_kick_the_loop (void);
+ 
+ /*-- command.c --*/
+ gpg_error_t agent_inq_pinentry_launched (ctrl_t ctrl, unsigned long pid,
+@@ -533,7 +534,7 @@ int agent_clear_passphrase (ctrl_t ctrl,
+ /*-- cache.c --*/
+ void initialize_module_cache (void);
+ void deinitialize_module_cache (void);
+-void agent_cache_housekeeping (void);
++struct timespec *agent_cache_expiration (void);
+ void agent_flush_cache (int pincache_only);
+ int agent_put_cache (ctrl_t ctrl, const char *key, cache_mode_t cache_mode,
+                      const char *data, int ttl);
+diff --git a/agent/cache.c b/agent/cache.c
+index 7616daf..e854420 100644
+--- a/agent/cache.c
++++ b/agent/cache.c
+@@ -53,8 +53,20 @@ struct secret_data_s {
+   char data[1];  /* A string.  */
+ };
+ 
+-/* The cache object.  */
++/* The type of cache object.  */
+ typedef struct cache_item_s *ITEM;
++
++/* The timer entry in a linked list.  */
++struct timer_s {
++  ITEM next;
++  int tv_sec;
++  int reason;
++};
++#define CACHE_EXPIRE_UNUSED      0
++#define CACHE_EXPIRE_LAST_ACCESS 1
++#define CACHE_EXPIRE_CREATION    2
++
++/* The cache object.  */
+ struct cache_item_s {
+   ITEM next;
+   time_t created;
+@@ -63,12 +75,18 @@ struct cache_item_s {
+   struct secret_data_s *pw;
+   cache_mode_t cache_mode;
+   int restricted;  /* The value of ctrl->restricted is part of the key.  */
++  struct timer_s t;
+   char key[1];
+ };
+ 
+ /* The cache himself.  */
+ static ITEM thecache;
+ 
++/* The timer list of expiration, in active.  */
++static ITEM the_timer_list;
++/* Newly created entries, to be inserted into the timer list.  */
++static ITEM the_timer_list_new;
++
+ /* NULL or the last cache key stored by agent_store_cache_hit.  */
+ static char *last_stored_cache_key;
+ 
+@@ -193,100 +211,302 @@ new_data (const char *string, struct secret_data_s **r_data)
+ }
+ 
+ 
++static void
++insert_to_timer_list_new (ITEM entry)
++{
++  entry->t.next = the_timer_list_new;
++  the_timer_list_new = entry;
++}
+ 
+-/* Check whether there are items to expire.  */
++/* Insert to the active timer list.  */
+ static void
+-housekeeping (void)
++insert_to_timer_list (struct timespec *ts, ITEM entry)
+ {
+-  ITEM r, rprev;
+-  time_t current = gnupg_get_time ();
++  ITEM e, eprev;
+ 
+-  /* First expire the actual data */
+-  for (r=thecache; r; r = r->next)
++  if (!the_timer_list || ts->tv_sec >= entry->t.tv_sec)
+     {
+-      if (r->cache_mode == CACHE_MODE_PIN)
+-        ; /* Don't let it expire - scdaemon explicitly flushes them.  */
+-      else if (r->pw && r->ttl >= 0 && r->accessed + r->ttl < current)
++      if (the_timer_list)
+         {
+-          if (DBG_CACHE)
+-            log_debug ("  expired '%s'.%d (%ds after last access)\n",
+-                       r->key, r->restricted, r->ttl);
+-          release_data (r->pw);
+-          r->pw = NULL;
+-          r->accessed = current;
++          the_timer_list->t.tv_sec += ts->tv_sec - entry->t.tv_sec;
++          if (ts->tv_nsec >= 500000000)
++            the_timer_list->t.tv_sec++;
+         }
++
++      ts->tv_sec = entry->t.tv_sec;
++      ts->tv_nsec = 0;
++
++      entry->t.tv_sec = 0;
++      entry->t.next = the_timer_list;
++      the_timer_list = entry;
++      return;
+     }
+ 
+-  /* Second, make sure that we also remove them based on the created
+-   * stamp so that the user has to enter it from time to time.  We
+-   * don't do this for data items which are used to storage secrets in
+-   * meory and are not user entered passphrases etc.  */
+-  for (r=thecache; r; r = r->next)
++  entry->t.tv_sec -= ts->tv_sec;
++  eprev = NULL;
++  for (e = the_timer_list; e; e = e->t.next)
+     {
+-      unsigned long maxttl;
++      if (e->t.tv_sec > entry->t.tv_sec)
++        break;
+ 
+-      switch (r->cache_mode)
+-        {
+-        case CACHE_MODE_DATA:
+-        case CACHE_MODE_PIN:
+-          continue;  /* No MAX TTL here.  */
+-        case CACHE_MODE_SSH: maxttl = opt.max_cache_ttl_ssh; break;
+-        default: maxttl = opt.max_cache_ttl; break;
+-        }
+-      if (r->pw && r->created + maxttl < current)
+-        {
+-          if (DBG_CACHE)
+-            log_debug ("  expired '%s'.%d (%lus after creation)\n",
+-                       r->key, r->restricted, opt.max_cache_ttl);
+-          release_data (r->pw);
+-          r->pw = NULL;
+-          r->accessed = current;
+-        }
++      eprev = e;
++      entry->t.tv_sec -= e->t.tv_sec;
++    }
++
++  entry->t.next = e;
++  if (e)
++    e->t.tv_sec -= entry->t.tv_sec;
++
++  if (eprev)
++    eprev->t.next = entry;
++  else
++    the_timer_list = entry;
++}
++
++static void
++remove_from_timer_list (ITEM entry)
++{
++  ITEM e, eprev;
++
++  eprev = NULL;
++  for (e = the_timer_list; e; e = e->t.next)
++    if (e != entry)
++      eprev = e;
++    else
++      {
++        if (e->t.next)
++          e->t.next->t.tv_sec += e->t.tv_sec;
++
++        if (eprev)
++          eprev->t.next = e->t.next;
++        else
++          the_timer_list = e->t.next;
++
++        break;
++      }
++
++  entry->t.next = NULL;
++  entry->t.tv_sec = 0;
++}
++
++static void
++remove_from_timer_list_new (ITEM entry)
++{
++  ITEM e, eprev;
++
++  eprev = NULL;
++  for (e = the_timer_list_new; e; e = e->t.next)
++    if (e != entry)
++      eprev = e;
++    else
++      {
++        if (eprev)
++          eprev->t.next = e->t.next;
++        else
++          the_timer_list_new = e->t.next;
++
++        break;
++      }
++
++  entry->t.next = NULL;
++  entry->t.tv_sec = 0;
++}
++
++static int
++compute_expiration (ITEM r)
++{
++  unsigned long maxttl;
++  time_t current = gnupg_get_time ();
++  time_t next;
++
++  if (r->cache_mode == CACHE_MODE_PIN)
++    return 0; /* Don't let it expire - scdaemon explicitly flushes them.  */
++
++  if (!r->pw)
++    {
++      /* Expire an old and unused entry after 30 minutes.  */
++      r->t.tv_sec = 60*30;
++      r->t.reason = CACHE_EXPIRE_UNUSED;
++      return 1;
+     }
+ 
+-  /* Third, make sure that we don't have too many items in the list.
+-   * Expire old and unused entries after 30 minutes.  */
+-  for (rprev=NULL, r=thecache; r; )
++  switch (r->cache_mode)
+     {
+-      if (!r->pw && r->ttl >= 0 && r->accessed + 60*30 < current)
+-        {
+-          ITEM r2 = r->next;
+-          if (DBG_CACHE)
+-            log_debug ("  removed '%s'.%d (mode %d) (slot not used for 30m)\n",
+-                       r->key, r->restricted, r->cache_mode);
+-          xfree (r);
+-          if (!rprev)
+-            thecache = r2;
+-          else
+-            rprev->next = r2;
+-          r = r2;
+-        }
+-      else
++    case CACHE_MODE_DATA:
++    case CACHE_MODE_PIN:
++      maxttl = 0;  /* No MAX TTL here.  */
++      break;
++    case CACHE_MODE_SSH: maxttl = opt.max_cache_ttl_ssh; break;
++    default: maxttl = opt.max_cache_ttl; break;
++    }
++
++  if (maxttl)
++    {
++      if (r->created + maxttl < current)
+         {
+-          rprev = r;
+-          r = r->next;
++          r->t.tv_sec = 0;
++          r->t.reason = CACHE_EXPIRE_CREATION;
++          return 1;
+         }
++
++      next = r->created + maxttl - current;
++    }
++  else
++    next = 0;
++
++  if (r->ttl >= 0 && (next == 0 || r->ttl < next))
++    {
++      r->t.tv_sec = r->ttl;
++      r->t.reason = CACHE_EXPIRE_LAST_ACCESS;
++      return 1;
+     }
++
++  if (next)
++    {
++      r->t.tv_sec = next;
++      r->t.reason = CACHE_EXPIRE_CREATION;
++      return 1;
++    }
++
++  return 0;
+ }
+ 
++static void
++update_expiration (ITEM entry, int is_new_entry)
++{
++  if (!is_new_entry)
++    {
++      remove_from_timer_list (entry);
++      remove_from_timer_list_new (entry);
++    }
+ 
+-void
+-agent_cache_housekeeping (void)
++  if (compute_expiration (entry))
++    {
++      insert_to_timer_list_new (entry);
++      agent_kick_the_loop ();
++    }
++}
++
++
++/* Expire the cache entry.  Returns 1 when the entry should be removed
++ * from the cache.  */
++static int
++do_expire (ITEM e)
+ {
+-  int res;
++  if (!e->pw)
++    /* Unused entry after 30 minutes.  */
++    return 1;
+ 
+-  if (DBG_CACHE)
+-    log_debug ("agent_cache_housekeeping\n");
++  if (e->t.reason == CACHE_EXPIRE_LAST_ACCESS)
++    {
++      if (DBG_CACHE)
++        log_debug ("  expired '%s'.%d (%ds after last access)\n",
++                   e->key, e->restricted, e->ttl);
++    }
++  else
++    {
++      if (DBG_CACHE)
++        log_debug ("  expired '%s'.%d (%lus after creation)\n",
++                   e->key, e->restricted, opt.max_cache_ttl);
++    }
++
++  release_data (e->pw);
++  e->pw = NULL;
++  e->accessed = 0;
++
++  if (compute_expiration (e))
++    insert_to_timer_list_new (e);
++
++  return 0;
++}
++
++
++struct timespec *
++agent_cache_expiration (void)
++{
++  static struct timespec abstime;
++  static struct timespec timeout;
++  struct timespec *tp;
++  struct timespec curtime;
++  int res;
++  int expired = 0;
++  ITEM e, enext;
+ 
+   res = npth_mutex_lock (&cache_lock);
+   if (res)
+     log_fatal ("failed to acquire cache mutex: %s\n", strerror (res));
+ 
+-  housekeeping ();
++  npth_clock_gettime (&curtime);
++  if (the_timer_list)
++    {
++      if (npth_timercmp (&abstime, &curtime, <))
++        expired = 1;
++      else
++        npth_timersub (&abstime, &curtime, &timeout);
++    }
++
++  if (expired && (e = the_timer_list) && e->t.tv_sec == 0)
++    {
++      the_timer_list = e->t.next;
++      e->t.next = NULL;
++
++      if (do_expire (e))
++        {
++          ITEM r, rprev;
++
++          if (DBG_CACHE)
++            log_debug ("  removed '%s'.%d (mode %d) (slot not used for 30m)\n",
++                       e->key, e->restricted, e->cache_mode);
++
++          rprev = NULL;
++          for (r = thecache; r; r = r->next)
++            if (r == e)
++              {
++                if (!rprev)
++                  thecache = r->next;
++                else
++                  rprev->next = r->next;
++                break;
++              }
++            else
++              rprev = r;
++
++          remove_from_timer_list_new (e);
++
++          xfree (e);
++        }
++    }
++
++  if (expired || !the_timer_list)
++    timeout.tv_sec = timeout.tv_nsec = 0;
++
++  for (e = the_timer_list_new; e; e = enext)
++    {
++      enext = e->t.next;
++      e->t.next = NULL;
++      insert_to_timer_list (&timeout, e);
++    }
++  the_timer_list_new = NULL;
++
++  if (!the_timer_list)
++    tp = NULL;
++  else
++    {
++      if (the_timer_list->t.tv_sec != 0)
++        {
++          timeout.tv_sec += the_timer_list->t.tv_sec;
++          the_timer_list->t.tv_sec = 0;
++        }
++
++      npth_timeradd (&timeout, &curtime, &abstime);
++      tp = &timeout;
++    }
+ 
+   res = npth_mutex_unlock (&cache_lock);
+   if (res)
+     log_fatal ("failed to release cache mutex: %s\n", strerror (res));
++
++  return tp;
+ }
+ 
+ 
+@@ -314,6 +534,7 @@ agent_flush_cache (int pincache_only)
+           release_data (r->pw);
+           r->pw = NULL;
+           r->accessed = 0;
++          update_expiration (r, 0);
+         }
+     }
+ 
+@@ -358,7 +579,6 @@ agent_put_cache (ctrl_t ctrl, const char *key, cache_mode_t cache_mode,
+   if (DBG_CACHE)
+     log_debug ("agent_put_cache '%s'.%d (mode %d) requested ttl=%d\n",
+                key, restricted, cache_mode, ttl);
+-  housekeeping ();
+ 
+   if (!ttl)
+     {
+@@ -410,6 +630,7 @@ agent_put_cache (ctrl_t ctrl, const char *key, cache_mode_t cache_mode,
+           err = new_data (data, &r->pw);
+           if (err)
+             log_error ("error replacing cache item: %s\n", gpg_strerror (err));
++          update_expiration (r, 0);
+         }
+     }
+   else if (data) /* Insert.  */
+@@ -431,6 +652,7 @@ agent_put_cache (ctrl_t ctrl, const char *key, cache_mode_t cache_mode,
+             {
+               r->next = thecache;
+               thecache = r;
++              update_expiration (r, 1);
+             }
+         }
+       if (err)
+@@ -478,7 +700,6 @@ agent_get_cache (ctrl_t ctrl, const char *key, cache_mode_t cache_mode)
+     log_debug ("agent_get_cache '%s'.%d (mode %d)%s ...\n",
+                key, restricted, cache_mode,
+                last_stored? " (stored cache key)":"");
+-  housekeeping ();
+ 
+   for (r=thecache; r; r = r->next)
+     {
+@@ -500,7 +721,10 @@ agent_get_cache (ctrl_t ctrl, const char *key, cache_mode_t cache_mode)
+            * below.  Note also that we don't update the accessed time
+            * for data items.  */
+           if (r->cache_mode != CACHE_MODE_DATA)
+-            r->accessed = gnupg_get_time ();
++            {
++              r->accessed = gnupg_get_time ();
++              update_expiration (r, 0);
++            }
+           if (DBG_CACHE)
+             log_debug ("... hit\n");
+           if (r->pw->totallen < 32)
+diff --git a/agent/divert-tpm2.c b/agent/divert-tpm2.c
+index 2496d09..5b5bd14 100644
+--- a/agent/divert-tpm2.c
++++ b/agent/divert-tpm2.c
+@@ -135,6 +135,15 @@ divert_tpm2_pkdecrypt (ctrl_t ctrl,
+       if (!smatch (&s, n, "a"))
+         return gpg_error (GPG_ERR_UNKNOWN_SEXP);
+       n = snext (&s);
++      /* NOTE: gpg-agent protocol uses signed integer for RSA (%m in
++       * MPI), where 0x00 is added when the MSB is 1.  TPM2 uses
++       * unsigned integer.  We need to remove this 0x00, or else
++       * it may result GPG_ERR_TOO_LARGE in tpm2daemon.  */
++      if (!*s && (n&1))
++        {
++          s++;
++          n--;
++        }
+     }
+   else if (smatch (&s, n, "ecdh"))
+     {
+diff --git a/agent/gpg-agent.c b/agent/gpg-agent.c
+index c4b281d..22db257 100644
+--- a/agent/gpg-agent.c
++++ b/agent/gpg-agent.c
+@@ -48,6 +48,9 @@
+ # include <signal.h>
+ #endif
+ #include <npth.h>
++#ifdef HAVE_PRCTL
++# include <sys/prctl.h>
++#endif
+ 
+ #define INCLUDED_BY_MAIN_MODULE 1
+ #define GNUPG_COMMON_NEED_AFLOCAL
+@@ -341,15 +344,13 @@ static struct debug_flags_s debug_flags [] =
+ #define MIN_PASSPHRASE_NONALPHA (1)
+ #define MAX_PASSPHRASE_DAYS   (0)
+ 
+-/* The timer tick used for housekeeping stuff.  Note that on Windows
+- * we use a SetWaitableTimer seems to signal earlier than about 2
+- * seconds.  Thus we use 4 seconds on all platforms.
+- * CHECK_OWN_SOCKET_INTERVAL defines how often we check
+- * our own socket in standard socket mode.  If that value is 0 we
+- * don't check at all.  All values are in seconds. */
+-#define TIMERTICK_INTERVAL          (4)
++/* CHECK_OWN_SOCKET_INTERVAL defines how often we check our own socket
++ * in standard socket mode.  If that value is 0 we don't check at all.
++ * Values is in seconds. */
+ #define CHECK_OWN_SOCKET_INTERVAL  (60)
+-
++/* CHECK_PROBLEMS_INTERFAL defines how often we check the existence of
++ * parent process and homedir.  Value is in seconds.  */
++#define CHECK_PROBLEMS_INTERVAL     (4)
+ 
+ /* Flag indicating that the ssh-agent subsystem has been enabled.  */
+ static int ssh_support;
+@@ -384,9 +385,6 @@ static int startup_signal_mask_valid;
+ /* Flag to indicate that a shutdown was requested.  */
+ static int shutdown_pending;
+ 
+-/* Counter for the currently running own socket checks.  */
+-static int check_own_socket_running;
+-
+ /* Flags to indicate that check_own_socket shall not be called.  */
+ static int disable_check_own_socket;
+ 
+@@ -396,6 +394,12 @@ static int is_supervised;
+ /* Flag indicating to start the daemon even if one already runs.  */
+ static int steal_socket;
+ 
++/* Flag to monitor problems.  */
++static int problem_detected;
++#define AGENT_PROBLEM_SOCKET_TAKEOVER (1 << 0)
++#define AGENT_PROBLEM_PARENT_HAS_GONE (1 << 1)
++#define AGENT_PROBLEM_HOMEDIR_REMOVED (1 << 2)
++
+ /* Flag to inhibit socket removal in cleanup.  */
+ static int inhibit_socket_removal;
+ 
+@@ -432,6 +436,17 @@ static assuan_sock_nonce_t socket_nonce_ssh;
+  * Let's try this as default.  Change at runtime with --listen-backlog.  */
+ static int listen_backlog = 64;
+ 
++#ifdef HAVE_W32_SYSTEM
++/* The event to break the select call.  */
++static HANDLE the_event2;
++#elif defined(HAVE_PSELECT_NO_EINTR)
++/* An FD to break the select call.  */
++static int event_pipe_fd;
++#else
++/* PID of the main thread.  */
++static pid_t main_thread_pid;
++#endif
++
+ /* Default values for options passed to the pinentry. */
+ static char *default_display;
+ static char *default_ttyname;
+@@ -452,9 +467,14 @@ static const char *debug_level;
+    the log file after a SIGHUP if it didn't changed. Malloced. */
+ static char *current_logfile;
+ 
+-/* The handle_tick() function may test whether a parent is still
+- * running.  We record the PID of the parent here or -1 if it should
+- * be watched.  */
++#ifdef HAVE_W32_SYSTEM
++#define HAVE_PARENT_PID_SUPPORT 0
++#else
++#define HAVE_PARENT_PID_SUPPORT 1
++#endif
++/* The check_others_thread() function may test whether a parent is
++ * still running.  We record the PID of the parent here or -1 if it
++ * should be watched.  */
+ static pid_t parent_pid = (pid_t)(-1);
+ 
+ /* This flag is true if the inotify mechanism for detecting the
+@@ -517,8 +537,11 @@ static void handle_connections (gnupg_fd_t listen_fd,
+                                 gnupg_fd_t listen_fd_extra,
+                                 gnupg_fd_t listen_fd_browser,
+                                 gnupg_fd_t listen_fd_ssh);
+-static void check_own_socket (void);
+ static int check_for_running_agent (int silent);
++#if CHECK_OWN_SOCKET_INTERVAL > 0
++static void *check_own_socket_thread (void *arg);
++#endif
++static void *check_others_thread (void *arg);
+ 
+ /* Pth wrapper function definitions. */
+ ASSUAN_SYSTEM_NPTH_IMPL;
+@@ -1088,6 +1111,11 @@ main (int argc, char **argv)
+ 
+   early_system_init ();
+ 
++#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
++  /* Disable ptrace on Linux without sgid bit */
++  prctl(PR_SET_DUMPABLE, 0);
++#endif
++
+   /* Before we do anything else we save the list of currently open
+      file descriptors and the signal mask.  This info is required to
+      do the exec call properly.  We don't need it on Windows.  */
+@@ -1399,9 +1427,6 @@ main (int argc, char **argv)
+       agent_exit (0);
+     }
+ 
+-  if (is_supervised && !opt.quiet)
+-    log_info(_("WARNING: \"%s\" is a deprecated option\n"), "--supervised");
+-
+   if (is_supervised)
+     ;
+   else if (!opt.extra_socket)
+@@ -2140,39 +2165,45 @@ get_agent_active_connection_count (void)
+    notification event.  Calling it the first time creates that
+    event.  */
+ #if defined(HAVE_W32_SYSTEM)
++static void *
++create_an_event (void)
++{
++  HANDLE h, h2;
++  SECURITY_ATTRIBUTES sa = { sizeof (SECURITY_ATTRIBUTES), NULL, TRUE};
++
++  /* We need to use a manual reset event object due to the way our
++     w32-pth wait function works: If we would use an automatic
++     reset event we are not able to figure out which handle has
++     been signaled because at the time we single out the signaled
++     handles using WFSO the event has already been reset due to
++     the WFMO.  */
++  h = CreateEvent (&sa, TRUE, FALSE, NULL);
++  if (!h)
++    log_error ("can't create an event: %s\n", w32_strerror (-1) );
++  else if (!DuplicateHandle (GetCurrentProcess(), h,
++                             GetCurrentProcess(), &h2,
++                             EVENT_MODIFY_STATE|SYNCHRONIZE, TRUE, 0))
++    {
++      log_error ("setting synchronize for an event failed: %s\n",
++                 w32_strerror (-1) );
++      CloseHandle (h);
++    }
++  else
++    {
++      CloseHandle (h);
++      return h2;
++    }
++
++  return INVALID_HANDLE_VALUE;
++}
++
+ void *
+ get_agent_daemon_notify_event (void)
+ {
+   static HANDLE the_event = INVALID_HANDLE_VALUE;
+ 
+   if (the_event == INVALID_HANDLE_VALUE)
+-    {
+-      HANDLE h, h2;
+-      SECURITY_ATTRIBUTES sa = { sizeof (SECURITY_ATTRIBUTES), NULL, TRUE};
+-
+-      /* We need to use a manual reset event object due to the way our
+-         w32-pth wait function works: If we would use an automatic
+-         reset event we are not able to figure out which handle has
+-         been signaled because at the time we single out the signaled
+-         handles using WFSO the event has already been reset due to
+-         the WFMO.  */
+-      h = CreateEvent (&sa, TRUE, FALSE, NULL);
+-      if (!h)
+-        log_error ("can't create scd notify event: %s\n", w32_strerror (-1) );
+-      else if (!DuplicateHandle (GetCurrentProcess(), h,
+-                                 GetCurrentProcess(), &h2,
+-                                 EVENT_MODIFY_STATE|SYNCHRONIZE, TRUE, 0))
+-        {
+-          log_error ("setting synchronize for scd notify event failed: %s\n",
+-                     w32_strerror (-1) );
+-          CloseHandle (h);
+-        }
+-      else
+-        {
+-          CloseHandle (h);
+-          the_event = h2;
+-        }
+-    }
++    the_event = create_an_event ();
+ 
+   return the_event;
+ }
+@@ -2429,57 +2460,6 @@ create_directories (void)
+ }
+ 
+ 
+-
+-/* This is the worker for the ticker.  It is called every few seconds
+-   and may only do fast operations. */
+-static void
+-handle_tick (void)
+-{
+-  static time_t last_minute;
+-  struct stat statbuf;
+-
+-  if (!last_minute)
+-    last_minute = time (NULL);
+-
+-  /* If we are running as a child of another process, check whether
+-     the parent is still alive and shutdown if not. */
+-#ifndef HAVE_W32_SYSTEM
+-  if (parent_pid != (pid_t)(-1))
+-    {
+-      if (kill (parent_pid, 0))
+-        {
+-          shutdown_pending = 2;
+-          log_info ("parent process died - shutting down\n");
+-          log_info ("%s %s stopped\n", gpgrt_strusage(11), gpgrt_strusage(13));
+-          cleanup ();
+-          agent_exit (0);
+-        }
+-    }
+-#endif /*HAVE_W32_SYSTEM*/
+-
+-  /* Code to be run from time to time.  */
+-#if CHECK_OWN_SOCKET_INTERVAL > 0
+-  if (last_minute + CHECK_OWN_SOCKET_INTERVAL <= time (NULL))
+-    {
+-      check_own_socket ();
+-      last_minute = time (NULL);
+-    }
+-#endif
+-
+-  /* Need to check for expired cache entries.  */
+-  agent_cache_housekeeping ();
+-
+-  /* Check whether the homedir is still available.  */
+-  if (!shutdown_pending
+-      && (!have_homedir_inotify || !reliable_homedir_inotify)
+-      && gnupg_stat (gnupg_homedir (), &statbuf) && errno == ENOENT)
+-    {
+-      shutdown_pending = 1;
+-      log_info ("homedir has been removed - shutting down\n");
+-    }
+-}
+-
+-
+ /* A global function which allows us to call the reload stuff from
+    other places too.  This is only used when build for W32.  */
+ void
+@@ -2538,6 +2518,11 @@ handle_signal (int signo)
+       agent_sigusr2_action ();
+       break;
+ 
++    case SIGCONT:
++      /* Do nothing, but break the syscall.  */
++      log_debug ("SIGCONT received - breaking select\n");
++      break;
++
+     case SIGTERM:
+       if (!shutdown_pending)
+         log_info ("SIGTERM received - shutting down ...\n");
+@@ -2969,6 +2954,28 @@ start_connection_thread_ssh (void *arg)
+ }
+ 
+ 
++void
++agent_kick_the_loop (void)
++{
++  /* Kick the select loop.  */
++#ifdef HAVE_W32_SYSTEM
++  int ret = SetEvent (the_event2);
++  if (ret == 0)
++    log_error ("SetEvent for agent_kick_the_loop failed: %s\n",
++               w32_strerror (-1));
++#else
++# ifdef HAVE_PSELECT_NO_EINTR
++  write (event_pipe_fd, "", 1);
++# else
++  int ret = kill (main_thread_pid, SIGCONT);
++  if (ret < 0)
++    log_error ("sending signal for agent_kick_the_loop failed: %s\n",
++               gpg_strerror (gpg_error_from_syserror ()));
++# endif
++#endif
++}
++
++
+ /* Connection handler loop.  Wait for connection requests and spawn a
+    thread after accepting a connection.  */
+ static void
+@@ -2986,12 +2993,15 @@ handle_connections (gnupg_fd_t listen_fd,
+   gnupg_fd_t fd;
+   int nfd;
+   int saved_errno;
+-  struct timespec abstime;
+-  struct timespec curtime;
+-  struct timespec timeout;
++  struct timespec *tp;
+ #ifdef HAVE_W32_SYSTEM
+-  HANDLE events[2];
++  HANDLE events[3];
+   unsigned int events_set;
++#else
++  int signo;
++# ifdef HAVE_PSELECT_NO_EINTR
++  int pipe_fd[2];
++# endif
+ #endif
+   int sock_inotify_fd = -1;
+   int home_inotify_fd = -1;
+@@ -3019,11 +3029,24 @@ handle_connections (gnupg_fd_t listen_fd,
+   npth_sigev_add (SIGUSR1);
+   npth_sigev_add (SIGUSR2);
+   npth_sigev_add (SIGINT);
++  npth_sigev_add (SIGCONT);
+   npth_sigev_add (SIGTERM);
+   npth_sigev_fini ();
++# ifdef HAVE_PSELECT_NO_EINTR
++  ret = gnupg_create_pipe (pipe_fd);
++  if (ret)
++    {
++      log_error ("pipe creation failed: %s\n", gpg_strerror (ret));
++      return;
++    }
++  event_pipe_fd = pipe_fd[1];
++# else
++  main_thread_pid = getpid ();
++# endif
+ #else
+   events[0] = get_agent_daemon_notify_event ();
+-  events[1] = INVALID_HANDLE_VALUE;
++  events[1] = the_event2 = create_an_event ();
++  events[2] = INVALID_HANDLE_VALUE;
+ #endif
+ 
+   if (disable_check_own_socket)
+@@ -3047,6 +3070,27 @@ handle_connections (gnupg_fd_t listen_fd,
+   else
+     have_homedir_inotify = 1;
+ 
++#if CHECK_OWN_SOCKET_INTERVAL > 0
++  if (!disable_check_own_socket && sock_inotify_fd == -1)
++    {
++      npth_t thread;
++
++      err = npth_create (&thread, &tattr, check_own_socket_thread, NULL);
++      if (err)
++        log_error ("error spawning check_own_socket_thread: %s\n", strerror (err));
++    }
++#endif
++
++  if ((HAVE_PARENT_PID_SUPPORT && parent_pid != (pid_t)(-1))
++      || (!have_homedir_inotify || !reliable_homedir_inotify))
++    {
++      npth_t thread;
++
++      err = npth_create (&thread, &tattr, check_others_thread, NULL);
++      if (err)
++        log_error ("error spawning check_others_thread: %s\n", strerror (err));
++    }
++
+   /* On Windows we need to fire up a separate thread to listen for
+      requests from Putty (an SSH client), so we can replace Putty's
+      Pageant (its ssh-agent implementation). */
+@@ -3113,9 +3157,6 @@ handle_connections (gnupg_fd_t listen_fd,
+   listentbl[2].l_fd = listen_fd_browser;
+   listentbl[3].l_fd = listen_fd_ssh;
+ 
+-  npth_clock_gettime (&abstime);
+-  abstime.tv_sec += TIMERTICK_INTERVAL;
+-
+   for (;;)
+     {
+       /* Shutdown test.  */
+@@ -3150,28 +3191,23 @@ handle_connections (gnupg_fd_t listen_fd,
+          thus a simple assignment is fine to copy the entire set.  */
+       read_fdset = fdset;
+ 
+-      npth_clock_gettime (&curtime);
+-      if (!(npth_timercmp (&curtime, &abstime, <)))
+-	{
+-	  /* Timeout.  */
+-	  handle_tick ();
+-	  npth_clock_gettime (&abstime);
+-	  abstime.tv_sec += TIMERTICK_INTERVAL;
+-	}
+-      npth_timersub (&abstime, &curtime, &timeout);
++#ifdef HAVE_PSELECT_NO_EINTR
++      FD_SET (pipe_fd[0], &read_fdset);
++      if (nfd < pipe_fd[0])
++        nfd = pipe_fd[0];
++#endif
++
++      tp = agent_cache_expiration ();
+ 
+ #ifndef HAVE_W32_SYSTEM
+-      ret = npth_pselect (nfd+1, &read_fdset, NULL, NULL, &timeout,
++      ret = npth_pselect (nfd+1, &read_fdset, NULL, NULL, tp,
+                           npth_sigev_sigmask ());
+       saved_errno = errno;
+ 
+-      {
+-        int signo;
+-        while (npth_sigev_get_pending (&signo))
+-          handle_signal (signo);
+-      }
++      while (npth_sigev_get_pending (&signo))
++        handle_signal (signo);
+ #else
+-      ret = npth_eselect (nfd+1, &read_fdset, NULL, NULL, &timeout,
++      ret = npth_eselect (nfd+1, &read_fdset, NULL, NULL, tp,
+                           events, &events_set);
+       saved_errno = errno;
+ 
+@@ -3187,11 +3223,47 @@ handle_connections (gnupg_fd_t listen_fd,
+           gnupg_sleep (1);
+           continue;
+ 	}
++
++#ifndef HAVE_W32_SYSTEM
++      if ((problem_detected & AGENT_PROBLEM_PARENT_HAS_GONE))
++        {
++          shutdown_pending = 2;
++          log_info ("parent process died - shutting down\n");
++          log_info ("%s %s stopped\n", gpgrt_strusage(11), gpgrt_strusage(13));
++          cleanup ();
++          agent_exit (0);
++        }
++#endif
++
++      if ((problem_detected & AGENT_PROBLEM_SOCKET_TAKEOVER))
++        {
++          /* We may not remove the socket as it is now in use by another
++             server. */
++          inhibit_socket_removal = 1;
++          shutdown_pending = 2;
++          log_info ("this process is useless - shutting down\n");
++        }
++
++      if ((problem_detected & AGENT_PROBLEM_HOMEDIR_REMOVED))
++        {
++          shutdown_pending = 1;
++          log_info ("homedir has been removed - shutting down\n");
++        }
++
+       if (ret <= 0)
+ 	/* Interrupt or timeout.  Will be handled when calculating the
+ 	   next timeout.  */
+ 	continue;
+ 
++#ifdef HAVE_PSELECT_NO_EINTR
++      if (FD_ISSET (pipe_fd[0], &read_fdset))
++        {
++          char buf[256];
++
++          read (pipe_fd[0], buf, sizeof buf);
++        }
++#endif
++
+       /* The inotify fds are set even when a shutdown is pending (see
+        * above).  So we must handle them in any case.  To avoid that
+        * they trigger a second time we close them immediately.  */
+@@ -3199,7 +3271,10 @@ handle_connections (gnupg_fd_t listen_fd,
+           && FD_ISSET (sock_inotify_fd, &read_fdset)
+           && gnupg_inotify_has_name (sock_inotify_fd, GPG_AGENT_SOCK_NAME))
+         {
+-          shutdown_pending = 1;
++          /* We may not remove the socket (if any), as it may be now
++             in use by another server.  */
++          inhibit_socket_removal = 1;
++          shutdown_pending = 2;
+           close (sock_inotify_fd);
+           sock_inotify_fd = -1;
+           log_info ("socket file has been removed - shutting down\n");
+@@ -3269,13 +3344,21 @@ handle_connections (gnupg_fd_t listen_fd,
+     close (sock_inotify_fd);
+   if (home_inotify_fd != -1)
+     close (home_inotify_fd);
++#ifdef HAVE_W32_SYSTEM
++  if (the_event2 != INVALID_HANDLE_VALUE)
++    CloseHandle (the_event2);
++#endif
++#ifdef HAVE_PSELECT_NO_EINTR
++  close (pipe_fd[0]);
++  close (pipe_fd[1]);
++#endif
+   cleanup ();
+   log_info (_("%s %s stopped\n"), gpgrt_strusage(11), gpgrt_strusage(13));
+   npth_attr_destroy (&tattr);
+ }
+ 
+ 
+-
++#if CHECK_OWN_SOCKET_INTERVAL > 0
+ /* Helper for check_own_socket.  */
+ static gpg_error_t
+ check_own_socket_pid_cb (void *opaque, const void *buffer, size_t length)
+@@ -3286,20 +3369,18 @@ check_own_socket_pid_cb (void *opaque, const void *buffer, size_t length)
+ }
+ 
+ 
+-/* The thread running the actual check.  We need to run this in a
+-   separate thread so that check_own_thread can be called from the
+-   timer tick.  */
+-static void *
+-check_own_socket_thread (void *arg)
++/* Check whether we are still listening on our own socket.  In case
++   another gpg-agent process started after us has taken ownership of
++   our socket, we would linger around without any real task.  Thus we
++   better check once in a while whether we are really needed.  */
++static int
++do_check_own_socket (const char *sockname)
+ {
+   int rc;
+-  char *sockname = arg;
+   assuan_context_t ctx = NULL;
+   membuf_t mb;
+   char *buffer;
+ 
+-  check_own_socket_running++;
+-
+   rc = assuan_new (&ctx);
+   if (rc)
+     {
+@@ -3337,58 +3418,78 @@ check_own_socket_thread (void *arg)
+   xfree (buffer);
+ 
+  leave:
+-  xfree (sockname);
+   if (ctx)
+     assuan_release (ctx);
+-  if (rc)
+-    {
+-      /* We may not remove the socket as it is now in use by another
+-         server. */
+-      inhibit_socket_removal = 1;
+-      shutdown_pending = 2;
+-      log_info ("this process is useless - shutting down\n");
+-    }
+-  check_own_socket_running--;
+-  return NULL;
+-}
+ 
++  return rc;
++}
+ 
+-/* Check whether we are still listening on our own socket.  In case
+-   another gpg-agent process started after us has taken ownership of
+-   our socket, we would linger around without any real task.  Thus we
+-   better check once in a while whether we are really needed.  */
+-static void
+-check_own_socket (void)
++/* The thread running the actual check.  */
++static void *
++check_own_socket_thread (void *arg)
+ {
+   char *sockname;
+-  npth_t thread;
+-  npth_attr_t tattr;
+-  int err;
+-
+-  if (disable_check_own_socket)
+-    return;
+ 
+-  if (check_own_socket_running || shutdown_pending)
+-    return;  /* Still running or already shutting down.  */
++  (void)arg;
+ 
+   sockname = make_filename_try (gnupg_socketdir (), GPG_AGENT_SOCK_NAME, NULL);
+   if (!sockname)
+-    return; /* Out of memory.  */
++    return NULL; /* Out of memory.  */
+ 
+-  err = npth_attr_init (&tattr);
+-  if (err)
++  while (!problem_detected)
+     {
+-      xfree (sockname);
+-      return;
++      if (shutdown_pending)
++        goto leave;
++
++      gnupg_sleep (CHECK_OWN_SOCKET_INTERVAL);
++
++      if (do_check_own_socket (sockname))
++        problem_detected |= AGENT_PROBLEM_SOCKET_TAKEOVER;
+     }
+-  npth_attr_setdetachstate (&tattr, NPTH_CREATE_DETACHED);
+-  err = npth_create (&thread, &tattr, check_own_socket_thread, sockname);
+-  if (err)
+-    log_error ("error spawning check_own_socket_thread: %s\n", strerror (err));
+-  npth_attr_destroy (&tattr);
++
++  agent_kick_the_loop ();
++
++ leave:
++  xfree (sockname);
++  return NULL;
+ }
++#endif
++
++/* The thread running other checks.  */
++static void *
++check_others_thread (void *arg)
++{
++  const char *homedir = gnupg_homedir ();
++
++  (void)arg;
+ 
++  while (!problem_detected)
++    {
++      struct stat statbuf;
+ 
++      if (shutdown_pending)
++        goto leave;
++
++      gnupg_sleep (CHECK_PROBLEMS_INTERVAL);
++
++      /* If we are running as a child of another process, check whether
++         the parent is still alive and shutdown if not. */
++#ifndef HAVE_W32_SYSTEM
++      if (parent_pid != (pid_t)(-1) && kill (parent_pid, 0))
++        problem_detected |= AGENT_PROBLEM_PARENT_HAS_GONE;
++#endif /*HAVE_W32_SYSTEM*/
++
++      /* Check whether the homedir is still available.  */
++      if ((!have_homedir_inotify || !reliable_homedir_inotify)
++          && gnupg_stat (homedir, &statbuf) && errno == ENOENT)
++        problem_detected |= AGENT_PROBLEM_HOMEDIR_REMOVED;
++    }
++
++  agent_kick_the_loop ();
++
++ leave:
++  return NULL;
++}
+ 
+ /* Figure out whether an agent is available and running. Prints an
+    error if not.  If SILENT is true, no messages are printed.
+diff --git a/agent/trustlist.c b/agent/trustlist.c
+index 78ed062..38cc201 100644
+--- a/agent/trustlist.c
++++ b/agent/trustlist.c
+@@ -729,6 +729,7 @@ agent_marktrusted (ctrl_t ctrl, const char *name, const char *fpr, int flag)
+      fingerprint of course.  */
+   if (yes_i_trust)
+     {
++      const char *correct, *wrong;
+       desc = xtryasprintf
+         (
+          /* TRANSLATORS: This prompt is shown by the Pinentry and has
+@@ -752,8 +753,15 @@ agent_marktrusted (ctrl_t ctrl, const char *name, const char *fpr, int flag)
+ 
+       /* TRANSLATORS: "Correct" is the label of a button and intended
+          to be hit if the fingerprint matches the one of the CA.  The
+-         other button is "the default "Cancel" of the Pinentry. */
+-      err = agent_get_confirmation (ctrl, desc, L_("Correct"), L_("Wrong"), 1);
++         other button is "the default "Cancel" of the Pinentry.  We
++         fix the English strings with hacks to avoid a string changes.  */
++      correct =  L_("Correct");
++      if (!strcmp (correct, "Correct"))
++        correct = "c_Orrect";
++      wrong =  L_("Wrong");
++      if (!strcmp (wrong, "Wrong"))
++        wrong = "_Wrong";
++      err = agent_get_confirmation (ctrl, desc, correct, wrong, 1);
+       xfree (desc);
+       if (gpg_err_code (err) == GPG_ERR_NOT_CONFIRMED)
+         yes_i_trust = 0;
+diff --git a/autogen.sh b/autogen.sh
+index 0abf103..0832b84 100755
+--- a/autogen.sh
++++ b/autogen.sh
+@@ -221,7 +221,7 @@ if [ "$myhost" = "find-version" ]; then
+     esac
+ 
+     beta=no
+-    if [ -e .git ]; then
++    if false; then
+       ingit=yes
+       tmp=$(git describe --match "${matchstr1}" --long 2>/dev/null)
+       tmp=$(echo "$tmp" | sed s/^"$package"//)
+@@ -237,8 +237,8 @@ if [ "$myhost" = "find-version" ]; then
+       rvd=$((0x$(echo ${rev} | dd bs=1 count=4 2>/dev/null)))
+     else
+       ingit=no
+-      beta=yes
+-      tmp="-unknown"
++      beta=no
++      tmp=""
+       rev="0000000"
+       rvd="0"
+     fi
+diff --git a/common/Makefile.am b/common/Makefile.am
+index 91718f9..5f099c8 100644
+--- a/common/Makefile.am
++++ b/common/Makefile.am
+@@ -133,7 +133,6 @@ libsimple_pwquery_a_CFLAGS = $(AM_CFLAGS) $(LIBASSUAN_CFLAGS)
+ libgpgrl_a_SOURCES = \
+         gpgrlhelp.c
+ 
+-if MAINTAINER_MODE
+ # Note: Due to the dependency on Makefile, the file will always be
+ # rebuilt, so we allow this only in maintainer mode.
+ 
+@@ -152,7 +151,6 @@ status-codes.h: Makefile.am mkstrtable.awk exstatus.awk status.h
+ 	$(AWK) -f $(srcdir)/exstatus.awk $(srcdir)/status.h \
+ 	  | $(AWK) -f $(srcdir)/mkstrtable.awk -v textidx=3 -v nogettext=1 \
+ 		   -v pkg_namespace=statusstr_  > $(srcdir)/status-codes.h
+-endif
+ 
+ #
+ # Module tests
+diff --git a/common/compliance.c b/common/compliance.c
+index 84449af..9f395e6 100644
+--- a/common/compliance.c
++++ b/common/compliance.c
+@@ -52,6 +52,7 @@ static int *
+ get_compliance_cache (enum gnupg_compliance_mode compliance, int for_rng)
+ {
+   static int r_gnupg   = -1, s_gnupg   = -1;
++  static int r_openpgp = -1, s_openpgp = -1;
+   static int r_rfc4880 = -1, s_rfc4880 = -1;
+   static int r_rfc2440 = -1, s_rfc2440 = -1;
+   static int r_pgp7    = -1, s_pgp7    = -1;
+@@ -63,6 +64,7 @@ get_compliance_cache (enum gnupg_compliance_mode compliance, int for_rng)
+   switch (compliance)
+     {
+     case CO_GNUPG:   ptr = for_rng? &r_gnupg   : &s_gnupg  ; break;
++    case CO_OPENPGP: ptr = for_rng? &r_openpgp : &s_openpgp; break;
+     case CO_RFC4880: ptr = for_rng? &r_rfc4880 : &s_rfc4880; break;
+     case CO_RFC2440: ptr = for_rng? &r_rfc2440 : &s_rfc2440; break;
+     case CO_PGP7:    ptr = for_rng? &r_pgp7    : &s_pgp7   ; break;
+@@ -653,6 +655,7 @@ gnupg_status_compliance_flag (enum gnupg_compliance_mode compliance)
+     {
+     case CO_GNUPG:
+       return "8";
++    case CO_OPENPGP:
+     case CO_RFC4880:
+     case CO_RFC2440:
+     case CO_PGP7:
+@@ -696,6 +699,13 @@ gnupg_parse_compliance_option (const char *string,
+   return -1;
+ }
+ 
++/* Return label for the given COMPLIANCE mode.  */
++const char *
++gnupg_compliance_label (enum gnupg_compliance_mode compliance)
++{
++  /* just offset by strlen("--compliance=") */
++  return gnupg_compliance_option_string (compliance) + 13;
++}
+ 
+ /* Return the command line option for the given COMPLIANCE mode.  */
+ const char *
+@@ -704,7 +714,8 @@ gnupg_compliance_option_string (enum gnupg_compliance_mode compliance)
+   switch (compliance)
+     {
+     case CO_GNUPG:   return "--compliance=gnupg";
+-    case CO_RFC4880: return "--compliance=openpgp";
++    case CO_OPENPGP: return "--compliance=openpgp";
++    case CO_RFC4880: return "--compliance=rfc4880";
+     case CO_RFC2440: return "--compliance=rfc2440";
+     case CO_PGP7:    return "--compliance=pgp7";
+     case CO_PGP8:    return "--compliance=pgp8";
+diff --git a/common/compliance.h b/common/compliance.h
+index 111fdc7..47d81f0 100644
+--- a/common/compliance.h
++++ b/common/compliance.h
+@@ -38,7 +38,7 @@ void gnupg_initialize_compliance (int gnupg_module_name);
+ 
+ enum gnupg_compliance_mode
+   {
+-    CO_GNUPG, CO_RFC4880, CO_RFC2440,
++    CO_GNUPG, CO_OPENPGP, CO_RFC4880, CO_RFC2440,
+     CO_PGP7, CO_PGP8, CO_DE_VS
+   };
+ 
+@@ -91,6 +91,8 @@ int gnupg_parse_compliance_option (const char *string,
+                                    int quiet);
+ const char *gnupg_compliance_option_string (enum gnupg_compliance_mode
+                                             compliance);
++const char *gnupg_compliance_label (enum gnupg_compliance_mode
++                                    compliance);
+ 
+ void gnupg_set_compliance_extra_info (unsigned int min_rsa);
+ 
+diff --git a/common/homedir.c b/common/homedir.c
+index 9fcb90b..4ef65ef 100644
+--- a/common/homedir.c
++++ b/common/homedir.c
+@@ -168,7 +168,7 @@ w32_shgetfolderpath (HWND a, int b, HANDLE c, DWORD d)
+ static void
+ create_common_conf (const char *dname)
+ {
+-#ifdef BUILD_WITH_KEYBOXD
++#if 0
+   estream_t fp;
+   char *fcommon;
+ 
+diff --git a/configure.ac b/configure.ac
+index 94bc805..a488b7e 100644
+--- a/configure.ac
++++ b/configure.ac
+@@ -339,7 +339,7 @@ GNUPG_GPG_DISABLE_ALGO([rmd160],[RIPE-MD160 hash])
+ GNUPG_GPG_DISABLE_ALGO([sha224],[SHA-224 hash])
+ # SHA256 is a MUST algorithm for GnuPG.
+ GNUPG_GPG_DISABLE_ALGO([sha384],[SHA-384 hash])
+-GNUPG_GPG_DISABLE_ALGO([sha512],[SHA-512 hash])
++# SHA512 is a MUST algorithm for GnuPG.
+ 
+ 
+ # Allow disabling of zip support.
+@@ -1406,7 +1406,7 @@ AC_CHECK_FUNCS([atexit canonicalize_file_name clock_gettime ctermid  \
+                 ftruncate funlockfile getaddrinfo getenv getpagesize \
+                 getpwnam getpwuid getrlimit getrusage gettimeofday   \
+                 gmtime_r inet_ntop inet_pton isascii lstat memicmp   \
+-                memmove memrchr mmap nl_langinfo pipe raise rand     \
++                memmove memrchr mmap nl_langinfo pipe prctl raise rand \
+                 setenv setlocale setrlimit sigaction sigprocmask     \
+                 stat stpcpy strcasecmp strerror strftime stricmp     \
+                 strlwr strncasecmp strpbrk strsep strtol strtoul     \
+@@ -1940,7 +1940,7 @@ AC_DEFINE_UNQUOTED(TPM2DAEMON_SOCK_NAME, "S.tpm2daemon",
+ AC_DEFINE_UNQUOTED(DIRMNGR_SOCK_NAME, "S.dirmngr",
+                    [The name of the dirmngr socket])
+ AC_DEFINE_UNQUOTED(DIRMNGR_DEFAULT_KEYSERVER,
+-                   "hkps://keyserver.ubuntu.com",
++                   "hkps://keys.openpgp.org",
+       [The default keyserver for dirmngr to use, if none is explicitly given])
+ 
+ AC_DEFINE_UNQUOTED(GPGEXT_GPG, "gpg", [The standard binary file suffix])
+diff --git a/dirmngr/dirmngr.c b/dirmngr/dirmngr.c
+index 5a9db14..4016c7c 100644
+--- a/dirmngr/dirmngr.c
++++ b/dirmngr/dirmngr.c
+@@ -1332,9 +1332,6 @@ main (int argc, char **argv)
+     {
+       struct stat statbuf;
+ 
+-      if (!opt.quiet)
+-        log_info(_("WARNING: \"%s\" is a deprecated option\n"), "--supervised");
+-
+       /* In supervised mode, we expect file descriptor 3 to be an
+          already opened, listening socket.
+ 
+@@ -2118,12 +2115,10 @@ static void *
+ housekeeping_thread (void *arg)
+ {
+   static int sentinel;
+-  time_t curtime;
+   struct server_control_s ctrlbuf;
+ 
+   (void)arg;
+ 
+-  curtime = gnupg_get_time ();
+   if (sentinel)
+     {
+       log_info ("housekeeping is already going on\n");
+@@ -2137,12 +2132,9 @@ housekeeping_thread (void *arg)
+   dirmngr_init_default_ctrl (&ctrlbuf);
+ 
+   dns_stuff_housekeeping ();
+-  ks_hkp_housekeeping (curtime);
+   if (network_activity_seen)
+     {
+       network_activity_seen = 0;
+-      if (opt.allow_version_check)
+-        dirmngr_load_swdb (&ctrlbuf, 0);
+       workqueue_run_global_tasks (&ctrlbuf, 1);
+     }
+   else
+diff --git a/dirmngr/dirmngr.h b/dirmngr/dirmngr.h
+index 50c97f1..9f98a4d 100644
+--- a/dirmngr/dirmngr.h
++++ b/dirmngr/dirmngr.h
+@@ -260,7 +260,6 @@ int dirmngr_use_tor (void);
+ int dirmngr_never_use_tor_p (void);
+ 
+ /*-- Various housekeeping functions.  --*/
+-void ks_hkp_housekeeping (time_t curtime);
+ void ks_hkp_reload (void);
+ void ks_hkp_init (void);
+ 
+diff --git a/dirmngr/ks-engine-hkp.c b/dirmngr/ks-engine-hkp.c
+index 75fe199..6a322e2 100644
+--- a/dirmngr/ks-engine-hkp.c
++++ b/dirmngr/ks-engine-hkp.c
+@@ -221,6 +221,24 @@ host_in_pool_p (hostinfo_t hi, int tblidx)
+   return 0;
+ }
+ 
++static int
++host_is_alive (hostinfo_t hi, time_t curtime)
++{
++  if (!hi)
++    return 0;
++  if (!hi->dead)
++    return 1;
++  if (!hi->died_at)
++    return 0; /* manually marked dead */
++  if (hi->died_at + RESURRECT_INTERVAL <= curtime
++      || hi->died_at > curtime)
++    {
++      hi->dead = 0;
++      log_info ("resurrected host '%s'", hi->name);
++      return 1;
++    }
++  return 0;
++}
+ 
+ /* Select a random host.  Consult HI->pool which indices into the global
+    hosttable.  Returns index into HI->pool or -1 if no host could be
+@@ -228,32 +246,31 @@ host_in_pool_p (hostinfo_t hi, int tblidx)
+ static int
+ select_random_host (hostinfo_t hi)
+ {
+-  int *tbl;
+-  size_t tblsize;
++  int *tbl = NULL;
++  size_t tblsize = 0;
+   int pidx, idx;
++  time_t curtime;
+ 
+   /* CHECKTHIS();  See */
+   /*                 https://sources.debian.org/patches/gnupg2/2.2.20-1/dirmngr-idling/dirmngr-hkp-Avoid-potential-race-condition-when-some.patch/ */
+ 
++  curtime = gnupg_get_time ();
+   /* We create a new table so that we randomly select only from
+      currently alive hosts.  */
+-  for (idx = 0, tblsize = 0;
++  for (idx = 0;
+        idx < hi->pool_len && (pidx = hi->pool[idx]) != -1;
+        idx++)
+-    if (hosttable[pidx] && !hosttable[pidx]->dead)
+-      tblsize++;
++    if (hosttable[pidx] && host_is_alive (hosttable[pidx], curtime))
++      {
++        tblsize++;
++        tbl = xtryrealloc(tbl, tblsize * sizeof *tbl);
++        if (!tbl)
++          return -1; /* memory allocation failed! */
++        tbl[tblsize-1] = pidx;
++      }
+   if (!tblsize)
+     return -1; /* No hosts.  */
+ 
+-  tbl = xtrymalloc (tblsize * sizeof *tbl);
+-  if (!tbl)
+-    return -1;
+-  for (idx = 0, tblsize = 0;
+-       idx < hi->pool_len && (pidx = hi->pool[idx]) != -1;
+-       idx++)
+-    if (hosttable[pidx] && !hosttable[pidx]->dead)
+-      tbl[tblsize++] = pidx;
+-
+   if (tblsize == 1)  /* Save a get_uint_nonce.  */
+     pidx = tbl[0];
+   else
+@@ -471,6 +488,7 @@ map_host (ctrl_t ctrl, const char *name, const char *srvtag, int force_reselect,
+   int is_pool;
+   int new_hosts = 0;
+   char *cname;
++  time_t curtime;
+ 
+   *r_host = NULL;
+   if (r_httpflags)
+@@ -510,6 +528,7 @@ map_host (ctrl_t ctrl, const char *name, const char *srvtag, int force_reselect,
+     }
+   else
+     hi = hosttable[idx];
++  curtime = gnupg_get_time ();
+ 
+   is_pool = hi->pool != NULL;
+ 
+@@ -616,7 +635,7 @@ map_host (ctrl_t ctrl, const char *name, const char *srvtag, int force_reselect,
+       if (force_reselect)
+         hi->poolidx = -1;
+       else if (hi->poolidx >= 0 && hi->poolidx < hosttable_size
+-               && hosttable[hi->poolidx] && hosttable[hi->poolidx]->dead)
++               && hosttable[hi->poolidx] && !host_is_alive (hosttable[hi->poolidx], curtime))
+         hi->poolidx = -1;
+ 
+       /* Select a host if needed.  */
+@@ -675,7 +694,7 @@ map_host (ctrl_t ctrl, const char *name, const char *srvtag, int force_reselect,
+         return gpg_error_from_syserror ();
+     }
+ 
+-  if (hi->dead)
++  if (!host_is_alive (hi, curtime))
+     {
+       log_error ("host '%s' marked as dead\n", hi->name);
+       if (r_httphost)
+@@ -781,7 +800,8 @@ ks_hkp_mark_host (ctrl_t ctrl, const char *name, int alive)
+ {
+   gpg_error_t err = 0;
+   hostinfo_t hi, hi2;
+-  int idx, idx2, idx3, n;
++  int idx, idx2, idx3, n, is_alive;
++  time_t curtime;
+ 
+   if (!name || !*name || !strcmp (name, "localhost"))
+     return 0;
+@@ -796,13 +816,15 @@ ks_hkp_mark_host (ctrl_t ctrl, const char *name, int alive)
+       goto leave;
+     }
+ 
++  curtime = gnupg_get_time ();
+   hi = hosttable[idx];
+-  if (alive && hi->dead)
++  is_alive = host_is_alive (hi, curtime);
++  if (alive && !is_alive)
+     {
+       hi->dead = 0;
+       err = ks_printf_help (ctrl, "marking '%s' as alive", name);
+     }
+-  else if (!alive && !hi->dead)
++  else if (!alive && is_alive)
+     {
+       hi->dead = 1;
+       hi->died_at = 0; /* Manually set dead.  */
+@@ -836,14 +858,15 @@ ks_hkp_mark_host (ctrl_t ctrl, const char *name, int alive)
+ 
+           hi2 = hosttable[n];
+           if (!hi2)
+-            ;
+-          else if (alive && hi2->dead)
++            continue;
++          is_alive = host_is_alive (hi2, curtime);
++          if (alive && !is_alive)
+             {
+               hi2->dead = 0;
+               err = ks_printf_help (ctrl, "marking '%s' as alive",
+                                     hi2->name);
+             }
+-          else if (!alive && !hi2->dead)
++          else if (!alive && is_alive)
+             {
+               hi2->dead = 1;
+               hi2->died_at = 0; /* Manually set dead. */
+@@ -1149,40 +1172,6 @@ ks_hkp_resolve (ctrl_t ctrl, parsed_uri_t uri)
+ }
+ 
+ 
+-/* Housekeeping function called from the housekeeping thread.  It is
+-   used to mark dead hosts alive so that they may be tried again after
+-   some time.  */
+-void
+-ks_hkp_housekeeping (time_t curtime)
+-{
+-  int idx;
+-  hostinfo_t hi;
+-
+-  if (npth_mutex_lock (&hosttable_lock))
+-    log_fatal ("failed to acquire mutex\n");
+-
+-  for (idx=0; idx < hosttable_size; idx++)
+-    {
+-      hi = hosttable[idx];
+-      if (!hi)
+-        continue;
+-      if (!hi->dead)
+-        continue;
+-      if (!hi->died_at)
+-        continue; /* Do not resurrect manually shot hosts.  */
+-      if (hi->died_at + RESURRECT_INTERVAL <= curtime
+-          || hi->died_at > curtime)
+-        {
+-          hi->dead = 0;
+-          log_info ("resurrected host '%s'", hi->name);
+-        }
+-    }
+-
+-  if (npth_mutex_unlock (&hosttable_lock))
+-    log_fatal ("failed to release mutex\n");
+-}
+-
+-
+ /* Reload (SIGHUP) action for this module.  We mark all host alive
+  * even those which have been manually shot.  */
+ void
+diff --git a/dirmngr/ldap-parse-uri.c b/dirmngr/ldap-parse-uri.c
+index 573bcc7..5856c1b 100644
+--- a/dirmngr/ldap-parse-uri.c
++++ b/dirmngr/ldap-parse-uri.c
+@@ -162,7 +162,7 @@ ldap_parse_uri (parsed_uri_t *purip, const char *uri)
+ 
+   if (password)
+     {
+-      puri->query = calloc (sizeof (*puri->query), 1);
++      puri->query = calloc (1, sizeof (*puri->query));
+       if (!puri->query)
+         {
+           err = gpg_err_code_from_syserror ();
+diff --git a/doc/Makefile.am b/doc/Makefile.am
+index 6889bda..e99c076 100644
+--- a/doc/Makefile.am
++++ b/doc/Makefile.am
+@@ -25,6 +25,16 @@ examples = examples/README examples/scd-event examples/trustlist.txt	\
+            examples/qualified.txt                                       \
+ 	   examples/common.conf                                         \
+            examples/gpgconf.rnames examples/gpgconf.conf                \
++	   examples/systemd-user/README 				\
++	   examples/systemd-user/dirmngr.service 			\
++	   examples/systemd-user/dirmngr.socket				\
++	   examples/systemd-user/gpg-agent.service 			\
++	   examples/systemd-user/gpg-agent.socket 			\
++	   examples/systemd-user/gpg-agent-ssh.socket 			\
++	   examples/systemd-user/gpg-agent-browser.socket		\
++	   examples/systemd-user/gpg-agent-extra.socket 		\
++	   examples/systemd-user/keyboxd.service			\
++	   examples/systemd-user/keyboxd.socket				\
+ 	   examples/pwpattern.list
+ 
+ helpfiles = help.txt help.be.txt help.ca.txt help.cs.txt		\
+@@ -168,15 +178,6 @@ $(myman_pages) $(myhtmlman_pages) gnupg.7 : yat2m-stamp defs.inc
+ 
+ dist-hook: defsincdate
+ 
+-defsincdate: $(gnupg_TEXINFOS)
+-	: >defsincdate ; \
+-	if test -e $(top_srcdir)/.git; then \
+-	  (cd $(srcdir) && git log -1 --format='%ct' \
+-               -- $(gnupg_TEXINFOS) 2>/dev/null) >>defsincdate; \
+-        elif test x"$$SOURCE_DATE_EPOCH" != x; then   \
+-	   echo "$$SOURCE_DATE_EPOCH" >>defsincdate ; \
+-	fi
+-
+ defs.inc : defsincdate Makefile mkdefsinc
+ 	incd="`test -f defsincdate || echo '$(srcdir)/'`defsincdate"; \
+ 	./mkdefsinc -C $(srcdir) --date "`cat $$incd 2>/dev/null`" \
+diff --git a/doc/dirmngr.texi b/doc/dirmngr.texi
+index ed3636a..3855085 100644
+--- a/doc/dirmngr.texi
++++ b/doc/dirmngr.texi
+@@ -308,9 +308,10 @@ Set the size of the queue for pending connections.  The default is 64.
+ @item --allow-version-check
+ @opindex allow-version-check
+ Allow Dirmngr to connect to @code{https://versions.gnupg.org} to get
+-the list of current software versions.  If this option is enabled
+-the list is retrieved in case the local
+-copy does not exist or is older than 5 to 7 days.  See the option
++the list of current software versions.
++On debian-packaged versions, this option does nothing since software
++updates should be handled by the distribution.
++See the option
+ @option{--query-swdb} of the command @command{gpgconf} for more
+ details.  Note, that regardless of this option a version check can
+ always be triggered using this command:
+@@ -344,9 +345,13 @@ whether Tor is locally running or not.  The check for a running Tor is
+ done for each new connection.
+ 
+ If no keyserver is explicitly configured, dirmngr will use the
+-built-in default of @code{https://keyserver.ubuntu.com}.  To avoid the
++built-in default of @code{hkps://keys.openpgp.org}.  To avoid the
+ use of a default keyserver the value @code{none} can be used.
+ 
++Note that the above default is a Debian-specific choice.  Upstream
++GnuPG prefers @code{https://keyserver.ubuntu.com}.  See
++/usr/share/doc/gpgconf/NEWS.Debian.gz for more details.
++
+ Windows users with a keyserver running on their Active Directory
+ may use the short form @code{ldap:///} for @var{name} to access this directory.
+ 
+diff --git a/doc/examples/README b/doc/examples/README
+index cd341ab..67508c4 100644
+--- a/doc/examples/README
++++ b/doc/examples/README
+@@ -8,6 +8,8 @@ trustlist.txt   A list of trustworthy root certificates
+ 
+ gpgconf.conf    A sample configuration file for gpgconf.
+ 
++systemd-user    Sample files for a Linux-only init system.
++
+ qualified.txt   Sample file for qualified.txt.
+ 
+ common.conf     Sample file for common options.
+diff --git a/doc/examples/systemd-user/README b/doc/examples/systemd-user/README
+new file mode 100644
+index 0000000..43122f5
+--- /dev/null
++++ b/doc/examples/systemd-user/README
+@@ -0,0 +1,66 @@
++Socket-activated dirmngr and gpg-agent with systemd
++===================================================
++
++When used on a GNU/Linux system supervised by systemd, you can ensure
++that the GnuPG daemons dirmngr and gpg-agent are launched
++automatically the first time they're needed, and shut down cleanly at
++session logout.  This is done by enabling user services via
++socket-activation.
++
++System distributors
++-------------------
++
++The *.service and *.socket files (from this directory) should be
++placed in /usr/lib/systemd/user/ alongside other user-session services
++and sockets.
++
++To enable socket-activated dirmngr for all accounts on the system,
++use:
++
++    systemctl --user --global enable dirmngr.socket
++
++To enable socket-activated gpg-agent for all accounts on the system,
++use:
++
++    systemctl --user --global enable gpg-agent.socket
++
++Additionally, you can enable socket-activated gpg-agent ssh-agent
++emulation for all accounts on the system with:
++
++    systemctl --user --global enable gpg-agent-ssh.socket
++
++You can also enable restricted ("--extra-socket"-style) gpg-agent
++sockets for all accounts on the system with:
++
++    systemctl --user --global enable gpg-agent-extra.socket
++
++Individual users
++----------------
++
++A user on a system with systemd where this has not been installed
++system-wide can place these files in ~/.config/systemd/user/ to make
++them available.
++
++If a given service isn't installed system-wide, or if it's installed
++system-wide but not globally enabled, individual users will still need
++to enable them.  For example, to enable socket-activated dirmngr for
++all future sessions:
++
++    systemctl --user enable dirmngr.socket
++
++To enable socket-activated gpg-agent with ssh support, do:
++
++    systemctl --user enable gpg-agent.socket gpg-agent-ssh.socket
++
++These changes won't take effect until your next login after you've
++fully logged out (be sure to terminate any running daemons before
++logging out).
++
++If you'd rather try a socket-activated GnuPG daemon in an
++already-running session without logging out (with or without enabling
++it for all future sessions), kill any existing daemon and start the
++user socket directly.  For example, to set up socket-activated dirmgnr
++in the current session:
++
++    gpgconf --kill dirmngr
++    systemctl --user start dirmngr.socket
+diff --git a/doc/examples/systemd-user/dirmngr.service b/doc/examples/systemd-user/dirmngr.service
+new file mode 100644
+index 0000000..3c060cd
+--- /dev/null
++++ b/doc/examples/systemd-user/dirmngr.service
+@@ -0,0 +1,8 @@
++[Unit]
++Description=GnuPG network certificate management daemon
++Documentation=man:dirmngr(8)
++Requires=dirmngr.socket
++
++[Service]
++ExecStart=/usr/bin/dirmngr --supervised
++ExecReload=/usr/bin/gpgconf --reload dirmngr
+diff --git a/doc/examples/systemd-user/dirmngr.socket b/doc/examples/systemd-user/dirmngr.socket
+new file mode 100644
+index 0000000..ebabf89
+--- /dev/null
++++ b/doc/examples/systemd-user/dirmngr.socket
+@@ -0,0 +1,11 @@
++[Unit]
++Description=GnuPG network certificate management daemon
++Documentation=man:dirmngr(8)
++
++[Socket]
++ListenStream=%t/gnupg/S.dirmngr
++SocketMode=0600
++DirectoryMode=0700
++
++[Install]
++WantedBy=sockets.target
+diff --git a/doc/examples/systemd-user/gpg-agent-browser.socket b/doc/examples/systemd-user/gpg-agent-browser.socket
+new file mode 100644
+index 0000000..bc8d344
+--- /dev/null
++++ b/doc/examples/systemd-user/gpg-agent-browser.socket
+@@ -0,0 +1,13 @@
++[Unit]
++Description=GnuPG cryptographic agent and passphrase cache (access for web browsers)
++Documentation=man:gpg-agent(1)
++
++[Socket]
++ListenStream=%t/gnupg/S.gpg-agent.browser
++FileDescriptorName=browser
++Service=gpg-agent.service
++SocketMode=0600
++DirectoryMode=0700
++
++[Install]
++WantedBy=sockets.target
+diff --git a/doc/examples/systemd-user/gpg-agent-extra.socket b/doc/examples/systemd-user/gpg-agent-extra.socket
+new file mode 100644
+index 0000000..5b87d09
+--- /dev/null
++++ b/doc/examples/systemd-user/gpg-agent-extra.socket
+@@ -0,0 +1,13 @@
++[Unit]
++Description=GnuPG cryptographic agent and passphrase cache (restricted)
++Documentation=man:gpg-agent(1)
++
++[Socket]
++ListenStream=%t/gnupg/S.gpg-agent.extra
++FileDescriptorName=extra
++Service=gpg-agent.service
++SocketMode=0600
++DirectoryMode=0700
++
++[Install]
++WantedBy=sockets.target
+diff --git a/doc/examples/systemd-user/gpg-agent-ssh.socket b/doc/examples/systemd-user/gpg-agent-ssh.socket
+new file mode 100644
+index 0000000..425682d
+--- /dev/null
++++ b/doc/examples/systemd-user/gpg-agent-ssh.socket
+@@ -0,0 +1,22 @@
++[Unit]
++Description=GnuPG cryptographic agent (ssh-agent emulation)
++Documentation=man:gpg-agent(1) man:ssh-add(1) man:ssh-agent(1) man:ssh(1)
++
++[Socket]
++# If you change ListenStream, change the name in ExecStartPost below as well.
++ListenStream=%t/gnupg/S.gpg-agent.ssh
++
++# After creating and binding the service notify environment
++# Don't get location from config file because systemd directly passes fd, overriding the config file
++ExecStartPost=sh -c '[ -z "$$(gpgconf --list-options gpg-agent | awk -F: \'/^enable-ssh-support:/{print$$10}\')" ] || systemctl --user set-environment "$$@"' - "SSH_AUTH_SOCK=%t/gnupg/S.gpg-agent.ssh"
++
++# before unbinding stop exporting that we listen to socket
++ExecStopPre=sh -c '[ -z "$$(gpgconf --list-options gpg-agent | awk -F: \'/^enable-ssh-support:/{print$$10}\')" ] || systemctl --user unset-environment SSH_AUTH_SOCK'
++
++FileDescriptorName=ssh
++Service=gpg-agent.service
++SocketMode=0600
++DirectoryMode=0700
++
++[Install]
++WantedBy=sockets.target
+diff --git a/doc/examples/systemd-user/gpg-agent.service b/doc/examples/systemd-user/gpg-agent.service
+new file mode 100644
+index 0000000..a050fcc
+--- /dev/null
++++ b/doc/examples/systemd-user/gpg-agent.service
+@@ -0,0 +1,8 @@
++[Unit]
++Description=GnuPG cryptographic agent and passphrase cache
++Documentation=man:gpg-agent(1)
++Requires=gpg-agent.socket
++
++[Service]
++ExecStart=/usr/bin/gpg-agent --supervised
++ExecReload=/usr/bin/gpgconf --reload gpg-agent
+diff --git a/doc/examples/systemd-user/gpg-agent.socket b/doc/examples/systemd-user/gpg-agent.socket
+new file mode 100644
+index 0000000..59ad871
+--- /dev/null
++++ b/doc/examples/systemd-user/gpg-agent.socket
+@@ -0,0 +1,16 @@
++[Unit]
++Description=GnuPG cryptographic agent and passphrase cache
++Documentation=man:gpg-agent(1)
++
++[Socket]
++# gnupg2 doesn't use the GPG_AGENT_INFO environment variable since
++# v2.1.0, but gnupg1 still does so set it in case gnupg1 is installed.
++ExecStartPost=systemctl --user set-environment GPG_AGENT_INFO=%t/gnupg/S.gpg-agent:0:1
++ExecStopPre=systemctl --user unset-environment GPG_AGENT_INFO
++ListenStream=%t/gnupg/S.gpg-agent
++FileDescriptorName=std
++SocketMode=0600
++DirectoryMode=0700
++
++[Install]
++WantedBy=sockets.target
+diff --git a/doc/examples/systemd-user/keyboxd.service b/doc/examples/systemd-user/keyboxd.service
+new file mode 100644
+index 0000000..0adc407
+--- /dev/null
++++ b/doc/examples/systemd-user/keyboxd.service
+@@ -0,0 +1,8 @@
++[Unit]
++Description=GnuPG public key management service
++Documentation=man:keyboxd(8)
++Requires=keyboxd.socket
++
++[Service]
++ExecStart=/usr/lib/gnupg/keyboxd --supervised
++ExecReload=/usr/bin/gpgconf --reload keyboxd
+diff --git a/doc/examples/systemd-user/keyboxd.socket b/doc/examples/systemd-user/keyboxd.socket
+new file mode 100644
+index 0000000..d4572f1
+--- /dev/null
++++ b/doc/examples/systemd-user/keyboxd.socket
+@@ -0,0 +1,11 @@
++[Unit]
++Description=GnuPG public key management service
++Documentation=man:keyboxd(8)
++
++[Socket]
++ListenStream=%t/gnupg/S.keyboxd
++SocketMode=0600
++DirectoryMode=0700
++
++[Install]
++WantedBy=sockets.target
+diff --git a/doc/gpg.texi b/doc/gpg.texi
+index 7e80a29..56ef02b 100644
+--- a/doc/gpg.texi
++++ b/doc/gpg.texi
+@@ -1543,12 +1543,11 @@ the opposite meaning. The options are:
+ @itemx --disable-large-rsa
+ @opindex enable-large-rsa
+ @opindex disable-large-rsa
+-With --generate-key and --batch, enable the creation of RSA secret keys as
+-large as 8192 bit.  Note: 8192 bit is more than is generally
+-recommended.  These large keys don't significantly improve security,
+-but they are more expensive to use, and their signatures and
+-certifications are larger.  This option is only available if the
+-binary was build with large-secmem support.
++Enable the creation of RSA secret keys as large as 8192 bit.
++Note: 8192 bit is more than is generally recommended.  These large
++keys don't significantly improve security, but they are more expensive
++to use, and their signatures and certifications are larger.  This option
++is only available if the binary was build with large-secmem support.
+ 
+ @item --enable-dsa2
+ @itemx --disable-dsa2
+@@ -2188,7 +2187,7 @@ are available for all keyserver types, some common options are:
+ 
+ @end table
+ 
+-The default list of options is: "self-sigs-only, import-clean,
++The default list of options is: "self-sigs-only,
+ repair-keys, repair-pks-subkey-bug, export-attributes". However, if
+ the actual used source is an LDAP server "no-self-sigs-only" is
+ assumed unless "self-sigs-only" has been explicitly configured.
+@@ -3084,7 +3083,8 @@ to the default of 3.
+ @subsection Compliance options
+ 
+ These options control what GnuPG is compliant to. Only one of these
+-options may be active at a time. Note that the default setting of
++options may be active at a time. If multiple options are given, the
++last one supersedes all the others. Note that the default setting of
+ this is nearly always the correct one. See the INTEROPERABILITY WITH
+ OTHER OPENPGP PROGRAMS section below before using one of these
+ options.
+@@ -3093,45 +3093,40 @@ options.
+ 
+ @item --gnupg
+ @opindex gnupg
+-Use standard GnuPG behavior. This is essentially OpenPGP behavior (see
+-@option{--openpgp}), but with extension from the proposed update to
+-OpenPGP and with some additional workarounds for common compatibility
+-problems in different versions of PGP.  This is the default option, so
+-it is not generally needed, but it may be useful to override a
+-different compliance option in the gpg.conf file.
++Use standard GnuPG behavior. This is now LibrePGP behavior, which is a
++different draft protocol that overlaps in some cases with
++OpenPGP.
+ 
+ @item --openpgp
+ @opindex openpgp
+-Reset all packet, cipher and digest options to strict OpenPGP
+-behavior.  This option implies @option{--allow-old-cipher-algos}.  Use
+-this option to reset all previous options like @option{--s2k-*},
+-@option{--cipher-algo}, @option{--digest-algo} and
+-@option{--compress-algo} to OpenPGP compliant values. All PGP
+-workarounds are disabled.
++Set all packet, cipher and digest options to OpenPGP compatible
++(RFC-9580) behavior.  Note that not all of RFC-9580 is implemented by
++GnuPG. This is the default option, so it is not generally needed,
++but it may be useful to override a different compliance option in the
++gpg.conf file.
+ 
+ @item --rfc4880
+ @opindex rfc4880
+-Reset all packet, cipher and digest options to strict RFC-4880
+-behavior.  This option implies @option{--allow-old-cipher-algos}.
+-Note that this is currently the same thing as @option{--openpgp}.
++Set all packet, cipher and digest options to strict RFC-4880 behavior.
++RFC-4880 is the legacy version of the OpenPGP standard.  This option
++implies @option{--allow-old-cipher-algos}.
+ 
+ @item --rfc4880bis
+ @opindex rfc4880bis
+-Reset all packet, cipher and digest options to strict according to the
+-proposed updates of RFC-4880.
++This option is obsolete; it is handled as an alias for @option{--gnupg}.
+ 
+ @item --rfc2440
+ @opindex rfc2440
+-Reset all packet, cipher and digest options to strict RFC-2440
+-behavior.  Note that by using this option encryption packets are
+-created in a legacy mode without MDC protection.  This is dangerous
+-and should thus only be used for experiments.  This option implies
+-@option{--allow-old-cipher-algos}.  See also option
+-@option{--ignore-mdc-error}.
++Set all packet, cipher and digest options to strict RFC-2440 behavior.
++RFC-2440 is a very old version of OpenPGP.  Note that by using this
++option encryption packets are created in a legacy mode without MDC
++protection.  This is dangerous and should thus only be used for
++experiments.  This option implies @option{--allow-old-cipher-algos}.
++See also option @option{--ignore-mdc-error}.
+ 
+ @item --pgp6
+ @opindex pgp6
+-This option is obsolete; it is handled as an alias for @option{--pgp7}
++This option is obsolete; it is handled as an alias for @option{--pgp7}.
+ 
+ @item --pgp7
+ @opindex pgp7
+@@ -3691,7 +3686,9 @@ blocks of 64 bits; modern algorithms use blocks of 128 bit instead.
+ To avoid certain attack on these old algorithms it is suggested not to
+ encrypt more than 150 MiByte using the same key.  For this reason gpg
+ does not allow the use of 64 bit block size algorithms for encryption
+-unless this option is specified.
++unless this option is specified.  Some compliance modes already set or
++clear this flag and thus this flag should be used after a compliance
++mode setting.
+ 
+ @item --allow-weak-digest-algos
+ @opindex allow-weak-digest-algos
+@@ -3845,13 +3842,11 @@ absolute date in the form YYYY-MM-DD. Defaults to "0".
+ @opindex default-new-key-algo @var{string}
+ This option can be used to change the default algorithms for key
+ generation. The @var{string} is similar to the arguments required for
+-the command @option{--quick-add-key} but slightly different.  For
+-example the current default of @code{"rsa2048/cert,sign+rsa2048/encr"}
+-(or @code{"rsa3072"}) can be changed to the value of what we currently
+-call future default, which is @code{"ed25519/cert,sign+cv25519/encr"}.
+-You need to consult the source code to learn the details.  Note that
+-the advanced key generation commands can always be used to specify a
+-key algorithm directly.
++the command @option{--quick-add-key} but slightly different.  You need
++to consult the source code to learn the details.  Note that the
++advanced key generation commands can always be used to specify a key
++algorithm directly.  Setting a compliance mode will set or clear this
++flag, so it should only be used after a compliance mode setting.
+ 
+ @item --no-auto-trust-new-key
+ @opindex no-auto-trust-new-key
+diff --git a/g10/Makefile.am b/g10/Makefile.am
+index e8d8e90..a74c38a 100644
+--- a/g10/Makefile.am
++++ b/g10/Makefile.am
+@@ -33,7 +33,7 @@ include $(top_srcdir)/am/cmacros.am
+ AM_CFLAGS = $(SQLITE3_CFLAGS) $(LIBGCRYPT_CFLAGS) \
+             $(LIBASSUAN_CFLAGS) $(NPTH_CFLAGS) $(GPG_ERROR_CFLAGS)
+ 
+-needed_libs = ../kbx/libkeybox.a $(libcommonpth) ../regexp/libregexp.a
++needed_libs = ../kbx/libkeybox.a ../regexp/libregexp.a
+ 
+ # Because there are no program specific transform macros we need to
+ # work around that to allow installing gpg as gpg2.
+@@ -104,7 +104,6 @@ common_source =  \
+ 	      expand-group.c	\
+ 	      keydb.h           \
+ 	      keydb-private.h   \
+-              call-keyboxd.c    \
+ 	      keydb.c           \
+ 	      keyring.c keyring.h \
+ 	      seskey.c		\
+@@ -132,6 +131,7 @@ common_source =  \
+ 
+ gpg_sources = server.c          \
+ 	      $(common_source)	\
++              call-keyboxd.c    \
+ 	      pkclist.c 	\
+ 	      skclist.c 	\
+ 	      pubkey-enc.c	\
+@@ -168,16 +168,17 @@ gpg_SOURCES  = gpg.c \
+ 
+ gpgv_SOURCES = gpgv.c           \
+ 	      $(common_source)  \
++	      internal-keydb.c  \
+ 	      verify.c
+ 
+ LDADD =  $(needed_libs) ../common/libgpgrl.a \
+          $(ZLIBS) $(LIBINTL) $(CAPLIBS)
+-gpg_LDADD = $(LDADD) $(SQLITE3_LIBS) $(LIBGCRYPT_LIBS) $(LIBREADLINE) \
++gpg_LDADD = $(LDADD) $(libcommonpth) $(SQLITE3_LIBS) $(LIBGCRYPT_LIBS) $(LIBREADLINE) \
+              $(LIBASSUAN_LIBS) $(NPTH_LIBS) $(GPG_ERROR_LIBS) $(NETLIBS) \
+ 	     $(LIBICONV) $(gpg_rc_objs)
+ gpg_LDFLAGS =
+-gpgv_LDADD = $(LDADD) $(LIBGCRYPT_LIBS) \
+-	      $(LIBASSUAN_LIBS) $(NPTH_LIBS) $(GPG_ERROR_LIBS) $(NETLIBS) \
++gpgv_LDADD = $(LDADD) $(libcommon) $(LIBGCRYPT_LIBS) \
++	      $(GPG_ERROR_LIBS) $(NETLIBS) \
+ 	      $(LIBICONV) $(gpgv_rc_objs)
+ gpgv_LDFLAGS =
+ 
+@@ -186,22 +187,22 @@ t_common_ldadd =
+ module_tests = t-rmd160 t-keydb t-keydb-get-keyblock t-stutter t-keyid
+ t_rmd160_SOURCES = t-rmd160.c rmd160.c
+ t_rmd160_LDADD = $(t_common_ldadd)
+-t_keydb_SOURCES = t-keydb.c test-stubs.c $(common_source)
+-t_keydb_LDADD = $(LDADD) $(LIBGCRYPT_LIBS) \
++t_keydb_SOURCES = t-keydb.c test-stubs.c $(common_source) call-keyboxd.c
++t_keydb_LDADD = $(LDADD) $(libcommonpth) $(LIBGCRYPT_LIBS) \
+               $(LIBASSUAN_LIBS) $(NPTH_LIBS) $(GPG_ERROR_LIBS) $(NETLIBS) \
+ 	      $(LIBICONV) $(t_common_ldadd)
+ t_keydb_get_keyblock_SOURCES = t-keydb-get-keyblock.c test-stubs.c \
+-	      $(common_source)
+-t_keydb_get_keyblock_LDADD = $(LDADD) $(LIBGCRYPT_LIBS) \
++	      $(common_source) call-keyboxd.c
++t_keydb_get_keyblock_LDADD = $(LDADD) $(libcommonpth) $(LIBGCRYPT_LIBS) \
+               $(LIBASSUAN_LIBS) $(NPTH_LIBS) $(GPG_ERROR_LIBS) $(NETLIBS) \
+ 	      $(LIBICONV) $(t_common_ldadd)
+ t_stutter_SOURCES = t-stutter.c test-stubs.c \
+-	      $(common_source)
+-t_stutter_LDADD = $(LDADD) $(LIBGCRYPT_LIBS) \
++	      $(common_source) call-keyboxd.c
++t_stutter_LDADD = $(LDADD) $(libcommonpth) $(LIBGCRYPT_LIBS) \
+ 	      $(LIBASSUAN_LIBS) $(NPTH_LIBS) $(GPG_ERROR_LIBS) $(NETLIBS) \
+ 	      $(LIBICONV) $(t_common_ldadd)
+-t_keyid_SOURCES = t-keyid.c test-stubs.c $(common_source)
+-t_keyid_LDADD = $(LDADD) $(LIBGCRYPT_LIBS) \
++t_keyid_SOURCES = t-keyid.c test-stubs.c $(common_source) call-keyboxd.c
++t_keyid_LDADD = $(LDADD) $(libcommonpth) $(LIBGCRYPT_LIBS) \
+               $(LIBASSUAN_LIBS) $(NPTH_LIBS) $(GPG_ERROR_LIBS) $(NETLIBS) \
+ 	      $(LIBICONV) $(t_common_ldadd)
+ 
+diff --git a/g10/armor.c b/g10/armor.c
+index f8cfa86..a24f296 100644
+--- a/g10/armor.c
++++ b/g10/armor.c
+@@ -1031,10 +1031,16 @@ radix64_read( armor_filter_context_t *afx, IOBUF a, size_t *retn,
+ 	    checkcrc++;
+ 	    break;
+ 	}
+-        else if (c == '-'
+-                 && afx->buffer_pos + 8 < afx->buffer_len
+-                 && !strncmp (afx->buffer, "-----END ", 8)) {
+-            break; /* End in --dearmor mode or No CRC.  */
++        else if (afx->buffer_pos == 1 && c == '-'
++                 && afx->buffer_len > 9
++                 && !strncmp (afx->buffer, "-----END ", 9)) {
++            /* End in --dearmor mode.  */
++            if (n)
++                /* No CRC found, and the end of the armor is detected.
++                   Let return with the result of N-byte now, and come
++                   again to process the end of the armor with N=0.  */
++                afx->buffer_pos--;
++            break;
+         }
+ 	else {
+ 	    log_error(_("invalid radix64 character %02X skipped\n"), c);
+@@ -1046,11 +1052,13 @@ radix64_read( armor_filter_context_t *afx, IOBUF a, size_t *retn,
+     afx->radbuf[0] = val;
+ 
+     if( n )
+-      gcry_md_write (afx->crc_md, buf, n);
++      {
++        gcry_md_write (afx->crc_md, buf, n);
++        afx->any_data = 1;
++      }
+ 
+     if( checkcrc ) {
+ 	gcry_md_final (afx->crc_md);
+-	afx->any_data = 1;
+ 	afx->inp_checked=0;
+ 	afx->faked = 0;
+ 	for(;;) { /* skip lf and pad characters */
+diff --git a/g10/encrypt.c b/g10/encrypt.c
+index 5593f69..de4811f 100644
+--- a/g10/encrypt.c
++++ b/g10/encrypt.c
+@@ -358,6 +358,11 @@ use_aead (pk_list_t pk_list, int algo)
+         }
+       return AEAD_ALGO_OCB;
+     }
++  if (opt.compliance != CO_GNUPG)
++    {
++      /* the "AEAD: OCB" feature is LibrePGP only */
++      return 0;
++    }
+ 
+   /* AEAD does only work with 128 bit cipher blocklength.  */
+   if (!can_use)
+diff --git a/g10/filter.h b/g10/filter.h
+index 4b4fc55..8e1662b 100644
+--- a/g10/filter.h
++++ b/g10/filter.h
+@@ -27,6 +27,8 @@ typedef struct {
+     gcry_md_hd_t md;      /* catch all */
+     gcry_md_hd_t md2;     /* if we want to calculate an alternate hash */
+     size_t maxbuf_size;
++    int textmode;         /* 1 hashing needs to normalize line-endings to CRLF */
++    int seen_cr;          /* 1 if last octet hashed was '\r' */
+ } md_filter_context_t;
+ 
+ typedef struct {
+diff --git a/g10/gpg.c b/g10/gpg.c
+index 28f47f8..f7d192c 100644
+--- a/g10/gpg.c
++++ b/g10/gpg.c
+@@ -1038,6 +1038,7 @@ static struct debug_flags_s debug_flags [] =
+ static struct compatibility_flags_s compatibility_flags [] =
+   {
+     { COMPAT_COMPR_KEYS,   "compr-keys" },
++    { COMPAT_SUGGEST_EMBEDDED_NAME, "suggest-embedded-name" },
+     { 0, NULL }
+   };
+ 
+@@ -1995,7 +1996,8 @@ static void
+ gpgconf_list (void)
+ {
+   es_printf ("debug-level:%lu:\"none:\n", GC_OPT_FLAG_DEFAULT);
+-  es_printf ("compliance:%lu:\"%s:\n", GC_OPT_FLAG_DEFAULT, "gnupg");
++  es_printf ("compliance:%lu:\"%s:\n", GC_OPT_FLAG_DEFAULT,
++             gnupg_compliance_label (opt.compliance));
+ 
+   /* The next one is an info only item and should match the macros at
+      the top of keygen.c  */
+@@ -2266,17 +2268,14 @@ set_compliance_option (enum cmd_and_opt_values option)
+ {
+   switch (option)
+     {
+-    case oOpenPGP:
+-    case oRFC4880:
+-      /* This is effectively the same as RFC2440, but with
+-         "--enable-dsa2 --no-rfc2440-text --escape-from-lines
+-         --require-cross-certification". */
+-      opt.compliance = CO_RFC4880;
+-      opt.flags.dsa2 = 1;
++    case oGnuPG:
++      /* set up default options affected by policy compliance: */
++      opt.compliance = CO_GNUPG;
++      opt.flags.dsa2 = 0;
+       opt.flags.require_cross_cert = 1;
+       opt.rfc2440_text = 0;
+-      opt.allow_non_selfsigned_uid = 1;
+-      opt.allow_freeform_uid = 1;
++      opt.allow_non_selfsigned_uid = 0;
++      opt.allow_freeform_uid = 0;
+       opt.escape_from = 1;
+       opt.not_dash_escaped = 0;
+       opt.def_cipher_algo = 0;
+@@ -2284,33 +2283,53 @@ set_compliance_option (enum cmd_and_opt_values option)
+       opt.cert_digest_algo = 0;
+       opt.compress_algo = -1;
+       opt.s2k_mode = 3; /* iterated+salted */
++      opt.s2k_digest_algo = 0;
++      opt.s2k_cipher_algo = DEFAULT_CIPHER_ALGO;
++      opt.flags.allow_old_cipher_algos = 0;
++      opt.def_new_key_algo = NULL;
++      break;
++    case oOpenPGP:
++      /* use MTIs from RFC 9580 at least: */
++      set_compliance_option (oGnuPG);
++      opt.compliance = CO_OPENPGP;
++      opt.flags.dsa2 = 1;
++      opt.allow_freeform_uid = 1;
++      break;
++    case oRFC4880:
++      set_compliance_option (oGnuPG);
++      /* This is effectively the same as RFC2440, but with
++         "--enable-dsa2 --no-rfc2440-text --escape-from-lines
++         --require-cross-certification". */
++      opt.compliance = CO_RFC4880;
++      opt.flags.dsa2 = 1;
++      opt.allow_non_selfsigned_uid = 1;
++      opt.allow_freeform_uid = 1;
+       opt.s2k_digest_algo = DIGEST_ALGO_SHA1;
+       opt.s2k_cipher_algo = CIPHER_ALGO_3DES;
+       opt.flags.allow_old_cipher_algos = 1;
++      opt.def_new_key_algo = "rsa3072/cert,sign+rsa3072/encr";
+       break;
+     case oRFC2440:
++      set_compliance_option (oGnuPG);
+       opt.compliance = CO_RFC2440;
+-      opt.flags.dsa2 = 0;
++      opt.flags.require_cross_cert = 0;
+       opt.rfc2440_text = 1;
+       opt.allow_non_selfsigned_uid = 1;
+       opt.allow_freeform_uid = 1;
+       opt.escape_from = 0;
+-      opt.not_dash_escaped = 0;
+-      opt.def_cipher_algo = 0;
+-      opt.def_digest_algo = 0;
+-      opt.cert_digest_algo = 0;
+-      opt.compress_algo = -1;
+-      opt.s2k_mode = 3; /* iterated+salted */
+       opt.s2k_digest_algo = DIGEST_ALGO_SHA1;
+       opt.s2k_cipher_algo = CIPHER_ALGO_3DES;
+       opt.flags.allow_old_cipher_algos = 1;
++      opt.def_new_key_algo = "rsa3072/cert,sign+rsa3072/encr";
+       break;
+-    case oPGP7:  opt.compliance = CO_PGP7;  break;
+-    case oPGP8:  opt.compliance = CO_PGP8;  break;
+-    case oGnuPG:
+-      opt.compliance = CO_GNUPG;
++    case oPGP7:
++      set_compliance_option (oGnuPG);
++      opt.compliance = CO_PGP7;
++      break;
++    case oPGP8:
++      set_compliance_option (oGnuPG);
++      opt.compliance = CO_PGP8;
+       break;
+-
+     case oDE_VS:
+       set_compliance_option (oOpenPGP);
+       opt.compliance = CO_DE_VS;
+@@ -2464,19 +2483,10 @@ main (int argc, char **argv)
+     opt.command_fd = -1; /* no command fd */
+     opt.compress_level = -1; /* defaults to standard compress level */
+     opt.bz2_compress_level = -1; /* defaults to standard compress level */
+-    /* note: if you change these lines, look at oOpenPGP */
+-    opt.def_cipher_algo = 0;
+-    opt.def_digest_algo = 0;
+-    opt.cert_digest_algo = 0;
+-    opt.compress_algo = -1; /* defaults to DEFAULT_COMPRESS_ALGO */
+-    opt.s2k_mode = 3; /* iterated+salted */
+     opt.s2k_count = 0; /* Auto-calibrate when needed.  */
+-    opt.s2k_cipher_algo = DEFAULT_CIPHER_ALGO;
+     opt.completes_needed = 1;
+     opt.marginals_needed = 3;
+     opt.max_cert_depth = 5;
+-    opt.escape_from = 1;
+-    opt.flags.require_cross_cert = 1;
+     opt.import_options = (IMPORT_REPAIR_KEYS
+                           | IMPORT_COLLAPSE_UIDS
+                           | IMPORT_COLLAPSE_SUBKEYS);
+@@ -2485,8 +2495,7 @@ main (int argc, char **argv)
+ 					    | IMPORT_REPAIR_PKS_SUBKEY_BUG
+                                             | IMPORT_SELF_SIGS_ONLY
+                                             | IMPORT_COLLAPSE_UIDS
+-                                            | IMPORT_COLLAPSE_SUBKEYS
+-                                            | IMPORT_CLEAN);
++                                            | IMPORT_COLLAPSE_SUBKEYS);
+     opt.keyserver_options.export_options = EXPORT_ATTRIBUTES;
+     opt.keyserver_options.options = 0;
+     opt.verify_options = (LIST_SHOW_UID_VALIDITY
+@@ -2511,7 +2520,7 @@ main (int argc, char **argv)
+     opt.passphrase_repeat = 1;
+     opt.emit_version = 0;
+     opt.weak_digests = NULL;
+-    opt.compliance = CO_GNUPG;
++    set_compliance_option (oOpenPGP);
+ 
+     /* Check special options given on the command line.  */
+     orig_argc = argc;
+diff --git a/g10/import.c b/g10/import.c
+index ba62d23..0eacdda 100644
+--- a/g10/import.c
++++ b/g10/import.c
+@@ -2000,7 +2000,6 @@ import_one_real (ctrl_t ctrl,
+   int non_self_or_utk = 0;
+   char pkstrbuf[PUBKEY_STRING_SIZE];
+   int merge_keys_done = 0;
+-  int any_filter = 0;
+   KEYDB_HANDLE hd = NULL;
+ 
+   if (r_valid)
+@@ -2037,14 +2036,6 @@ import_one_real (ctrl_t ctrl,
+       log_printf ("\n");
+     }
+ 
+-
+-  if (!uidnode)
+-    {
+-      if (!silent)
+-        log_error( _("key %s: no user ID\n"), keystr_from_pk(pk));
+-      return 0;
+-    }
+-
+   if (screener && screener (keyblock, screener_arg))
+     {
+       log_error (_("key %s: %s\n"), keystr_from_pk (pk),
+@@ -2138,18 +2129,10 @@ import_one_real (ctrl_t ctrl,
+ 	  }
+     }
+ 
+-  /* Delete invalid parts and bail out if there are no user ids left.  */
+-  if (!delete_inv_parts (ctrl, keyblock, keyid, options, otherrevsigs))
+-    {
+-      if (!silent)
+-        {
+-          log_error ( _("key %s: no valid user IDs\n"), keystr_from_pk(pk));
+-          if (!opt.quiet)
+-            log_info(_("this may be caused by a missing self-signature\n"));
+-        }
+-      stats->no_user_id++;
+-      return 0;
+-    }
++  /* Delete invalid parts, and note if we have any valid ones left.
++   * We will later abort import if this key is new but contains
++   * no valid uids.  */
++  delete_inv_parts (ctrl, keyblock, keyid, options, otherrevsigs);
+ 
+   /* Get rid of deleted nodes.  */
+   commit_kbnode (&keyblock);
+@@ -2159,24 +2142,11 @@ import_one_real (ctrl_t ctrl,
+     {
+       apply_keep_uid_filter (ctrl, keyblock, import_filter.keep_uid);
+       commit_kbnode (&keyblock);
+-      any_filter = 1;
+     }
+   if (import_filter.drop_sig)
+     {
+       apply_drop_sig_filter (ctrl, keyblock, import_filter.drop_sig);
+       commit_kbnode (&keyblock);
+-      any_filter = 1;
+-    }
+-
+-  /* If we ran any filter we need to check that at least one user id
+-   * is left in the keyring.  Note that we do not use log_error in
+-   * this case. */
+-  if (any_filter && !any_uid_left (keyblock))
+-    {
+-      if (!opt.quiet )
+-        log_info ( _("key %s: no valid user IDs\n"), keystr_from_pk (pk));
+-      stats->no_user_id++;
+-      return 0;
+     }
+ 
+   /* The keyblock is valid and ready for real import.  */
+@@ -2236,6 +2206,13 @@ import_one_real (ctrl_t ctrl,
+       err = 0;
+       stats->skipped_new_keys++;
+     }
++  else if (err && !any_uid_left (keyblock))
++    {
++      if (!silent)
++        log_info( _("key %s: new key but contains no user ID - skipped\n"), keystr(keyid));
++      err = 0;
++      stats->no_user_id++;
++    }
+   else if (err)  /* Insert this key. */
+     {
+       /* Note: ERR can only be NO_PUBKEY or UNUSABLE_PUBKEY.  */
+@@ -3905,6 +3882,7 @@ chk_self_sigs (ctrl_t ctrl, kbnode_t keyblock, u32 *keyid, int *non_self)
+                   /* It's valid, so is it newer? */
+                   if (sig->timestamp >= rsdate)
+                     {
++                      knode->flag |= NODE_GOOD_SELFSIG; /* Subkey is valid.  */
+                       if (rsnode)
+                         {
+                           /* Delete the last revocation sig since
+diff --git a/g10/internal-keydb.c b/g10/internal-keydb.c
+new file mode 100644
+index 0000000..a7ffeae
+--- /dev/null
++++ b/g10/internal-keydb.c
+@@ -0,0 +1,118 @@
++/* internal-keydb.c - Access a keydb directly, without keyboxd
++ * Copyright (C) 2025  g10 Code GmbH
++ *
++ * This file is part of GnuPG.
++ *
++ * GnuPG is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 3 of the License, or
++ * (at your option) any later version.
++ *
++ * GnuPG is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, see <https://www.gnu.org/licenses/>.
++ * SPDX-License-Identifier: GPL-3.0-or-later
++ */
++
++/* This is extracted from call-keyboxd.h with all references to
++ * keyboxd stripped.  The goal is to be able to use it in gpgv, since
++ * that tool never talks to the keybox daemon */
++
++#include <config.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <errno.h>
++#include <unistd.h>
++#include <time.h>
++#ifdef HAVE_LOCALE_H
++# include <locale.h>
++#endif
++#include "gpg.h"
++#include "../common/util.h"
++#include "../common/membuf.h"
++#include "options.h"
++#include "../common/i18n.h"
++#include "keydb.h"
++#include "keydb-private.h"  /* For struct keydb_handle_s */
++
++KEYDB_HANDLE
++keydb_new (ctrl_t ctrl)
++{
++  gpg_error_t err;
++  KEYDB_HANDLE hd;
++
++  if (DBG_CLOCK)
++    log_clock ("keydb_new");
++
++  hd = xtrycalloc (1, sizeof *hd);
++  if (!hd)
++    {
++      err = gpg_error_from_syserror ();
++      goto leave;
++    }
++
++  err = internal_keydb_init (hd);
++
++ leave:
++  if (err)
++    {
++      int rc;
++      log_error (_("error opening key DB: %s\n"), gpg_strerror (err));
++      xfree (hd);
++      hd = NULL;
++      if (!(rc = gpg_err_code_to_errno (err)))
++        rc = gpg_err_code_to_errno (GPG_ERR_EIO);
++      gpg_err_set_errno (rc);
++    }
++  return hd;
++}
++
++void
++keydb_release (KEYDB_HANDLE hd)
++{
++  if (!hd)
++    return;
++  internal_keydb_deinit (hd);
++  xfree (hd);
++}
++
++gpg_error_t
++keydb_lock (KEYDB_HANDLE hd)
++{
++  return internal_keydb_lock (hd);
++}
++
++gpg_error_t
++keydb_get_keyblock (KEYDB_HANDLE hd, kbnode_t *ret_kb)
++{
++  if (!hd)
++    return gpg_error (GPG_ERR_INV_ARG);
++  return internal_keydb_get_keyblock (hd, ret_kb);
++}
++
++gpg_error_t
++keydb_search (KEYDB_HANDLE hd, KEYDB_SEARCH_DESC *desc,
++              size_t ndesc, size_t *descindex)
++{
++  if (!hd)
++    return gpg_error (GPG_ERR_INV_ARG);
++
++  if (descindex)
++    *descindex = 0; /* Make sure it is always set on return.  */
++
++  return internal_keydb_search (hd, desc, ndesc, descindex);
++}
++
++gpg_error_t
++keydb_search_reset (KEYDB_HANDLE hd)
++{
++  if (!hd)
++    return gpg_error (GPG_ERR_INV_ARG);
++
++  return internal_keydb_search_reset (hd);
++}
+diff --git a/g10/keygen.c b/g10/keygen.c
+index b7e2bf8..23ffe10 100644
+--- a/g10/keygen.c
++++ b/g10/keygen.c
+@@ -455,22 +455,22 @@ keygen_set_std_prefs (const char *string,int personal)
+ 	      strcat(dummy_string,"S7 ");
+ 	    strcat(dummy_string,"S2 "); /* 3DES */
+ 
+-            if (!openpgp_aead_test_algo (AEAD_ALGO_OCB))
++            if ((opt.compliance == CO_GNUPG) && (!openpgp_aead_test_algo (AEAD_ALGO_OCB)))
+ 	      strcat(dummy_string,"A2 ");
+ 
+             if (personal)
+               {
+                 /* The default internal hash algo order is:
+-                 *  SHA-256, SHA-384, SHA-512, SHA-224, SHA-1.
++                 *  SHA-512, SHA-384, SHA-256, SHA-224, SHA-1.
+                  */
+-                if (!openpgp_md_test_algo (DIGEST_ALGO_SHA256))
+-                  strcat (dummy_string, "H8 ");
++                if (!openpgp_md_test_algo (DIGEST_ALGO_SHA512))
++                  strcat (dummy_string, "H10 ");
+ 
+                 if (!openpgp_md_test_algo (DIGEST_ALGO_SHA384))
+                   strcat (dummy_string, "H9 ");
+ 
+-                if (!openpgp_md_test_algo (DIGEST_ALGO_SHA512))
+-                  strcat (dummy_string, "H10 ");
++                if (!openpgp_md_test_algo (DIGEST_ALGO_SHA256))
++                  strcat (dummy_string, "H8 ");
+               }
+             else
+               {
+@@ -939,8 +939,10 @@ keygen_upd_std_prefs (PKT_signature *sig, void *opaque)
+ 
+   /* Make sure that the MDC feature flag is set if needed.  */
+   add_feature_mdc (sig,mdc_available);
+-  add_feature_aead (sig, aead_available);
+-  add_feature_v5 (sig, 1);
++  if (opt.compliance == CO_GNUPG) {
++    add_feature_aead (sig, aead_available);
++    add_feature_v5 (sig, 1);
++  }
+   add_keyserver_modify (sig,ks_modify);
+   keygen_add_keyserver_url(sig,NULL);
+ 
+@@ -1752,7 +1754,7 @@ gen_elg (int algo, unsigned int nbits, KBNODE pub_root,
+ 
+   if (nbits < 1024)
+     {
+-      nbits = 2048;
++      nbits = 3072;
+       log_info (_("keysize invalid; using %u bits\n"), nbits );
+     }
+   else if (nbits > 4096)
+@@ -2671,7 +2673,7 @@ get_keysize_range (int algo, unsigned int *min, unsigned int *max)
+ 
+     default:
+       *min = opt.compliance == CO_DE_VS ? 2048: 1024;
+-      *max = 4096;
++      *max = opt.flags.large_rsa == 1 ? 8192 : 4096;
+       def = 3072;
+       break;
+     }
+@@ -3577,6 +3579,15 @@ parse_key_parameter_part (ctrl_t ctrl,
+   else
+     return gpg_error (GPG_ERR_UNKNOWN_CURVE);
+ 
++  if ((RFC4880||RFC2440||PGP8||PGP7) &&
++      (algo != PUBKEY_ALGO_RSA) &&
++      (algo != PUBKEY_ALGO_DSA) &&
++      (algo != PUBKEY_ALGO_ELGAMAL_E)) {
++    log_error (_("Cannot generate pubkey algorithm \"%s\" in compliance mode: %s\n"),
++               string, gnupg_compliance_label (opt.compliance));
++    return gpg_error (GPG_ERR_UNKNOWN_ALGORITHM);
++  }
++
+   /* Parse the flags.  */
+   keyuse = 0;
+   if (flags)
+@@ -3634,7 +3645,13 @@ parse_key_parameter_part (ctrl_t ctrl,
+                 }
+             }
+           else if (!ascii_strcasecmp (s, "v5"))
++            {
++              if (opt.compliance != CO_GNUPG) {
++                log_error (_("Cannot create a v5 key without --compliance=gnupg"));
++                return gpg_error (GPG_ERR_UNKNOWN_VERSION);
++              }
+             keyversion = 5;
++            }
+           else if (!ascii_strcasecmp (s, "v4"))
+             keyversion = 4;
+           else
+@@ -3815,6 +3832,11 @@ parse_key_parameter_part (ctrl_t ctrl,
+   /* Ed448 and X448 must only be used as v5 keys.  */
+   if (is_448)
+     {
++      if (opt.compliance != CO_GNUPG)
++        {
++          log_error(_("Cannot create Ed448 or Curve448 key without --compliance=gnupg.\n"));
++          return gpg_error (GPG_ERR_PUBKEY_ALGO);
++        }
+       if (keyversion == 4)
+         log_info (_("WARNING: v4 is specified, but overridden by v5.\n"));
+ 
+diff --git a/g10/main.h b/g10/main.h
+index 6d47287..4b9aa28 100644
+--- a/g10/main.h
++++ b/g10/main.h
+@@ -41,7 +41,7 @@
+ # define DEFAULT_CIPHER_ALGO     CIPHER_ALGO_3DES
+ #endif
+ 
+-#define DEFAULT_DIGEST_ALGO     ((GNUPG)? DIGEST_ALGO_SHA256:DIGEST_ALGO_SHA1)
++#define DEFAULT_DIGEST_ALGO     ((PGP7||RFC2440)?DIGEST_ALGO_SHA1:((PGP8)?DIGEST_ALGO_SHA256:DIGEST_ALGO_SHA512))
+ #define DEFAULT_S2K_DIGEST_ALGO  DEFAULT_DIGEST_ALGO
+ #ifdef HAVE_ZIP
+ # define DEFAULT_COMPRESS_ALGO   COMPRESS_ALGO_ZIP
+diff --git a/g10/mainproc.c b/g10/mainproc.c
+index 82ea79d..fc585ee 100644
+--- a/g10/mainproc.c
++++ b/g10/mainproc.c
+@@ -170,6 +170,7 @@ add_onepass_sig (CTX c, PACKET *pkt)
+ {
+   kbnode_t node;
+ 
++  log_assert(!(c->sigs_only && c->signed_data.used));
+   if (c->list) /* Add another packet. */
+     add_kbnode (c->list, new_kbnode (pkt));
+   else /* Insert the first one.  */
+@@ -970,9 +971,12 @@ proc_plaintext( CTX c, PACKET *pkt )
+           if (n->pkt->pkt.onepass_sig->digest_algo)
+             {
+               if (!opt.skip_verify)
+-                gcry_md_enable (c->mfx.md,
+-                                n->pkt->pkt.onepass_sig->digest_algo);
+-
++                {
++                  gcry_md_enable (c->mfx.md,
++                                  n->pkt->pkt.onepass_sig->digest_algo);
++                  if (n->pkt->pkt.onepass_sig->sig_class == 0x01)
++                    c->mfx.textmode = 1;
++                }
+               any = 1;
+             }
+         }
+@@ -991,7 +995,10 @@ proc_plaintext( CTX c, PACKET *pkt )
+           clearsig = (*data == 0x01);
+           for (data++, datalen--; datalen; datalen--, data++)
+             if (!opt.skip_verify)
+-              gcry_md_enable (c->mfx.md, *data);
++              {
++                gcry_md_enable (c->mfx.md, *data);
++                c->mfx.textmode = 1;
++              }
+           any = 1;
+           break;  /* Stop here as one-pass signature packets are not
+                      expected.  */
+@@ -1000,7 +1007,11 @@ proc_plaintext( CTX c, PACKET *pkt )
+         {
+           /* The SIG+LITERAL case that PGP used to use.  */
+           if (!opt.skip_verify)
+-            gcry_md_enable (c->mfx.md, n->pkt->pkt.signature->digest_algo);
++            {
++              gcry_md_enable (c->mfx.md, n->pkt->pkt.signature->digest_algo);
++              if (n->pkt->pkt.signature->sig_class == 0x01)
++                c->mfx.textmode = 1;
++            }
+           any = 1;
+         }
+     }
+@@ -1119,7 +1130,10 @@ proc_compressed (CTX c, PACKET *pkt)
+ 
+   /*printf("zip: compressed data packet\n");*/
+   if (c->sigs_only)
+-    rc = handle_compressed (c->ctrl, c, zd, proc_compressed_cb, c);
++    {
++      log_assert(!c->signed_data.used);
++      rc = handle_compressed (c->ctrl, c, zd, proc_compressed_cb, c);
++    }
+   else if( c->encrypt_only )
+     rc = handle_compressed (c->ctrl, c, zd, proc_encrypt_cb, c);
+   else
+@@ -1644,6 +1658,7 @@ do_proc_packets (CTX c, iobuf_t a)
+   c->iobuf = a;
+   init_packet(pkt);
+   init_parse_packet (&parsectx, a);
++  parsectx.sigs_only = c->sigs_only && c->signed_data.used;
+   while ((rc=parse_packet (&parsectx, pkt)) != -1)
+     {
+       any_data = 1;
+@@ -1655,6 +1670,12 @@ do_proc_packets (CTX c, iobuf_t a)
+           if (gpg_err_code (rc) == GPG_ERR_INV_PACKET
+               && opt.list_packets == 0)
+             break;
++
++          if (gpg_err_code (rc) == GPG_ERR_UNEXPECTED_PACKET)
++            {
++              write_status_text( STATUS_UNEXPECTED, "0" );
++              goto leave;
++            }
+           continue;
+ 	}
+       newpkt = -1;
+@@ -1692,7 +1713,9 @@ do_proc_packets (CTX c, iobuf_t a)
+             case PKT_COMPRESSED:  rc = proc_compressed (c, pkt); break;
+             case PKT_ONEPASS_SIG: newpkt = add_onepass_sig (c, pkt); break;
+             case PKT_GPG_CONTROL: newpkt = add_gpg_control (c, pkt); break;
+-            default: newpkt = 0; break;
++            case PKT_MARKER:      newpkt = 0; break;
++            default: log_assert(!c->signed_data.used);
++              newpkt = 0; break;
+ 	    }
+ 	}
+       else if (c->encrypt_only)
+diff --git a/g10/mdfilter.c b/g10/mdfilter.c
+index f3318f1..4872d9c 100644
+--- a/g10/mdfilter.c
++++ b/g10/mdfilter.c
+@@ -40,7 +40,7 @@ md_filter( void *opaque, int control,
+ {
+     size_t size = *ret_len;
+     md_filter_context_t *mfx = opaque;
+-    int i, rc=0;
++    int i, rc=0, n;
+ 
+     if( control == IOBUFCTRL_UNDERFLOW ) {
+ 	if( mfx->maxbuf_size && size > mfx->maxbuf_size )
+@@ -48,7 +48,16 @@ md_filter( void *opaque, int control,
+ 	i = iobuf_read( a, buf, size );
+ 	if( i == -1 ) i = 0;
+ 	if( i ) {
+-	    gcry_md_write(mfx->md, buf, i );
++            if (!mfx->textmode)
++              gcry_md_write(mfx->md, buf, i );
++            else
++              for (n = 0; n < i; n++)
++                {
++                  if (buf[n] == '\n' && !mfx->seen_cr)
++                    gcry_md_putc(mfx->md, '\r');
++                  gcry_md_putc(mfx->md, buf[n]);
++                  mfx->seen_cr = (buf[n] == '\r');
++                }
+ 	    if( mfx->md2 )
+ 		gcry_md_write(mfx->md2, buf, i );
+ 	}
+@@ -70,4 +79,6 @@ free_md_filter_context( md_filter_context_t *mfx )
+     mfx->md = NULL;
+     mfx->md2 = NULL;
+     mfx->maxbuf_size = 0;
++    mfx->textmode = 0;
++    mfx->seen_cr = 0;
+ }
+diff --git a/g10/misc.c b/g10/misc.c
+index 2f4b452..b54f152 100644
+--- a/g10/misc.c
++++ b/g10/misc.c
+@@ -862,11 +862,8 @@ map_md_openpgp_to_gcry (digest_algo_t algo)
+     case DIGEST_ALGO_SHA384: return 0;
+ #endif
+ 
+-#ifdef GPG_USE_SHA512
+     case DIGEST_ALGO_SHA512: return GCRY_MD_SHA512;
+-#else
+-    case DIGEST_ALGO_SHA512: return 0;
+-#endif
++
+     default: return 0;
+     }
+ }
+@@ -1413,12 +1410,16 @@ compliance_failure(void)
+       ver="GnuPG";
+       break;
+ 
+-    case CO_RFC4880:
++    case CO_OPENPGP:
+       ver="OpenPGP";
+       break;
+ 
++    case CO_RFC4880:
++      ver="OpenPGP (older, RFC 4880)";
++      break;
++
+     case CO_RFC2440:
+-      ver="OpenPGP (older)";
++      ver="OpenPGP (oldest, RFC 2440)";
+       break;
+ 
+     case CO_PGP7:
+diff --git a/g10/openfile.c b/g10/openfile.c
+index 5ca168a..0c728db 100644
+--- a/g10/openfile.c
++++ b/g10/openfile.c
+@@ -125,7 +125,7 @@ make_outfile_name (const char *iname)
+    NAMELEN is its actual length.
+  */
+ char *
+-ask_outfile_name( const char *name, size_t namelen )
++ask_outfile_name (const char *name, size_t namelen)
+ {
+   size_t n;
+   const char *s;
+@@ -136,8 +136,14 @@ ask_outfile_name( const char *name, size_t namelen )
+   if ( opt.batch )
+     return NULL;
+ 
+-  defname = name && namelen? make_printable_string (name, namelen, 0) : NULL;
+-
++  /* To avoid tricking the user into using the embedded filename we do
++   * not anymore include that name in the prompt as default.  For
++   * modern v5 signature this might make sense as they are now covered
++   * by the signature but we better leave such a decision to a GUI.  */
++  if (name && namelen && (opt.compat_flags & COMPAT_SUGGEST_EMBEDDED_NAME))
++    defname = make_printable_string (name, namelen, 0);
++  else
++    defname = NULL;
+   s = _("Enter new filename");
+   n = strlen(s) + (defname?strlen (defname):0) + 10;
+   prompt = xmalloc (n);
+diff --git a/g10/options.h b/g10/options.h
+index 62d6672..e7935ec 100644
+--- a/g10/options.h
++++ b/g10/options.h
+@@ -388,10 +388,16 @@ EXTERN_UNLESS_MAIN_MODULE int memory_stat_debug_mode;
+ 
+ /* Compatibility flags */
+ #define COMPAT_COMPR_KEYS     4  /* Allow import of compressed keys. (T7014) */
++#define COMPAT_SUGGEST_EMBEDDED_NAME 16 /* Show the non-signed
++                                         * embedded filename as
++                                         * suggestion.  */
++
++
+ 
+ 
+ /* Compliance test macors.  */
+ #define GNUPG   (opt.compliance==CO_GNUPG || opt.compliance==CO_DE_VS)
++#define OPENPGP (opt.compliance==CO_OPENPGP)
+ #define RFC2440 (opt.compliance==CO_RFC2440)
+ #define RFC4880 (opt.compliance==CO_RFC4880)
+ #define PGP7    (opt.compliance==CO_PGP7)
+diff --git a/g10/packet.h b/g10/packet.h
+index 9a1198d..d3f0dfe 100644
+--- a/g10/packet.h
++++ b/g10/packet.h
+@@ -674,6 +674,7 @@ struct parse_packet_ctx_s
+   int free_last_pkt; /* Indicates that LAST_PKT must be freed.  */
+   int skip_meta;     /* Skip ring trust packets.  */
+   unsigned int n_parsed_packets;	/* Number of parsed packets.  */
++  int sigs_only;     /* Only accept detached signature packets */
+ };
+ typedef struct parse_packet_ctx_s *parse_packet_ctx_t;
+ 
+@@ -684,6 +685,7 @@ typedef struct parse_packet_ctx_s *parse_packet_ctx_t;
+     (a)->free_last_pkt = 0;         \
+     (a)->skip_meta = 0;             \
+     (a)->n_parsed_packets = 0;      \
++    (a)->sigs_only = 0;             \
+   } while (0)
+ 
+ #define deinit_parse_packet(a) do { \
+diff --git a/g10/parse-packet.c b/g10/parse-packet.c
+index aa6bac9..da3c4ce 100644
+--- a/g10/parse-packet.c
++++ b/g10/parse-packet.c
+@@ -738,6 +738,20 @@ parse (parse_packet_ctx_t ctx, PACKET *pkt, int onlykeypkts, off_t * retpos,
+             case PKT_ENCRYPTED_MDC:
+             case PKT_ENCRYPTED_AEAD:
+             case PKT_COMPRESSED:
++              if (ctx->sigs_only)
++                {
++                  log_error (_("partial length packet of type %d in detached"
++                               " signature\n"), pkttype);
++                  rc = gpg_error (GPG_ERR_UNEXPECTED);
++                  goto leave;
++                }
++              if (onlykeypkts)
++                {
++                  log_error (_("partial length packet of type %d in keyring\n"),
++                             pkttype);
++                  rc = gpg_error (GPG_ERR_UNEXPECTED);
++                  goto leave;
++                }
+               iobuf_set_partial_body_length_mode (inp, c & 0xff);
+               pktlen = 0;	/* To indicate partial length.  */
+               partial = 1;
+@@ -775,6 +789,20 @@ parse (parse_packet_ctx_t ctx, PACKET *pkt, int onlykeypkts, off_t * retpos,
+ 	      rc = gpg_error (GPG_ERR_INV_PACKET);
+ 	      goto leave;
+ 	    }
++	  else if (ctx->sigs_only)
++	    {
++	      log_error (_("indeterminate length packet of type %d in detached"
++                           " signature\n"), pkttype);
++	      rc = gpg_error (GPG_ERR_UNEXPECTED);
++	      goto leave;
++	    }
++	  else if (onlykeypkts)
++	    {
++	      log_error (_("indeterminate length packet of type %d in"
++                           " keyring\n"), pkttype);
++	      rc = gpg_error (GPG_ERR_UNEXPECTED);
++	      goto leave;
++	    }
+ 	}
+       else
+ 	{
+@@ -828,7 +856,21 @@ parse (parse_packet_ctx_t ctx, PACKET *pkt, int onlykeypkts, off_t * retpos,
+       goto leave;
+     }
+ 
+-  if (with_uid && pkttype == PKT_USER_ID)
++  if (ctx->sigs_only)
++    switch (pkttype)
++      {
++      case PKT_SIGNATURE:
++      case PKT_MARKER:
++	break;
++      default:
++        log_error(_("Packet type %d not allowed in detached signature\n"),
++                  pkttype);
++	iobuf_skip_rest (inp, pktlen, partial);
++	*skip = 1;
++	rc = GPG_ERR_UNEXPECTED;
++	goto leave;
++      }
++  else if (with_uid && pkttype == PKT_USER_ID)
+     /* If ONLYKEYPKTS is set to 2, then we never skip user id packets,
+        even if DO_SKIP is set.  */
+     ;
+diff --git a/g10/plaintext.c b/g10/plaintext.c
+index 5c21dd7..8190a8e 100644
+--- a/g10/plaintext.c
++++ b/g10/plaintext.c
+@@ -311,6 +311,7 @@ handle_plaintext (PKT_plaintext * pt, md_filter_context_t * mfx,
+ 	  while (pt->len)
+ 	    {
+ 	      int len = pt->len > temp_size ? temp_size : pt->len;
++              int n;
+ 	      len = iobuf_read (pt->buf, buffer, len);
+ 	      if (len == -1)
+ 		{
+@@ -321,7 +322,18 @@ handle_plaintext (PKT_plaintext * pt, md_filter_context_t * mfx,
+ 		  goto leave;
+ 		}
+ 	      if (mfx->md)
+-		gcry_md_write (mfx->md, buffer, len);
++                {
++                  if (!mfx->textmode)
++                    gcry_md_write (mfx->md, buffer, len);
++                  else
++                    for (n = 0; n < len; n++)
++                      {
++                        if (buffer[n] == '\n' && !mfx->seen_cr)
++                          gcry_md_putc(mfx->md, '\r');
++                        gcry_md_putc(mfx->md, buffer[n]);
++                        mfx->seen_cr = (buffer[n] == '\r');
++                      }
++                }
+ 	      if (fp)
+ 		{
+ 		  if (opt.max_output && (count += len) > opt.max_output)
+@@ -409,12 +421,24 @@ handle_plaintext (PKT_plaintext * pt, md_filter_context_t * mfx,
+ 	       * So, always assume EOF if iobuf_read returns less bytes
+ 	       * then requested */
+ 	      int len = iobuf_read (pt->buf, buffer, temp_size);
++              int n;
+ 	      if (len == -1)
+ 		break;
+ 	      if (len < temp_size)
+ 		eof_seen = 1;
+ 	      if (mfx->md)
+-		gcry_md_write (mfx->md, buffer, len);
++                {
++                  if (!mfx->textmode)
++                    gcry_md_write (mfx->md, buffer, len);
++                  else
++                    for (n = 0; n < len; n++)
++                      {
++                        if (buffer[n] == '\n' && !mfx->seen_cr)
++                          gcry_md_putc(mfx->md, '\r');
++                        gcry_md_putc(mfx->md, buffer[n]);
++                        mfx->seen_cr = (buffer[n] == '\r');
++                      }
++                }
+ 	      if (fp)
+ 		{
+ 		  if (opt.max_output && (count += len) > opt.max_output)
+diff --git a/kbx/keyboxd.c b/kbx/keyboxd.c
+index f875e11..55e42bc 100644
+--- a/kbx/keyboxd.c
++++ b/kbx/keyboxd.c
+@@ -88,6 +88,7 @@ enum cmd_and_opt_values
+     oLogFile,
+     oServer,
+     oDaemon,
++    oSupervised,
+     oFakedSystemTime,
+     oListenBacklog,
+     oDisableCheckOwnSocket,
+@@ -104,6 +105,9 @@ static gpgrt_opt_t opts[] = {
+ 
+   ARGPARSE_s_n (oDaemon,  "daemon", N_("run in daemon mode (background)")),
+   ARGPARSE_s_n (oServer,  "server", N_("run in server mode (foreground)")),
++#ifndef HAVE_W32_SYSTEM
++  ARGPARSE_s_n (oSupervised,  "supervised", "@"),
++#endif
+   ARGPARSE_s_n (oNoDetach,  "no-detach", N_("do not detach from the console")),
+   ARGPARSE_s_n (oStealSocket, "steal-socket", "@"),
+   ARGPARSE_s_s (oHomedir,    "homedir",      "@"),
+@@ -209,6 +213,9 @@ static int have_homedir_inotify;
+  * reliable.  */
+ static int reliable_homedir_inotify;
+ 
++/* Flag indicating that we are in supervised mode.  */
++static int is_supervised;
++
+ /* Number of active connections.  */
+ static int active_connections;
+ 
+@@ -575,6 +582,7 @@ main (int argc, char **argv )
+         case oLogFile: logfile = pargs.r.ret_str; break;
+         case oServer: pipe_server = 1; break;
+         case oDaemon: is_daemon = 1; break;
++        case oSupervised: is_supervised = 1; break;
+         case oFakedSystemTime:
+           {
+             time_t faked_time = isotime2epoch (pargs.r.ret_str);
+@@ -643,7 +651,7 @@ main (int argc, char **argv )
+   bind_textdomain_codeset (PACKAGE_GT, "UTF-8");
+ #endif
+ 
+-  if (!pipe_server && !is_daemon && !gpgconf_list)
++  if (!pipe_server && !is_daemon && !gpgconf_list && !is_supervised)
+     {
+      /* We have been called without any command and thus we merely
+       * check whether an instance of us is already running.  We do
+@@ -716,6 +724,73 @@ main (int argc, char **argv )
+       kbxd_deinit_default_ctrl (ctrl);
+       xfree (ctrl);
+     }
++  else if (is_supervised && comopt.no_autostart)
++    {
++      log_info ("%s %s not starting in supervised mode due to no-autostart.\n",
++                gpgrt_strusage(11), gpgrt_strusage(13) );
++    }
++  else if (is_supervised)
++    {
++#ifndef HAVE_W32_SYSTEM
++      struct stat statbuf;
++
++      inhibit_socket_removal = 1;
++
++      /* In supervised mode, we expect file descriptor 3 to be an
++         already opened, listening socket.
++
++         We will also not detach from the controlling process or close
++         stderr; the supervisor should handle all of that.  */
++      if (fstat (3, &statbuf) == -1 && errno == EBADF)
++        {
++          log_error ("file descriptor 3 must be validin --supervised mode\n");
++          kbxd_exit (1);
++        }
++      socket_name = gnupg_get_socket_name (3);
++
++      /* when supervised and sending logs to stderr, the process
++         supervisor should handle log entry metadata (pid, name,
++         timestamp) */
++      if (!logfile)
++        log_set_prefix (NULL, 0);
++
++      initialize_modules ();
++
++      log_info ("%s %s starting in supervised mode.\n",
++                gpgrt_strusage(11), gpgrt_strusage(13) );
++
++#ifdef HAVE_SIGPROCMASK
++      if (startup_signal_mask_valid)
++        {
++          if (sigprocmask (SIG_SETMASK, &startup_signal_mask, NULL))
++            log_error ("error restoring signal mask: %s\n",
++                       strerror (errno));
++        }
++      else
++        log_info ("no saved signal mask\n");
++#endif /*HAVE_SIGPROCMASK*/
++
++      {
++        ctrl_t ctrl;
++
++        ctrl = xtrycalloc (1, sizeof *ctrl);
++        if (!ctrl)
++          {
++            log_error ("error allocating connection control data: %s\n",
++                       strerror (errno) );
++            kbxd_exit (1);
++          }
++        kbxd_init_default_ctrl (ctrl);
++        /* kbxd_set_database (ctrl, "pubring.kbx", 0); */
++        kbxd_set_database (ctrl, "pubring.db", 0);
++        kbxd_deinit_default_ctrl (ctrl);
++        xfree (ctrl);
++      }
++
++      handle_connections (3);
++      assuan_sock_close (3);
++#endif /*!HAVE_W32_SYSTEM*/
++    }
+   else if (!is_daemon)
+     ; /* NOTREACHED */
+   else
+@@ -1546,7 +1621,7 @@ handle_connections (gnupg_fd_t listen_fd)
+       /* Shutdown test.  */
+       if (shutdown_pending)
+         {
+-          if (!active_connections)
++          if (!active_connections || is_supervised)
+             break; /* ready */
+ 
+           /* Do not accept new connections but keep on running the
+diff --git a/regexp/Makefile.am b/regexp/Makefile.am
+index 307aacf..035858e 100644
+--- a/regexp/Makefile.am
++++ b/regexp/Makefile.am
+@@ -27,13 +27,11 @@ AM_CFLAGS =
+ libregexp_a_SOURCES = jimregexp.h utf8.h jimregexp.c utf8.c
+ libregexp_a_CFLAGS = $(AM_CFLAGS)
+ 
+-EXTRA_DIST = parse-unidata.awk UnicodeData.txt _unicode_mapping.c
++EXTRA_DIST = parse-unidata.awk _unicode_mapping.c
+ 
+-if MAINTAINER_MODE
+ BUILT_SOURCES = _unicode_mapping.c
+ MAINTAINERCLEANFILES = _unicode_mapping.c
+ 
+-_unicode_mapping.c: parse-unidata.awk UnicodeData.txt
++_unicode_mapping.c: parse-unidata.awk
+ 	$(AWK) $(AWK_HEX_NUMBER_OPTION) -f $(srcdir)/parse-unidata.awk \
+-	       $(srcdir)/UnicodeData.txt >$@
+-endif
++	       /usr/share/unicode/UnicodeData.txt >$@
+diff --git a/scd/scdaemon.c b/scd/scdaemon.c
+index 9617920..cace638 100644
+--- a/scd/scdaemon.c
++++ b/scd/scdaemon.c
+@@ -37,6 +37,9 @@
+ #include <unistd.h>
+ #include <signal.h>
+ #include <npth.h>
++#ifdef HAVE_PRCTL
++# include <sys/prctl.h>
++#endif
+ 
+ #define INCLUDED_BY_MAIN_MODULE 1
+ #define GNUPG_COMMON_NEED_AFLOCAL
+@@ -471,6 +474,12 @@ main (int argc, char **argv )
+   const char *application_priority = NULL;
+ 
+   early_system_init ();
++
++#if defined(HAVE_PRCTL) && defined(PR_SET_DUMPABLE)
++  /* Disable ptrace on Linux without sgid bit */
++  prctl(PR_SET_DUMPABLE, 0);
++#endif
++
+   gpgrt_set_strusage (my_strusage);
+   gcry_control (GCRYCTL_SUSPEND_SECMEM_WARN);
+   /* Please note that we may running SUID(ROOT), so be very CAREFUL
+diff --git a/tests/openpgp/Makefile.am b/tests/openpgp/Makefile.am
+index 7998d2a..bf2f11a 100644
+--- a/tests/openpgp/Makefile.am
++++ b/tests/openpgp/Makefile.am
+@@ -81,6 +81,7 @@ XTESTS = \
+ 	gpgv-forged-keyring.scm \
+ 	armor.scm \
+ 	import.scm \
++	import-incomplete.scm \
+ 	import-revocation-certificate.scm \
+ 	ecc.scm \
+ 	4gb-packet.scm \
+@@ -104,7 +105,8 @@ XTESTS = \
+ 	issue2417.scm \
+ 	issue2419.scm \
+ 	issue2929.scm \
+-	issue2941.scm
++	issue2941.scm \
++	issue7539.scm
+ 
+ 
+ # XXX: Currently, one cannot override automake's 'check' target.  As a
+@@ -177,7 +179,9 @@ TEST_FILES = pubring.asc secring.asc plain-1o.asc plain-2o.asc plain-3o.asc \
+ 	     trust-pgp/david.sec.asc \
+ 	     trust-pgp/frank.sec.asc \
+ 	     trust-pgp/grace.sec.asc \
+-	     trust-pgp/heidi.sec.asc
++	     trust-pgp/heidi.sec.asc \
++	     issue7539-signer.asc \
++	     issue7539-message.asc
+ 
+ data_files = data-500 data-9000 data-32000 data-80000 plain-large
+ 
+diff --git a/tests/openpgp/encrypt.scm b/tests/openpgp/encrypt.scm
+index ef2f7b0..ed903ce 100755
+--- a/tests/openpgp/encrypt.scm
++++ b/tests/openpgp/encrypt.scm
+@@ -88,7 +88,7 @@
+  (lambda (source)
+    (tr:do
+     (tr:open source)
+-    (tr:gpgstatus "" `(--yes -e
++    (tr:gpgstatus "" `(--yes -e --compliance=gnupg
+                        -r ,"patrice.lumumba"
+                        -r ,"mahsa.amini"))
+     (tr:call-with-content
+diff --git a/tests/openpgp/import-incomplete.scm b/tests/openpgp/import-incomplete.scm
+new file mode 100755
+index 0000000..331e101
+--- /dev/null
++++ b/tests/openpgp/import-incomplete.scm
+@@ -0,0 +1,67 @@
++#!/usr/bin/env gpgscm
++
++;; Copyright (C) 2016 g10 Code GmbH
++;;
++;; This file is part of GnuPG.
++;;
++;; GnuPG is free software; you can redistribute it and/or modify
++;; it under the terms of the GNU General Public License as published by
++;; the Free Software Foundation; either version 3 of the License, or
++;; (at your option) any later version.
++;;
++;; GnuPG is distributed in the hope that it will be useful,
++;; but WITHOUT ANY WARRANTY; without even the implied warranty of
++;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++;; GNU General Public License for more details.
++;;
++;; You should have received a copy of the GNU General Public License
++;; along with this program; if not, see <http://www.gnu.org/licenses/>.
++
++(load (in-srcdir "tests" "openpgp" "defs.scm"))
++(setup-environment)
++
++(call-check `(,(tool 'gpg) --import ,(in-srcdir "tests" "openpgp" "import-incomplete" "primary+uid.asc")))
++
++(info "Test import of new subkey, from a certificate without uid")
++(define keyid "573EA710367356BB")
++(call-check `(,(tool 'gpg) --import ,(in-srcdir "tests" "openpgp" "import-incomplete" "primary+subkey+sub-sig.asc")))
++(tr:do
++ (tr:pipe-do
++  (pipe:gpg `(--list-keys --with-colons ,keyid)))
++ (tr:call-with-content
++  (lambda (c)
++    ;; XXX we do not have a regexp library
++    (unless (any (lambda (line)
++		   (and (string-prefix? line "sub:")
++			(string-contains? line "573EA710367356BB")))
++		 (string-split-newlines c))
++	    (exit 1)))))
++
++(info "Test import of a subkey revocation, from a certificate without uid")
++(define keyid "573EA710367356BB")
++(call-check `(,(tool 'gpg) --import ,(in-srcdir "tests" "openpgp" "import-incomplete" "primary+subkey+sub-revocation.asc")))
++(tr:do
++ (tr:pipe-do
++  (pipe:gpg `(--list-keys --with-colons ,keyid)))
++ (tr:call-with-content
++  (lambda (c)
++    ;; XXX we do not have a regexp library
++    (unless (any (lambda (line)
++		   (and (string-prefix? line "sub:r:")
++			(string-contains? line "573EA710367356BB")))
++		 (string-split-newlines c))
++	    (exit 1)))))
++
++(info "Test import of revocation, from a certificate without uid")
++(call-check `(,(tool 'gpg) --import ,(in-srcdir "tests" "openpgp" "import-incomplete" "primary+revocation.asc")))
++(tr:do
++ (tr:pipe-do
++  (pipe:gpg `(--list-keys --with-colons ,keyid)))
++ (tr:call-with-content
++  (lambda (c)
++    ;; XXX we do not have a regexp library
++    (unless (any (lambda (line)
++		   (and (string-prefix? line "pub:r:")
++			(string-contains? line "0843DA969AA8DAFB")))
++		 (string-split-newlines c))
++	    (exit 1)))))
+diff --git a/tests/openpgp/import-incomplete/primary+revocation.asc b/tests/openpgp/import-incomplete/primary+revocation.asc
+new file mode 100644
+index 0000000..6b7b608
+--- /dev/null
++++ b/tests/openpgp/import-incomplete/primary+revocation.asc
+@@ -0,0 +1,9 @@
++-----BEGIN PGP PUBLIC KEY BLOCK-----
++Comment: [E] primary key, revocation signature over primary (no user ID)
++
++mDMEXNmUGRYJKwYBBAHaRw8BAQdA75R8VlchvmEd2Iz/8l07RoKUaUPDB71Ao1zZ
++631VAN2IeAQgFggAIBYhBLRpj5W82H/gSMzKKQhD2paaqNr7BQJc2ZQZAh0AAAoJ
++EAhD2paaqNr7qAwA/2jBUpnN0BxwRO/4CrxvrLIsL+C9aSXJUOTv8XkP4lvtAQD3
++XsDFfFNgEueiTfF7HtOGt5LPmRqVvUpQSMVgJJW6CQ==
++=tM90
++-----END PGP PUBLIC KEY BLOCK-----
+diff --git a/tests/openpgp/import-incomplete/primary+subkey+sub-revocation.asc b/tests/openpgp/import-incomplete/primary+subkey+sub-revocation.asc
+new file mode 100644
+index 0000000..83a51a5
+--- /dev/null
++++ b/tests/openpgp/import-incomplete/primary+subkey+sub-revocation.asc
+@@ -0,0 +1,10 @@
++-----BEGIN PGP PUBLIC KEY BLOCK-----
++Comment: [D] primary key, subkey, subkey revocation (no user ID)
++
++mDMEXNmUGRYJKwYBBAHaRw8BAQdA75R8VlchvmEd2Iz/8l07RoKUaUPDB71Ao1zZ
++631VAN24OARc2ZQhEgorBgEEAZdVAQUBAQdABsd5ha0AWXdXcSmfeiWIfrNcGqQK
++j++lwwWDAOlkVicDAQgHiHgEKBYIACAWIQS0aY+VvNh/4EjMyikIQ9qWmqja+wUC
++XNmnkAIdAgAKCRAIQ9qWmqja+ylaAQDmIKf86BJEq4OpDqU+V9D+wn2cyuxbyWVQ
++3r9LiL9qNwD/QAjyrhSN8L3Mfq+wdTHo5i0yB9ZCCpHLXSbhCqfWZwQ=
++=dwx2
++-----END PGP PUBLIC KEY BLOCK-----
+diff --git a/tests/openpgp/import-incomplete/primary+subkey+sub-sig.asc b/tests/openpgp/import-incomplete/primary+subkey+sub-sig.asc
+new file mode 100644
+index 0000000..dc47a02
+--- /dev/null
++++ b/tests/openpgp/import-incomplete/primary+subkey+sub-sig.asc
+@@ -0,0 +1,10 @@
++-----BEGIN PGP PUBLIC KEY BLOCK-----
++Comment: [B] primary key, subkey, subkey binding sig (no user ID)
++
++mDMEXNmUGRYJKwYBBAHaRw8BAQdA75R8VlchvmEd2Iz/8l07RoKUaUPDB71Ao1zZ
++631VAN24OARc2ZQhEgorBgEEAZdVAQUBAQdABsd5ha0AWXdXcSmfeiWIfrNcGqQK
++j++lwwWDAOlkVicDAQgHiHgEGBYIACAWIQS0aY+VvNh/4EjMyikIQ9qWmqja+wUC
++XNmUIQIbDAAKCRAIQ9qWmqja++vFAP98G1L+1/rWTGbsnxOAV2RocBYIroAvsbkR
++Ly6FdP8YNwEA7jOgT05CoKIe37MstpOz23mM80AK369Ca3JMmKKCQgg=
++=xuDu
++-----END PGP PUBLIC KEY BLOCK-----
+diff --git a/tests/openpgp/import-incomplete/primary+uid-sig.asc b/tests/openpgp/import-incomplete/primary+uid-sig.asc
+new file mode 100644
+index 0000000..134607d
+--- /dev/null
++++ b/tests/openpgp/import-incomplete/primary+uid-sig.asc
+@@ -0,0 +1,10 @@
++-----BEGIN PGP PUBLIC KEY BLOCK-----
++Comment: [C] primary key and self-sig expiring in 2024 (no user ID)
++
++mDMEXNmUGRYJKwYBBAHaRw8BAQdA75R8VlchvmEd2Iz/8l07RoKUaUPDB71Ao1zZ
++631VAN2IlgQTFggAPgIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgBYhBLRpj5W8
++2H/gSMzKKQhD2paaqNr7BQJc2ZR1BQkJZgHcAAoJEAhD2paaqNr79soA/0lWkUsu
++3NLwgbni6EzJxnTzgeNMpljqNpipHAwfix9hAP93AVtFdC8g7hdUZxawobl9lnSN
++9ohXOEBWvdJgVv2YAg==
++=KWIK
++-----END PGP PUBLIC KEY BLOCK-----
+diff --git a/tests/openpgp/import-incomplete/primary+uid.asc b/tests/openpgp/import-incomplete/primary+uid.asc
+new file mode 100644
+index 0000000..055f300
+--- /dev/null
++++ b/tests/openpgp/import-incomplete/primary+uid.asc
+@@ -0,0 +1,10 @@
++-----BEGIN PGP PUBLIC KEY BLOCK-----
++Comment: [A] primary key, user ID, and self-sig expiring in 2021
++
++mDMEXNmUGRYJKwYBBAHaRw8BAQdA75R8VlchvmEd2Iz/8l07RoKUaUPDB71Ao1zZ
++631VAN20CHRlc3Qga2V5iJYEExYIAD4WIQS0aY+VvNh/4EjMyikIQ9qWmqja+wUC
++XNmUGQIbAwUJA8JnAAULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRAIQ9qWmqja
+++0G1AQDdQiwhXxjXLMqoth+D4SigVHTJK8ORwifzsy3UE7mPGwD/aZ67XbAF/lgI
++kv2O1Jo0u9BL9RNNF+L0DM7rAFbfMAs=
++=1eII
++-----END PGP PUBLIC KEY BLOCK-----
+diff --git a/tests/openpgp/issue7539-message.asc b/tests/openpgp/issue7539-message.asc
+new file mode 100644
+index 0000000..d9627e9
+--- /dev/null
++++ b/tests/openpgp/issue7539-message.asc
+@@ -0,0 +1,8 @@
++-----BEGIN PGP MESSAGE-----
++
++xA0DAQoWT96UsBf1XGsBywtiAAAAAAB0ZXN0CsJ1BAEWCgAdFiEE4nTJ+uve2SXH
++vtD4T96UsBf1XGsFAme5OzsACgkQT96UsBf1XGtKWAEAjmR2dUu8Jsvq+j3QArUQ
++J549CNsbbuHLLAhaE0C2zZMBAJD4hLT9KXxnpTINCAcgZfytWChkNP+qKqb4pV5N
++ItsH
++=OYzj
++-----END PGP MESSAGE-----
+diff --git a/tests/openpgp/issue7539-signer.asc b/tests/openpgp/issue7539-signer.asc
+new file mode 100644
+index 0000000..170498e
+--- /dev/null
++++ b/tests/openpgp/issue7539-signer.asc
+@@ -0,0 +1,9 @@
++-----BEGIN PGP PUBLIC KEY BLOCK-----
++
++xjMEZ7k39xYJKwYBBAHaRw8BAQdAOfCju+pxXLXR2WU7ItL1LdlJFfubUeXQPk33
++sqDgebXNCHRlc3Qga2V5wo8EEBYIADcCGQEFAme5N/cCGwMICwkIBwoNDAsFFQoJ
++CAsCFgIBJxYhBOJ0yfrr3tklx77Q+E/elLAX9VxrAAoJEE/elLAX9VxrJKcBAPzY
++8Ct8qZ2xbzMXMtHrnR+a2kYLVDA9U8xPtrzQOUcOAPoDW17PxLj0IyZBS7ewb2Zt
++bbZ7yHLYYKmrF2mAyBOiCA==
++=UNOn
++-----END PGP PUBLIC KEY BLOCK-----
+diff --git a/tests/openpgp/issue7539.scm b/tests/openpgp/issue7539.scm
+new file mode 100644
+index 0000000..c84c40f
+--- /dev/null
++++ b/tests/openpgp/issue7539.scm
+@@ -0,0 +1,29 @@
++#!/usr/bin/env gpgscm
++
++;; Copyright (C) 2025 Daniel Kahn Gillmor <dkg@fifthhorseman.net>
++;;
++;; This file is part of GnuPG.
++;;
++;; GnuPG is free software; you can redistribute it and/or modify
++;; it under the terms of the GNU General Public License as published by
++;; the Free Software Foundation; either version 3 of the License, or
++;; (at your option) any later version.
++;;
++;; GnuPG is distributed in the hope that it will be useful,
++;; but WITHOUT ANY WARRANTY; without even the implied warranty of
++;; MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++;; GNU General Public License for more details.
++;;
++;; You should have received a copy of the GNU General Public License
++;; along with this program; if not, see <https://www.gnu.org/licenses/>.
++
++(load (in-srcdir "tests" "openpgp" "defs.scm"))
++(setup-legacy-environment)
++
++(define keyfile (in-srcdir "tests" "openpgp" "issue7539-signer.asc"))
++(define msg (in-srcdir "tests" "openpgp" "issue7539-message.asc"))
++
++(info "Checking text Signature over binary Literal Data Packet")
++
++(call-check `(,@gpg --import ,keyfile))
++(call-check `(,@gpg --verify ,msg))
+diff --git a/tests/openpgp/quick-key-manipulation.scm b/tests/openpgp/quick-key-manipulation.scm
+index 71d222a..37ac708 100755
+--- a/tests/openpgp/quick-key-manipulation.scm
++++ b/tests/openpgp/quick-key-manipulation.scm
+@@ -31,6 +31,14 @@
+ 		   `(--with-fingerprint
+ 		     --list-secret-keys ,(exact id))))))
+ 
++(define (count-8192-keys id)
++  (length (filter (lambda (x) (and (string=? "sec" (car x))
++			   (string=? "8192" (caddr x))))
++		  (gpg-with-colons
++		   `(--with-fingerprint
++		     --list-secret-keys ,(exact id))))))
++
++(define mega "Mega <mega@invalid.example.net>")
+ (define alpha "Alpha <alpha@invalid.example.net>")
+ (define bravo "Bravo <bravo@invalid.example.net>")
+ (define bravohash "F75B1420CC5881F4005333379355CFF5873094DE")
+@@ -54,6 +62,11 @@
+ (assert (= 1 (count-uids-of-secret-key alpha)))
+ (assert (not (equal? "" (:expire (assoc "pub" keyinfo)))))
+ 
++(info "Checking quick key generation of large RSA key...")
++(call-check `(,@GPG --enable-large-rsa --quick-generate-key ,mega rsa8192))
++
++(assert (= 1 (count-8192-keys mega)))
++
+ (info "Checking that we can add a user ID...")
+ 
+ ;; Make sure the key capabilities don't change when we add a user id.
+diff --git a/tpm2d/tpm2.c b/tpm2d/tpm2.c
+index 3e908dd..cd0347c 100644
+--- a/tpm2d/tpm2.c
++++ b/tpm2d/tpm2.c
+@@ -917,10 +917,20 @@ tpm2_ecc_decrypt (ctrl_t ctrl, TSS_CONTEXT *tssc, TPM_HANDLE key,
+   size_t len;
+   int ret;
+ 
++#if defined(TPM2_MAX_ECC_KEY_BYTES) /* Intel stack */
++  if (ciphertext_len > 2*TPM2_MAX_ECC_KEY_BYTES + 1)
++    return GPG_ERR_TOO_LARGE;
++#elif defined(MAX_ECC_KEY_BYTES)    /* IBM stack */
++  if (ciphertext_len > 2*MAX_ECC_KEY_BYTES + 1)
++    return GPG_ERR_TOO_LARGE;
++#else
++# error TMP2 header are not correctly installed
++#endif
++
+   /* This isn't really a decryption per se.  The ciphertext actually
+    * contains an EC Point which we must multiply by the private key number.
+    *
+-   * The reason is to generate a diffe helman agreement on a shared
++   * The reason is to generate a diffie-hellman agreement on a shared
+    * point.  This shared point is then used to generate the per
+    * session encryption key.
+    */
+@@ -976,6 +986,16 @@ tpm2_rsa_decrypt (ctrl_t ctrl, TSS_CONTEXT *tssc, TPM_HANDLE key,
+   TPM_HANDLE ah;
+   char *auth;
+ 
++#if defined(TPM2_MAX_RSA_KEY_BYTES)  /* Intel stack */
++  if (ciphertext_len > TPM2_MAX_RSA_KEY_BYTES)
++    return GPG_ERR_TOO_LARGE;
++#elif defined(MAX_RSA_KEY_BYTES)     /* IBM stack */
++  if (ciphertext_len > MAX_RSA_KEY_BYTES)
++    return GPG_ERR_TOO_LARGE;
++#else
++# error TMP2 header are not correctly installed
++#endif
++
+   inScheme.scheme = TPM_ALG_RSAES;
+   /*
+    * apparent gcrypt error: occasionally rsa ciphertext will

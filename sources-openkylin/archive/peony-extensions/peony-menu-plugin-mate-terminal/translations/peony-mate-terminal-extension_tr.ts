@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE TS>
+<TS version="2.1" language="tr">
+<context>
+    <name>Peony::MateTerminalMenuPlugin</name>
+    <message>
+        <location filename="../mate-terminal-menu-plugin.cpp" line="240"/>
+        <location filename="../mate-terminal-menu-plugin.cpp" line="259"/>
+        <source>Open Directory in Terminal</source>
+        <translation>Dizini Terminalde Aç</translation>
+    </message>
+    <message>
+        <location filename="../mate-terminal-menu-plugin.h" line="43"/>
+        <source>Peony-Qt Mate Terminal Menu Extension</source>
+        <translation>Peony-Qt Mate Terminal Menü Eklentisi</translation>
+    </message>
+    <message>
+        <location filename="../mate-terminal-menu-plugin.h" line="44"/>
+        <source>Open Terminal with menu</source>
+        <translation>Terminali açmak için sağ tık menüsünü kullanın</translation>
+    </message>
+    <message>
+        <source>Open Terminal with menu.</source>
+        <translation type="vanished">Terminali menü ile aç</translation>
+    </message>
+</context>
+<context>
+    <name>QObject</name>
+    <message>
+        <location filename="../mate-terminal-menu-plugin.cpp" line="170"/>
+        <source>Open terminal fail</source>
+        <translation>Terminal açılamadı</translation>
+    </message>
+    <message>
+        <location filename="../mate-terminal-menu-plugin.cpp" line="171"/>
+        <source>Open terminal failed, did you removed the default terminal?  If it&apos;s true please reinstall it.</source>
+        <translation>Terminal açılamadı, varsayılan terminali kaldırdınız mı? Eğer kaldırdıysanız lütfen yeniden yükleyin.</translation>
+    </message>
+</context>
+</TS>

@@ -1,0 +1,55 @@
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ *
+ * Copyright (C) 2024 KylinSoft  Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
+ */
+#include "lightlabel.h"
+#include <kysdk/applications/themeController.h>
+
+LightLabel::LightLabel(QWidget *parent):
+    FixLabel(parent)
+{
+
+}
+
+LightLabel::LightLabel(QString text , QWidget *parent):
+    FixLabel(parent)
+{
+    this->setText(text);
+}
+
+LightLabel::~LightLabel()
+{
+
+}
+
+void LightLabel::setText(const QString &text)
+{
+    FixLabel::setText(text);
+    // KDK_EXTEND 会写成机器名；平铺/读屏用可见文案
+    setAccessibleName(text);
+    setAccessibleDescription(QString());
+}
+
+void LightLabel::paintEvent(QPaintEvent *event)
+{
+    QPalette paltte;
+    paltte.setColor(QPalette::Text, ThemeController::getCustomColorFromDT("kfont-secondary"));
+    this->setPalette(paltte);
+    FixLabel::paintEvent(event);
+    return;
+}

@@ -1,0 +1,379 @@
+#!/bin/bash
+#出厂备份，在系统安装时由安装器在安装完成后某个时机调用
+#调用样例：backup-auto --factorybackup ${rootpath}  /backup
+
+if [ $# -lt 3 ] ; then
+    exit 1
+fi
+
+bootinfo_file="/etc/.bootinfo"
+KB=1024
+MB=1048576
+GB=1073741824
+
+busy_type=$1
+root_path=$2
+mount_path=$3
+
+if [ "${root_path}" = "/" ]; then
+    root_path=""
+fi
+
+backuplist_path="${mount_path}/snapshots/backuplist.xml"
+exclude_file="${mount_path}/snapshots/.exclude"
+log_path="${mount_path}/log"
+log_file="${log_path}/log-$(date +%Y%m%d%H%M)"
+record_file="${mount_path}/log.txt" 
+factory_uuid="00000000-0000-0000-0000-000000000000"
+personal_exclude_file=".exclude.user.txt"
+personal_backup_file=".user.txt"
+backup_partition_uuid=
+
+#如果/backup不存在，则创建该目录
+mkdir -p ${mount_path}
+
+getBackupInfo(){
+    local bootinfo=
+    local content=
+    if [ "$root_path" = "/" ]; then
+        bootinfo=${bootinfo_file}
+    else
+        bootinfo=${root_path}${bootinfo_file}
+    fi
+
+    if [ ! -e "$bootinfo" ]; then
+        echo "$bootinfo file not exist!"
+        exit 200
+    fi
+
+    local which_line=0
+    content=`cat "$bootinfo" | grep -Ev "^#" | grep "=" | awk '{print $1}'`
+    for line in $content;
+    do
+        #parse_device "$device"
+        #只读第1行：RECOVERY_DEV_UUID=c965e712-9903-4139-b8da-c6e1eef0af6a
+        if [ $which_line -eq 0 ]; then
+            backup_partition_uuid=`echo $line | sed 's:.*=::' | tr -d "\n"`
+            which_line=`expr $which_line + 1`
+        fi
+    done
+}
+
+createBackupListXml(){
+    local backuplistDir=${mount_path}"/snapshots/"
+
+    if [ ! -e "$backuplistDir" ]; then
+        mkdir -p $backuplistDir
+    fi
+
+    if [ ! -e "$backuplist_path" ]; then
+        #第1行'>'会清空后写文件
+        echo "<?xml version='1.0'?>" >$backuplist_path
+        echo "<backupList/>" >>$backuplist_path
+    fi
+}
+
+mountBackup()
+{
+    local myuuid="/dev/disk/by-uuid/"$backup_partition_uuid
+
+    local tmp_root_dev=$(mount | grep " /root " | cut -d ' ' -f 1)
+    case "$tmp_root_dev" in
+        /dev/mapper/*)
+            eval $(dmsetup splitname --nameprefixes --noheadings --rows "${tmp_root_dev#/dev/mapper/}")
+            if [ "$DM_VG_NAME" ] && [ "$DM_LV_NAME" ];then
+                lvm lvchange -aay -y --sysinit --ignoreskippedcluster "$DM_VG_NAME"
+            fi
+        ;;
+    esac
+
+    mount $myuuid $mount_path
+
+    mkdir -p $log_path
+    if [ $? -ne 0 ]; then
+        echo "Could not create log directory in /backup"
+        exit 22
+    fi
+
+    touch $log_file
+    if [ $? -ne 0 ]; then
+        echo "Could not create log file"
+        exit 23
+    fi
+    echo "Log for backuping and restoring...." > $log_file
+    createBackupListXml #创建备份信息
+}
+
+umountBackup()
+{
+    umount $mount_path
+}
+
+caculateDirSize() {
+    mkdir -p /backup/snapshots/check/data
+    local total_file_size=$(rsync  -aAHXrn --stats --ignore-missing-args --exclude=/backup --exclude=/cdrom --exclude=/dev --exclude=/efi --exclude=/etc/uid_list --exclude=/data/ghost --exclude=/ghost --exclude=/lost+found --exclude=/media --exclude=/mnt --exclude=/proc --exclude=/run --exclude=/swap_file --exclude=/sys --exclude=/tmp --exclude=/var/lib/docker/overlay2 --exclude=/var/lib/kmre/data --exclude=/var/lib/kmre/kmre-*-*/data/media/0/0-麒麟* --exclude=/var/lib/udisks2 --exclude=/var/log --exclude=*/backup/snapshots --exclude=/data/home --exclude=/data/root "${root_path}/" /backup/snapshots/check/data/ | grep "Total file size:" | awk '{print $4}' | sed 's/,//g')
+    total_file_size=$(expr ${total_file_size} + 200000000)
+    total_file_size=`expr ${total_file_size} / 2`
+    echo "备份所需空间大小：${total_file_size}" >> $log_file
+    echo "${total_file_size}"
+}
+
+updateStateByComment() {
+    local tmpFile="${backuplist_path}.tmp"
+    local is_first_line=1
+    local xxx=  #临时存放xml中每行的内容
+    local foundComment=0 #是否发现了要修改的comment
+
+    #如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+    local IFS_old=$IFS
+    IFS=$'\n'
+    while read line
+    do
+        #去除了前后空格
+        xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+
+        if [[ "$xxx" =~ "<Comment>" ]]; then
+            if [ $xxx = "<Comment>${m_comment}</Comment>" ]; then
+                foundComment=1 #当前comment是要修改的mycomment
+            else
+                foundComment=0 #当前comment不是要修改的mycomment
+            fi
+        fi
+
+        if [[ "$xxx" =~ "<Size>" ]]; then
+            if [[ $foundComment -eq 1 ]]; then
+                line="        <Size>${newSize}</Size>"
+            fi
+        fi
+
+        if [[ "$xxx" =~ "<State>" ]]; then
+            if [ $foundComment -eq 1 ]; then
+                line="        <State>${m_state}</State>"
+            fi
+        fi
+
+        if [ "$is_first_line" -eq 1 ]; then
+            echo "$line" >$tmpFile
+        else
+            echo "$line" >>$tmpFile
+        fi
+
+        is_first_line=0
+
+    done < "$backuplist_path";
+    IFS=$IFS_old
+
+    cp -f $tmpFile ${backuplist_path}
+    rm -f $tmpFile
+}
+
+writeLogFile() {
+    echo $1 >>$record_file
+}
+
+generateExcludeFile() {
+    m_bindMountPaths=""
+    echo "/backup" > $exclude_file
+    echo "/dev" >> $exclude_file
+    echo "/ghost" >> $exclude_file  #ghost镜像文件
+    echo "/mnt" >> $exclude_file
+    echo "/proc" >> $exclude_file
+    echo "/run" >> $exclude_file
+    echo "/sys" >> $exclude_file
+    echo "/media" >> $exclude_file
+    echo "/tmp" >> $exclude_file
+    echo "*/lost+found" >> $exclude_file
+    echo "/var/lib/udisks2" >> $exclude_file
+    echo "/cdrom" >> $exclude_file
+    echo "/swap_file" >> $exclude_file
+    echo "/var/lib/docker/overlay2" >> $exclude_file
+    echo "/var/log" >> $exclude_file
+    echo "/data/security-dir" >> $exclude_file
+    echo "*/backup/snapshots" >> $exclude_file
+
+    # bind挂载的目录不进行备份或还原
+        # cat ${root_path}/etc/fstab | awk '{if($4~/bind/) print $1}' |
+        # while read excludePath
+        # do
+        #     echo "$excludePath" >> $exclude_file
+    #     m_bindMountPaths="${m_bindMountPaths}XXXYYY${excludePath}/XXXYYY"
+        # done
+}
+
+factoryBackuping() {
+    local src=$1
+    local dst=$2
+
+    generateExcludeFile 
+    echo "/" > ${mount_path}/snapshots/$m_uuid/$personal_backup_file
+    cp $exclude_file ${mount_path}/snapshots/$m_uuid/$personal_exclude_file
+
+    echo "Begin to backup..." >>$log_file
+    echo "Begin to backup..."
+
+    mkdir -p ${root_path}/var/log
+    touch ${root_path}/var/log/backup.log
+    
+    #echo rsync -avAXH --ignore-missing-args --exclude-from $exclude_file $src $dst >>${root_path}/var/log/backup.log 2>&1
+    #rsync -avAXH --ignore-missing-args --exclude-from $exclude_file $src $dst >>${root_path}/var/log/backup.log 2>&1
+    local excludeArgs=
+    while read excludePath
+    do
+        # if [[ $m_bindMountPaths =~ XXXYYY${excludePath}/XXXYYY ]]; then
+        #     echo "不排除bind挂载路径:${excludePath}"
+        # else
+            excludeArgs="${excludeArgs} -e ${root_path}${excludePath}"
+        # fi
+    done < $exclude_file
+    echo "mksquashfs ${src} ${dst}/dst.img ${excludeArgs}" >> ${root_path}/var/log/backup.log 2>&1
+    mksquashfs ${src} "${dst}/dst.img" ${excludeArgs} >> ${root_path}/var/log/backup.log 2>&1
+
+    if [ $? -eq 0 -o $? -eq 24 -o $? -eq 23 ]; then
+        m_state="backup finished"
+        touch $dst/.exectl
+
+    else
+        echo "backup update backuplist.xml failed for updateBackupAutoFinishedState!";
+        m_state="backup unfinished"
+    fi
+
+    #写日志文件
+    local df_backup=`df -k ${mount_path} | sed '1d' | tr -d "\n"`
+    local leftSize=`echo $df_backup | awk '{print $4}'`
+    leftSize=`expr 1024 \* $leftSize`
+    m_size=`expr $freeDisk - $leftSize`
+    local newSize1=$( echo "scale=2;$m_size / ${GB}" | bc)
+    local newSize2=$( echo "scale=2;$m_size / ${MB}" | bc)
+    local newSize3=$( echo "scale=2;$m_size / ${KB}" | bc)
+
+    if [ $( echo "$newSize1 > 1.0" | bc ) = 1 ]; then
+        newSize=$newSize1"GB"
+    elif [ $( echo "$newSize2 > 1.0" | bc ) = 1 ]; then
+        newSize=$newSize2"MB"
+    else
+        newSize=$newSize3"KB"
+    fi
+    updateStateByComment
+    writeLogFile "${m_time},${m_uuid},0,出厂备份,${newSize}" #grub时只有全盘备份，没有增量备份
+    echo "sync..." >> $log_file
+    sync
+    echo "Backup end..." >> $log_file
+}
+
+backupAuto() { #备份
+    # 备份分区剩余空间大小
+    local df_backup=`df -k ${mount_path} | sed '1d' | tr -d "\n"`
+    freeDisk=`echo $df_backup | awk '{print $4}'`
+    freeDisk=`expr 1024 \* $freeDisk`
+    
+    local needSize=`caculateDirSize`
+    echo "freeDisk = $freeDisk; needSize = $needSize"
+    if [ $freeDisk -lt $needSize ]; then
+        echo "The backup disk space is not enough"
+        exit 100
+    fi
+
+    m_uuid="{"${factory_uuid}"}"
+    m_time=`date "+%y-%m-%d %H:%M:%S" | tr -d "\n"`
+    m_comment=$m_time #这个是全局变量
+    local dst="${mount_path}/snapshots/${m_uuid}/data"
+    mkdir -p $dst
+
+    m_size=$needSize
+    echo "m_size = ${needSize}"
+    local newSize1=$( echo "scale=2;$m_size / ${GB}" | bc)
+    local newSize2=$( echo "scale=2;$m_size / ${MB}" | bc)
+    local newSize3=$( echo "scale=2;$m_size / ${KB}" | bc)
+
+    if [ $( echo "$newSize1 > 1.0" | bc ) = 1 ]; then
+        newSize=$newSize1"GB"
+    elif [ $( echo "$newSize2 > 1.0" | bc ) = 1 ]; then
+        newSize=$newSize2"MB"
+    else
+        newSize=$newSize3"KB"
+    fi
+
+    #写入文件backuplist_path=$mount_path"/snapshots/backuplist.xml"
+    local state="backup unfinished"
+    local tmpFile="${backuplist_path}.tmp"
+    local new_content=""
+    local is_first_line=1
+    local hasHead=false #有头吗"<backupList>"
+    #如果不定义IFS，则echo $line会去掉前后空格，导致写到文件中去时没有格式
+    local IFS_old=$IFS
+    IFS=$'\n'
+    local xxx=
+    while read line;
+    do
+        #去除了前后空格
+        xxx=$( echo "$line" | sed "s/^[ \t]*//g" | sed "s/[ \t]*$//g" )
+
+        if [[ "$xxx" =~ "<backupList>" ]]; then
+            hasHead=true
+        fi
+
+        if [[ "$xxx" =~ "<backupList/>" ]]; then
+            xxx="</backupList>"  #与图形界面一致
+            line="</backupList>"
+        fi
+
+        #插入新的记录
+        if [ "$xxx" = "</backupList>" ]; then
+            if [ "$hasHead" = false ]; then
+                echo "<backupList>" >> $tmpFile
+                hasHead=true
+            fi
+
+            echo "    <BackupPoint>" >> $tmpFile
+            echo "        <Comment>$m_comment</Comment>" >> $tmpFile
+            echo "        <Time>$m_time</Time>" >> $tmpFile
+            echo "        <Uuid>$m_uuid</Uuid>" >> $tmpFile
+            echo "        <Size>$newSize</Size>" >> $tmpFile
+            echo "        <State>$state</State>" >> $tmpFile
+            echo "        <Type>0</Type>" >> $tmpFile
+            echo "        <Position>3</Position>" >> $tmpFile
+            echo "        <PrefixDestPath>/</PrefixDestPath>" >> $tmpFile
+            echo "    </BackupPoint>" >> $tmpFile
+        fi
+
+        if [ "$is_first_line" -eq 1 ]; then
+            echo "$line" > $tmpFile
+        else
+            echo "$line" >> $tmpFile
+        fi
+
+        is_first_line=0
+
+    done < "$backuplist_path";
+    IFS=$IFS_old
+
+    cp -f $tmpFile ${backuplist_path}
+    rm -f $tmpFile
+
+    factoryBackuping ${root_path}/ $dst
+}
+
+#--------主程序从这里开始-----------------------------------------
+
+# if [ "${root_path}" = "/" ]; then
+#     echo "This program is used in boot time"
+#     exit 0
+# fi
+
+getBackupInfo
+
+if [ "$busy_type" = "--factorybackup" ]; then
+    mountBackup
+    mount >> $log_file
+    backupAuto
+    #umountBackup
+
+    echo "This is factorybackup"
+else
+    echo "Not correct command"
+    exit 1
+fi
+
+exit 0
+
+

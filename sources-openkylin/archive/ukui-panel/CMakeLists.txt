@@ -1,0 +1,10 @@
+cmake_minimum_required(VERSION 3.16)
+
+project(ukui-panel VERSION 4.1)
+include(CTest)
+if (BUILD_TEST)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fprofile-arcs -ftest-coverage")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -fprofile-arcs -ftest-coverage")
+endif ()
+add_subdirectory(panel)
+add_subdirectory(widgets)

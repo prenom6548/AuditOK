@@ -1,0 +1,83 @@
+#!/usr/bin/env node
+const CommandLine = require('./lib/CommandLine');
+const Platform = require('./lib/Platform');
+const LibraryTool = require("./lib/LibraryTool");
+const path = require("path");
+
+const optionDeclarations = [
+    {
+        name: "platform",
+        shortName: "p",
+        type: "string",
+        description: "Specifies current platform. Supported platforms: [\"win\", \"mac\", \"ios\", \"linux\", \"android\", \"web\", \"ohos\"]."
+    },
+    {
+        name: "xcframework",
+        shortName: "x",
+        type: "string",
+        description: "Merges all archs in the specified library path into one xcframework if current platform supports it."
+    },
+    {
+        name: "arch",
+        shortName: "a",
+        type: "string",
+        description: "Specifies the arch of current platform. Supported archs: [\"x86\", \"x64\", \"arm\", \"arm64\", \"arm64-simulator\", \"wasm\", \"wasm-mt\"]. Ignored if --xcframework is specified."
+    },
+    {
+        name: "output",
+        shortName: "o",
+        type: "string",
+        description: "Merges all static libraries into specified output library file."
+    },
+    {
+        name: "verbose",
+        shortName: "v",
+        type: "boolean",
+        description: "Prints message in verbose mode."
+    },
+    {
+        name: "help",
+        shortName: "h",
+        type: "boolean",
+        description: "Print help message."
+    }
+];
+
+function printHelp(cmd) {
+    let output = "";
+    output += "Syntax:   node lib-merge [libraryFile] [libraryFile]... [options]\n";
+    output += "Examples: " + cmd + " libpng.a libwebp.a -o libvendor.a -p mac -a x64\n";
+    output += "Examples: " + cmd + " -x vendor/ffavc -p mac -o out/ffavc\n\n";
+    output += CommandLine.printOptions(optionDeclarations);
+    process.stdout.write(output);
+}
+
+let args = process.argv;
+let options = CommandLine.parse(args.slice(2), optionDeclarations);
+if (options.help) {
+    printHelp();
+    if (options.errors.length > 0) {
+        process.exit(1);
+    }
+    return;
+}
+let platform = Platform.Create(options.platform, false, options.verbose);
+if (!options.arch) {
+    options.arch = platform.archs[0];
+} else {
+    options.arch = options.arch.toLowerCase();
+}
+let libraryTool = LibraryTool.Create(platform);
+if (options.xcframework) {
+    let libraryPath = path.resolve(options.xcframework, platform.name);
+    let outputPath = libraryPath;
+    let removeOrigins = true;
+    if (options.output) {
+        outputPath = path.resolve(options.output, platform.name);
+        removeOrigins = false;
+    }
+    libraryTool.createXCFramework(libraryPath, outputPath, removeOrigins);
+} else {
+    libraryTool.mergeLibraries(options.targets, options.output, options.arch);
+}
+

@@ -1,0 +1,339 @@
+pkg_check_modules(X11 REQUIRED x11)
+pkg_check_modules(XTST REQUIRED xtst)
+pkg_check_modules(QGS REQUIRED gsettings-qt)
+pkg_check_modules(KYSDKSYSTIME REQUIRED kysdk-systime)
+pkg_check_modules(MPV REQUIRED mpv)
+pkg_check_modules(TAGLIB REQUIRED taglib)
+
+include_directories(${PROJECT_BINARY_DIR})
+include_directories(${PROJECT_SOURCE_DIR}/Common)
+
+include_directories(
+	${X11_INCLUDE_DIRS}
+        ${XTST_INCLUDE_DIRS}
+        ${QGS_INCLUDE_DIRS}
+        ${KYSDKSYSTIME_INCLUDE_DIRS}
+        ${TAGLIB_INCLUDE_DIRS}
+        )
+## 添加 mpv 头文件路径
+#include_directories(/usr/include/mpv/)
+set(EXTRA_LIBS
+	${EXTRA_LIBS}
+	${X11_LIBRARIES}
+        ${XTST_LIBRARIES}
+        ${QGS_LIBRARIES}
+        ${KYSDKSYSTIME_LIBRARIES}
+        ${TAGLIB_LIBRARIES}
+        -ldl
+	)
+qt5_add_resources(screensaver_SRC
+	default.qrc
+	)
+
+qt5_wrap_cpp(screensaver_SRC
+    chinesedate.h
+    screensaver.h
+    mbackground.h
+    cyclelabel.h
+    scconfiguration.h
+    sleeptime.h
+    checkbutton.h
+    weathermanager.h
+    networkwatcher.h
+    videoplayer.h
+    graphicsview.h
+    weatherwidget.h
+    mprissaverwidget.h
+    mprisdbusclient.h
+    mediasaverwidget.h
+    dbusadapter.h
+    mmediaplayer.h
+    mmediaplaylist.h
+    playcontroller.h
+    musicdatabase.h
+    musicfileinformation.h
+    weatherwidget.h
+    customalbumviewer.h
+    timethumbnailwidget.h
+    albumthumbnailwidget.h
+    musicthumbnailwidget.h
+    saverthumbnailwidget.h
+    weatherthumbnailwidget.h
+    masklable.h
+    rotatablelabel.h
+    cornerrotatinglabel.h
+    adaptivelabel.h
+    ../common/commonfunc.h
+    ../common/global_utils.h
+    ../common/utils.h
+    ../dbusifs/freedesktophelper.h
+    ../lock-dialog/backenddbushelper.h
+    ../userinfo.h
+    ../agreementinfo.h
+    ../widgets/statusbutton.h
+    ../widgets/customlabel.h
+    )
+set(screensaver_SRC
+    ${screensaver_SRC}
+    main.cpp
+    chinesedate.cpp
+    mbackground.cpp
+    screensaver.cpp
+    cyclelabel.cpp
+    scconfiguration.cpp
+    sleeptime.cpp
+    checkbutton.cpp
+    weathermanager.cpp
+    networkwatcher.cpp
+    videoplayer.cpp
+    graphicsview.cpp
+    weatherwidget.cpp
+    mprissaverwidget.cpp
+    mprisdbusclient.cpp
+    mediasaverwidget.cpp
+    dbusadapter.cpp
+    mmediaplayer.cpp
+    mmediaplaylist.cpp
+    playcontroller.cpp
+    musicdatabase.cpp
+    musicfileinformation.cpp
+    weatherwidget.cpp
+    customalbumviewer.cpp
+    timethumbnailwidget.cpp
+    albumthumbnailwidget.cpp
+    musicthumbnailwidget.cpp
+    saverthumbnailwidget.cpp
+    weatherthumbnailwidget.cpp
+    masklable.cpp
+    rotatablelabel.cpp
+    cornerrotatinglabel.cpp
+    adaptivelabel.cpp
+    ../common/commonfunc.cpp
+    ../common/global_utils.cpp
+    ../common/utils.cpp
+    ../dbusifs/freedesktophelper.cpp
+    ../lock-dialog/backenddbushelper.cpp
+    ../userinfo.cpp
+    ../agreementinfo.cpp
+    ../widgets/statusbutton.cpp
+    ../widgets/customlabel.cpp
+    )
+add_executable(ukui-screensaver-default ${screensaver_SRC})
+target_link_libraries(ukui-screensaver-default Qt5::Core Qt5::Widgets Qt5::DBus Qt5::X11Extras Qt5::Xml Qt5::Network Qt5::Sql ukui-log4qt Qt5::Multimedia Qt5::MultimediaWidgets Qt5::Svg avformat avcodec mpv sqlite3 Qt5::WebKitWidgets ${EXTRA_LIBS})
+
+qt5_add_resources(screensaver_Plugin_SRC
+        default.qrc
+        )
+
+qt5_wrap_cpp(screensaver_Plugin_SRC
+    chinesedate.h
+    screensaver.h
+    mbackground.h
+    cyclelabel.h
+    scconfiguration.h
+    sleeptime.h
+    checkbutton.h
+    weathermanager.h
+    customplugin.h
+    networkwatcher.h
+    videoplayer.h
+    graphicsview.h
+    screensaverplugin.h
+    weatherwidget.h
+    mprissaverwidget.h
+    mprisdbusclient.h
+    mediasaverwidget.h
+    dbusadapter.h
+    mmediaplayer.h
+    mmediaplaylist.h
+    playcontroller.h
+    musicdatabase.h
+    musicfileinformation.h
+    weatherthumbnailwidget.h
+    weatherwidget.h
+    customalbumviewer.h
+    timethumbnailwidget.h
+    albumthumbnailwidget.h
+    musicthumbnailwidget.h
+    saverthumbnailwidget.h
+    masklable.h
+    rotatablelabel.h
+    cornerrotatinglabel.h
+    adaptivelabel.h
+    ../common/commonfunc.h
+    ../common/global_utils.h
+    ../common/utils.h
+    ../dbusifs/freedesktophelper.h
+    ../lock-dialog/backenddbushelper.h
+    ../userinfo.h
+    ../agreementinfo.h
+    ../widgets/statusbutton.h
+    ../widgets/customlabel.h
+    )
+set(screensaver_Plugin_SRC
+    ${screensaver_Plugin_SRC}
+    chinesedate.cpp
+    mbackground.cpp
+    screensaver.cpp
+    cyclelabel.cpp
+    scconfiguration.cpp
+    sleeptime.cpp
+    checkbutton.cpp
+    weathermanager.cpp
+    networkwatcher.cpp
+    videoplayer.cpp
+    graphicsview.cpp
+    customplugin.cpp
+    weatherwidget.cpp
+    mprissaverwidget.cpp
+    mprisdbusclient.cpp
+    mediasaverwidget.cpp
+    dbusadapter.cpp
+    mmediaplayer.cpp
+    mmediaplaylist.cpp
+    playcontroller.cpp
+    musicdatabase.cpp
+    musicfileinformation.cpp
+    weatherwidget.cpp
+    customalbumviewer.cpp
+    timethumbnailwidget.cpp
+    albumthumbnailwidget.cpp
+    musicthumbnailwidget.cpp
+    saverthumbnailwidget.cpp
+    weatherthumbnailwidget.cpp
+    masklable.cpp
+    rotatablelabel.cpp
+    cornerrotatinglabel.cpp
+    adaptivelabel.cpp
+    ../common/commonfunc.cpp
+    ../common/global_utils.cpp
+    ../common/utils.cpp
+    ../dbusifs/freedesktophelper.cpp
+    ../lock-dialog/backenddbushelper.cpp
+    ../userinfo.cpp
+    ../agreementinfo.cpp
+    ../widgets/statusbutton.cpp
+    ../widgets/customlabel.cpp
+    )
+
+add_library(screensaver-default SHARED ${screensaver_Plugin_SRC})
+target_link_libraries(screensaver-default Qt5::Core Qt5::Widgets Qt5::DBus Qt5::X11Extras Qt5::Xml Qt5::Network ukui-log4qt Qt5::Multimedia Qt5::Sql Qt5::MultimediaWidgets Qt5::Svg avformat avcodec mpv sqlite3 Qt5::WebKitWidgets ${EXTRA_LIBS})
+target_compile_options(screensaver-default PRIVATE -fvisibility=hidden)
+target_link_options(screensaver-default PRIVATE -Bsymbolic)
+
+qt5_add_resources(Screensaver_SRC
+        default.qrc
+        )
+
+qt5_wrap_cpp(Screensaver_SRC
+    chinesedate.h
+    screensaver.h
+    mbackground.h
+    cyclelabel.h
+    scconfiguration.h
+    sleeptime.h
+    checkbutton.h
+    weathermanager.h
+    customplugin.h
+    networkwatcher.h
+    videoplayer.h
+    graphicsview.h
+    screensaverplugin.h
+    weatherwidget.h
+    mprissaverwidget.h
+    mprisdbusclient.h
+    mediasaverwidget.h
+    dbusadapter.h
+    mmediaplayer.h
+    mmediaplaylist.h
+    playcontroller.h
+    musicdatabase.h
+    musicfileinformation.h
+    weatherwidget.h
+    customalbumviewer.h
+    timethumbnailwidget.h
+    albumthumbnailwidget.h
+    musicthumbnailwidget.h
+    saverthumbnailwidget.h
+    weatherthumbnailwidget.h
+    masklable.h
+    rotatablelabel.h
+    cornerrotatinglabel.h
+    adaptivelabel.h
+    ../common/commonfunc.h
+    ../common/global_utils.h
+    ../common/utils.h
+    ../dbusifs/freedesktophelper.h
+    ../lock-dialog/backenddbushelper.h
+    ../userinfo.h
+    ../agreementinfo.h
+    ../widgets/statusbutton.h
+    ../widgets/customlabel.h
+    )
+set(Screensaver_SRC
+     ${Screensaver_SRC}
+    chinesedate.cpp
+    mbackground.cpp
+    screensaver.cpp
+    cyclelabel.cpp
+    scconfiguration.cpp
+    sleeptime.cpp
+    checkbutton.cpp
+    weathermanager.cpp
+    networkwatcher.cpp
+    videoplayer.cpp
+    graphicsview.cpp
+    customplugin.cpp
+    weatherwidget.cpp
+    mprissaverwidget.cpp
+    mprisdbusclient.cpp
+    mediasaverwidget.cpp
+    dbusadapter.cpp
+    mmediaplayer.cpp
+    mmediaplaylist.cpp
+    playcontroller.cpp
+    musicdatabase.cpp
+    musicfileinformation.cpp
+    weatherwidget.cpp
+    customalbumviewer.cpp
+    timethumbnailwidget.cpp
+    albumthumbnailwidget.cpp
+    musicthumbnailwidget.cpp
+    saverthumbnailwidget.cpp
+    weatherthumbnailwidget.cpp
+    masklable.cpp
+    rotatablelabel.cpp
+    cornerrotatinglabel.cpp
+    adaptivelabel.cpp
+    ../common/commonfunc.cpp
+    ../common/global_utils.cpp
+    ../common/utils.cpp
+    ../dbusifs/freedesktophelper.cpp
+    ../lock-dialog/backenddbushelper.cpp
+    ../userinfo.cpp
+    ../agreementinfo.cpp
+    ../widgets/statusbutton.cpp
+    ../widgets/customlabel.cpp
+    )
+
+add_library(Screensaver STATIC ${Screensaver_SRC})
+target_link_libraries(Screensaver Qt5::Core Qt5::Widgets Qt5::DBus Qt5::X11Extras Qt5::Xml Qt5::Network ukui-log4qt Qt5::Multimedia Qt5::Sql Qt5::MultimediaWidgets Qt5::Svg avformat avcodec mpv sqlite3 Qt5::WebKitWidgets ${EXTRA_LIBS})
+target_compile_options(Screensaver PRIVATE -fvisibility=hidden)
+target_link_options(Screensaver PRIVATE -Bsymbolic)
+
+install(TARGETS
+	ukui-screensaver-default
+	screensaver-default
+	DESTINATION lib/ukui-screensaver)
+
+install(FILES
+        language/screensaver-zh_CN.ini 
+	language/screensaver-en_US.ini
+        language/screensaver-bo_CN.ini
+	language/screensaver-jd.ini
+        language/screensaver-zh_CN-ok.ini
+        DESTINATION share/ukui-screensaver/language)
+
+install(FILES
+	screensaverplugin.h
+	DESTINATION include/ukui-screensaver/)

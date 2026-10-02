@@ -1,0 +1,44 @@
+/*
+* Copyright (C) 2026, KylinSoft Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+#ifndef AUTOTESTS_WINDOWS_STUB_NOTIFICATION_GROUP_MODEL_H
+#define AUTOTESTS_WINDOWS_STUB_NOTIFICATION_GROUP_MODEL_H
+
+#include <QAbstractProxyModel>
+
+namespace UkuiNotification {
+
+class NotificationGroupModel : public QAbstractProxyModel
+{
+    Q_OBJECT
+public:
+    explicit NotificationGroupModel(QObject *parent = nullptr);
+
+    void setSourceModel(QAbstractItemModel *sourceModel) override;
+    QModelIndex mapToSource(const QModelIndex &proxyIndex) const override;
+    QModelIndex mapFromSource(const QModelIndex &sourceIndex) const override;
+    QModelIndex index(int row, int column, const QModelIndex &parent) const override;
+    QModelIndex parent(const QModelIndex &child) const override;
+    int rowCount(const QModelIndex &parent) const override;
+    int columnCount(const QModelIndex &parent) const override;
+    QVariant data(const QModelIndex &proxyIndex, int role) const override;
+};
+
+} // namespace UkuiNotification
+
+#endif

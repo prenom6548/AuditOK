@@ -1,0 +1,56 @@
+From: Chris Webb <chris@arachsys.com>
+Date: Mon, 15 Dec 2025 18:41:08 +0000
+Subject: unshare: remove get_mnt_ino() check in bind_ns_files_from_child()
+
+get_mnt_ino() was originally introduced in c84f2590 where it was used
+in a loop to wait for the parent process to unshare the mount namespace
+before binding the namespace in its child.
+
+The parent and child processes are now synchronised with eventfd, so
+remove this vestigial check and the now-unused get_mnt_ino() function.
+This allows bind_ns_files_from_child() to be used even when the mount
+namespace isn't amongst the namespaces being unshared.
+
+Signed-off-by: Chris Webb <chris@arachsys.com>
+---
+ sys-utils/unshare.c | 15 ---------------
+ 1 file changed, 15 deletions(-)
+
+diff --git a/sys-utils/unshare.c b/sys-utils/unshare.c
+index 56146a7..02884bf 100644
+--- a/sys-utils/unshare.c
++++ b/sys-utils/unshare.c
+@@ -200,18 +200,6 @@ static int bind_ns_files(pid_t pid)
+ 	return 0;
+ }
+ 
+-static ino_t get_mnt_ino(pid_t pid)
+-{
+-	struct stat st;
+-	char path[PATH_MAX];
+-
+-	snprintf(path, sizeof(path), "/proc/%u/ns/mnt", (unsigned) pid);
+-
+-	if (stat(path, &st) != 0)
+-		err(EXIT_FAILURE, _("stat of %s failed"), path);
+-	return st.st_ino;
+-}
+-
+ static void settime(int64_t offset, clockid_t clk_id)
+ {
+ 	char buf[sizeof(stringify_value(ULONG_MAX)) * 3];
+@@ -311,14 +299,11 @@ static pid_t fork_and_wait(int *fd)
+ static pid_t bind_ns_files_from_child(int *fd)
+ {
+ 	pid_t child, ppid = getpid();
+-	ino_t ino = get_mnt_ino(ppid);
+ 
+ 	child = fork_and_wait(fd);
+ 	if (child)
+ 		return child;
+ 
+-	if (get_mnt_ino(ppid) == ino)
+-		exit(EXIT_FAILURE);
+ 	bind_ns_files(ppid);
+ 	exit(EXIT_SUCCESS);
+ }

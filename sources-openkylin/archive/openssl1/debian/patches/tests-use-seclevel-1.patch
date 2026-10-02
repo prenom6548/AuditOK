@@ -1,0 +1,264 @@
+From: Dimitri John Ledkov <xnox@ubuntu.com>
+Date: Sat, 14 May 2022 02:35:25 +0800
+Subject: Change testsuite to use SECLEVEL 1 by default
+
+By default the testsuite assumes that SECLEVEL is set to 1, and many
+tests fail, when one raises security level to 2. Many test certs use
+insecure hash algorithms and small key sizes.
+---
+ test/bad_dtls_test.c                |  2 ++
+ test/recipes/70-test_sslmessages.t  |  2 +-
+ test/recipes/70-test_sslsigalgs.t   | 16 ++++++++--------
+ test/recipes/70-test_sslsignature.t |  4 ++--
+ test/ssl_test.c                     | 10 ++++++++++
+ test/ssltestlib.c                   | 10 ++++++++++
+ util/perl/TLSProxy/Proxy.pm         |  8 ++++----
+ 7 files changed, 37 insertions(+), 15 deletions(-)
+
+diff --git a/test/bad_dtls_test.c b/test/bad_dtls_test.c
+index e06206b6acdd..f3e7a57dd2fd 100644
+--- a/test/bad_dtls_test.c
++++ b/test/bad_dtls_test.c
+@@ -472,6 +472,8 @@ static int test_bad_dtls(void)
+         goto end;
+ 
+     ctx = SSL_CTX_new(DTLS_client_method());
++    if (TEST_ptr(ctx))
++        SSL_CTX_set_security_level(ctx, 1);
+     if (!TEST_ptr(ctx)
+             || !TEST_true(SSL_CTX_set_min_proto_version(ctx, DTLS1_BAD_VER))
+             || !TEST_true(SSL_CTX_set_max_proto_version(ctx, DTLS1_BAD_VER))
+diff --git a/test/recipes/70-test_sslmessages.t b/test/recipes/70-test_sslmessages.t
+index 212791fc05e1..e8ce04a7bd58 100644
+--- a/test/recipes/70-test_sslmessages.t
++++ b/test/recipes/70-test_sslmessages.t
+@@ -421,7 +421,7 @@ SKIP: {
+     $proxy->clear();
+     $proxy->clientflags("-no_tls1_3");
+     $proxy->serverflags("-no_tls1_3");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->start();
+     checkhandshake($proxy, checkhandshake::EC_HANDSHAKE,
+                    checkhandshake::DEFAULT_EXTENSIONS
+diff --git a/test/recipes/70-test_sslsigalgs.t b/test/recipes/70-test_sslsigalgs.t
+index b3339ff59f98..48ac974aff88 100644
+--- a/test/recipes/70-test_sslsigalgs.t
++++ b/test/recipes/70-test_sslsigalgs.t
+@@ -125,7 +125,7 @@ SKIP: {
+     #        should succeed
+     $proxy->clear();
+     $proxy->serverflags("-no_tls1_3");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->filter(undef);
+     $proxy->start();
+     ok(TLSProxy::Message->success, "TLSv1.3 client TLSv1.2 server");
+@@ -169,7 +169,7 @@ SKIP: {
+     $proxy->clear();
+     $testtype = EMPTY_SIG_ALGS_EXT;
+     $proxy->clientflags("-no_tls1_3");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->start();
+     ok(TLSProxy::Message->fail, "Empty TLSv1.2 sigalgs");
+ 
+@@ -177,7 +177,7 @@ SKIP: {
+     $proxy->clear();
+     $testtype = NO_KNOWN_SIG_ALGS;
+     $proxy->clientflags("-no_tls1_3");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->start();
+     ok(TLSProxy::Message->fail, "No known TLSv1.3 sigalgs");
+ 
+@@ -186,7 +186,7 @@ SKIP: {
+     $proxy->clear();
+     $testtype = NO_PSS_SIG_ALGS;
+     $proxy->clientflags("-no_tls1_3");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->start();
+     ok(TLSProxy::Message->success, "No PSS TLSv1.2 sigalgs");
+ 
+@@ -194,7 +194,7 @@ SKIP: {
+     $proxy->clear();
+     $testtype = PSS_ONLY_SIG_ALGS;
+     $proxy->serverflags("-no_tls1_3");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->start();
+     ok(TLSProxy::Message->success, "PSS only sigalgs in TLSv1.2");
+ 
+@@ -205,7 +205,7 @@ SKIP: {
+     $proxy->clear();
+     $testtype = PSS_ONLY_SIG_ALGS;
+     $proxy->clientflags("-no_tls1_3 -sigalgs RSA+SHA256");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->start();
+     ok(TLSProxy::Message->fail, "Sigalg we did not send in TLSv1.2");
+ 
+@@ -213,7 +213,7 @@ SKIP: {
+     #         matches the certificate should fail in TLSv1.2
+     $proxy->clear();
+     $proxy->clientflags("-no_tls1_3 -sigalgs ECDSA+SHA256");
+-    $proxy->ciphers("ECDHE-RSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-RSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->filter(undef);
+     $proxy->start();
+     ok(TLSProxy::Message->fail, "No matching TLSv1.2 sigalgs");
+@@ -227,7 +227,7 @@ SKIP: {
+                                                "server-ecdsa-cert.pem") .
+                         " -key " . srctop_file("test", "certs",
+                                                "server-ecdsa-key.pem")),
+-    $proxy->ciphers("ECDHE-ECDSA-AES128-SHA");
++    $proxy->ciphers("ECDHE-ECDSA-AES128-SHA:\@SECLEVEL=1");
+     $proxy->start();
+     ok(TLSProxy::Message->success, "No TLSv1.2 sigalgs, ECDSA");
+ }
+diff --git a/test/recipes/70-test_sslsignature.t b/test/recipes/70-test_sslsignature.t
+index 034950e26a8d..9d6a8a3551aa 100644
+--- a/test/recipes/70-test_sslsignature.t
++++ b/test/recipes/70-test_sslsignature.t
+@@ -101,8 +101,8 @@ SKIP: {
+         $proxy->clear();
+         $testtype = CORRUPT_TLS1_2_SERVER_KEY_EXCHANGE;
+         $proxy->clientflags("-no_tls1_3");
+-        $proxy->cipherc('DHE-RSA-AES128-SHA');
+-        $proxy->ciphers('DHE-RSA-AES128-SHA');
++        $proxy->cipherc('DHE-RSA-AES128-SHA:\@SECLEVEL=1');
++        $proxy->ciphers('DHE-RSA-AES128-SHA:\@SECLEVEL=1');
+         $proxy->start();
+         ok(TLSProxy::Message->fail, "Corrupt <=TLSv1.2 ServerKeyExchange");
+     }
+diff --git a/test/ssl_test.c b/test/ssl_test.c
+index 7453a9d10e1e..7fe9c22d3c4c 100644
+--- a/test/ssl_test.c
++++ b/test/ssl_test.c
+@@ -406,6 +406,7 @@ static int test_handshake(int idx)
+ #ifndef OPENSSL_NO_DTLS
+     if (test_ctx->method == SSL_TEST_METHOD_DTLS) {
+         server_ctx = SSL_CTX_new(DTLS_server_method());
++        SSL_CTX_set_security_level(server_ctx, 1);
+         if (!TEST_true(SSL_CTX_set_max_proto_version(server_ctx,
+                                                      DTLS_MAX_VERSION)))
+             goto err;
+@@ -413,17 +414,21 @@ static int test_handshake(int idx)
+             SSL_TEST_SERVERNAME_CB_NONE) {
+             if (!TEST_ptr(server2_ctx = SSL_CTX_new(DTLS_server_method())))
+                 goto err;
++            SSL_CTX_set_security_level(server2_ctx, 1);
+         }
+         client_ctx = SSL_CTX_new(DTLS_client_method());
++        SSL_CTX_set_security_level(client_ctx, 1);
+         if (!TEST_true(SSL_CTX_set_max_proto_version(client_ctx,
+                                                      DTLS_MAX_VERSION)))
+             goto err;
+         if (test_ctx->handshake_mode == SSL_TEST_HANDSHAKE_RESUME) {
+             resume_server_ctx = SSL_CTX_new(DTLS_server_method());
++            SSL_CTX_set_security_level(resume_server_ctx, 1);
+             if (!TEST_true(SSL_CTX_set_max_proto_version(resume_server_ctx,
+                                                          DTLS_MAX_VERSION)))
+                 goto err;
+             resume_client_ctx = SSL_CTX_new(DTLS_client_method());
++            SSL_CTX_set_security_level(resume_client_ctx, 1);
+             if (!TEST_true(SSL_CTX_set_max_proto_version(resume_client_ctx,
+                                                          DTLS_MAX_VERSION)))
+                 goto err;
+@@ -435,6 +440,7 @@ static int test_handshake(int idx)
+ #endif
+     if (test_ctx->method == SSL_TEST_METHOD_TLS) {
+         server_ctx = SSL_CTX_new(TLS_server_method());
++        SSL_CTX_set_security_level(server_ctx, 1);
+         if (!TEST_true(SSL_CTX_set_max_proto_version(server_ctx,
+                                                      TLS_MAX_VERSION)))
+             goto err;
+@@ -443,21 +449,25 @@ static int test_handshake(int idx)
+             SSL_TEST_SERVERNAME_CB_NONE) {
+             if (!TEST_ptr(server2_ctx = SSL_CTX_new(TLS_server_method())))
+                 goto err;
++            SSL_CTX_set_security_level(server2_ctx, 1);
+             if (!TEST_true(SSL_CTX_set_max_proto_version(server2_ctx,
+                                                          TLS_MAX_VERSION)))
+                 goto err;
+         }
+         client_ctx = SSL_CTX_new(TLS_client_method());
++        SSL_CTX_set_security_level(client_ctx, 1);
+         if (!TEST_true(SSL_CTX_set_max_proto_version(client_ctx,
+                                                      TLS_MAX_VERSION)))
+             goto err;
+ 
+         if (test_ctx->handshake_mode == SSL_TEST_HANDSHAKE_RESUME) {
+             resume_server_ctx = SSL_CTX_new(TLS_server_method());
++            SSL_CTX_set_security_level(resume_server_ctx, 1);
+             if (!TEST_true(SSL_CTX_set_max_proto_version(resume_server_ctx,
+                                                      TLS_MAX_VERSION)))
+                 goto err;
+             resume_client_ctx = SSL_CTX_new(TLS_client_method());
++            SSL_CTX_set_security_level(resume_client_ctx, 1);
+             if (!TEST_true(SSL_CTX_set_max_proto_version(resume_client_ctx,
+                                                          TLS_MAX_VERSION)))
+                 goto err;
+diff --git a/test/ssltestlib.c b/test/ssltestlib.c
+index 456afdf4716e..dcb43ce25d63 100644
+--- a/test/ssltestlib.c
++++ b/test/ssltestlib.c
+@@ -720,6 +720,11 @@ int create_ssl_ctx_pair(const SSL_METHOD *sm, const SSL_METHOD *cm,
+             || (cctx != NULL && !TEST_ptr(clientctx = SSL_CTX_new(cm))))
+         goto err;
+ 
++    if (SSL_CTX_get_security_level(serverctx) == 2)
++            SSL_CTX_set_security_level(serverctx, 1);
++    if (clientctx != NULL && SSL_CTX_get_security_level(clientctx) == 2)
++            SSL_CTX_set_security_level(clientctx, 1);
++
+     if ((min_proto_version > 0
+          && !TEST_true(SSL_CTX_set_min_proto_version(serverctx,
+                                                      min_proto_version)))
+@@ -781,6 +786,11 @@ int create_ssl_objects(SSL_CTX *serverctx, SSL_CTX *clientctx, SSL **sssl,
+     else if (!TEST_ptr(clientssl = SSL_new(clientctx)))
+         goto error;
+ 
++    if (SSL_get_security_level(serverssl) == 2)
++            SSL_set_security_level(serverssl, 1);
++    if (SSL_get_security_level(clientssl) == 2)
++            SSL_set_security_level(clientssl, 1);
++
+     if (SSL_is_dtls(clientssl)) {
+         if (!TEST_ptr(s_to_c_bio = BIO_new(bio_s_mempacket_test()))
+                 || !TEST_ptr(c_to_s_bio = BIO_new(bio_s_mempacket_test())))
+diff --git a/util/perl/TLSProxy/Proxy.pm b/util/perl/TLSProxy/Proxy.pm
+index 6f983b3281b1..31c8f78755ca 100644
+--- a/util/perl/TLSProxy/Proxy.pm
++++ b/util/perl/TLSProxy/Proxy.pm
+@@ -97,9 +97,9 @@ sub new
+         execute => $execute,
+         cert => $cert,
+         debug => $debug,
+-        cipherc => "",
++        cipherc => "DEFAULT:\@SECLEVEL=1",
+         ciphersuitesc => "",
+-        ciphers => "AES128-SHA",
++        ciphers => "AES128-SHA:\@SECLEVEL=1",
+         ciphersuitess => "TLS_AES_128_GCM_SHA256",
+         flight => -1,
+         direction => -1,
+@@ -145,7 +145,7 @@ sub clearClient
+ {
+     my $self = shift;
+ 
+-    $self->{cipherc} = "";
++    $self->{cipherc} = "DEFAULT:\@SECLEVEL=1";
+     $self->{ciphersuitec} = "";
+     $self->{flight} = -1;
+     $self->{direction} = -1;
+@@ -167,7 +167,7 @@ sub clear
+     my $self = shift;
+ 
+     $self->clearClient;
+-    $self->{ciphers} = "AES128-SHA";
++    $self->{ciphers} = "AES128-SHA:\@SECLEVEL=1";
+     $self->{ciphersuitess} = "TLS_AES_128_GCM_SHA256";
+     $self->{serverflags} = "";
+     $self->{serverconnects} = 1;

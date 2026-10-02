@@ -1,0 +1,2 @@
+add_subdirectory(ukui_navigations)
+add_subdirectory(shortcut_navigations)

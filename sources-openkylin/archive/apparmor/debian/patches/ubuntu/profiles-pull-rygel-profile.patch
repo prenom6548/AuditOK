@@ -1,0 +1,317 @@
+From: Ryan Lee <ryan.lee@canonical.com>
+Date: Mon, 1 Jun 2026 14:28:33 +0800
+Subject: Pull the rygel profile
+
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/2137088
+
+I'm not pulling the tunables file because 1. others might be using it in
+custom configs (even if there's no sensible reason why they would) and 2.
+apparmor-profiles containing the extras does not currently have custom
+tunables and I don't want to force a decision on organizing those right now.
+---
+ profiles/apparmor.d/rygel               | 144 --------------------------------
+ profiles/apparmor/profiles/extras/rygel | 144 ++++++++++++++++++++++++++++++++
+ 2 files changed, 144 insertions(+), 144 deletions(-)
+ delete mode 100644 profiles/apparmor.d/rygel
+ create mode 100644 profiles/apparmor/profiles/extras/rygel
+
+diff --git a/profiles/apparmor.d/rygel b/profiles/apparmor.d/rygel
+deleted file mode 100644
+index feea7ab..0000000
+--- a/profiles/apparmor.d/rygel
++++ /dev/null
+@@ -1,144 +0,0 @@
+-# -*- mode: apparmor; -*-
+-# vim: ft=apparmor
+-# ------------------------------------------------------------------
+-#
+-#    Copyright (C) 2024 Canonical Ltd.
+-#
+-#    This program is free software; you can redistribute it and/or
+-#    modify it under the terms of version 2 of the GNU General Public
+-#    License published by the Free Software Foundation.
+-#
+-# ------------------------------------------------------------------
+-
+-abi <abi/5.0>,
+-
+-include <tunables/global>
+-include <tunables/rygel>
+-
+-profile rygel /usr/bin/rygel {
+-  include <abstractions/base>
+-  include <abstractions/dbus-session-strict>
+-  include <abstractions/dconf>
+-  include <abstractions/freedesktop.org>
+-  include <abstractions/nameservice>
+-
+-  # gst-plugin-scanner tries to probe various things including display devices
+-  # etc so allow those that are harmless but deny the rest
+-  file r /dev/{,urandom,null},
+-  file r /sys/,
+-  file r /sys/{bus,class}/,
+-  file r /sys/class/drm/,
+-  deny file r /dev/dri/{,**},
+-
+-  file r @{etc_ro}/rygel.conf,
+-
+-  file mr @{exec_path},
+-
+-  file Cx /usr/libexec/rygel/mx-extract -> mx-extract,
+-
+-  file mrix /usr/lib/@{multiarch}/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner,
+-
+-  file r /usr/share/gupnp-dlna-2.0/dlna-profiles/{,*},
+-  file r /usr/share/gupnp-av/{,*},
+-  file r /usr/share/rygel/{,**},
+-
+-  owner file rw  @{HOME}/.cache/gstreamer-1.0/{,*},
+-
+-  # config and cache
+-  owner file rwk @{HOME}/.cache/rygel/{,*},
+-  owner file rw  @{HOME}/.config/rygel.conf,
+-  owner file rw  @{HOME}/.config/Rygel/{,*},
+-
+-  # thumbnails
+-  owner file r @{HOME}/.cache/thumbnails/{,**},
+-
+-  # media files - see tunables/rygel
+-  owner file r @{rygel_media_dirs}/{,**},
+-
+-  # dconf access
+-  owner rw @{run}/user/*/dconf/user,
+-
+-  # liborc temporary files from gstreamer Orc Integration
+-  owner file mrw @{HOME}/orcexec.*,
+-  owner file mrw @{run}/user/*/orcexec.*,
+-  owner file mrw /tmp/orcexec.*,
+-
+-  network netlink dgram,
+-
+-  # dbus access
+-  # register on DBus
+-  dbus (send)
+-      bus=session
+-      path=/org/freedesktop/DBus
+-      interface=org.freedesktop.DBus
+-      member="{Request,Release}Name"
+-      peer=(name=org.freedesktop.DBus, label=unconfined),
+-
+-  # claim the org.gnome.Rygel[1] names
+-  dbus bus=session
+-      name="org.gnome.Rygel{,1}",
+-
+-  # Allow unconfined to introspect us
+-  dbus (receive)
+-      bus=session
+-      interface=org.freedesktop.DBus.Introspectable
+-      member=Introspect
+-      peer=(label=unconfined),
+-
+-  # allow to respond to unconfined clients
+-  dbus (receive)
+-      bus=session
+-      interface="org.gnome.Rygel1"
+-      peer=(label=unconfined),
+-
+-  # allow us to respond to unconfined clients (eg, org.freedesktop.*,
+-  # org.gtk.Application, etc)
+-  dbus (receive)
+-      bus=session
+-      path="/org/gnome/Rygel{,1}"
+-      peer=(label=unconfined),
+-
+-  # allow to enumerate mounts
+-  dbus (send)
+-    bus=session
+-    path="/org/gtk/vfs/mounttracker"
+-    interface="org.gtk.vfs.MountTracker"
+-    member="ListMountableInfo"
+-    peer=(label=unconfined),
+-
+-  profile mx-extract {
+-    include <abstractions/base>
+-    include <abstractions/dbus-session-strict>
+-    include <abstractions/freedesktop.org>
+-
+-    # gst-plugin-scanner tries to probe various things including display devices
+-    # etc so allow those that are harmless but deny the rest
+-    file r /dev/{,urandom,null},
+-    file r /sys/,
+-    file r /sys/{bus,class}/,
+-    file r /sys/class/drm/,
+-    deny file r /dev/dri/{,**},
+-
+-    file mr /usr/libexec/rygel/mx-extract,
+-
+-    file r  /usr/share/gupnp-dlna-2.0/dlna-profiles/{,*},
+-
+-    file mrix /usr/lib/@{multiarch}/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner,
+-
+-    file r /usr/share/gvfs/mounts/,
+-
+-    owner file r  @{HOME}/.cache/gstreamer-1.0/*,
+-    owner file rw @{HOME}/.cache/media-art/{,*},
+-
+-    # media files - see tunables/rygel
+-    owner file r  @{rygel_media_dirs}/{,**},
+-
+-    # liborc temporary files from gstreamer Orc Integration
+-    owner file mrw @{HOME}/orcexec.*,
+-    owner file mrw @{run}/user/*/orcexec.*,
+-    owner file mrw /tmp/orcexec.*,
+-  }
+-
+-  # Site-specific additions and overrides. See local/README for details.
+-  include if exists <local/rygel>
+-}
+diff --git a/profiles/apparmor/profiles/extras/rygel b/profiles/apparmor/profiles/extras/rygel
+new file mode 100644
+index 0000000..feea7ab
+--- /dev/null
++++ b/profiles/apparmor/profiles/extras/rygel
+@@ -0,0 +1,144 @@
++# -*- mode: apparmor; -*-
++# vim: ft=apparmor
++# ------------------------------------------------------------------
++#
++#    Copyright (C) 2024 Canonical Ltd.
++#
++#    This program is free software; you can redistribute it and/or
++#    modify it under the terms of version 2 of the GNU General Public
++#    License published by the Free Software Foundation.
++#
++# ------------------------------------------------------------------
++
++abi <abi/5.0>,
++
++include <tunables/global>
++include <tunables/rygel>
++
++profile rygel /usr/bin/rygel {
++  include <abstractions/base>
++  include <abstractions/dbus-session-strict>
++  include <abstractions/dconf>
++  include <abstractions/freedesktop.org>
++  include <abstractions/nameservice>
++
++  # gst-plugin-scanner tries to probe various things including display devices
++  # etc so allow those that are harmless but deny the rest
++  file r /dev/{,urandom,null},
++  file r /sys/,
++  file r /sys/{bus,class}/,
++  file r /sys/class/drm/,
++  deny file r /dev/dri/{,**},
++
++  file r @{etc_ro}/rygel.conf,
++
++  file mr @{exec_path},
++
++  file Cx /usr/libexec/rygel/mx-extract -> mx-extract,
++
++  file mrix /usr/lib/@{multiarch}/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner,
++
++  file r /usr/share/gupnp-dlna-2.0/dlna-profiles/{,*},
++  file r /usr/share/gupnp-av/{,*},
++  file r /usr/share/rygel/{,**},
++
++  owner file rw  @{HOME}/.cache/gstreamer-1.0/{,*},
++
++  # config and cache
++  owner file rwk @{HOME}/.cache/rygel/{,*},
++  owner file rw  @{HOME}/.config/rygel.conf,
++  owner file rw  @{HOME}/.config/Rygel/{,*},
++
++  # thumbnails
++  owner file r @{HOME}/.cache/thumbnails/{,**},
++
++  # media files - see tunables/rygel
++  owner file r @{rygel_media_dirs}/{,**},
++
++  # dconf access
++  owner rw @{run}/user/*/dconf/user,
++
++  # liborc temporary files from gstreamer Orc Integration
++  owner file mrw @{HOME}/orcexec.*,
++  owner file mrw @{run}/user/*/orcexec.*,
++  owner file mrw /tmp/orcexec.*,
++
++  network netlink dgram,
++
++  # dbus access
++  # register on DBus
++  dbus (send)
++      bus=session
++      path=/org/freedesktop/DBus
++      interface=org.freedesktop.DBus
++      member="{Request,Release}Name"
++      peer=(name=org.freedesktop.DBus, label=unconfined),
++
++  # claim the org.gnome.Rygel[1] names
++  dbus bus=session
++      name="org.gnome.Rygel{,1}",
++
++  # Allow unconfined to introspect us
++  dbus (receive)
++      bus=session
++      interface=org.freedesktop.DBus.Introspectable
++      member=Introspect
++      peer=(label=unconfined),
++
++  # allow to respond to unconfined clients
++  dbus (receive)
++      bus=session
++      interface="org.gnome.Rygel1"
++      peer=(label=unconfined),
++
++  # allow us to respond to unconfined clients (eg, org.freedesktop.*,
++  # org.gtk.Application, etc)
++  dbus (receive)
++      bus=session
++      path="/org/gnome/Rygel{,1}"
++      peer=(label=unconfined),
++
++  # allow to enumerate mounts
++  dbus (send)
++    bus=session
++    path="/org/gtk/vfs/mounttracker"
++    interface="org.gtk.vfs.MountTracker"
++    member="ListMountableInfo"
++    peer=(label=unconfined),
++
++  profile mx-extract {
++    include <abstractions/base>
++    include <abstractions/dbus-session-strict>
++    include <abstractions/freedesktop.org>
++
++    # gst-plugin-scanner tries to probe various things including display devices
++    # etc so allow those that are harmless but deny the rest
++    file r /dev/{,urandom,null},
++    file r /sys/,
++    file r /sys/{bus,class}/,
++    file r /sys/class/drm/,
++    deny file r /dev/dri/{,**},
++
++    file mr /usr/libexec/rygel/mx-extract,
++
++    file r  /usr/share/gupnp-dlna-2.0/dlna-profiles/{,*},
++
++    file mrix /usr/lib/@{multiarch}/gstreamer1.0/gstreamer-1.0/gst-plugin-scanner,
++
++    file r /usr/share/gvfs/mounts/,
++
++    owner file r  @{HOME}/.cache/gstreamer-1.0/*,
++    owner file rw @{HOME}/.cache/media-art/{,*},
++
++    # media files - see tunables/rygel
++    owner file r  @{rygel_media_dirs}/{,**},
++
++    # liborc temporary files from gstreamer Orc Integration
++    owner file mrw @{HOME}/orcexec.*,
++    owner file mrw @{run}/user/*/orcexec.*,
++    owner file mrw /tmp/orcexec.*,
++  }
++
++  # Site-specific additions and overrides. See local/README for details.
++  include if exists <local/rygel>
++}

@@ -1,0 +1,5669 @@
+/*
+ * Copyright (C) 2012,2014 Colin Walters <walters@verbum.org>
+ *
+ * SPDX-License-Identifier: LGPL-2.0+
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 2 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU Lesser General Public
+ * License along with this library. If not, see <https://www.gnu.org/licenses/>.
+ */
+
+#include "config.h"
+
+#include <err.h>
+#include <gio/gunixinputstream.h>
+#include <gio/gunixoutputstream.h>
+#include <gio/gio.h>
+#include <glib-unix.h>
+#include <stdbool.h>
+#include <stdint.h>
+#include <sys/ioctl.h>
+#include <sys/mount.h>
+#include <sys/poll.h>
+#include <sys/socket.h>
+#include <sys/statvfs.h>
+#include <errno.h>
+#include <glib.h>
+#include <glib/gkeyfile.h>
+#include <dirent.h>  
+#include <sys/types.h>  
+#include <sys/wait.h>  
+#include <unistd.h>  
+#include <syslog.h>
+#include <elf.h>
+#include <sys/utsname.h>
+#include <glib/gdatetime.h>
+#include <json-glib/json-glib.h>
+
+#ifdef HAVE_LIBMOUNT
+#include <libmount.h>
+#endif
+#ifdef HAVE_LIBSYSTEMD
+#include <systemd/sd-journal.h>
+#endif
+
+#include "libglnx.h"
+#include "ostree-core-private.h"
+#include "ostree-deployment-private.h"
+#include "ostree-linuxfsutil.h"
+#include "ostree-repo-private.h"
+#include "ostree-sepolicy-private.h"
+#include "ostree-sysroot-private.h"
+#include "ostree.h"
+#include "otcore.h"
+
+#define SECONDARY_CONF          "/etc/ostree/ostree-aux.conf"
+#define GROUP_NAME_DEPLOYMENT   "DEPLOYMENT"
+#define MAX_NUM                 "max_num"
+
+#define POST_DEPLOY_DIR         "/etc/ostree/scripts/post-deploy/"
+#define POST_UNDEPLOY_DIR       "/etc/ostree/scripts/post-undeploy/"
+
+typedef struct
+{
+  guint64 root_syncfs_msec;
+  guint64 boot_syncfs_msec;
+} SyncStats;
+
+typedef struct {
+    OstreeSysroot *self;
+    OstreeDeployment *new_deployment;
+    gboolean bootloader_is_atomic;
+    gboolean requires_new_bootversion;
+    char *new_subbootdir;
+    SyncStats syncstats;
+    OstreeBootloader *bootloader;
+    GCancellable *cancellable;
+    int old_deployments_len; 
+    guint new_deployments_len;  // 新增：新部署数组长度
+} InitramfsUpdateTask;
+
+typedef struct {
+    OstreeSysroot *self;
+    int old_deployments_len;
+    OstreeDeployment *new_deployment;
+    guint new_deployments_len;
+    GCancellable *cancellable;
+} DeploymentFinalizeTask;
+#define UPDATE_MANIFESTS_DIR         "/var/opt/system/resource/update-manifests/"
+// The path to the systemd tmpfiles.d directory.
+#define USRLIB_TMPFILES "usr/lib/tmpfiles.d"
+
+#ifdef HAVE_LIBSYSTEMD
+#define OSTREE_VARRELABEL_ID \
+  SD_ID128_MAKE (da, 67, 9b, 08, ac, d3, 45, 04, b7, 89, d9, 6f, 81, 8e, a7, 81)
+#define OSTREE_CONFIGMERGE_ID \
+  SD_ID128_MAKE (d3, 86, 3b, ae, c1, 3e, 44, 49, ab, 03, 84, 68, 4a, 8a, f3, a7)
+#define OSTREE_DEPLOYMENT_COMPLETE_ID \
+  SD_ID128_MAKE (dd, 44, 0e, 3e, 54, 90, 83, b6, 3d, 0e, fc, 7d, c1, 52, 55, f1)
+#define OSTREE_DEPLOYMENT_FINALIZING_ID \
+  SD_ID128_MAKE (e8, 64, 6c, d6, 3d, ff, 46, 25, b7, 79, 09, a8, e7, a4, 09, 94)
+#endif
+
+/* How much additional space we require available on top of what we accounted
+ * during the early prune fallocate space check. This accounts for anything not
+ * captured directly by `get_kernel_layout_size()` like writing new BLS entries.
+ */
+#define EARLY_PRUNE_SAFETY_MARGIN_SIZE (1 << 20) /* 1 MB */
+
+/*
+ * Like symlinkat() but overwrites (atomically) an existing
+ * symlink.
+ */
+static gboolean
+symlink_at_replace (const char *oldpath, int parent_dfd, const char *newpath,
+                    GCancellable *cancellable, GError **error)
+{
+  /* Possibly in the future generate a temporary random name here,
+   * would need to move "generate a temporary name" code into
+   * libglnx or glib?
+   */
+  g_autofree char *temppath = g_strconcat (newpath, ".tmp", NULL);
+
+  /* Clean up any stale temporary links */
+  (void)unlinkat (parent_dfd, temppath, 0);
+
+  /* Create the temp link */
+  if (TEMP_FAILURE_RETRY (symlinkat (oldpath, parent_dfd, temppath)) < 0)
+    return glnx_throw_errno_prefix (error, "symlinkat");
+
+  /* Rename it into place */
+  if (!glnx_renameat (parent_dfd, temppath, parent_dfd, newpath, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+static GLnxFileCopyFlags
+sysroot_flags_to_copy_flags (GLnxFileCopyFlags defaults, OstreeSysrootDebugFlags sysrootflags)
+{
+  if (sysrootflags & OSTREE_SYSROOT_DEBUG_NO_XATTRS)
+    defaults |= GLNX_FILE_COPY_NOXATTRS;
+  return defaults;
+}
+
+/* 计算文件的MD5校验和 */
+static gboolean
+compute_file_md5_at (int dfd, const char *path, gchar **out_md5,
+                     GCancellable *cancellable, GError **error)
+{
+  glnx_autofd int fd = -1;
+  if (!glnx_openat_rdonly (dfd, path, FALSE, &fd, error))
+    return FALSE;
+
+  g_autoptr(GChecksum) checksum = g_checksum_new (G_CHECKSUM_MD5);
+  g_autoptr(GInputStream) stream = g_unix_input_stream_new (g_steal_fd (&fd), TRUE);
+  
+  gchar buffer[8192];
+  gssize bytes_read;
+  
+  while ((bytes_read = g_input_stream_read (stream, buffer, sizeof(buffer), cancellable, error)) > 0)
+    {
+      g_checksum_update (checksum, (guchar*)buffer, bytes_read);
+    }
+  
+  if (bytes_read < 0)
+    return FALSE;
+    
+  *out_md5 = g_strdup (g_checksum_get_string (checksum));
+  return TRUE;
+}
+
+/* 查找并复用已存在的相同内核文件 */
+static gboolean
+try_reuse_existing_kernel (OstreeSysroot *sysroot, int dest_dfd, const char *dest_subpath,
+                          int src_dfd, const char *src_subpath,
+                          GCancellable *cancellable, GError **error)
+{
+  // 只对内核文件进行复用尝试
+  if (!g_str_has_prefix (dest_subpath, "vmlinuz-"))
+    return FALSE;
+
+  // 确保 sysroot 和必要的 fd 可用
+  if (!sysroot || sysroot->boot_fd < 0)
+    return FALSE;
+
+  // 遍历已有的 boot 目录寻找相同文件
+  glnx_autofd int ostree_dfd = -1;
+  if (!glnx_opendirat (sysroot->boot_fd, "ostree", TRUE, &ostree_dfd, NULL))
+    return FALSE;
+
+  g_auto(GLnxDirFdIterator) dfd_iter = { 0 };
+  if (!glnx_dirfd_iterator_init_at (ostree_dfd, ".", FALSE, &dfd_iter, NULL))
+    return FALSE;
+
+  struct dirent *dent;
+  while (TRUE)
+  {
+    if (!glnx_dirfd_iterator_next_dent (&dfd_iter, &dent, cancellable, error))
+      return FALSE;
+    if (dent == NULL)
+      break;
+
+    if (dent->d_type == DT_DIR && strstr (dent->d_name, "-")) 
+    {
+      glnx_autofd int subdir_dfd = -1;
+      if (glnx_opendirat (dfd_iter.fd, dent->d_name, TRUE, &subdir_dfd, NULL))
+      {
+        struct stat stbuf;
+        if (fstatat (subdir_dfd, dest_subpath, &stbuf, AT_SYMLINK_NOFOLLOW) == 0)
+        {
+          // 找到相同文件，尝试创建硬链接
+          if (linkat (subdir_dfd, dest_subpath, dest_dfd, dest_subpath, 0) == 0)
+          {
+            g_debug ("Reused existing kernel: %s", dest_subpath);
+            return TRUE;
+          }
+        }
+      }
+    }
+  }
+
+  // 如果没有找到同名文件，则进行内容(MD5)匹配
+  // 首先计算源文件的MD5
+  g_autofree gchar *src_md5 = NULL;
+  if (!compute_file_md5_at (src_dfd, src_subpath, &src_md5, cancellable, error))
+    return FALSE;
+
+  // 遍历所有可能的内核文件进行MD5对比
+  if (!glnx_dirfd_iterator_init_at (ostree_dfd, ".", FALSE, &dfd_iter, NULL))
+    return FALSE;
+
+  while (TRUE)
+  {
+    if (!glnx_dirfd_iterator_next_dent (&dfd_iter, &dent, cancellable, error))
+      return FALSE;
+    if (dent == NULL)
+      break;
+
+    if (dent->d_type == DT_DIR && strstr (dent->d_name, "-")) 
+    {
+      glnx_autofd int subdir_dfd = -1;
+      if (glnx_opendirat (dfd_iter.fd, dent->d_name, TRUE, &subdir_dfd, NULL))
+      {
+        // 遍历子目录中的所有文件
+        g_auto(GLnxDirFdIterator) subdir_iter = { 0 };
+        if (glnx_dirfd_iterator_init_at (subdir_dfd, ".", FALSE, &subdir_iter, NULL))
+        {
+          struct dirent *sub_dent;
+          while (TRUE)
+          {
+            if (!glnx_dirfd_iterator_next_dent (&subdir_iter, &sub_dent, cancellable, error))
+              return FALSE;
+            if (sub_dent == NULL)
+              break;
+
+            // 检查是否为常规文件
+            if (sub_dent->d_type == DT_REG)
+            {
+              // 计算候选文件的MD5
+              g_autofree gchar *candidate_md5 = NULL;
+              if (compute_file_md5_at (subdir_dfd, sub_dent->d_name, &candidate_md5, cancellable, NULL))
+              {
+                // 比较MD5值
+                if (g_strcmp0 (src_md5, candidate_md5) == 0)
+                {
+                  // MD5值相同，尝试创建硬链接
+                  if (linkat (subdir_dfd, sub_dent->d_name, dest_dfd, dest_subpath, 0) == 0)
+                  {
+                    g_debug ("Reused existing kernel by MD5 match: %s -> %s", 
+                             sub_dent->d_name, dest_subpath);
+                    return TRUE;
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return FALSE;
+}
+/* Try a hardlink if we can, otherwise fall back to copying.  Used
+ * right now for kernels/initramfs/device trees in /boot, where we can just
+ * hardlink if we're on the same partition.
+ */
+static gboolean
+install_into_boot (OstreeRepo *repo, OstreeSePolicy *sepolicy, int src_dfd, const char *src_subpath,
+                   int dest_dfd, const char *dest_subpath, GCancellable *cancellable,
+                   GError **error)
+{
+  if (linkat (src_dfd, src_subpath, dest_dfd, dest_subpath, 0) == 0)
+    return TRUE; /* Note early return */
+  if (!G_IN_SET (errno, EMLINK, EXDEV))
+    return glnx_throw_errno_prefix (error, "linkat(%s)", dest_subpath);
+
+  /* Otherwise, copy */
+  struct stat src_stbuf;
+  if (!glnx_fstatat (src_dfd, src_subpath, &src_stbuf, AT_SYMLINK_NOFOLLOW, error))
+    return FALSE;
+
+  glnx_autofd int src_fd = -1;
+  if (!glnx_openat_rdonly (src_dfd, src_subpath, FALSE, &src_fd, error))
+    return FALSE;
+
+  /* Be sure we relabel when copying the kernel, as in current
+   * e.g. Fedora it might be labeled module_object_t or usr_t,
+   * but policy may not allow other processes to read from that
+   * like kdump.
+   * See also
+   * https://github.com/fedora-selinux/selinux-policy/commit/747f4e6775d773ab74efae5aa37f3e5e7f0d4aca
+   * This means we also drop xattrs but...I doubt anyone uses
+   * non-SELinux xattrs for the kernel anyways aside from perhaps
+   * IMA but that's its own story.
+   */
+  g_auto (OstreeSepolicyFsCreatecon) fscreatecon = {
+    0,
+  };
+  const char *boot_path = glnx_strjoina ("/boot/", glnx_basename (dest_subpath));
+  if (!_ostree_sepolicy_preparefscreatecon (&fscreatecon, sepolicy, boot_path, S_IFREG | 0644,
+                                            error))
+    return FALSE;
+
+  g_auto (GLnxTmpfile) tmp_dest = {
+    0,
+  };
+  if (!glnx_open_tmpfile_linkable_at (dest_dfd, ".", O_WRONLY | O_CLOEXEC, &tmp_dest, error))
+    return FALSE;
+
+  if (glnx_regfile_copy_bytes (src_fd, tmp_dest.fd, (off_t)-1) < 0)
+    return glnx_throw_errno_prefix (error, "regfile copy");
+
+  /* Kernel data should always be root-owned */
+  if (fchown (tmp_dest.fd, src_stbuf.st_uid, src_stbuf.st_gid) != 0)
+    return glnx_throw_errno_prefix (error, "fchown");
+
+  if (fchmod (tmp_dest.fd, src_stbuf.st_mode & 07777) != 0)
+    return glnx_throw_errno_prefix (error, "fchmod");
+
+  if (fdatasync (tmp_dest.fd) < 0)
+    return glnx_throw_errno_prefix (error, "fdatasync");
+
+  /* Today we don't have a config flag to *require* verity on /boot,
+   * and at least for Fedora CoreOS we're not likely to do fsverity on
+   * /boot soon due to wanting to support mounting it from old Linux
+   * kernels.  So change "required" to "maybe".
+   */
+  _OstreeFeatureSupport boot_verity = _OSTREE_FEATURE_NO;
+  if (repo->fs_verity_wanted != _OSTREE_FEATURE_NO)
+    boot_verity = _OSTREE_FEATURE_MAYBE;
+  if (!_ostree_tmpf_fsverity_core (&tmp_dest, boot_verity, NULL, NULL, error))
+    return FALSE;
+
+  if (!glnx_link_tmpfile_at (&tmp_dest, GLNX_LINK_TMPFILE_NOREPLACE, dest_dfd, dest_subpath, error))
+    return FALSE;
+
+  return TRUE;
+}
+gboolean
+write_detached_metadata_deployment_timestamp(OstreeSysroot *self, OstreeRepo *repo, const char *commit_checksum,
+                                             const char *deployment_stage, GError **error)
+{
+  if(self->is_cmdline_invoked)
+    return TRUE;
+  g_autoptr(GVariant) current_detached_meta = NULL;
+  g_autofree char *timestamp_str = NULL;
+  g_autoptr (GPtrArray) deployments = ostree_sysroot_get_deployments (self);
+  g_autoptr(GDateTime) now = NULL;
+  now = g_date_time_new_now_local();
+  timestamp_str = g_date_time_format (now, "%Y-%m-%d %H:%M:%S");
+  if (!ostree_repo_read_commit_detached_metadata (repo, commit_checksum, &current_detached_meta, NULL, error))
+    return FALSE;
+
+  g_autoptr(GVariantDict) dict = current_detached_meta ? g_variant_dict_new(current_detached_meta) : g_variant_dict_new(NULL);
+  if (self->current_deployment_log == NULL) {
+    self->current_deployment_log = g_string_new("");
+  }
+
+  if (g_strcmp0(deployment_stage, "checkout-tree") == 0){
+    g_string_append_printf(self->current_deployment_log, "checkout-tree-time: %s; ", timestamp_str);
+  }
+  else if (g_strcmp0(deployment_stage, "update-initramfs") == 0) {
+    g_string_append_printf(self->current_deployment_log, "update-initramfs-time: %s; ", timestamp_str);
+  }
+  else if (g_strcmp0(deployment_stage, "data-migration") == 0) {
+    g_string_append_printf(self->current_deployment_log, "deploy-time: %s; ", timestamp_str);
+  }
+  else if (g_strcmp0(deployment_stage, "finish") == 0) {
+    g_string_append_printf(self->current_deployment_log, "finish-time: %s; ", timestamp_str);
+    if (self->current_deployment_start_time != NULL) {
+      gint64 diff_microseconds = g_date_time_difference(now, self->current_deployment_start_time);
+      gint64 diff_seconds = diff_microseconds / G_TIME_SPAN_SECOND;
+      gint64 minutes = diff_seconds / 60;
+      gint64 seconds = diff_seconds % 60;
+      g_string_append_printf(self->current_deployment_log, "total-time: %" G_GINT64_FORMAT "m%" G_GINT64_FORMAT "s", minutes, seconds);
+    }
+    OstreeDeployment *deployment = deployments->pdata[0];
+    g_autofree char *metadata_key = g_strdup_printf("deployment-time-log-%d",ostree_deployment_get_deployserial (deployment));
+    g_variant_dict_insert_value(dict, metadata_key, g_variant_new_string(self->current_deployment_log->str));
+  }
+  else {
+    g_string_append_printf(self->current_deployment_log, "%s-time: %s", deployment_stage, timestamp_str);
+  }
+  g_autoptr(GVariant) new_meta = g_variant_dict_end(dict);
+  /* Write back the detached metadata */
+  if (!ostree_repo_write_commit_detached_metadata (repo, commit_checksum, new_meta, NULL, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+gboolean
+update_progress_deploy (OstreeAsyncProgress *progress, guint current_progress, guint total_progress,
+                           const gchar *status, gboolean is_completed)
+{ 
+  ostree_async_progress_set (
+      progress, "current-progress", "u", current_progress, "total-progress",
+      "u", total_progress, "is-completed", "b", is_completed,
+      "status", "s", "", NULL);
+  while (g_main_context_iteration (NULL, FALSE));
+  g_usleep (700000);
+  return TRUE;
+}
+
+/* Copy ownership, mode, and xattrs from source directory to destination */
+static gboolean
+dirfd_copy_attributes_and_xattrs (int src_parent_dfd, const char *src_name, int src_dfd,
+                                  int dest_dfd, OstreeSysrootDebugFlags flags,
+                                  GCancellable *cancellable, GError **error)
+{
+  g_autoptr (GVariant) xattrs = NULL;
+
+  /* Clone all xattrs first, so we get the SELinux security context
+   * right.  This will allow other users access if they have ACLs, but
+   * oh well.
+   */
+  if (!(flags & OSTREE_SYSROOT_DEBUG_NO_XATTRS))
+    {
+      if (!glnx_dfd_name_get_all_xattrs (src_parent_dfd, src_name, &xattrs, cancellable, error))
+        return FALSE;
+      if (!glnx_fd_set_all_xattrs (dest_dfd, xattrs, cancellable, error))
+        return FALSE;
+    }
+
+  struct stat src_stbuf;
+  if (!glnx_fstat (src_dfd, &src_stbuf, error))
+    return FALSE;
+  if (fchown (dest_dfd, src_stbuf.st_uid, src_stbuf.st_gid) != 0)
+    return glnx_throw_errno_prefix (error, "fchown");
+  if (fchmod (dest_dfd, src_stbuf.st_mode) != 0)
+    return glnx_throw_errno_prefix (error, "fchmod");
+
+  return TRUE;
+}
+
+static gint
+str_sort_cb (gconstpointer name_ptr_a, gconstpointer name_ptr_b)
+{
+  const gchar *name_a = *((const gchar **)name_ptr_a);
+  const gchar *name_b = *((const gchar **)name_ptr_b);
+
+  return g_strcmp0 (name_a, name_b);
+}
+
+static gboolean
+checksum_dir_recurse (int dfd, const char *path, OtChecksum *checksum, GCancellable *cancellable,
+                      GError **error)
+{
+  g_auto (GLnxDirFdIterator) dfditer = {
+    0,
+  };
+  g_autoptr (GPtrArray) d_entries = g_ptr_array_new_with_free_func (g_free);
+
+  if (!glnx_dirfd_iterator_init_at (dfd, path, TRUE, &dfditer, error))
+    return FALSE;
+
+  while (TRUE)
+    {
+      struct dirent *dent;
+
+      if (!glnx_dirfd_iterator_next_dent (&dfditer, &dent, cancellable, error))
+        return FALSE;
+
+      if (dent == NULL)
+        break;
+
+      g_ptr_array_add (d_entries, g_strdup (dent->d_name));
+    }
+
+  /* File systems do not guarantee dir entry order, make sure this is
+   * reproducable
+   */
+  g_ptr_array_sort (d_entries, str_sort_cb);
+
+  for (gint i = 0; i < d_entries->len; i++)
+    {
+      const gchar *d_name = (gchar *)g_ptr_array_index (d_entries, i);
+      struct stat stbuf;
+
+      if (!glnx_fstatat (dfditer.fd, d_name, &stbuf, AT_SYMLINK_NOFOLLOW, error))
+        return FALSE;
+
+      if (S_ISDIR (stbuf.st_mode))
+        {
+          if (!checksum_dir_recurse (dfditer.fd, d_name, checksum, cancellable, error))
+            return FALSE;
+        }
+      else
+        {
+          glnx_autofd int fd = -1;
+
+          if (!ot_openat_ignore_enoent (dfditer.fd, d_name, &fd, error))
+            return FALSE;
+          if (fd != -1)
+            {
+              g_autoptr (GInputStream) in = g_unix_input_stream_new (g_steal_fd (&fd), TRUE);
+              if (!ot_gio_splice_update_checksum (NULL, in, checksum, cancellable, error))
+                return FALSE;
+            }
+        }
+    }
+
+  return TRUE;
+}
+
+static gboolean
+copy_dir_recurse (int src_parent_dfd, int dest_parent_dfd, const char *name,
+                  OstreeSysrootDebugFlags flags, GCancellable *cancellable, GError **error)
+{
+  g_auto (GLnxDirFdIterator) src_dfd_iter = {
+    0,
+  };
+  glnx_autofd int dest_dfd = -1;
+  struct dirent *dent;
+
+  if (!glnx_dirfd_iterator_init_at (src_parent_dfd, name, TRUE, &src_dfd_iter, error))
+    return FALSE;
+
+  /* Create with mode 0700, we'll fchmod/fchown later */
+  if (!glnx_ensure_dir (dest_parent_dfd, name, 0700, error))
+    return FALSE;
+
+  if (!glnx_opendirat (dest_parent_dfd, name, TRUE, &dest_dfd, error))
+    return FALSE;
+
+  if (!dirfd_copy_attributes_and_xattrs (src_parent_dfd, name, src_dfd_iter.fd, dest_dfd, flags,
+                                         cancellable, error))
+    return glnx_prefix_error (error, "Copying attributes of %s", name);
+
+  while (TRUE)
+    {
+      struct stat child_stbuf;
+
+      if (!glnx_dirfd_iterator_next_dent (&src_dfd_iter, &dent, cancellable, error))
+        return FALSE;
+      if (dent == NULL)
+        break;
+
+      if (!glnx_fstatat (src_dfd_iter.fd, dent->d_name, &child_stbuf, AT_SYMLINK_NOFOLLOW, error))
+        return FALSE;
+
+      if (S_ISDIR (child_stbuf.st_mode))
+        {
+          if (!copy_dir_recurse (src_dfd_iter.fd, dest_dfd, dent->d_name, flags, cancellable,
+                                 error))
+            return FALSE;
+        }
+      else
+        {
+          if (S_ISLNK (child_stbuf.st_mode) || S_ISREG (child_stbuf.st_mode))
+            {
+              if (!glnx_file_copy_at (src_dfd_iter.fd, dent->d_name, &child_stbuf, dest_dfd,
+                                      dent->d_name,
+                                      sysroot_flags_to_copy_flags (GLNX_FILE_COPY_OVERWRITE, flags),
+                                      cancellable, error))
+                return glnx_prefix_error (error, "Copying %s", dent->d_name);
+            }
+          else
+            {
+              ot_journal_print (LOG_INFO,
+                                "Ignoring non-regular/non-symlink file found during /etc merge: %s",
+                                dent->d_name);
+            }
+        }
+    }
+
+  return TRUE;
+}
+
+/* If a chain of directories is added, this function will ensure
+ * they're created.
+ */
+static gboolean
+ensure_directory_from_template (int orig_etc_fd, int modified_etc_fd, int new_etc_fd,
+                                const char *path, int *out_dfd, OstreeSysrootDebugFlags flags,
+                                GCancellable *cancellable, GError **error)
+{
+  glnx_autofd int src_dfd = -1;
+  glnx_autofd int target_dfd = -1;
+
+  g_assert (path != NULL);
+  g_assert (*path != '/' && *path != '\0');
+
+  if (!glnx_opendirat (modified_etc_fd, path, TRUE, &src_dfd, error))
+    return FALSE;
+
+  /* Create with mode 0700, we'll fchmod/fchown later */
+again:
+  if (mkdirat (new_etc_fd, path, 0700) != 0)
+    {
+      if (errno == EEXIST)
+        {
+          /* Fall through */
+        }
+      else if (errno == ENOENT)
+        {
+          g_autofree char *parent_path = g_path_get_dirname (path);
+
+          if (strcmp (parent_path, ".") != 0)
+            {
+              if (!ensure_directory_from_template (orig_etc_fd, modified_etc_fd, new_etc_fd,
+                                                   parent_path, NULL, flags, cancellable, error))
+                return FALSE;
+
+              /* Loop */
+              goto again;
+            }
+          else
+            {
+              /* Fall through...shouldn't happen, but we'll propagate
+               * an error from open. */
+            }
+        }
+      else
+        return glnx_throw_errno_prefix (error, "mkdirat");
+    }
+
+  if (!glnx_opendirat (new_etc_fd, path, TRUE, &target_dfd, error))
+    return FALSE;
+
+  if (!dirfd_copy_attributes_and_xattrs (modified_etc_fd, path, src_dfd, target_dfd, flags,
+                                         cancellable, error))
+    return FALSE;
+
+  if (out_dfd)
+    *out_dfd = g_steal_fd (&target_dfd);
+  return TRUE;
+}
+
+/* Copy (relative) @path from @modified_etc_fd to @new_etc_fd, overwriting any
+ * existing file there. The @path may refer to a regular file, a symbolic link,
+ * or a directory. Directories will be copied recursively.
+ */
+static gboolean
+copy_modified_config_file (int orig_etc_fd, int modified_etc_fd, int new_etc_fd, const char *path,
+                           OstreeSysrootDebugFlags flags, GCancellable *cancellable, GError **error)
+{
+  struct stat modified_stbuf;
+  struct stat new_stbuf;
+
+  if (!glnx_fstatat (modified_etc_fd, path, &modified_stbuf, AT_SYMLINK_NOFOLLOW, error))
+    return glnx_prefix_error (error, "Reading modified config file");
+
+  glnx_autofd int dest_parent_dfd = -1;
+  if (strchr (path, '/') != NULL)
+    {
+      g_autofree char *parent = g_path_get_dirname (path);
+
+      if (!ensure_directory_from_template (orig_etc_fd, modified_etc_fd, new_etc_fd, parent,
+                                           &dest_parent_dfd, flags, cancellable, error))
+        return FALSE;
+    }
+  else
+    {
+      dest_parent_dfd = dup (new_etc_fd);
+      if (dest_parent_dfd == -1)
+        return glnx_throw_errno_prefix (error, "dup");
+    }
+
+  g_assert (dest_parent_dfd != -1);
+
+  if (fstatat (new_etc_fd, path, &new_stbuf, AT_SYMLINK_NOFOLLOW) < 0)
+    {
+      if (errno != ENOENT)
+        return glnx_throw_errno_prefix (error, "fstatat");
+    }
+  else if (S_ISDIR (new_stbuf.st_mode))
+    {
+      if (!S_ISDIR (modified_stbuf.st_mode))
+        {
+          return g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                              _("Modified config file newly defaults to directory '%s', cannot merge"),
+                              path),
+                 FALSE;
+        }
+      else
+        {
+          /* Do nothing here - we assume that we've already
+           * recursively copied the parent directory.
+           */
+          return TRUE;
+        }
+    }
+  else
+    {
+      if (!glnx_unlinkat (new_etc_fd, path, 0, error))
+        return FALSE;
+    }
+
+  if (S_ISDIR (modified_stbuf.st_mode))
+    {
+      if (!copy_dir_recurse (modified_etc_fd, new_etc_fd, path, flags, cancellable, error))
+        return FALSE;
+    }
+  else if (S_ISLNK (modified_stbuf.st_mode) || S_ISREG (modified_stbuf.st_mode))
+    {
+      if (!glnx_file_copy_at (modified_etc_fd, path, &modified_stbuf, new_etc_fd, path,
+                              sysroot_flags_to_copy_flags (GLNX_FILE_COPY_OVERWRITE, flags),
+                              cancellable, error))
+        return glnx_prefix_error (error, "Copying %s", path);
+    }
+  else
+    {
+      ot_journal_print (LOG_INFO,
+                        "Ignoring non-regular/non-symlink file found during /etc merge: %s", path);
+    }
+
+  return TRUE;
+}
+
+/*
+ * merge_configuration_from:
+ * @sysroot: Sysroot
+ * @merge_deployment: Source of configuration differences
+ * @new_deployment: Target for merge of configuration
+ * @new_deployment_dfd: Directory fd for @new_deployment (may *not* be -1)
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Compute the difference between @merge_deployment's `/usr/etc` and `/etc`, and
+ * apply that to @new_deployment's `/etc`.
+ *
+ * The algorithm for computing the difference is pretty simple; it's
+ * approximately equivalent to "diff -unR orig_etc modified_etc",
+ * except that rather than attempting a 3-way merge if a file is also
+ * changed in @new_etc, the modified version always wins.
+ */
+static gboolean
+merge_configuration_from (OstreeSysroot *sysroot, OstreeDeployment *merge_deployment,
+                          OstreeDeployment *new_deployment, int new_deployment_dfd,
+                          GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("During /etc merge", error);
+  const OstreeSysrootDebugFlags flags = sysroot->debug_flags;
+
+  g_assert (merge_deployment != NULL && new_deployment != NULL);
+  g_assert (new_deployment_dfd != -1);
+
+  g_autofree char *merge_deployment_path
+      = ostree_sysroot_get_deployment_dirpath (sysroot, merge_deployment);
+  glnx_autofd int merge_deployment_dfd = -1;
+  if (!glnx_opendirat (sysroot->sysroot_fd, merge_deployment_path, FALSE, &merge_deployment_dfd,
+                       error))
+    return FALSE;
+
+  /* TODO: get rid of GFile usage here */
+  g_autoptr (GFile) orig_etc = ot_fdrel_to_gfile (merge_deployment_dfd, "usr/etc");
+  g_autoptr (GFile) modified_etc = ot_fdrel_to_gfile (merge_deployment_dfd, "etc");
+  /* Return values for below */
+  g_autoptr (GPtrArray) modified
+      = g_ptr_array_new_with_free_func ((GDestroyNotify)ostree_diff_item_unref);
+  g_autoptr (GPtrArray) removed = g_ptr_array_new_with_free_func ((GDestroyNotify)g_object_unref);
+  g_autoptr (GPtrArray) added = g_ptr_array_new_with_free_func ((GDestroyNotify)g_object_unref);
+  /* For now, ignore changes to xattrs; the problem is that
+   * security.selinux will be different between the /usr/etc labels
+   * and the ones in the real /etc, so they all show up as different.
+   *
+   * This means that if you want to change the security context of a
+   * file, to have that change persist across upgrades, you must also
+   * modify the content of the file.
+   */
+  if (!ostree_diff_dirs (OSTREE_DIFF_FLAGS_IGNORE_XATTRS, orig_etc, modified_etc, modified, removed,
+                         added, cancellable, error))
+    return glnx_prefix_error (error, "While computing configuration diff");
+
+  {
+    g_autofree char *msg
+        = g_strdup_printf ("Copying /etc changes: %u modified, %u removed, %u added", modified->len,
+                           removed->len, added->len);
+    ot_journal_send ("MESSAGE_ID=" SD_ID128_FORMAT_STR, SD_ID128_FORMAT_VAL (OSTREE_CONFIGMERGE_ID),
+                     "MESSAGE=%s", msg, "ETC_N_MODIFIED=%u", modified->len, "ETC_N_REMOVED=%u",
+                     removed->len, "ETC_N_ADDED=%u", added->len, NULL);
+    _ostree_sysroot_emit_journal_msg (sysroot, msg);
+  }
+
+  glnx_autofd int orig_etc_fd = -1;
+  if (!glnx_opendirat (merge_deployment_dfd, "usr/etc", TRUE, &orig_etc_fd, error))
+    return FALSE;
+  glnx_autofd int modified_etc_fd = -1;
+  if (!glnx_opendirat (merge_deployment_dfd, "etc", TRUE, &modified_etc_fd, error))
+    return FALSE;
+  glnx_autofd int new_etc_fd = -1;
+  if (!glnx_opendirat (new_deployment_dfd, "etc", TRUE, &new_etc_fd, error))
+    return FALSE;
+
+  for (guint i = 0; i < removed->len; i++)
+    {
+      GFile *file = removed->pdata[i];
+      g_autofree char *path = NULL;
+
+      path = g_file_get_relative_path (orig_etc, file);
+      g_assert (path);
+
+      if (!glnx_shutil_rm_rf_at (new_etc_fd, path, cancellable, error))
+        return FALSE;
+    }
+
+  for (guint i = 0; i < modified->len; i++)
+    {
+      OstreeDiffItem *diff = modified->pdata[i];
+      g_autofree char *path = g_file_get_relative_path (modified_etc, diff->target);
+
+      g_assert (path);
+
+      if (!copy_modified_config_file (orig_etc_fd, modified_etc_fd, new_etc_fd, path, flags,
+                                      cancellable, error))
+        return FALSE;
+    }
+  for (guint i = 0; i < added->len; i++)
+    {
+      GFile *file = added->pdata[i];
+      g_autofree char *path = g_file_get_relative_path (modified_etc, file);
+
+      g_assert (path);
+
+      if (!copy_modified_config_file (orig_etc_fd, modified_etc_fd, new_etc_fd, path, flags,
+                                      cancellable, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+#ifdef HAVE_COMPOSEFS
+static gboolean
+compare_verity_digests (GVariant *metadata_composefs, const guchar *fsverity_digest, GError **error)
+{
+  const guchar *expected_digest;
+
+  if (metadata_composefs == NULL)
+    return TRUE;
+
+  if (g_variant_n_children (metadata_composefs) != OSTREE_SHA256_DIGEST_LEN)
+    return glnx_throw (error, "Expected composefs fs-verity in metadata has the wrong size");
+
+  expected_digest = g_variant_get_data (metadata_composefs);
+  if (memcmp (fsverity_digest, expected_digest, OSTREE_SHA256_DIGEST_LEN) != 0)
+    {
+      char actual_checksum[OSTREE_SHA256_STRING_LEN + 1];
+      char expected_checksum[OSTREE_SHA256_STRING_LEN + 1];
+
+      ostree_checksum_inplace_from_bytes (fsverity_digest, actual_checksum);
+      ostree_checksum_inplace_from_bytes (expected_digest, expected_checksum);
+
+      return glnx_throw (error,
+                         "Generated composefs image digest (%s) doesn't match expected digest (%s)",
+                         actual_checksum, expected_checksum);
+    }
+
+  return TRUE;
+}
+
+#endif
+
+/* Look up @revision in the repository, and check it out in
+ * /ostree/deploy/OS/deploy/${treecsum}.${deployserial}.
+ * A dfd for the result is returned in @out_deployment_dfd.
+ */
+static gboolean
+checkout_deployment_tree (OstreeSysroot *sysroot, OstreeAsyncProgress *progress, OstreeRepo *repo, OstreeDeployment *deployment,
+                          const char *revision, int *out_deployment_dfd, GCancellable *cancellable,
+                          GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Checking out deployment tree", error);
+  /* Find the directory with deployments for this stateroot */
+  g_autofree char *osdeploy_path
+      = g_strconcat ("ostree/deploy/", ostree_deployment_get_osname (deployment), "/deploy", NULL);
+  if (!glnx_shutil_mkdir_p_at (sysroot->sysroot_fd, osdeploy_path, 0775, cancellable, error))
+    return FALSE;
+
+  glnx_autofd int osdeploy_dfd = -1;
+  if (!glnx_opendirat (sysroot->sysroot_fd, osdeploy_path, TRUE, &osdeploy_dfd, error))
+    return FALSE;
+
+  /* Clean up anything that was there before, from e.g. an interrupted checkout */
+  const char *csum = ostree_deployment_get_csum (deployment);
+  g_autofree char *checkout_target_name
+      = g_strdup_printf ("%s.%d", csum, ostree_deployment_get_deployserial (deployment));
+  if (!glnx_shutil_rm_rf_at (osdeploy_dfd, checkout_target_name, cancellable, error))
+    return FALSE;
+  if(progress) update_progress_deploy(progress, 18, 100, "Processing...", FALSE);
+  /* Generate hardlink farm, then opendir it */
+  OstreeRepoCheckoutAtOptions checkout_opts = { .process_passthrough_whiteouts = TRUE };
+
+  if (!ostree_repo_checkout_at (repo, &checkout_opts, osdeploy_dfd, checkout_target_name, csum,
+                                cancellable, error))
+    return FALSE;
+
+  glnx_autofd int ret_deployment_dfd = -1;
+  if (!glnx_opendirat (osdeploy_dfd, checkout_target_name, TRUE, &ret_deployment_dfd, error))
+    return FALSE;
+
+#ifdef HAVE_COMPOSEFS
+  /* TODO: Consider changing things in the future to parse the deployment config from memory, and
+   * if composefs is enabled, then we can check out in "user mode" (i.e. only have suid binaries
+   * enabled in composefs, etc.)
+   *
+   * However in practice we should get this for free by going to composefs-native backing
+   * storage.
+   */
+  g_autoptr (GKeyFile) prepare_root_config
+      = otcore_load_config (ret_deployment_dfd, PREPARE_ROOT_CONFIG_PATH, error);
+  if (!prepare_root_config)
+    return glnx_prefix_error (error, _("Parsing prepare-root config"));
+  // We always parse the composefs config, because we want to detect and error
+  // out if it's enabled, but not supported at compile time.
+  // However, we don't load the keys here, because they may not exist, such
+  // as in the initial deploy
+  g_autoptr (ComposefsConfig) composefs_config
+      = otcore_load_composefs_config (prepare_root_config, FALSE, error);
+  if (!composefs_config)
+    return glnx_prefix_error (error, "Reading composefs config");
+
+  OtTristate composefs_enabled = composefs_config->enabled;
+  g_debug ("composefs enabled by config: %d repo: %d", composefs_enabled, repo->composefs_wanted);
+  if (repo->composefs_wanted == OT_TRISTATE_YES)
+    composefs_enabled = repo->composefs_wanted;
+  if (composefs_enabled == OT_TRISTATE_YES)
+    {
+      g_autofree guchar *fsverity_digest = NULL;
+      g_auto (GLnxTmpfile) tmpf = {
+        0,
+      };
+      g_autoptr (GVariant) commit_variant = NULL;
+
+      if (!ostree_repo_load_commit (repo, revision, &commit_variant, NULL, error))
+        return FALSE;
+
+      g_autoptr (GVariant) metadata = g_variant_get_child_value (commit_variant, 0);
+      g_autoptr (GVariant) metadata_composefs = g_variant_lookup_value (
+          metadata, OSTREE_COMPOSEFS_DIGEST_KEY_V0, G_VARIANT_TYPE_BYTESTRING);
+
+      /* Create a composefs image and put in deploy dir */
+      g_autoptr (OstreeComposefsTarget) target = ostree_composefs_target_new ();
+
+      g_autoptr (GFile) commit_root = NULL;
+      if (!ostree_repo_read_commit (repo, csum, &commit_root, NULL, cancellable, error))
+        return FALSE;
+
+      if (!ostree_repo_checkout_composefs (repo, target, (OstreeRepoFile *)commit_root, cancellable,
+                                           error))
+        return FALSE;
+
+      g_autofree char *composefs_cfs_path
+          = g_strdup_printf ("%s/" OSTREE_COMPOSEFS_NAME, checkout_target_name);
+
+      g_debug ("writing %s", composefs_cfs_path);
+
+      if (!glnx_open_tmpfile_linkable_at (osdeploy_dfd, checkout_target_name, O_WRONLY | O_CLOEXEC,
+                                          &tmpf, error))
+        return FALSE;
+
+      if (!ostree_composefs_target_write (target, tmpf.fd, &fsverity_digest, cancellable, error))
+        return FALSE;
+
+      /* If the commit specified a composefs digest, verify it */
+      if (!compare_verity_digests (metadata_composefs, fsverity_digest, error))
+        return FALSE;
+
+      if (!glnx_fchmod (tmpf.fd, 0644, error))
+        return FALSE;
+
+      if (!_ostree_tmpf_fsverity (repo, &tmpf, NULL, error))
+        return FALSE;
+
+      if (!glnx_link_tmpfile_at (&tmpf, GLNX_LINK_TMPFILE_REPLACE, osdeploy_dfd, composefs_cfs_path,
+                                 error))
+        return FALSE;
+    }
+  else
+    g_debug ("not using composefs");
+#endif
+
+  if (out_deployment_dfd)
+    *out_deployment_dfd = glnx_steal_fd (&ret_deployment_dfd);
+  return TRUE;
+}
+
+static char *
+ptrarray_path_join (GPtrArray *path)
+{
+  GString *path_buf;
+
+  path_buf = g_string_new ("");
+
+  if (path->len == 0)
+    g_string_append_c (path_buf, '/');
+  else
+    {
+      guint i;
+      for (i = 0; i < path->len; i++)
+        {
+          const char *elt = path->pdata[i];
+
+          g_string_append_c (path_buf, '/');
+          g_string_append (path_buf, elt);
+        }
+    }
+
+  return g_string_free (path_buf, FALSE);
+}
+
+static gboolean
+relabel_one_path (OstreeSysroot *sysroot, OstreeSePolicy *sepolicy, GFile *path, GFileInfo *info,
+                  GPtrArray *path_parts, GCancellable *cancellable, GError **error)
+{
+  gboolean ret = FALSE;
+  g_autofree char *relpath = NULL;
+
+  relpath = ptrarray_path_join (path_parts);
+  if (!ostree_sepolicy_restorecon (sepolicy, relpath, info, path,
+                                   OSTREE_SEPOLICY_RESTORECON_FLAGS_ALLOW_NOLABEL, NULL,
+                                   cancellable, error))
+    goto out;
+
+  ret = TRUE;
+out:
+  return ret;
+}
+
+static gboolean
+relabel_recursively (OstreeSysroot *sysroot, OstreeSePolicy *sepolicy, GFile *dir,
+                     GFileInfo *dir_info, GPtrArray *path_parts, GCancellable *cancellable,
+                     GError **error)
+{
+  gboolean ret = FALSE;
+  g_autoptr (GFileEnumerator) direnum = NULL;
+
+  if (!relabel_one_path (sysroot, sepolicy, dir, dir_info, path_parts, cancellable, error))
+    goto out;
+
+  direnum = g_file_enumerate_children (dir, OSTREE_GIO_FAST_QUERYINFO,
+                                       G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, error);
+  if (!direnum)
+    goto out;
+
+  while (TRUE)
+    {
+      GFileInfo *file_info;
+      GFile *child;
+      GFileType ftype;
+
+      if (!g_file_enumerator_iterate (direnum, &file_info, &child, cancellable, error))
+        goto out;
+      if (file_info == NULL)
+        break;
+
+      g_ptr_array_add (path_parts, (char *)g_file_info_get_name (file_info));
+
+      ftype = g_file_info_get_file_type (file_info);
+      if (ftype == G_FILE_TYPE_DIRECTORY)
+        {
+          if (!relabel_recursively (sysroot, sepolicy, child, file_info, path_parts, cancellable,
+                                    error))
+            goto out;
+        }
+      else
+        {
+          if (!relabel_one_path (sysroot, sepolicy, child, file_info, path_parts, cancellable,
+                                 error))
+            goto out;
+        }
+
+      g_ptr_array_remove_index (path_parts, path_parts->len - 1);
+    }
+
+  ret = TRUE;
+out:
+  return ret;
+}
+
+static gboolean
+selinux_relabel_dir (OstreeSysroot *sysroot, OstreeSePolicy *sepolicy, GFile *dir,
+                     const char *prefix, GCancellable *cancellable, GError **error)
+{
+
+  g_autoptr (GFileInfo) root_info = g_file_query_info (
+      dir, OSTREE_GIO_FAST_QUERYINFO, G_FILE_QUERY_INFO_NOFOLLOW_SYMLINKS, cancellable, error);
+  if (!root_info)
+    return FALSE;
+
+  g_autoptr (GPtrArray) path_parts = g_ptr_array_new ();
+  g_ptr_array_add (path_parts, (char *)prefix);
+  if (!relabel_recursively (sysroot, sepolicy, dir, root_info, path_parts, cancellable, error))
+    return glnx_prefix_error (error, "Relabeling /%s", prefix);
+
+  return TRUE;
+}
+
+/* Handles SELinux labeling for /var; this is slated to be deleted.  See
+ * https://github.com/ostreedev/ostree/pull/872
+ */
+static gboolean
+selinux_relabel_var_if_needed (OstreeSysroot *sysroot, OstreeSePolicy *sepolicy, int os_deploy_dfd,
+                               GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Relabeling /var", error);
+  /* This is a bit of a hack; we should change the code at some
+   * point in the distant future to only create (and label) /var
+   * when doing a deployment.
+   */
+  const char selabeled[] = "var/.ostree-selabeled";
+  struct stat stbuf;
+  if (!glnx_fstatat_allow_noent (os_deploy_dfd, selabeled, &stbuf, AT_SYMLINK_NOFOLLOW, error))
+    return FALSE;
+  if (errno == ENOENT)
+    {
+      {
+        g_autofree char *msg
+            = g_strdup_printf ("Relabeling /var (no stamp file '%s' found)", selabeled);
+        ot_journal_send ("MESSAGE_ID=" SD_ID128_FORMAT_STR,
+                         SD_ID128_FORMAT_VAL (OSTREE_VARRELABEL_ID), "MESSAGE=%s", msg, NULL);
+        _ostree_sysroot_emit_journal_msg (sysroot, msg);
+      }
+
+      g_autoptr (GFile) deployment_var_path = ot_fdrel_to_gfile (os_deploy_dfd, "var");
+      if (!selinux_relabel_dir (sysroot, sepolicy, deployment_var_path, "var", cancellable, error))
+        {
+          g_prefix_error (error, "Relabeling /var: ");
+          return FALSE;
+        }
+
+      {
+        g_auto (OstreeSepolicyFsCreatecon) con = {
+          0,
+        };
+        const char *selabeled_abspath = glnx_strjoina ("/", selabeled);
+
+        if (!_ostree_sepolicy_preparefscreatecon (&con, sepolicy, selabeled_abspath, 0644, error))
+          return FALSE;
+
+        if (!glnx_file_replace_contents_at (os_deploy_dfd, selabeled, (guint8 *)"", 0,
+                                            GLNX_FILE_REPLACE_DATASYNC_NEW, cancellable, error))
+          return FALSE;
+      }
+    }
+
+  return TRUE;
+}
+
+/* Handle initial creation of /etc in the deployment. See also
+ * merge_configuration_from().
+ */
+static gboolean
+prepare_deployment_etc (OstreeSysroot *sysroot, OstreeAsyncProgress *progress, OstreeRepo *repo, OstreeDeployment *deployment,
+                        int deployment_dfd, GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Preparing /etc", error);
+
+  enum DirectoryState
+  {
+    DIRSTATE_NONEXISTENT,
+    DIRSTATE_EMPTY,
+    DIRSTATE_POPULATED,
+  };
+
+  enum DirectoryState etc_state;
+  {
+    gboolean exists = FALSE;
+    g_auto (GLnxDirFdIterator) dfd_iter = {
+      0,
+    };
+    if (!ot_dfd_iter_init_allow_noent (deployment_dfd, "etc", &dfd_iter, &exists, error))
+      return glnx_prefix_error (error, _("Failed to stat etc in deployment"));
+    if (!exists)
+      {
+        etc_state = DIRSTATE_NONEXISTENT;
+      }
+    else
+      {
+        struct dirent *dent;
+        if (!glnx_dirfd_iterator_next_dent (&dfd_iter, &dent, NULL, error))
+          return FALSE;
+        if (dent)
+          etc_state = DIRSTATE_POPULATED;
+        else
+          etc_state = DIRSTATE_EMPTY;
+      }
+  }
+  if(progress) update_progress_deploy(progress, 30, 100, "Processing...", FALSE);
+  struct stat stbuf;
+  if (!glnx_fstatat_allow_noent (deployment_dfd, "usr/etc", &stbuf, AT_SYMLINK_NOFOLLOW, error))
+    return FALSE;
+  gboolean usretc_exists = (errno == 0);
+
+  switch (etc_state)
+    {
+    case DIRSTATE_NONEXISTENT:
+      break;
+    case DIRSTATE_EMPTY:
+      {
+        if (usretc_exists)
+          {
+            /* For now it's actually simpler to just remove the empty directory
+             * and have a symmetrical code path.
+             */
+            if (unlinkat (deployment_dfd, "etc", AT_REMOVEDIR) < 0)
+              return glnx_throw_errno_prefix (error, _("Failed to remove empty etc"));
+            etc_state = DIRSTATE_NONEXISTENT;
+          }
+        /* Otherwise, there's no /etc or /usr/etc, we'll assume they know what they're doing... */
+      }
+      break;
+    case DIRSTATE_POPULATED:
+      {
+        if (usretc_exists)
+          {
+            return glnx_throw (error, _("Tree contains both /etc and /usr/etc"));
+          }
+        else
+          {
+            /* Compatibility hack */
+            if (!glnx_renameat (deployment_dfd, "etc", deployment_dfd, "usr/etc", error))
+              return FALSE;
+            etc_state = DIRSTATE_NONEXISTENT;
+            usretc_exists = TRUE;
+          }
+      }
+      break;
+    }
+  if(progress) update_progress_deploy(progress, 32, 100, "Processing...", FALSE);
+  if (usretc_exists)
+    {
+      g_assert (etc_state == DIRSTATE_NONEXISTENT);
+      /* We need copies of /etc from /usr/etc (so admins can use vi), and if
+       * SELinux is enabled, we need to relabel.
+       */
+      OstreeRepoCheckoutAtOptions etc_co_opts
+          = { .force_copy = TRUE, .subpath = "/usr/etc", .sepolicy_prefix = "/etc" };
+
+      /* Here, we initialize SELinux policy from the /usr/etc inside
+       * the root - this is before we've finalized the configuration
+       * merge into /etc. */
+      g_autoptr (OstreeSePolicy) sepolicy
+          = ostree_sepolicy_new_at (deployment_dfd, cancellable, error);
+      if (!sepolicy)
+      {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Failed to initialize SELinux policy for deployment"));
+        return FALSE;
+      }
+      if(progress) update_progress_deploy(progress, 33, 100, "Processing...", FALSE);
+
+      if (ostree_sepolicy_get_name (sepolicy) != NULL)
+        etc_co_opts.sepolicy = sepolicy;
+
+      /* Copy usr/etc → etc */
+      if (!ostree_repo_checkout_at (repo, &etc_co_opts, deployment_dfd, "etc",
+                                    ostree_deployment_get_csum (deployment), cancellable, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/* Write the origin file for a deployment; this does not bump the mtime, under
+ * the assumption the caller may be writing multiple.
+ */
+static gboolean
+write_origin_file_internal (OstreeSysroot *sysroot, OstreeSePolicy *sepolicy,
+                            OstreeDeployment *deployment, GKeyFile *new_origin,
+                            GLnxFileReplaceFlags flags, GCancellable *cancellable, GError **error)
+{
+  if (!_ostree_sysroot_ensure_writable (sysroot, error))
+    return FALSE;
+
+  GLNX_AUTO_PREFIX_ERROR ("Writing out origin file", error);
+  GKeyFile *origin = new_origin ? new_origin : ostree_deployment_get_origin (deployment);
+
+  if (origin)
+    {
+      g_auto (OstreeSepolicyFsCreatecon) con = {
+        0,
+      };
+      if (!_ostree_sepolicy_preparefscreatecon (&con, sepolicy, "/etc/ostree/remotes.d/dummy.conf",
+                                                0644, error))
+        return FALSE;
+
+      g_autofree char *origin_path = g_strdup_printf (
+          "ostree/deploy/%s/deploy/%s.%d.origin", ostree_deployment_get_osname (deployment),
+          ostree_deployment_get_csum (deployment), ostree_deployment_get_deployserial (deployment));
+
+      gsize len;
+      g_autofree char *contents = g_key_file_to_data (origin, &len, error);
+      if (!contents)
+        return FALSE;
+
+      if (!glnx_file_replace_contents_at (sysroot->sysroot_fd, origin_path, (guint8 *)contents, len,
+                                          flags, cancellable, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_write_origin_file:
+ * @sysroot: System root
+ * @deployment: Deployment
+ * @new_origin: (allow-none): Origin content
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Immediately replace the origin file of the referenced @deployment
+ * with the contents of @new_origin.  If @new_origin is %NULL,
+ * this function will write the current origin of @deployment.
+ */
+gboolean
+ostree_sysroot_write_origin_file (OstreeSysroot *sysroot, OstreeDeployment *deployment,
+                                  GKeyFile *new_origin, GCancellable *cancellable, GError **error)
+{
+  g_autoptr (GFile) rootfs = g_file_new_for_path ("/");
+  g_autoptr (OstreeSePolicy) sepolicy = ostree_sepolicy_new (rootfs, cancellable, error);
+  if (!sepolicy)
+    return FALSE;
+
+  if (!write_origin_file_internal (sysroot, sepolicy, deployment, new_origin,
+                                   GLNX_FILE_REPLACE_DATASYNC_NEW, cancellable, error))
+    return FALSE;
+
+  if (!_ostree_sysroot_bump_mtime (sysroot, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+typedef struct
+{
+  int boot_dfd;
+  char *kernel_srcpath;
+  char *kernel_namever;
+  char *kernel_hmac_srcpath;
+  char *kernel_hmac_namever;
+  char *initramfs_srcpath;
+  char *initramfs_namever;
+  char *devicetree_srcpath;
+  char *devicetree_namever;
+  char *aboot_srcpath;
+  char *aboot_namever;
+  char *bootcsum;
+} OstreeKernelLayout;
+static void
+_ostree_kernel_layout_free (OstreeKernelLayout *layout)
+{
+  glnx_close_fd (&layout->boot_dfd);
+  g_free (layout->kernel_srcpath);
+  g_free (layout->kernel_namever);
+  g_free (layout->kernel_hmac_srcpath);
+  g_free (layout->kernel_hmac_namever);
+  g_free (layout->initramfs_srcpath);
+  g_free (layout->initramfs_namever);
+  g_free (layout->devicetree_srcpath);
+  g_free (layout->devicetree_namever);
+  g_free (layout->aboot_srcpath);
+  g_free (layout->aboot_namever);
+  g_free (layout->bootcsum);
+  g_free (layout);
+}
+G_DEFINE_AUTOPTR_CLEANUP_FUNC (OstreeKernelLayout, _ostree_kernel_layout_free);
+
+static OstreeKernelLayout *
+_ostree_kernel_layout_new (void)
+{
+  OstreeKernelLayout *ret = g_new0 (OstreeKernelLayout, 1);
+  ret->boot_dfd = -1;
+  return ret;
+}
+
+/* See get_kernel_from_tree() below */
+static gboolean
+get_kernel_from_tree_usrlib_modules (OstreeSysroot *sysroot, int deployment_dfd,
+                                     OstreeKernelLayout **out_layout, GCancellable *cancellable,
+                                     GError **error)
+{
+  g_autofree char *kver = NULL;
+  /* Look in usr/lib/modules */
+  g_auto (GLnxDirFdIterator) mod_dfditer = {
+    0,
+  };
+  gboolean exists;
+  if (!ot_dfd_iter_init_allow_noent (deployment_dfd, "usr/lib/modules", &mod_dfditer, &exists,
+                                     error))
+    return FALSE;
+  if (!exists)
+    {
+      /* No usr/lib/modules?  We're done */
+      *out_layout = NULL;
+      return TRUE;
+    }
+
+  g_autoptr (OstreeKernelLayout) ret_layout = _ostree_kernel_layout_new ();
+
+  /* Reusable buffer for path string */
+  g_autoptr (GString) pathbuf = g_string_new ("");
+  /* Loop until we find something that looks like a valid /usr/lib/modules/$kver */
+  while (ret_layout->boot_dfd == -1)
+    {
+      struct dirent *dent;
+      struct stat stbuf;
+
+      if (!glnx_dirfd_iterator_next_dent_ensure_dtype (&mod_dfditer, &dent, cancellable, error))
+        return FALSE;
+      if (dent == NULL)
+        break;
+      if (dent->d_type != DT_DIR)
+        continue;
+
+      /* It's a directory, look for /vmlinuz as a regular file */
+      g_string_truncate (pathbuf, 0);
+      g_string_append_printf (pathbuf, "%s/vmlinuz", dent->d_name);
+      if (fstatat (mod_dfditer.fd, pathbuf->str, &stbuf, 0) < 0)
+        {
+          if (errno != ENOENT)
+            return glnx_throw_errno_prefix (error, "fstatat(%s)", pathbuf->str);
+          else
+            continue;
+        }
+      else
+        {
+          /* Not a regular file? Loop again */
+          if (!S_ISREG (stbuf.st_mode))
+            continue;
+        }
+
+      /* Looks valid, this should exit the loop */
+      if (!glnx_opendirat (mod_dfditer.fd, dent->d_name, FALSE, &ret_layout->boot_dfd, error))
+        return FALSE;
+      kver = g_strdup (dent->d_name);
+      ret_layout->kernel_srcpath = g_strdup ("vmlinuz");
+      ret_layout->kernel_namever = g_strdup_printf ("vmlinuz-%s", kver);
+    }
+
+  if (ret_layout->boot_dfd == -1)
+    {
+      *out_layout = NULL;
+      /* No kernel found?  We're done. */
+      return TRUE;
+    }
+
+  /* We found a module directory, compute the checksum */
+  g_auto (OtChecksum) checksum = {
+    0,
+  };
+  ot_checksum_init (&checksum);
+  glnx_autofd int fd = -1;
+  /* Checksum the kernel */
+  if (!glnx_openat_rdonly (ret_layout->boot_dfd, "vmlinuz", TRUE, &fd, error))
+    return FALSE;
+  g_autoptr (GInputStream) in = g_unix_input_stream_new (fd, FALSE);
+  if (!ot_gio_splice_update_checksum (NULL, in, &checksum, cancellable, error))
+    return FALSE;
+  g_clear_object (&in);
+  glnx_close_fd (&fd);
+
+  /* Look for an initramfs, but it's optional; since there wasn't any precedent
+   * for this, let's be a bit conservative and support both `initramfs.img` and
+   * `initramfs`.
+   */
+  const char *initramfs_paths[] = { "initramfs.img", "initramfs" };
+  const char *initramfs_path = NULL;
+  for (guint i = 0; i < G_N_ELEMENTS (initramfs_paths); i++)
+    {
+      initramfs_path = initramfs_paths[i];
+      if (!ot_openat_ignore_enoent (ret_layout->boot_dfd, initramfs_path, &fd, error))
+        return FALSE;
+      if (fd != -1)
+        break;
+      else
+        initramfs_path = NULL;
+    }
+  if (fd != -1)
+    {
+      g_assert (initramfs_path);
+      ret_layout->initramfs_srcpath = g_strdup (initramfs_path);
+      ret_layout->initramfs_namever = g_strdup_printf ("initramfs-%s.img", kver);
+      in = g_unix_input_stream_new (fd, FALSE);
+      if (!ot_gio_splice_update_checksum (NULL, in, &checksum, cancellable, error))
+        return FALSE;
+    }
+  g_clear_object (&in);
+  glnx_close_fd (&fd);
+
+  /* look for a aboot.img file. */
+  if (!ot_openat_ignore_enoent (ret_layout->boot_dfd, "aboot.img", &fd, error))
+    return FALSE;
+
+  if (fd != -1)
+    {
+      ret_layout->aboot_srcpath = g_strdup ("aboot.img");
+      ret_layout->aboot_namever = g_strdup_printf ("aboot-%s.img", kver);
+    }
+  glnx_close_fd (&fd);
+
+  /* look for a aboot.cfg file. */
+  if (!ot_openat_ignore_enoent (ret_layout->boot_dfd, "aboot.cfg", &fd, error))
+    return FALSE;
+
+  /* Testing aid for https://github.com/ostreedev/ostree/issues/2154 */
+  const gboolean no_dtb = (sysroot->debug_flags & OSTREE_SYSROOT_DEBUG_TEST_NO_DTB) > 0;
+  if (!no_dtb)
+    {
+      /* Check for /usr/lib/modules/$kver/devicetree first, if it does not
+       * exist check for /usr/lib/modules/$kver/dtb/ directory.
+       */
+      if (!ot_openat_ignore_enoent (ret_layout->boot_dfd, "devicetree", &fd, error))
+        return FALSE;
+      if (fd != -1)
+        {
+          ret_layout->devicetree_srcpath = g_strdup ("devicetree");
+          ret_layout->devicetree_namever = g_strdup_printf ("devicetree-%s", kver);
+          in = g_unix_input_stream_new (fd, FALSE);
+          if (!ot_gio_splice_update_checksum (NULL, in, &checksum, cancellable, error))
+            return FALSE;
+        }
+      else
+        {
+          struct stat stbuf;
+          /* Check for dtb directory */
+          if (!glnx_fstatat_allow_noent (ret_layout->boot_dfd, "dtb", &stbuf, 0, error))
+            return FALSE;
+
+          if (errno == 0 && S_ISDIR (stbuf.st_mode))
+            {
+              /* devicetree_namever set to NULL indicates a complete directory */
+              ret_layout->devicetree_srcpath = g_strdup ("dtb");
+              ret_layout->devicetree_namever = NULL;
+
+              if (!checksum_dir_recurse (ret_layout->boot_dfd, "dtb", &checksum, cancellable,
+                                         error))
+                return FALSE;
+            }
+        }
+    }
+  g_clear_object (&in);
+  glnx_close_fd (&fd);
+
+  /* And finally, look for any HMAC file. This is needed for FIPS mode on some distros. */
+  if (!glnx_fstatat_allow_noent (ret_layout->boot_dfd, ".vmlinuz.hmac", NULL, 0, error))
+    return FALSE;
+  if (errno == 0)
+    {
+      ret_layout->kernel_hmac_srcpath = g_strdup (".vmlinuz.hmac");
+      /* Name it as dracut expects it:
+       * https://github.com/dracutdevs/dracut/blob/225e4b94cbdb702cf512490dcd2ad9ca5f5b22c1/modules.d/01fips/fips.sh#L129
+       */
+      ret_layout->kernel_hmac_namever = g_strdup_printf (".%s.hmac", ret_layout->kernel_namever);
+    }
+
+  char hexdigest[OSTREE_SHA256_STRING_LEN + 1];
+  ot_checksum_get_hexdigest (&checksum, hexdigest, sizeof (hexdigest));
+  ret_layout->bootcsum = g_strdup (hexdigest);
+
+  *out_layout = g_steal_pointer (&ret_layout);
+  return TRUE;
+}
+
+/* See get_kernel_from_tree() below */
+static gboolean
+get_kernel_from_tree_legacy_layouts (int deployment_dfd, OstreeKernelLayout **out_layout,
+                                     GCancellable *cancellable, GError **error)
+{
+  const char *legacy_paths[] = { "usr/lib/ostree-boot", "boot" };
+  g_autofree char *kernel_checksum = NULL;
+  g_autofree char *initramfs_checksum = NULL;
+  g_autofree char *devicetree_checksum = NULL;
+  g_autoptr (OstreeKernelLayout) ret_layout = _ostree_kernel_layout_new ();
+
+  for (guint i = 0; i < G_N_ELEMENTS (legacy_paths); i++)
+    {
+      const char *path = legacy_paths[i];
+      ret_layout->boot_dfd = glnx_opendirat_with_errno (deployment_dfd, path, TRUE);
+      if (ret_layout->boot_dfd == -1)
+        {
+          if (errno != ENOENT)
+            return glnx_throw_errno_prefix (error, "openat(%s)", path);
+        }
+      else
+        break;
+    }
+
+  if (ret_layout->boot_dfd == -1)
+    {
+      /* No legacy found?  We're done */
+      *out_layout = NULL;
+      return TRUE;
+    }
+
+  /* ret_layout->boot_dfd will point to either /usr/lib/ostree-boot or /boot, let's
+   * inspect it.
+   */
+  g_auto (GLnxDirFdIterator) dfditer = {
+    0,
+  };
+  if (!glnx_dirfd_iterator_init_at (ret_layout->boot_dfd, ".", FALSE, &dfditer, error))
+    return FALSE;
+
+  while (TRUE)
+    {
+      struct dirent *dent;
+
+      if (!glnx_dirfd_iterator_next_dent (&dfditer, &dent, cancellable, error))
+        return FALSE;
+      if (dent == NULL)
+        break;
+
+      const char *name = dent->d_name;
+      /* See if this is the kernel */
+      if (ret_layout->kernel_srcpath == NULL && g_str_has_prefix (name, "vmlinuz-"))
+        {
+          const char *dash = strrchr (name, '-');
+          g_assert (dash);
+          /* In this version, we require that the tree builder generated a
+           * sha256 of the kernel+initramfs and appended it to the file names.
+           */
+          if (ostree_validate_structureof_checksum_string (dash + 1, NULL))
+            {
+              kernel_checksum = g_strdup (dash + 1);
+              ret_layout->kernel_srcpath = g_strdup (name);
+              ret_layout->kernel_namever = g_strndup (name, dash - name);
+            }
+        }
+      /* See if this is the initramfs  */
+      else if (ret_layout->initramfs_srcpath == NULL && g_str_has_prefix (name, "initramfs-"))
+        {
+          const char *dash = strrchr (name, '-');
+          g_assert (dash);
+          if (ostree_validate_structureof_checksum_string (dash + 1, NULL))
+            {
+              initramfs_checksum = g_strdup (dash + 1);
+              ret_layout->initramfs_srcpath = g_strdup (name);
+              ret_layout->initramfs_namever = g_strndup (name, dash - name);
+            }
+        }
+      /* See if this is the devicetree  */
+      else if (ret_layout->devicetree_srcpath == NULL && g_str_has_prefix (name, "devicetree-"))
+        {
+          const char *dash = strrchr (name, '-');
+          g_assert (dash);
+          if (ostree_validate_structureof_checksum_string (dash + 1, NULL))
+            {
+              devicetree_checksum = g_strdup (dash + 1);
+              ret_layout->devicetree_srcpath = g_strdup (name);
+              ret_layout->devicetree_namever = g_strndup (name, dash - name);
+            }
+        }
+
+      /* If we found a kernel, an initramfs and a devicetree, break out of the loop */
+      if (ret_layout->kernel_srcpath != NULL && ret_layout->initramfs_srcpath != NULL
+          && ret_layout->devicetree_srcpath != NULL)
+        break;
+    }
+
+  /* No kernel found?  We're done */
+  if (ret_layout->kernel_srcpath == NULL)
+    {
+      *out_layout = NULL;
+      return TRUE;
+    }
+
+  /* The kernel/initramfs checksums must be the same */
+  if (ret_layout->initramfs_srcpath != NULL)
+    {
+      g_assert (kernel_checksum != NULL);
+      g_assert (initramfs_checksum != NULL);
+      if (strcmp (kernel_checksum, initramfs_checksum) != 0)
+        return glnx_throw (error, "Mismatched kernel checksum vs initrd");
+    }
+
+  /* The kernel/devicetree checksums must be the same */
+  if (ret_layout->devicetree_srcpath != NULL)
+    {
+      g_assert (kernel_checksum != NULL);
+      g_assert (devicetree_checksum != NULL);
+      if (strcmp (kernel_checksum, devicetree_checksum) != 0)
+        {
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                       _("Mismatched kernel checksum vs device tree in tree"));
+          return FALSE;
+        }
+    }
+
+  ret_layout->bootcsum = g_steal_pointer (&kernel_checksum);
+
+  *out_layout = g_steal_pointer (&ret_layout);
+  return TRUE;
+}
+
+/* Locate kernel/initramfs in the tree; the current standard is to look in
+ * /usr/lib/modules/$kver/vmlinuz first.
+ *
+ * Originally OSTree defined kernels to be found underneath /boot
+ * in the tree.  But that means when mounting /boot at runtime
+ * we end up masking the content underneath, triggering a warning.
+ *
+ * For that reason, and also consistency with the "/usr defines the OS" model we
+ * later switched to defining the in-tree kernels to be found under
+ * /usr/lib/ostree-boot. But since then, Fedora at least switched to storing the
+ * kernel in /usr/lib/modules, which makes sense and isn't ostree-specific, so
+ * we prefer that now. However, the default Fedora layout doesn't put the
+ * initramfs there, so we need to look in /usr/lib/ostree-boot first.
+ */
+static gboolean
+get_kernel_from_tree (OstreeSysroot *sysroot, int deployment_dfd, OstreeKernelLayout **out_layout,
+                      GCancellable *cancellable, GError **error)
+{
+  g_autoptr (OstreeKernelLayout) usrlib_modules_layout = NULL;
+  g_autoptr (OstreeKernelLayout) legacy_layout = NULL;
+
+  /* First, gather from usr/lib/modules/$kver if it exists */
+  if (!get_kernel_from_tree_usrlib_modules (sysroot, deployment_dfd, &usrlib_modules_layout,
+                                            cancellable, error))
+    return FALSE;
+
+  /* Gather the legacy layout */
+  if (!get_kernel_from_tree_legacy_layouts (deployment_dfd, &legacy_layout, cancellable, error))
+    return FALSE;
+
+  /* Evaluate the state of both layouts.  If there's no legacy layout
+   * If a legacy layout exists, and it has
+   * an initramfs but the module layout doesn't, the legacy layout wins. This is
+   * what happens with rpm-ostree with Fedora today, until rpm-ostree learns the
+   * new layout.
+   */
+  if (legacy_layout == NULL)
+    {
+      /* No legacy layout, let's see if we have a module layout...*/
+      if (usrlib_modules_layout == NULL)
+        {
+          /* Both layouts are not found?  Throw. */
+          g_set_error (error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND,
+                       _("Failed to find kernel in /usr/lib/modules, /usr/lib/ostree-boot or /boot"));
+          return FALSE;
+        }
+      else
+        {
+          /* No legacy, just usr/lib/modules?  We're done */
+          *out_layout = g_steal_pointer (&usrlib_modules_layout);
+          return TRUE;
+        }
+    }
+  else if (usrlib_modules_layout != NULL && usrlib_modules_layout->initramfs_srcpath == NULL
+           && legacy_layout->initramfs_srcpath != NULL)
+    {
+      /* Does the module path not have an initramfs, but the legacy does?  Prefer
+       * the latter then, to make rpm-ostree work as is today.
+       */
+      *out_layout = g_steal_pointer (&legacy_layout);
+      return TRUE;
+    }
+  /* Prefer module layout */
+  else if (usrlib_modules_layout != NULL)
+    {
+      *out_layout = g_steal_pointer (&usrlib_modules_layout);
+      return TRUE;
+    }
+  else
+    {
+      /* And finally fall back to legacy; we know one exists since we
+       * checked first above.
+       */
+      g_assert (legacy_layout->kernel_srcpath);
+      *out_layout = g_steal_pointer (&legacy_layout);
+      return TRUE;
+    }
+}
+
+/* We used to syncfs(), but that doesn't flush the journal on XFS,
+ * and since GRUB2 can't read the XFS journal, the system
+ * could fail to boot.
+ *
+ * http://marc.info/?l=linux-fsdevel&m=149520244919284&w=2
+ * https://github.com/ostreedev/ostree/pull/1049
+ */
+static gboolean
+fsfreeze_thaw_cycle (OstreeSysroot *self, int rootfs_dfd, GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("During fsfreeze-thaw", error);
+
+  int sockpair[2];
+  if (socketpair (AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockpair) < 0)
+    return glnx_throw_errno_prefix (error, "socketpair");
+  glnx_autofd int sock_parent = sockpair[0];
+  glnx_autofd int sock_watchdog = sockpair[1];
+
+  pid_t pid = fork ();
+  if (pid < 0)
+    return glnx_throw_errno_prefix (error, "fork");
+
+  const gboolean debug_fifreeze = (self->debug_flags & OSTREE_SYSROOT_DEBUG_TEST_FIFREEZE) > 0;
+  char c = '!';
+  if (pid == 0) /* Child watchdog/unfreezer process. */
+    {
+      glnx_close_fd (&sock_parent);
+      /* Daemonize, and mask SIGINT/SIGTERM, so we're likely to survive e.g.
+       * someone doing a `systemctl restart rpm-ostreed` or a Ctrl-C of
+       * `ostree admin upgrade`.  We don't daemonize though if testing so
+       * that we can waitpid().
+       */
+      if (!debug_fifreeze)
+        {
+          if (daemon (0, 0) < 0)
+            err (1, "daemon");
+        }
+      int sigs[] = { SIGINT, SIGTERM };
+      for (guint i = 0; i < G_N_ELEMENTS (sigs); i++)
+        {
+          if (signal (sigs[i], SIG_IGN) == SIG_ERR)
+            err (1, "signal");
+        }
+      /* Tell the parent we're ready */
+      if (write (sock_watchdog, &c, sizeof (c)) != 1)
+        err (1, "write");
+      /* Wait for the parent to say it's going to freeze. */
+      ssize_t bytes_read = TEMP_FAILURE_RETRY (read (sock_watchdog, &c, sizeof (c)));
+      if (bytes_read < 0)
+        err (1, "read");
+      if (bytes_read != 1)
+        errx (1, "failed to read from parent");
+      /* Now we wait for the second message from the parent saying the freeze is
+       * complete. We have a 30 second timeout; if somehow the parent hasn't
+       * signaled completion, go ahead and unfreeze. But for debugging, just 1
+       * second to avoid exessively lengthining the test suite.
+       */
+      const int timeout_ms = debug_fifreeze ? 1000 : 30000;
+      struct pollfd pfds[1];
+      pfds[0].fd = sock_watchdog;
+      pfds[0].events = POLLIN | POLLHUP;
+      int r = TEMP_FAILURE_RETRY (poll (pfds, 1, timeout_ms));
+      /* Do a thaw if we hit an error, or if the poll timed out */
+      if (r <= 0)
+        {
+          /* Ignore errors:
+           * EINVAL: Not frozen
+           * EPERM: For running the test suite as non-root
+           * EOPNOTSUPP: If the filesystem doesn't support it
+           */
+          int saved_errno = errno;
+          _ostree_linuxfs_filesystem_thaw (rootfs_dfd);
+          errno = saved_errno;
+          /* But if we got an error from poll, let's log it */
+          if (r < 0)
+            err (1, "poll");
+        }
+      if (debug_fifreeze)
+        g_printerr ("fifreeze watchdog was run\n");
+      /* We use _exit() rather than exit() to avoid tripping over any shared
+       * libraries in process that aren't fork() safe; for example gjs/spidermonkey:
+       * https://github.com/ostreedev/ostree/issues/1262
+       * This doesn't help for the err()/errx() calls above, but eh...
+       */
+      _exit (EXIT_SUCCESS);
+    }
+  else /* Parent process. */
+    {
+      glnx_close_fd (&sock_watchdog);
+      /* Wait for the watchdog to say it's set up; mainly that it's
+       * masked SIGTERM successfully.
+       */
+      ssize_t bytes_read = TEMP_FAILURE_RETRY (read (sock_parent, &c, sizeof (c)));
+      if (bytes_read < 0)
+        return glnx_throw_errno_prefix (error, "read(watchdog init)");
+      if (bytes_read != 1)
+        return glnx_throw (error, "read(watchdog init)");
+      /* And tell the watchdog that we're ready to start */
+      if (write (sock_parent, &c, sizeof (c)) != sizeof (c))
+        return glnx_throw_errno_prefix (error, "write(watchdog start)");
+      /* Testing infrastructure */
+      if (debug_fifreeze)
+        {
+          int wstatus;
+          /* Ensure the child has written its data */
+          if (TEMP_FAILURE_RETRY (waitpid (pid, &wstatus, 0)) < 0)
+            return glnx_throw_errno_prefix (error, "waitpid(test-fifreeze)");
+          if (!g_spawn_check_exit_status (wstatus, error))
+            return glnx_prefix_error (error, "test-fifreeze: ");
+          return glnx_throw (error, "aborting due to test-fifreeze");
+        }
+      /* Do a freeze/thaw cycle; TODO add a FIFREEZETHAW ioctl */
+      if (_ostree_linuxfs_filesystem_freeze (rootfs_dfd) != 0)
+        {
+          /* Not supported, we're running in the unit tests (as non-root), or
+           * the filesystem is already frozen (EBUSY).
+           * OK, let's just do a syncfs.
+           */
+          if (G_IN_SET (errno, EOPNOTSUPP, ENOSYS, EPERM, EBUSY))
+            {
+              /* Warn if the filesystem was already frozen */
+              if (errno == EBUSY)
+                g_debug ("Filesystem already frozen, falling back to syncfs");
+              if (TEMP_FAILURE_RETRY (syncfs (rootfs_dfd)) != 0)
+                return glnx_throw_errno_prefix (error, "syncfs");
+              /* Write the completion, and return */
+              if (write (sock_parent, &c, sizeof (c)) != sizeof (c))
+                return glnx_throw_errno_prefix (error, "write(watchdog syncfs complete)");
+              return TRUE;
+            }
+          else
+            return glnx_throw_errno_prefix (error, "ioctl(FIFREEZE)");
+        }
+      /* And finally thaw, then signal our completion to the watchdog */
+      if (_ostree_linuxfs_filesystem_thaw (rootfs_dfd) != 0)
+        {
+          /* Warn but don't error if the filesystem was already thawed */
+          if (errno == EINVAL)
+            g_debug ("Filesystem already thawed");
+          else
+            return glnx_throw_errno_prefix (error, "ioctl(FITHAW)");
+        }
+      if (write (sock_parent, &c, sizeof (c)) != sizeof (c))
+        return glnx_throw_errno_prefix (error, "write(watchdog FITHAW complete)");
+    }
+  return TRUE;
+}
+
+/* First, sync the root directory as well as /var and /boot which may
+ * be separate mount points.  Then *in addition*, do a global
+ * `sync()`.
+ */
+static gboolean
+full_system_sync (OstreeSysroot *self, SyncStats *out_stats, GCancellable *cancellable,
+                  GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Full sync", error);
+  ot_journal_print (LOG_INFO, "Starting syncfs() for system root");
+  guint64 start_msec = g_get_monotonic_time () / 1000;
+  if (syncfs (self->sysroot_fd) != 0)
+    return glnx_throw_errno_prefix (error, "syncfs(sysroot)");
+  guint64 end_msec = g_get_monotonic_time () / 1000;
+  ot_journal_print (LOG_INFO, "Completed syncfs() for system root in %" G_GUINT64_FORMAT " ms",
+                    end_msec - start_msec);
+
+  out_stats->root_syncfs_msec = (end_msec - start_msec);
+
+  if (!_ostree_sysroot_ensure_boot_fd (self, error))
+    return FALSE;
+
+  g_assert_cmpint (self->boot_fd, !=, -1);
+  ot_journal_print (LOG_INFO, "Starting freeze/thaw cycle for system root");
+  start_msec = g_get_monotonic_time () / 1000;
+  if (!fsfreeze_thaw_cycle (self, self->boot_fd, cancellable, error))
+    return FALSE;
+  end_msec = g_get_monotonic_time () / 1000;
+  ot_journal_print (LOG_INFO,
+                    "Completed freeze/thaw cycle for system root in %" G_GUINT64_FORMAT " ms",
+                    end_msec - start_msec);
+  out_stats->boot_syncfs_msec = (end_msec - start_msec);
+
+  return TRUE;
+}
+
+/* Write out the "bootlinks", which are symlinks pointing to deployments.
+ * We might be generating a new bootversion (i.e. updating the bootloader config),
+ * or we might just be generating a "sub-bootversion".
+ *
+ * These new links are made active by swap_bootlinks().
+ */
+static gboolean
+create_new_bootlinks (OstreeSysroot *self, int bootversion, GPtrArray *new_deployments,
+                      GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Creating new current bootlinks", error);
+  glnx_autofd int ostree_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, "ostree", TRUE, &ostree_dfd, error))
+    return FALSE;
+
+  int old_subbootversion;
+  if (bootversion != self->bootversion)
+    {
+      if (!_ostree_sysroot_read_current_subbootversion (self, bootversion, &old_subbootversion,
+                                                        cancellable, error))
+        return FALSE;
+    }
+  else
+    old_subbootversion = self->subbootversion;
+
+  int new_subbootversion = old_subbootversion == 0 ? 1 : 0;
+
+  /* Create the "subbootdir", which is a directory holding a symlink farm pointing to
+   * deployments per-osname.
+   */
+  g_autofree char *ostree_subbootdir_name
+      = g_strdup_printf ("boot.%d.%d", bootversion, new_subbootversion);
+  if (!glnx_shutil_rm_rf_at (ostree_dfd, ostree_subbootdir_name, cancellable, error))
+    return FALSE;
+  if (!glnx_shutil_mkdir_p_at (ostree_dfd, ostree_subbootdir_name, 0755, cancellable, error))
+    return FALSE;
+
+  glnx_autofd int ostree_subbootdir_dfd = -1;
+  if (!glnx_opendirat (ostree_dfd, ostree_subbootdir_name, FALSE, &ostree_subbootdir_dfd, error))
+    return FALSE;
+
+  for (guint i = 0; i < new_deployments->len; i++)
+    {
+      OstreeDeployment *deployment = new_deployments->pdata[i];
+      g_autofree char *bootlink_parent
+          = g_strconcat (ostree_deployment_get_osname (deployment), "/",
+                         ostree_deployment_get_bootcsum (deployment), NULL);
+      g_autofree char *bootlink_pathname = g_strdup_printf (
+          "%s/%d", bootlink_parent, ostree_deployment_get_bootserial (deployment));
+      g_autofree char *bootlink_target = g_strdup_printf (
+          "../../../deploy/%s/deploy/%s.%d", ostree_deployment_get_osname (deployment),
+          ostree_deployment_get_csum (deployment), ostree_deployment_get_deployserial (deployment));
+
+      if (!glnx_shutil_mkdir_p_at (ostree_subbootdir_dfd, bootlink_parent, 0755, cancellable,
+                                   error))
+        return FALSE;
+
+      if (!symlink_at_replace (bootlink_target, ostree_subbootdir_dfd, bootlink_pathname,
+                               cancellable, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/* Rename into place symlinks created via create_new_bootlinks().
+ */
+static gboolean
+swap_bootlinks (OstreeSysroot *self, int bootversion, GPtrArray *new_deployments,
+                char **out_subbootdir, GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Swapping new version bootlinks", error);
+  glnx_autofd int ostree_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, "ostree", TRUE, &ostree_dfd, error))
+    return FALSE;
+
+  int old_subbootversion;
+  if (bootversion != self->bootversion)
+    {
+      if (!_ostree_sysroot_read_current_subbootversion (self, bootversion, &old_subbootversion,
+                                                        cancellable, error))
+        return FALSE;
+    }
+  else
+    old_subbootversion = self->subbootversion;
+
+  int new_subbootversion = old_subbootversion == 0 ? 1 : 0;
+  g_autofree char *ostree_bootdir_name = g_strdup_printf ("boot.%d", bootversion);
+  g_autofree char *ostree_subbootdir_name
+      = g_strdup_printf ("boot.%d.%d", bootversion, new_subbootversion);
+  if (!symlink_at_replace (ostree_subbootdir_name, ostree_dfd, ostree_bootdir_name, cancellable,
+                           error))
+    return FALSE;
+  if (out_subbootdir)
+    *out_subbootdir = g_steal_pointer (&ostree_subbootdir_name);
+  return TRUE;
+}
+
+static GHashTable *
+parse_os_release (const char *contents, const char *split)
+{
+  g_autofree char **lines = g_strsplit (contents, split, -1);
+  GHashTable *ret = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, g_free);
+
+  for (char **iter = lines; *iter; iter++)
+    {
+      g_autofree char *line = *iter;
+
+      if (g_str_has_prefix (line, "#"))
+        continue;
+
+      char *eq = strchr (line, '=');
+      if (!eq)
+        continue;
+
+      *eq = '\0';
+      const char *quotedval = eq + 1;
+      char *val = g_shell_unquote (quotedval, NULL);
+      if (!val)
+        continue;
+
+      g_hash_table_insert (ret, g_steal_pointer (&line), val);
+    }
+
+  return ret;
+}
+
+/* Generate the filename we will use in /boot/loader/entries for this deployment.
+ * The provided n_deployments should be the total number of target deployments (which
+ * might be different from the cached value in the sysroot).
+ */
+static char *
+bootloader_entry_filename (OstreeSysroot *sysroot, guint n_deployments,
+                           OstreeDeployment *deployment)
+{
+  guint index = n_deployments - ostree_deployment_get_index (deployment);
+  // Allow opt-out to dropping the stateroot in case of compatibility issues.
+  // As of 2024.5, we have a new naming scheme because grub2 parses the *filename* and ignores
+  // the version field.  xref https://github.com/ostreedev/ostree/issues/2961
+  bool use_old_naming = (sysroot->opt_flags & OSTREE_SYSROOT_GLOBAL_OPT_BOOTLOADER_NAMING_1) > 0;
+  if (use_old_naming)
+    {
+      const char *stateroot = ostree_deployment_get_osname (deployment);
+      return g_strdup_printf ("ostree-%d-%s.conf", index, stateroot);
+    }
+  else
+    {
+      return g_strdup_printf ("ostree-%d.conf", index);
+    }
+}
+
+/* Given @deployment, prepare it to be booted; basically copying its
+ * kernel/initramfs into /boot/ostree (if needed) and writing out an entry in
+ * /boot/loader/entries.
+ */
+static gboolean
+install_deployment_kernel (OstreeSysroot *sysroot, int new_bootversion,
+                           OstreeDeployment *deployment, guint n_deployments, gboolean show_osname,
+                           GCancellable *cancellable, GError **error)
+
+{
+  GLNX_AUTO_PREFIX_ERROR ("Installing kernel", error);
+  OstreeBootconfigParser *bootconfig = ostree_deployment_get_bootconfig (deployment);
+  g_autofree char *deployment_dirpath = ostree_sysroot_get_deployment_dirpath (sysroot, deployment);
+  glnx_autofd int deployment_dfd = -1;
+  if (!glnx_opendirat (sysroot->sysroot_fd, deployment_dirpath, FALSE, &deployment_dfd, error))
+    return FALSE;
+
+  /* We need to label the kernels */
+  g_autoptr (OstreeSePolicy) sepolicy = ostree_sepolicy_new_at (deployment_dfd, cancellable, error);
+  if (!sepolicy)
+    return FALSE;
+
+  /* Find the kernel/initramfs/devicetree in the tree */
+  g_autoptr (OstreeKernelLayout) kernel_layout = NULL;
+  if (!get_kernel_from_tree (sysroot, deployment_dfd, &kernel_layout, cancellable, error))
+    return FALSE;
+
+  if (!_ostree_sysroot_ensure_boot_fd (sysroot, error))
+    return FALSE;
+
+  const char *osname = ostree_deployment_get_osname (deployment);
+  const char *bootcsum = ostree_deployment_get_bootcsum (deployment);
+  g_autofree char *bootcsumdir = g_strdup_printf ("ostree/%s-%s", osname, bootcsum);
+  g_autofree char *bootconfdir = g_strdup_printf ("loader.%d/entries", new_bootversion);
+  g_autofree char *bootconf_name = bootloader_entry_filename (sysroot, n_deployments, deployment);
+
+  if (!glnx_shutil_mkdir_p_at (sysroot->boot_fd, bootcsumdir, 0775, cancellable, error))
+    return FALSE;
+
+  glnx_autofd int bootcsum_dfd = -1;
+  if (!glnx_opendirat (sysroot->boot_fd, bootcsumdir, TRUE, &bootcsum_dfd, error))
+    return FALSE;
+
+  if (!glnx_shutil_mkdir_p_at (sysroot->boot_fd, bootconfdir, 0775, cancellable, error))
+    return FALSE;
+
+  OstreeRepo *repo = ostree_sysroot_repo (sysroot);
+
+  const char *bootprefix = repo->enable_bootprefix ? "/boot/" : "/";
+
+  /* Install (hardlink/copy) the kernel into /boot/ostree/osname-${bootcsum} if
+   * it doesn't exist already.
+   */
+  struct stat stbuf;
+  if (!glnx_fstatat_allow_noent (bootcsum_dfd, kernel_layout->kernel_namever, &stbuf, 0, error))
+    return FALSE;
+  if (errno == ENOENT)
+    {
+      // 首先尝试重用现有内核
+      if (try_reuse_existing_kernel (sysroot, bootcsum_dfd, 
+                                    kernel_layout->kernel_namever,
+                                    kernel_layout->boot_dfd,
+                                    kernel_layout->kernel_srcpath,
+                                    cancellable, error)) {
+        // 成功重用了现有内核
+        g_debug ("Reused existing kernel file for deployment");
+      }
+      else {
+        if (!install_into_boot (repo, sepolicy, kernel_layout->boot_dfd,
+                                kernel_layout->kernel_srcpath, bootcsum_dfd,
+                                kernel_layout->kernel_namever, cancellable, error))
+          return FALSE;
+      }
+    }
+
+  /* If we have an initramfs, then install it into
+   * /boot/ostree/osname-${bootcsum} if it doesn't exist already.
+   */
+  if (kernel_layout->initramfs_srcpath)
+    {
+      g_assert (kernel_layout->initramfs_namever);
+      if (!glnx_fstatat_allow_noent (bootcsum_dfd, kernel_layout->initramfs_namever, &stbuf, 0,
+                                     error))
+        return FALSE;
+      if (errno == ENOENT)
+        {
+          if (!install_into_boot (repo, sepolicy, kernel_layout->boot_dfd,
+                                  kernel_layout->initramfs_srcpath, bootcsum_dfd,
+                                  kernel_layout->initramfs_namever, cancellable, error))
+            return FALSE;
+        }
+    }
+
+  if (kernel_layout->devicetree_srcpath)
+    {
+      /* If devicetree_namever is set a single device tree is deployed */
+      if (kernel_layout->devicetree_namever)
+        {
+          if (!glnx_fstatat_allow_noent (bootcsum_dfd, kernel_layout->devicetree_namever, &stbuf, 0,
+                                         error))
+            return FALSE;
+          if (errno == ENOENT)
+            {
+              if (!install_into_boot (repo, sepolicy, kernel_layout->boot_dfd,
+                                      kernel_layout->devicetree_srcpath, bootcsum_dfd,
+                                      kernel_layout->devicetree_namever, cancellable, error))
+                return FALSE;
+            }
+        }
+      else
+        {
+          if (!copy_dir_recurse (kernel_layout->boot_dfd, bootcsum_dfd,
+                                 kernel_layout->devicetree_srcpath, sysroot->debug_flags,
+                                 cancellable, error))
+            return FALSE;
+        }
+    }
+
+  if (kernel_layout->kernel_hmac_srcpath)
+    {
+      if (!glnx_fstatat_allow_noent (bootcsum_dfd, kernel_layout->kernel_hmac_namever, &stbuf, 0,
+                                     error))
+        return FALSE;
+      if (errno == ENOENT)
+        {
+          if (!install_into_boot (repo, sepolicy, kernel_layout->boot_dfd,
+                                  kernel_layout->kernel_hmac_srcpath, bootcsum_dfd,
+                                  kernel_layout->kernel_hmac_namever, cancellable, error))
+            return FALSE;
+        }
+    }
+
+  if (kernel_layout->aboot_srcpath)
+    {
+      g_assert (kernel_layout->aboot_namever);
+      if (!glnx_fstatat_allow_noent (bootcsum_dfd, kernel_layout->aboot_namever, &stbuf, 0, error))
+        return FALSE;
+
+      if (errno == ENOENT)
+        {
+          if (!install_into_boot (repo, sepolicy, kernel_layout->boot_dfd,
+                                  kernel_layout->aboot_srcpath, bootcsum_dfd,
+                                  kernel_layout->aboot_namever, cancellable, error))
+            return FALSE;
+        }
+    }
+
+  /* NOTE: if adding more things in bootcsum_dfd, also update get_kernel_layout_size() */
+
+  g_autoptr (GPtrArray) overlay_initrds = NULL;
+  for (char **it = _ostree_deployment_get_overlay_initrds (deployment); it && *it; it++)
+    {
+      char *checksum = *it;
+
+      /* Overlay initrds are not part of the bootcsum dir; they're not part of the tree
+       * proper. Instead they're in /boot/ostree/initramfs-overlays/ named by their csum.
+       * Doing it this way allows sharing the same bootcsum dir for multiple deployments
+       * with the only change being in overlay initrds (or conversely, the same overlay
+       * across different boocsums). Eventually, it'd be nice to have an OSTree repo in
+       * /boot itself and drop the boocsum dir concept entirely. */
+
+      g_autofree char *destpath = g_strdup_printf (
+          "%s%s/%s.img", bootprefix, _OSTREE_SYSROOT_BOOT_INITRAMFS_OVERLAYS, checksum);
+      const char *rel_destpath = destpath + 1;
+
+      /* lazily allocate array and create dir so we don't pollute /boot if not needed */
+      if (overlay_initrds == NULL)
+        {
+          overlay_initrds = g_ptr_array_new_with_free_func (g_free);
+
+          if (!glnx_shutil_mkdir_p_at (sysroot->boot_fd, _OSTREE_SYSROOT_BOOT_INITRAMFS_OVERLAYS,
+                                       0755, cancellable, error))
+            return FALSE;
+        }
+
+      if (!glnx_fstatat_allow_noent (sysroot->boot_fd, rel_destpath, NULL, 0, error))
+        return FALSE;
+      if (errno == ENOENT)
+        {
+          g_autofree char *srcpath
+              = g_strdup_printf (_OSTREE_SYSROOT_RUNSTATE_STAGED_INITRDS_DIR "/%s", checksum);
+          if (!install_into_boot (repo, sepolicy, AT_FDCWD, srcpath, sysroot->boot_fd, rel_destpath,
+                                  cancellable, error))
+            return FALSE;
+        }
+
+      /* these are used lower down to populate the bootconfig */
+      g_ptr_array_add (overlay_initrds, g_steal_pointer (&destpath));
+    }
+
+  g_autofree char *contents = NULL;
+  if (!glnx_fstatat_allow_noent (deployment_dfd, "usr/lib/os-release", &stbuf, 0, error))
+    return FALSE;
+  if (errno == ENOENT)
+    {
+      contents = glnx_file_get_contents_utf8_at (deployment_dfd, "etc/os-release", NULL,
+                                                 cancellable, error);
+      if (!contents)
+        return glnx_prefix_error (error, "Reading /etc/os-release");
+    }
+  else
+    {
+      contents = glnx_file_get_contents_utf8_at (deployment_dfd, "usr/lib/os-release", NULL,
+                                                 cancellable, error);
+      if (!contents)
+        return glnx_prefix_error (error, "Reading /usr/lib/os-release");
+    }
+
+  g_autoptr (GHashTable) osrelease_values = parse_os_release (contents, "\n");
+  /* title */
+  const char *val = g_hash_table_lookup (osrelease_values, "PRETTY_NAME");
+  if (val == NULL)
+    val = g_hash_table_lookup (osrelease_values, "ID");
+  if (val == NULL)
+    return glnx_throw (error, _("No PRETTY_NAME or ID in /etc/os-release"));
+
+  g_autofree char *deployment_version = NULL;
+  if (repo)
+    {
+      /* Try extracting a version for this deployment. */
+      const char *csum = ostree_deployment_get_csum (deployment);
+      g_autoptr (GVariant) variant = NULL;
+      g_autoptr (GVariant) metadata = NULL;
+
+      /* XXX Copying ot_admin_checksum_version() + bits from
+       *     ot-admin-builtin-status.c.  Maybe this should be
+       *     public API in libostree? */
+      if (ostree_repo_load_variant (repo, OSTREE_OBJECT_TYPE_COMMIT, csum, &variant, NULL))
+        {
+          metadata = g_variant_get_child_value (variant, 0);
+          (void)g_variant_lookup (metadata, OSTREE_COMMIT_META_KEY_VERSION, "s",
+                                  &deployment_version);
+        }
+    }
+
+  /* XXX The SYSLINUX bootloader backend actually parses the title string
+   *     (specifically, it looks for the substring "(ostree"), so further
+   *     changes to the title format may require updating that backend. */
+  g_autoptr (GString) title_key = g_string_new ("");
+  // if (deployment_version && *deployment_version && !strstr (val, deployment_version))
+  //   {
+  //     g_string_append_c (title_key, ' ');
+  //     g_string_append (title_key, deployment_version);
+  //   }
+  // g_string_append (title_key, " (ostree");
+  // if (show_osname)
+  //   {
+  //     g_string_append_c (title_key, ':');
+  //     g_string_append (title_key, osname);
+  //   }
+
+  // g_string_append_printf (title_key, ":%d", ostree_deployment_get_index (deployment));
+
+
+  g_string_append (title_key, ostree_deployment_get_osversion(deployment));
+
+  // g_string_append_c (title_key, ')');
+  ostree_bootconfig_parser_set (bootconfig, "title", title_key->str);
+
+  g_autofree char *version_key
+      = g_strdup_printf ("%d", n_deployments - ostree_deployment_get_index (deployment));
+  ostree_bootconfig_parser_set (bootconfig, OSTREE_COMMIT_META_KEY_VERSION, version_key);
+  g_autofree char *boot_relpath
+      = g_strconcat (bootprefix, bootcsumdir, "/", kernel_layout->kernel_namever, NULL);
+  ostree_bootconfig_parser_set (bootconfig, "linux", boot_relpath);
+
+  val = ostree_bootconfig_parser_get (bootconfig, "options");
+  g_autoptr (OstreeKernelArgs) kargs = ostree_kernel_args_from_string (val);
+
+  if (kernel_layout->initramfs_namever)
+    {
+      g_autofree char *initrd_boot_relpath
+          = g_strconcat (bootprefix, bootcsumdir, "/", kernel_layout->initramfs_namever, NULL);
+      ostree_bootconfig_parser_set (bootconfig, "initrd", initrd_boot_relpath);
+
+      if (overlay_initrds)
+        {
+          g_ptr_array_add (overlay_initrds, NULL);
+          ostree_bootconfig_parser_set_overlay_initrds (bootconfig,
+                                                        (char **)overlay_initrds->pdata);
+        }
+    }
+  else
+    {
+      g_autofree char *prepare_root_arg = NULL;
+      prepare_root_arg = g_strdup_printf (
+          "init=/ostree/boot.%d/%s/%s/%d/usr/lib/ostree/ostree-prepare-root", new_bootversion,
+          osname, bootcsum, ostree_deployment_get_bootserial (deployment));
+      ostree_kernel_args_replace_take (kargs, g_steal_pointer (&prepare_root_arg));
+    }
+
+  const char *aboot_fn = NULL;
+  if (kernel_layout->aboot_namever)
+    {
+      aboot_fn = kernel_layout->aboot_namever;
+    }
+  else if (kernel_layout->aboot_srcpath)
+    {
+      aboot_fn = kernel_layout->aboot_srcpath;
+    }
+
+  if (aboot_fn)
+    {
+      g_autofree char *aboot_relpath = g_strconcat ("/", bootcsumdir, "/", aboot_fn, NULL);
+      ostree_bootconfig_parser_set (bootconfig, "aboot", aboot_relpath);
+    }
+  else
+    {
+      g_autofree char *aboot_relpath
+          = g_strconcat ("/", deployment_dirpath, "/usr/lib/ostree-boot/aboot.img", NULL);
+      ostree_bootconfig_parser_set (bootconfig, "aboot", aboot_relpath);
+    }
+
+  g_autofree char *abootcfg_relpath
+      = g_strconcat ("/", deployment_dirpath, "/usr/lib/ostree-boot/aboot.cfg", NULL);
+  ostree_bootconfig_parser_set (bootconfig, "abootcfg", abootcfg_relpath);
+
+  if (kernel_layout->devicetree_namever)
+    {
+      g_autofree char *dt_boot_relpath
+          = g_strconcat (bootprefix, bootcsumdir, "/", kernel_layout->devicetree_namever, NULL);
+      ostree_bootconfig_parser_set (bootconfig, "devicetree", dt_boot_relpath);
+    }
+  else if (kernel_layout->devicetree_srcpath)
+    {
+      /* If devicetree_srcpath is set but devicetree_namever is NULL, then we
+       * want to point to a whole directory of device trees.
+       * See: https://github.com/ostreedev/ostree/issues/1900
+       */
+      g_autofree char *dt_boot_relpath
+          = g_strconcat (bootprefix, bootcsumdir, "/", kernel_layout->devicetree_srcpath, NULL);
+      ostree_bootconfig_parser_set (bootconfig, "fdtdir", dt_boot_relpath);
+    }
+
+  /* Note this is parsed in ostree-impl-system-generator.c */
+  g_autofree char *ostree_kernel_arg
+      = g_strdup_printf ("ostree=/ostree/boot.%d/%s/%s/%d", new_bootversion, osname, bootcsum,
+                         ostree_deployment_get_bootserial (deployment));
+  ostree_kernel_args_replace_take (kargs, g_steal_pointer (&ostree_kernel_arg));
+
+  g_autofree char *options_key = ostree_kernel_args_to_string (kargs);
+  ostree_bootconfig_parser_set (bootconfig, "options", options_key);
+
+  /* Only append to this BLS config if:
+   * - this is not the default deployment
+   */
+  /* If deployment was prepended, it is the new default */
+  gboolean is_new_default = (ostree_deployment_get_index (deployment) == 0);
+  gboolean allow_append = !is_new_default;
+  if (allow_append)
+    {
+      /* get all key value pairs in bls-append */
+      GLNX_HASH_TABLE_FOREACH_KV (repo->bls_append_values, const char *, key, const char *, value)
+        ostree_bootconfig_parser_set (bootconfig, key, value);
+    }
+
+  glnx_autofd int bootconf_dfd = -1;
+  if (!glnx_opendirat (sysroot->boot_fd, bootconfdir, TRUE, &bootconf_dfd, error))
+    return FALSE;
+
+  if (!ostree_bootconfig_parser_write_at (ostree_deployment_get_bootconfig (deployment),
+                                          bootconf_dfd, bootconf_name, cancellable, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+/* We generate the symlink on disk, then potentially do a syncfs() to ensure
+ * that it (and everything else we wrote) has hit disk. Only after that do we
+ * rename it into place.
+ */
+static gboolean
+prepare_new_bootloader_link (OstreeSysroot *sysroot, int current_bootversion, int new_bootversion,
+                             GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Preparing final bootloader swap", error);
+  g_assert ((current_bootversion == 0 && new_bootversion == 1)
+            || (current_bootversion == 1 && new_bootversion == 0));
+
+  /* This allows us to support both /boot on a seperate filesystem to / as well
+   * as on the same filesystem. */
+  if (TEMP_FAILURE_RETRY (symlinkat (".", sysroot->sysroot_fd, "boot/boot")) < 0)
+    if (errno != EEXIST)
+      return glnx_throw_errno_prefix (error, "symlinkat");
+
+  g_autofree char *new_target = g_strdup_printf ("loader.%d", new_bootversion);
+
+  /* We shouldn't actually need to replace but it's easier to reuse
+     that code */
+  if (!symlink_at_replace (new_target, sysroot->sysroot_fd, "boot/loader.tmp", cancellable, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+/* Update the /boot/loader symlink to point to /boot/loader.$new_bootversion */
+static gboolean
+swap_bootloader (OstreeSysroot *sysroot, OstreeBootloader *bootloader, int current_bootversion,
+                 int new_bootversion, GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Final bootloader swap", error);
+
+  g_assert ((current_bootversion == 0 && new_bootversion == 1)
+            || (current_bootversion == 1 && new_bootversion == 0));
+
+  if (!_ostree_sysroot_ensure_boot_fd (sysroot, error))
+    return FALSE;
+
+  /* The symlink was already written, and we used syncfs() to ensure
+   * its data is in place.  Renaming now should give us atomic semantics;
+   * see https://bugzilla.gnome.org/show_bug.cgi?id=755595
+   */
+  if (!glnx_renameat (sysroot->boot_fd, "loader.tmp", sysroot->boot_fd, "loader", error))
+    return FALSE;
+
+  /* Now we explicitly fsync this directory, even though it
+   * isn't required for atomicity, for two reasons:
+   *  - It should be very cheap as we're just syncing whatever
+   *    data was written since the last sync which was hopefully
+   *    less than a second ago.
+   *  - It should be sync'd before shutdown as that could crash
+   *    for whatever reason, and we wouldn't want to confuse the
+   *    admin by going back to the previous session.
+   */
+  if (fsync (sysroot->boot_fd) != 0)
+    return glnx_throw_errno_prefix (error, "fsync(boot)");
+
+  /* TODO: In the future also execute this automatically via a systemd unit
+   * if we detect it's necessary.
+   **/
+  if (bootloader)
+    {
+      if (!_ostree_bootloader_post_bls_sync (bootloader, new_bootversion, cancellable, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/* Deployments may share boot checksums; the bootserial indexes them
+ * per-bootchecksum. It's used by the symbolic links after the bootloader.
+ */
+static void
+assign_bootserials (GPtrArray *deployments)
+{
+  g_autoptr (GHashTable) serials = g_hash_table_new_full (g_str_hash, g_str_equal, NULL, NULL);
+
+  for (guint i = 0; i < deployments->len; i++)
+    {
+      OstreeDeployment *deployment = deployments->pdata[i];
+      const char *bootcsum = ostree_deployment_get_bootcsum (deployment);
+      /* Note that not-found maps to NULL which converts to zero */
+      guint count = GPOINTER_TO_UINT (g_hash_table_lookup (serials, bootcsum));
+      g_hash_table_replace (serials, (char *)bootcsum, GUINT_TO_POINTER (count + 1));
+
+      ostree_deployment_set_bootserial (deployment, count);
+    }
+}
+
+static char *
+get_deployment_nonostree_kargs (OstreeDeployment *deployment)
+{
+  /* pick up kernel arguments but filter out ostree= */
+  OstreeBootconfigParser *bootconfig = ostree_deployment_get_bootconfig (deployment);
+  const char *boot_options = ostree_bootconfig_parser_get (bootconfig, "options");
+  g_autoptr (OstreeKernelArgs) kargs = ostree_kernel_args_from_string (boot_options);
+  ostree_kernel_args_replace (kargs, "ostree");
+  return ostree_kernel_args_to_string (kargs);
+}
+
+static char *
+get_deployment_ostree_version (OstreeRepo *repo, OstreeDeployment *deployment)
+{
+  const char *csum = ostree_deployment_get_csum (deployment);
+
+  g_autofree char *version = NULL;
+  g_autoptr (GVariant) variant = NULL;
+  if (ostree_repo_load_variant (repo, OSTREE_OBJECT_TYPE_COMMIT, csum, &variant, NULL))
+    {
+      g_autoptr (GVariant) metadata = g_variant_get_child_value (variant, 0);
+      (void)g_variant_lookup (metadata, OSTREE_COMMIT_META_KEY_VERSION, "s", &version);
+    }
+
+  return g_steal_pointer (&version);
+}
+
+/* OSTree implements a special optimization where we want to avoid touching
+ * the bootloader configuration if the kernel layout hasn't changed.  This is
+ * handled by the ostree= kernel argument referring to a "bootlink".  But
+ * we *do* need to update the bootloader configuration if the kernel arguments
+ * change.
+ *
+ * Hence, this function determines if @a and @b are fully compatible from a
+ * bootloader perspective.
+ */
+static gboolean
+deployment_bootconfigs_equal (OstreeRepo *repo, OstreeDeployment *a, OstreeDeployment *b)
+{
+  /* same kernel & initramfs? */
+  const char *a_bootcsum = ostree_deployment_get_bootcsum (a);
+  const char *b_bootcsum = ostree_deployment_get_bootcsum (b);
+  if (strcmp (a_bootcsum, b_bootcsum) != 0)
+    return FALSE;
+
+  /* same initrd overlays? */
+  if (g_strcmp0 (a->overlay_initrds_id, b->overlay_initrds_id) != 0)
+    return FALSE;
+
+  /* same kargs? */
+  g_autofree char *a_boot_options_without_ostree = get_deployment_nonostree_kargs (a);
+  g_autofree char *b_boot_options_without_ostree = get_deployment_nonostree_kargs (b);
+  if (strcmp (a_boot_options_without_ostree, b_boot_options_without_ostree) != 0)
+    return FALSE;
+
+  /* same ostree version? this is just for the menutitle, we won't have to cp the kernel */
+  g_autofree char *a_version = get_deployment_ostree_version (repo, a);
+  g_autofree char *b_version = get_deployment_ostree_version (repo, b);
+  if (g_strcmp0 (a_version, b_version) != 0)
+    return FALSE;
+
+  return TRUE;
+}
+
+/* This used to be a temporary hack to create "current" symbolic link
+ * that's easy to follow inside the gnome-ostree build scripts (now
+ * gnome-continuous).  It wasn't atomic, and nowadays people can use
+ * the OSTree API to find deployments.
+ */
+static gboolean
+cleanup_legacy_current_symlinks (OstreeSysroot *self, GCancellable *cancellable, GError **error)
+{
+  g_autoptr (GString) buf = g_string_new ("");
+
+  for (guint i = 0; i < self->deployments->len; i++)
+    {
+      OstreeDeployment *deployment = self->deployments->pdata[i];
+      const char *osname = ostree_deployment_get_osname (deployment);
+
+      g_string_truncate (buf, 0);
+      g_string_append_printf (buf, "ostree/deploy/%s/current", osname);
+
+      if (!ot_ensure_unlinked_at (self->sysroot_fd, buf->str, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_write_deployments:
+ * @self: Sysroot
+ * @new_deployments: (element-type OstreeDeployment): List of new deployments
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Older version of ostree_sysroot_write_deployments_with_options(). This
+ * version will perform post-deployment cleanup by default.
+ */
+gboolean
+ostree_sysroot_write_deployments (OstreeSysroot *self, GPtrArray *new_deployments,
+                                  GCancellable *cancellable, GError **error)
+{
+  OstreeSysrootWriteDeploymentsOpts opts = { .do_postclean = TRUE };
+  return ostree_sysroot_write_deployments_with_options (self, NULL, new_deployments, &opts, cancellable,
+                                                        error);
+}
+
+
+char *get_os_version(char *release_version) 
+{
+  if (!release_version)
+    return NULL;
+  char *os_name = calloc(1024,sizeof(char));
+  const char s1[2] = ":";
+  const char s2[2] = "/";
+  char *token;
+  token = strtok(release_version, s1);
+  int i = 1;
+  while (token != NULL)
+  {
+    if (i == 2 || i == 4 || i == 5)
+    {
+      strcat(os_name, token);
+      strcat(os_name, " ");
+    }
+    if (i == 9)
+    {
+      strcat(os_name, token);
+    }
+    token = strtok(NULL, s2);
+    i++;
+  }
+  return os_name;
+}
+
+
+char *get_release_version(OstreeDeployment *self,const char *root_dirs[], int dir_count)
+{
+  char *conf_path = calloc(1024,sizeof(char));
+  for (int i = 0; i < dir_count; i++)
+  {
+    memset(conf_path, 0, sizeof(conf_path));
+    sprintf(conf_path, "%sostree/deploy/%s/deploy/%s.%d/etc/ostree-release",
+            root_dirs[i], ostree_deployment_get_osname(self),
+            ostree_deployment_get_csum(self),
+            ostree_deployment_get_deployserial(self));
+    if (access(conf_path, F_OK) == 0)
+    {
+      GKeyFile *config = g_key_file_new();
+      g_key_file_load_from_file(config, conf_path, G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS, NULL);
+      char *release_version = g_key_file_get_string(config, "info", "version", NULL);
+      g_key_file_free(config);
+      free(conf_path);
+      /*从ostree-release读取os_release成功*/
+      return get_os_version(release_version); 
+    }
+  }
+  free(conf_path);
+  return NULL;
+}
+
+static void *ostree_dployment_set_osversion(OstreeDeployment *self)
+{
+  const char *root_dirs[] = {"/", "/tmp/", "/target/"};
+  int dir_count = sizeof(root_dirs) / sizeof(root_dirs[0]);
+  char *os_version = get_release_version(self,root_dirs, dir_count);
+  if(os_version)
+  {
+    self->os_version = g_strdup(os_version);
+    free(os_version);
+  }
+  return NULL;
+}
+
+/* Handle writing out a new bootloader config. One reason this needs to be a
+ * helper function is to handle wrapping it with temporarily remounting /boot
+ * rw.
+ */
+static gboolean
+write_deployments_bootswap (OstreeSysroot *self, GPtrArray *new_deployments,
+                            OstreeSysrootWriteDeploymentsOpts *opts, OstreeBootloader *bootloader,
+                            SyncStats *out_syncstats, char **out_subbootdir,
+                            GCancellable *cancellable, GError **error)
+{
+  const int new_bootversion = self->bootversion ? 0 : 1;
+
+  g_autofree char *new_loader_entries_dir
+      = g_strdup_printf ("boot/loader.%d/entries", new_bootversion);
+  if (!glnx_shutil_rm_rf_at (self->sysroot_fd, new_loader_entries_dir, cancellable, error))
+    return FALSE;
+  if (!glnx_shutil_mkdir_p_at (self->sysroot_fd, new_loader_entries_dir, 0755, cancellable, error))
+    return FALSE;
+
+  /* Only show the osname in bootloader titles if there are multiple
+   * osname's among the new deployments.  Check for that here. */
+  gboolean show_osname = FALSE;
+  for (guint i = 1; i < new_deployments->len; i++)
+    {
+      const char *osname_0 = ostree_deployment_get_osname (new_deployments->pdata[0]);
+      const char *osname_i = ostree_deployment_get_osname (new_deployments->pdata[i]);
+      if (!g_str_equal (osname_0, osname_i))
+        {
+          show_osname = TRUE;
+          break;
+        }
+    }
+
+  for (guint i = 0; i < new_deployments->len; i++)
+    {
+      OstreeDeployment *deployment = new_deployments->pdata[i];
+      ostree_dployment_set_osversion(deployment);
+      if (!install_deployment_kernel (self, new_bootversion, deployment, new_deployments->len,
+                                      show_osname, cancellable, error))
+        return FALSE;
+    }
+
+  /* Create and swap bootlinks for *new* version */
+  if (!create_new_bootlinks (self, new_bootversion, new_deployments, cancellable, error))
+  {
+    g_set_error(error,G_IO_ERROR,G_IO_ERROR_FAILED, _("Failed to update boot loader links"));    
+    return FALSE;
+  }
+
+  g_autofree char *new_subbootdir = NULL;
+  if (!swap_bootlinks (self, new_bootversion, new_deployments, &new_subbootdir, cancellable, error))
+    return FALSE;
+
+  g_debug ("Using bootloader: %s",
+           bootloader ? g_type_name (G_TYPE_FROM_INSTANCE (bootloader)) : "(none)");
+
+  if (bootloader)
+    {
+      if (!_ostree_bootloader_write_config (bootloader, new_bootversion, new_deployments,
+                                            cancellable, error))
+        return glnx_prefix_error (error, "Bootloader write config");
+    }
+
+  if (!prepare_new_bootloader_link (self, self->bootversion, new_bootversion, cancellable, error))
+    return FALSE;
+
+  if (!full_system_sync (self, out_syncstats, cancellable, error))
+  {
+    g_set_error(error,G_IO_ERROR, G_IO_ERROR_FAILED, _("Failed to synchronize file system changes"));
+    return FALSE;   
+  }
+
+  if (!swap_bootloader (self, bootloader, self->bootversion, new_bootversion, cancellable, error))
+  {
+    g_set_error(error,G_IO_ERROR,G_IO_ERROR_FAILED, _("Failed to switch boot loader configuration"));
+    return FALSE;
+  }
+
+  if (out_subbootdir)
+    *out_subbootdir = g_steal_pointer (&new_subbootdir);
+  return TRUE;
+}
+
+/* Get the maximum quantity value in the configuration file */
+static
+int get_max_num_deployment(void)
+{
+  int max_deploy_num = 5;
+  GError* error = NULL;
+  GKeyFile *config = g_key_file_new();
+  if(!g_key_file_load_from_file(config, SECONDARY_CONF, G_KEY_FILE_KEEP_COMMENTS | G_KEY_FILE_KEEP_TRANSLATIONS, &error))
+  {
+    g_debug("File load exception:%s",error->message);
+    g_key_file_free(config);
+    if(error)
+      g_error_free(error);
+    return max_deploy_num;
+  }
+  int num_value = g_key_file_get_int64(config, GROUP_NAME_DEPLOYMENT, MAX_NUM, &error);
+  if(num_value >= 1)
+  {
+    max_deploy_num = num_value;
+  }
+  g_key_file_free(config);
+  if(error)
+      g_error_free(error);
+  return max_deploy_num;
+}
+
+/* Calculate the number of deployments that need to be deleted */
+static int
+get_ostree_deployments_undeploy_num(OstreeSysroot *self)
+{
+  g_autoptr(GPtrArray) deployments = ostree_sysroot_get_deployments(self);
+  int deploy_num = 0; 
+ 
+  for (guint i = 0; i < deployments->len; i++)
+  {
+    OstreeDeployment *deployment = deployments->pdata[i];
+    if(ostree_deployment_get_unlocked(deployment) != OSTREE_DEPLOYMENT_UNLOCKED_HOTFIX && !ostree_deployment_is_pinned(deployment))
+      deploy_num++;
+  }
+
+  if(deploy_num > get_max_num_deployment())
+    return deploy_num - get_max_num_deployment();
+
+  return 0;
+}
+
+
+/* Delete the longest out of quantity deployment 
+ * from back to front */
+static void
+ostree_delete_deployment(OstreeSysroot *self)
+{
+  int num = get_ostree_deployments_undeploy_num(self);
+
+  // 如果不需要删除任何部署，直接返回
+  if (num <= 0)
+  {
+    g_debug("No deployments need to be deleted (num: %d)", num);
+    return;
+  }
+
+  g_debug("The maximum number of deployments set in the configuration file has been exceeded, and [%d] deployments need to be deleted",num);
+  g_autoptr (GPtrArray) current_deployments = ostree_sysroot_get_deployments (self);
+  for (guint i = current_deployments->len - 1; i >= 0 && num > 0; i--)
+  {
+    OstreeDeployment *deployment = current_deployments->pdata[i];
+
+    if(ostree_deployment_get_unlocked(deployment) == OSTREE_DEPLOYMENT_UNLOCKED_HOTFIX || ostree_deployment_is_pinned(deployment))
+      continue;
+
+    int deploy_index = ostree_deployment_get_index(deployment);
+    g_debug("The index of the deployment that is currently being deleted is %d (%s.%d)",deploy_index,
+                  ostree_deployment_get_csum(deployment),ostree_deployment_get_deployserial(deployment));
+
+    //Determine whether it is a deployment currently in use
+    if (deployment == ostree_sysroot_get_booted_deployment(self))
+    {
+      g_debug("Cannot undeploy currently booted deployment %d",deploy_index);
+      continue;
+    }
+
+    g_ptr_array_remove_index(current_deployments, deploy_index);
+
+    g_print("Deleted deployment %s.%d\n", ostree_deployment_get_csum(deployment),
+            ostree_deployment_get_deployserial(deployment));
+    num--;
+  }
+
+  ostree_sysroot_write_deployments(self, current_deployments, NULL, NULL);
+
+  if (!ostree_sysroot_cleanup(self, NULL, NULL))
+    g_debug("Performing final cleanup");
+}
+
+/* Actions taken after writing deployments is complete */
+static gboolean
+write_deployments_finish (OstreeSysroot *self, GCancellable *cancellable, GError **error)
+{
+  if (!_ostree_sysroot_bump_mtime (self, error))
+    return FALSE;
+
+  /* Now reload from disk */
+  if (!ostree_sysroot_load (self, cancellable, error))
+    return glnx_prefix_error (error, "Reloading deployments after commit");
+
+  if (!cleanup_legacy_current_symlinks (self, cancellable, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+static gboolean
+add_file_size_if_nonnull (int dfd, const char *path, guint64 blocksize, guint64 *inout_size,
+                          GError **error)
+{
+  if (path == NULL)
+    return TRUE;
+
+  struct stat stbuf;
+  if (!glnx_fstatat (dfd, path, &stbuf, 0, error))
+    return FALSE;
+
+  *inout_size += stbuf.st_size;
+  if (blocksize > 0)
+    {
+      off_t rem = stbuf.st_size % blocksize;
+      if (rem > 0)
+        *inout_size += blocksize - rem;
+    }
+
+  return TRUE;
+}
+
+/* calculates the total size of the bootcsum dir in /boot after we would copy
+ * it. This reflects the logic in  install_deployment_kernel(). */
+static gboolean
+get_kernel_layout_size (OstreeSysroot *self, OstreeDeployment *deployment, guint64 blocksize,
+                        guint64 *out_size, GCancellable *cancellable, GError **error)
+{
+  g_autofree char *deployment_dirpath = ostree_sysroot_get_deployment_dirpath (self, deployment);
+  glnx_autofd int deployment_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, deployment_dirpath, FALSE, &deployment_dfd, error))
+    return FALSE;
+
+  g_autoptr (OstreeKernelLayout) kernel_layout = NULL;
+  if (!get_kernel_from_tree (self, deployment_dfd, &kernel_layout, cancellable, error))
+    return FALSE;
+
+  guint64 bootdir_size = 0;
+  if (!add_file_size_if_nonnull (kernel_layout->boot_dfd, kernel_layout->kernel_srcpath, blocksize,
+                                 &bootdir_size, error))
+    return FALSE;
+  if (!add_file_size_if_nonnull (kernel_layout->boot_dfd, kernel_layout->initramfs_srcpath,
+                                 blocksize, &bootdir_size, error))
+    return FALSE;
+  if (kernel_layout->devicetree_srcpath)
+    {
+      /* These conditionals mirror the logic in install_deployment_kernel(). */
+      if (kernel_layout->devicetree_namever)
+        {
+          if (!add_file_size_if_nonnull (kernel_layout->boot_dfd, kernel_layout->devicetree_srcpath,
+                                         blocksize, &bootdir_size, error))
+            return FALSE;
+        }
+      else
+        {
+          guint64 dirsize = 0;
+          if (!ot_get_dir_size (kernel_layout->boot_dfd, kernel_layout->devicetree_srcpath,
+                                blocksize, &dirsize, cancellable, error))
+            return FALSE;
+          bootdir_size += dirsize;
+        }
+    }
+  if (!add_file_size_if_nonnull (kernel_layout->boot_dfd, kernel_layout->kernel_hmac_srcpath,
+                                 blocksize, &bootdir_size, error))
+    return FALSE;
+  if (!add_file_size_if_nonnull (kernel_layout->boot_dfd, kernel_layout->aboot_srcpath, blocksize,
+                                 &bootdir_size, error))
+    return FALSE;
+
+  *out_size = bootdir_size;
+  return TRUE;
+}
+
+/* This is a roundabout but more trustworthy way of doing a space check than
+ * relying on statvfs's f_bfree when you know the size of the objects. */
+static gboolean
+dfd_fallocate_check (int dfd, off_t len, gboolean *out_passed, GError **error)
+{
+  /* If the requested size is 0 then return early. Passing a 0 len to
+   * fallocate results in EINVAL */
+  if (len == 0)
+    {
+      *out_passed = TRUE;
+      return TRUE;
+    }
+
+  g_auto (GLnxTmpfile) tmpf = {
+    0,
+  };
+  if (!glnx_open_tmpfile_linkable_at (dfd, ".", O_WRONLY | O_CLOEXEC, &tmpf, error))
+    return FALSE;
+
+  /* add the safety margin */
+  len += EARLY_PRUNE_SAFETY_MARGIN_SIZE;
+
+  *out_passed = TRUE;
+  /* There's glnx_try_fallocate, but not with the same error semantics. */
+  if (TEMP_FAILURE_RETRY (fallocate (tmpf.fd, 0, 0, len)) < 0)
+    {
+      if (G_IN_SET (errno, ENOSYS, EOPNOTSUPP))
+        return TRUE;
+      else if (errno != ENOSPC)
+        return glnx_throw_errno_prefix (error, "fallocate");
+      *out_passed = FALSE;
+    }
+  return TRUE;
+}
+
+/* Analyze /boot and figure out if the new deployments won't fit in the
+ * remaining space. If they won't, check if deleting the deployments that are
+ * getting rotated out (e.g. the current rollback) would free up sufficient
+ * space. If so, call ostree_sysroot_write_deployments() to delete them. */
+static gboolean
+auto_early_prune_old_deployments (OstreeSysroot *self, GPtrArray *new_deployments,
+                                  GCancellable *cancellable, GError **error)
+{
+  /* If we're not booted into a deployment, then this is some kind of e.g. disk
+   * creation/provisioning. The situation isn't as dire, so let's not resort to
+   * auto-pruning and instead let possible ENOSPC errors naturally bubble. */
+  if (self->booted_deployment == NULL)
+    return TRUE;
+
+  if (!_ostree_sysroot_ensure_boot_fd (self, error))
+    return FALSE;
+
+  {
+    struct stat stbuf;
+    if (!glnx_fstatat (self->boot_fd, ".", &stbuf, 0, error))
+      return FALSE;
+
+    /* if /boot is on the same filesystem as the sysroot (which must be where
+     * the sysroot repo is), don't do anything */
+    if (stbuf.st_dev == self->repo->device)
+      return TRUE;
+  }
+
+  /* pre-emptive cleanup of any cruft in /boot to free up any wasted space */
+  if (!_ostree_sysroot_cleanup_bootfs (self, cancellable, error))
+    return FALSE;
+
+  /* tracks all the bootcsums currently in /boot */
+  g_autoptr (GHashTable) current_bootcsums
+      = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+
+  /* tracks all the bootcsums of new_deployments */
+  g_autoptr (GHashTable) new_bootcsums
+      = g_hash_table_new_full (g_str_hash, g_str_equal, g_free, NULL);
+
+  /* get bootfs block size */
+  struct statvfs stvfsbuf;
+  if (TEMP_FAILURE_RETRY (fstatvfs (self->boot_fd, &stvfsbuf)) < 0)
+    return glnx_throw_errno_prefix (error, "fstatvfs(boot)");
+
+  g_auto (GStrv) bootdirs = NULL;
+  if (!_ostree_sysroot_list_all_boot_directories (self, &bootdirs, cancellable, error))
+    return glnx_prefix_error (error, "listing bootcsum directories in bootfs");
+
+  for (char **it = bootdirs; it && *it; it++)
+    {
+      const char *bootdir = *it;
+
+      g_autofree char *bootcsum = NULL;
+      if (!_ostree_sysroot_parse_bootdir_name (bootdir, NULL, &bootcsum))
+        g_assert_not_reached (); /* checked in _ostree_sysroot_list_all_boot_directories() */
+
+      guint64 bootdir_size;
+      g_autofree char *ostree_bootdir = g_build_filename ("ostree", bootdir, NULL);
+      if (!ot_get_dir_size (self->boot_fd, ostree_bootdir, stvfsbuf.f_bsize, &bootdir_size,
+                            cancellable, error))
+        return FALSE;
+
+      /* for our purposes of sizing bootcsums, it's highly unlikely we need a
+       * guint64; cast it down to guint so we can more easily store it */
+      if (bootdir_size > G_MAXUINT)
+        {
+          /* If it somehow happens, don't make it fatal. this is all an
+           * optimization anyway, so let the deployment continue. But log it so
+           * that users report it and we tweak this code to handle this.
+           *
+           * An alternative is working with the block size instead, which would
+           * be easier to handle. */
+          g_printerr ("bootcsum %s size exceeds %u; disabling auto-prune optimization\n", bootdir,
+                      G_MAXUINT);
+          return TRUE;
+        }
+
+      g_assert_cmpuint (bootdir_size, >, 0);
+      g_hash_table_insert (current_bootcsums, g_steal_pointer (&bootcsum),
+                           GUINT_TO_POINTER (bootdir_size));
+    }
+
+  /* total size of all bootcsums dirs that aren't already in /boot */
+  guint64 net_new_bootcsum_dirs_total_size = 0;
+
+  /* now gather all the bootcsums of the new deployments */
+  for (guint i = 0; i < new_deployments->len; i++)
+    {
+      OstreeDeployment *deployment = new_deployments->pdata[i];
+
+      const char *bootcsum = ostree_deployment_get_bootcsum (deployment);
+      gpointer bootdir_sizep = g_hash_table_lookup (current_bootcsums, bootcsum);
+      if (bootdir_sizep != 0)
+        {
+          g_hash_table_insert (new_bootcsums, g_strdup (bootcsum), bootdir_sizep);
+          continue;
+        }
+
+      guint64 bootdir_size = 0;
+      if (!get_kernel_layout_size (self, deployment, stvfsbuf.f_bsize, &bootdir_size, cancellable,
+                                   error))
+        return FALSE;
+
+      /* see similar logic in previous loop */
+      if (bootdir_size > G_MAXUINT)
+        {
+          g_printerr (
+              "deployment %s kernel layout size exceeds %u; disabling auto-prune optimization\n",
+              ostree_deployment_get_csum (deployment), G_MAXUINT);
+          return TRUE;
+        }
+
+      g_hash_table_insert (new_bootcsums, g_strdup (bootcsum), GUINT_TO_POINTER (bootdir_size));
+
+      /* it wasn't in current_bootcsums; add */
+      net_new_bootcsum_dirs_total_size += bootdir_size;
+    }
+  g_autofree char *net_new_formatted = g_format_size (net_new_bootcsum_dirs_total_size);
+
+  {
+    gboolean bootfs_has_space = FALSE;
+    if (!dfd_fallocate_check (self->boot_fd, net_new_bootcsum_dirs_total_size, &bootfs_has_space,
+                              error))
+      return glnx_prefix_error (error, "Checking if bootfs has sufficient space");
+
+    /* does the bootfs have enough free space for temporarily holding both the new
+     * and old bootdirs? */
+    if (bootfs_has_space)
+      {
+        g_printerr ("bootfs is sufficient for calculated new size: %s\n", net_new_formatted);
+        return TRUE; /* nothing to do! */
+      }
+  }
+
+  g_printerr ("bootfs requires additional space: %s\n", net_new_formatted);
+  /* OK, we would fail if we tried to write the new bootdirs. Is it salvageable?
+   * First, calculate how much space we could save with the bootcsums scheduled
+   * for removal. */
+  guint64 bootcsum_dirs_to_remove_total_size = 0;
+  GLNX_HASH_TABLE_FOREACH_KV (current_bootcsums, const char *, bootcsum, gpointer, sizep)
+    {
+      if (!g_hash_table_contains (new_bootcsums, bootcsum))
+        bootcsum_dirs_to_remove_total_size += GPOINTER_TO_UINT (sizep);
+    }
+
+  {
+    g_autofree char *to_remove_formated = g_format_size (bootcsum_dirs_to_remove_total_size);
+    g_printerr ("Size to prune from bootfs: %s\n", to_remove_formated);
+  }
+
+  if (net_new_bootcsum_dirs_total_size > bootcsum_dirs_to_remove_total_size)
+    {
+      /* Check whether if we did early prune, we'd have enough space to write
+       * the new bootcsum dirs. */
+      gboolean bootfs_has_space = FALSE;
+      if (!dfd_fallocate_check (
+              self->boot_fd, net_new_bootcsum_dirs_total_size - bootcsum_dirs_to_remove_total_size,
+              &bootfs_has_space, error))
+        return glnx_prefix_error (error, _("Checking if prune would give bootfs sufficient space"));
+
+      if (!bootfs_has_space)
+        {
+          /* Even if we auto-pruned, the new bootdirs wouldn't fit. Just let the
+           * code continue and let it hit ENOSPC. */
+          g_printerr ("Disabling auto-prune optimization; insufficient space left in bootfs\n");
+          return TRUE;
+        }
+    }
+
+  g_printerr ("Insufficient space left in bootfs; updating bootloader in two steps\n");
+
+  /* Auto-pruning can salvage the situation. Calculate the set of deployments in common. */
+  g_autoptr (GPtrArray) common_deployments = g_ptr_array_new ();
+  for (guint i = 0; i < self->deployments->len; i++)
+    {
+      OstreeDeployment *deployment = self->deployments->pdata[i];
+      const char *bootcsum = ostree_deployment_get_bootcsum (deployment);
+      if (g_hash_table_contains (new_bootcsums, bootcsum))
+        {
+          g_ptr_array_add (common_deployments, deployment);
+        }
+      else
+        {
+          /* we always keep the booted deployment */
+          g_assert (deployment != self->booted_deployment);
+        }
+    }
+
+  /* if we're here, it means that removing some deployments is possible to gain space */
+  g_assert_cmpuint (common_deployments->len, <, self->deployments->len);
+
+  /* Do an initial write out where we do a pure deployment pruning, keeping
+   * common deployments. To be safe, disable auto-pruning to make recursion
+   * impossible (though the logic in this function shouldn't kick in anyway in
+   * that recursive call). Disable cleaning since it's an intermediate stage. */
+  OstreeSysrootWriteDeploymentsOpts opts
+      = { .do_postclean = FALSE, .disable_auto_early_prune = TRUE };
+  if (!ostree_sysroot_write_deployments_with_options (self, NULL, common_deployments, &opts, cancellable,
+                                                      error))
+    return FALSE;
+
+  /* clean up /boot */
+  if (!_ostree_sysroot_cleanup_bootfs (self, cancellable, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+static int bind_mount(const char *deployment_path, const char *targets[], int target_count)
+{
+  char target[256];
+  for (int i = 0; i < target_count; i++)
+  {
+    sprintf(target, "%s%s%s", "/", deployment_path, targets[i]);
+    int res = mount(targets[i], target, NULL, MS_BIND, NULL);
+    if (res == -1)
+    {
+      g_printerr("Error: %s", strerror(errno));
+      return 0;
+    }
+  }
+  return 1;
+}
+
+static int copy_config_files(const char *src_dir, const char *dest_dir)
+{
+  GError *error = NULL;
+  GDir *dir;
+
+  dir = g_dir_open(src_dir, 0, &error);
+  if (dir == NULL)
+  {
+    g_printerr(_("Failed to open directory %s: %s\n"), src_dir, error->message);
+    g_error_free(error);
+    //g_dir_close(dir);
+    return -1;
+  }
+
+  const gchar *filename;
+  while ((filename = g_dir_read_name(dir)) != NULL)
+  {
+    if (g_str_has_prefix(filename, "config-"))
+    {
+      g_autofree gchar *src_path = g_build_filename(src_dir, filename, NULL);
+      g_autofree gchar *dest_path = g_build_filename(dest_dir, filename, NULL);
+
+      if (!g_file_copy(g_file_new_for_path(src_path), g_file_new_for_path(dest_path), G_FILE_COPY_OVERWRITE, NULL, NULL, NULL, &error))
+      {
+        g_printerr("Failed to copy file %s to %s: %s\n", src_path, dest_path, error->message);
+        g_error_free(error);
+        g_dir_close(dir);
+        return -1;
+      }
+      g_print("Copied: %s -> %s\n", src_path, dest_path);
+    }
+  }
+  g_error_free(error);
+  g_dir_close(dir);
+  return 0;
+}
+
+/**
+ * pre_mount: 
+ * @self: OstreeSysroot instance
+ * @curr_deployment: Current active deployment
+ * @new_deployment: New deployment to be activated
+ * 
+ * Prepare and mount overlay filesystem for deployment
+ * 
+ * This function sets up overlay filesystem mounts to preserve configuration
+ * files from the current deployment when switching to a new deployment.
+ * It creates overlay mounts for /etc directory and binds essential system
+ * directories to the new deployment.
+ *
+ * @return: 1 on success, 0 on failure
+ */
+static int pre_mount(OstreeSysroot *self, OstreeDeployment *curr_deployment, OstreeDeployment *new_deployment)
+{
+  // Validate input parameters
+  if (!new_deployment || !curr_deployment)
+  {
+    g_printerr("new_deployment or curr_deployment is null !\n");
+    return 0;
+  }
+
+  // Structure for path building configuration
+  struct path_builder
+  {
+    char *buffer;
+    size_t buffer_size;
+    const char *name;
+  };
+
+  // Path buffers for overlay filesystem setup
+  char deploy_path[1024];
+  char curr_overlay_path[1024];
+  char curr_etclower_path[1024];
+  char curr_etcwork_path[1024];
+  char new_deploy_etc[1024];
+  char mount_data[1024 * 3];
+
+  // Get deployment information
+  const char *osname = ostree_deployment_get_osname(new_deployment);
+  const char *csum = ostree_deployment_get_csum(new_deployment);
+  int deployserial = ostree_deployment_get_deployserial(new_deployment);
+  const char *curr_csum = ostree_deployment_get_csum(curr_deployment);
+  int curr_deployserial = ostree_deployment_get_deployserial(curr_deployment);
+
+  // Path configuration array (buffer, size, and name)
+  struct path_builder paths[] = {
+      {curr_overlay_path, sizeof(curr_overlay_path), "curr_overlay_path"},
+      {curr_etclower_path, sizeof(curr_etclower_path), "curr_etclower_path"},
+      {curr_etcwork_path, sizeof(curr_etcwork_path), "curr_etcwork_path"},
+      {deploy_path, sizeof(deploy_path), "deploy_path"},
+      {new_deploy_etc, sizeof(new_deploy_etc), "new_deploy_etc"}};
+
+  // Build all required paths
+  gboolean paths_built = TRUE;
+  for (int i = 0; i < G_N_ELEMENTS(paths); i++)
+  {
+    int result;
+    switch (i)
+    {
+      case 0: /* curr_overlay_path */
+        result = snprintf(paths[i].buffer, paths[i].buffer_size, "/ostree/pkgs/ovl-%s.%d", curr_csum, curr_deployserial);
+        break;
+      case 1: /* curr_etclower_path */
+        result = snprintf(paths[i].buffer, paths[i].buffer_size, "%s/etc-ovl/etc-lower", curr_overlay_path);
+        break;
+      case 2: /* curr_etcwork_path */
+        result = snprintf(paths[i].buffer, paths[i].buffer_size, "%s/etc-ovl/etc-work", curr_overlay_path);
+        break;
+      case 3: /* deploy_path */
+        result = snprintf(paths[i].buffer, paths[i].buffer_size, "/ostree/deploy/%s/deploy/%s.%d", osname, csum, deployserial);
+        break;
+      case 4: /* new_deploy_etc */
+        result = snprintf(paths[i].buffer, paths[i].buffer_size, "%s/etc", deploy_path);
+        break;
+      default:
+        result = -1;
+        break;
+    }
+
+    if (result >= (int)paths[i].buffer_size)
+    {
+      g_printerr("Path too long for %s: %s\n", paths[i].name, paths[i].buffer);
+      paths_built = FALSE;
+    }
+  }
+
+  // Check if all required paths exist
+  gboolean paths_valid = paths_built;
+  if (paths_built)
+  {
+    for (int i = 0; i < G_N_ELEMENTS(paths); i++)
+    {
+      if (!g_file_test(paths[i].buffer, G_FILE_TEST_EXISTS))
+      {
+        g_print("Warning: %s does not exist: %s\n", paths[i].name, paths[i].buffer);
+        paths_valid = FALSE;
+      }
+    }
+  }
+
+
+  /* The new deployment point binds and mounts itself to ensure that the mount in the chroot environment has/information, 
+  * so that the mkinitramfs after chroot contains the corresponding ko.
+  */
+  if (mount(deploy_path, deploy_path, NULL, MS_BIND, NULL) == -1)
+  {
+    g_printerr("Error: %s fail to bind (%s)", deploy_path,strerror(errno));
+  }
+
+  // Only mount if all paths exist
+  if (paths_valid)
+  {
+    if (snprintf(mount_data, sizeof(mount_data),
+                 "lowerdir=%s,upperdir=%s,workdir=%s",
+                 new_deploy_etc, curr_etclower_path, curr_etcwork_path) >= sizeof(mount_data))
+      g_printerr("Mount data too long\n");
+
+    g_print("Mount data %s \n",mount_data);
+    /*
+     * Mount overlay filesystem to merge old deployment's /etc with new deployment
+     * This allows configuration files to be preserved during system updates
+     */
+    if (mount("overlay", new_deploy_etc, "overlay", 0, mount_data) != 0)
+      g_printerr("Mount failed: %s\n", strerror(errno));
+    else
+      g_debug("Overlay filesystem mounted successfully");
+  }
+  else
+    g_print("Skipping overlay mount due to missing paths\n");
+
+  // Copy boot configuration files from deployment to system
+  g_autofree char *deployment_path = ostree_sysroot_get_deployment_dirpath(self, new_deployment);
+  g_autofree char *boot_src_dir = g_build_filename(deployment_path, "/boot", NULL);
+  const char *boot_dest_dir = "/boot";
+
+  if (copy_config_files(boot_src_dir, boot_dest_dir) != 0)
+  {
+    g_printerr("Failed to copy config files\n");
+  }
+
+  // Bind mount essential system directories to new deployment
+  const char *targets[] = {"/dev", "/sys", "/proc", "/boot"};
+  int target_count = sizeof(targets) / sizeof(targets[0]);
+  return bind_mount(deployment_path, targets, target_count);
+}
+
+static void deploy_initramfs(OstreeDeployment *deployment)
+{
+  char deploy_path[256];
+  char target_dir[512];
+  char cmd[4096];
+  DIR *dir;
+  struct dirent *entry;
+  const char *osname = ostree_deployment_get_osname(deployment);
+  const char *csum = ostree_deployment_get_csum(deployment);
+  int deployserial = ostree_deployment_get_deployserial(deployment);
+  const char *bootcsum = ostree_deployment_get_bootcsum(deployment);
+
+  snprintf(deploy_path, sizeof(deploy_path), "/ostree/deploy/%s/deploy/%s.%d", osname, csum, deployserial);
+  snprintf(target_dir, sizeof(target_dir), "%s/usr/lib/modules", deploy_path);
+
+  dir = opendir(target_dir);
+  if (dir == NULL)
+  {
+    g_printerr(_("Failed to open directory:%s\n"),target_dir);
+    return;
+  }
+
+  while ((entry = readdir(dir)) != NULL)
+  {
+    char boot_path[1024];
+
+    if (entry->d_type != DT_DIR || strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+      continue;
+
+
+    pid_t pid = fork();
+    if (pid == 0) {
+      // 子进程
+      char output_path[512];
+      snprintf(output_path, sizeof(output_path), "/boot/ostree/%s-%s/initramfs-%s.img", 
+                osname, bootcsum, entry->d_name);
+
+      // 构建参数数组
+      char *args[] = {
+            "/usr/sbin/mkinitramfs",
+            "-o",
+            output_path,
+            entry->d_name,
+            NULL
+      };
+
+      // 切换到 chroot 环境
+      if (chroot(deploy_path) != 0) {
+            perror("chroot failed");
+            _exit(1);
+      }
+
+      // 切换到根目录
+      if (chdir("/") != 0) {
+            perror("chdir failed");
+            _exit(1);
+      }
+
+      // 执行 mkinitramfs
+      execve("/usr/sbin/mkinitramfs", args, environ);
+      perror("execve failed");
+      _exit(1);
+
+    }
+    else if (pid > 0) {
+      // 父进程
+      int status;
+      waitpid(pid, &status, 0);
+
+      if (WIFEXITED(status)) {
+        g_debug("mkinitramfs exited with status: %d\n", WEXITSTATUS(status));
+        if (WEXITSTATUS(status) != 0) {
+          g_printerr("Error executing mkinitramfs, status: %d\n", WEXITSTATUS(status));
+        }
+      } else if (WIFSIGNALED(status)) {
+        g_printerr("mkinitramfs killed by signal: %d\n", WTERMSIG(status));
+      }
+
+    } else {
+      g_printerr("fork failed\n");
+    }
+  }
+  closedir(dir);
+}
+
+/*Execute all scripts in the specified directory*/
+static void execute_scripts(const char* dir_path) 
+{
+    char command[1024];
+    sprintf(command, "run-parts --verbose %s >> /var/log/ostree.log 2>&1", dir_path);
+    int status = system(command);
+    if (status != 0)
+      g_printerr ("Error executing command '%s', status: %d",command, status);
+}
+
+
+static const gchar *kernel_version = NULL;
+
+static bool ostree_check_kernel_vsrsion(gchar *lib_path)
+{  
+      const gchar *opt_path = "/opt/system/lib/modules";
+      GDir *lib_dir;
+      const gchar *entry;
+      GError *error = NULL;
+      gboolean is_rebuild = FALSE;
+  
+      lib_dir = g_dir_open(lib_path, 0, &error);
+      if (!lib_dir) {
+          g_printerr("Failed to open %s: %s\n", lib_path, error->message);
+          g_error_free(error);
+          return FALSE;
+      }
+
+
+      while ((entry = g_dir_read_name(lib_dir)) != NULL) {
+          gchar *lib_subdir = g_build_filename(lib_path, entry, NULL);
+          if (g_file_test(lib_subdir, G_FILE_TEST_IS_DIR)) {
+              // Check if corresponding dir exists in /opt/system/lib/modules
+              kernel_version = entry;
+              gchar *opt_subdir = g_build_filename(opt_path, entry, NULL);
+              if (!g_file_test(opt_subdir, G_FILE_TEST_IS_DIR)) {
+                  is_rebuild = TRUE;
+                  g_debug("Missing kernel module in opt\n");
+              }
+              g_free(opt_subdir);
+          }
+          g_free(lib_subdir);
+      }
+  
+      g_dir_close(lib_dir);
+      return is_rebuild;
+}
+
+
+static void ostree_sysroot_rebuild_dkms (OstreeSysroot *self, OstreeDeployment *new_deployment)
+{
+    int status;
+    char deploy_path[256];
+    char cmd[4096];
+    const char *osname = ostree_deployment_get_osname(new_deployment);
+    const char *csum = ostree_deployment_get_csum(new_deployment);
+    int deployserial = ostree_deployment_get_deployserial(new_deployment);
+
+  
+    snprintf(deploy_path, sizeof(deploy_path), "/ostree/deploy/%s/deploy/%s.%d", osname, csum, deployserial);
+
+    gchar *lib_path = g_strdup_printf("%s/usr/lib/modules", deploy_path);
+    gboolean ret = ostree_check_kernel_vsrsion(lib_path);
+  
+    if (ret) {
+      gchar *contents = NULL;
+      gsize length = 0;
+      GError *error = NULL;
+      const gchar *file_path = "/opt/system/lib/modules/.dkms.info";
+      const gchar *base_path = "/opt/system/lib/modules";
+
+      if (!g_file_get_contents(file_path, &contents, &length, &error)) {
+          g_printerr("Failed to read %s: %s\n", file_path, error->message);
+          g_error_free(error);
+          return;
+      }
+
+      gchar *full_path = g_build_filename(base_path, kernel_version, NULL);
+      if (g_mkdir_with_parents(full_path, 0755) != 0) {
+          g_printerr("Failed to create directory %s\n", full_path);
+          g_free(full_path);
+          return;
+      }
+      g_free(full_path);
+
+      snprintf(cmd, sizeof(cmd), "chroot %s mkdir -p /opt/kare-applications  /opt/system", deploy_path);
+      status = system(cmd);
+
+      snprintf(cmd, sizeof(cmd), "chroot %s touch /etc/passwd  /etc/group /etc/shadow /etc/gshadow", deploy_path);
+      status = system(cmd);
+
+      g_autofree char *deployment_path = ostree_sysroot_get_deployment_dirpath(self, new_deployment);
+      const char *targets[] = {"/etc/kare","/etc/passwd", "/etc/group","/etc/shadow","/etc/gshadow", "/var/lib/dkms", "/opt/kare-applications", "/opt/system"};
+      int target_count = sizeof(targets) / sizeof(targets[0]);
+      bind_mount(deployment_path, targets, target_count);
+
+      gchar **lines = g_strsplit(contents, "\n", -1);
+      for (gint i = 0; lines[i] != NULL; i++) {
+          gchar *line = g_strstrip(lines[i]);
+          if (line[0] == '\0') continue;  // 跳过空行
+          gchar **tokens = g_strsplit_set(line, " \t", 2);
+          if (tokens[0] && tokens[1]) {
+              gchar *module = tokens[0];
+              gchar *version = tokens[1];
+              snprintf(cmd, sizeof(cmd), "chroot %s kare run dkmsContainer dkms build -m %s -v %s -k %s --force",
+                  deploy_path, module, version, kernel_version);
+              status = system(cmd);
+              snprintf(cmd, sizeof(cmd), "chroot %s kare run dkmsContainer dkms install -m %s -v %s -k %s --force",
+                  deploy_path, module, version, kernel_version);
+              status = system(cmd);
+          }
+          g_strfreev(tokens);
+      }
+      g_strfreev(lines);
+      g_free(contents);
+    } else {
+        g_debug("No need rebuild dkms drivers\n");
+    }
+}
+
+static gboolean
+check_offline_source (void)
+{
+  struct stat offline_source_stat;
+  gboolean is_kpb = false;
+
+  // 检查路径是否存在且为目录
+  if (stat("/media/OfflineSource", &offline_source_stat) == 0) {
+      if (S_ISDIR(offline_source_stat.st_mode)) {
+          is_kpb = true;
+          g_debug("Directory /media/OfflineSource exists.");
+      } else {
+        g_debug("/media/OfflineSource is not a directory.");
+      }
+  } else {
+      g_debug("Path /media/OfflineSource does not exist or cannot be accessed");
+  }
+  return is_kpb;
+}
+
+static gboolean
+process_manifest (OstreeSysroot *self, OstreeDeployment *deployment, GCancellable *cancellable, GError **error)
+{
+  gboolean is_kpb = check_offline_source ();
+  if (self->is_cmdline_invoked && !is_kpb)
+    return TRUE;
+
+  const char *curr_csum = ostree_deployment_get_csum(deployment);
+  int curr_deployserial = ostree_deployment_get_deployserial(deployment);
+  g_autofree char *pkg_ovl_base = g_strdup_printf("ostree/pkgs/ovl-%s.%d", curr_csum, curr_deployserial);
+  g_autofree char *var_upper_path = g_build_filename(pkg_ovl_base, "var-ovl", "var-upper", NULL);
+  g_autofree char *etc_upper_path = g_build_filename(pkg_ovl_base, "etc-ovl", "etc-upper", NULL);
+
+  // Open the var-upper directory file descriptor
+  glnx_autofd int var_upper_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, var_upper_path, TRUE, &var_upper_dfd, error))
+    return FALSE;
+
+  // Open the etc-upper directory file descriptor
+  glnx_autofd int etc_upper_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, etc_upper_path, TRUE, &etc_upper_dfd, error))
+    return FALSE;
+  
+  g_debug("pkg-ovl var-upper path: %s", var_upper_path);
+  g_debug("pkg-ovl etc-upper path: %s", etc_upper_path);
+
+  /* Open stateroot var directory for /var/opt files (local dir, not overlay) */
+  const char *stateroot = ostree_deployment_get_osname (deployment);
+  g_autofree char *var_local_path = g_build_filename ("ostree/deploy/", stateroot, "var", NULL);
+  glnx_autofd int var_local_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, var_local_path, TRUE, &var_local_dfd, error))
+    return FALSE;
+  g_debug("pkg-ovl var-local path (for /var/opt): %s", var_local_path);
+  
+  g_autofree char *deploy_path = ostree_sysroot_get_deployment_dirpath(self, deployment);
+  g_autofree char *manifest_dir = g_strdup_printf("/%s%s", deploy_path, UPDATE_MANIFESTS_DIR);
+  g_debug("manifest_dir is : %s", manifest_dir);
+  g_autoptr(GDir) dir = g_dir_open(manifest_dir, 0, NULL);
+  if(!dir)
+    return TRUE;
+
+  const gchar *filename;
+  while ((filename = g_dir_read_name(dir)) != NULL) {
+    if (!g_str_has_suffix(filename, ".json"))
+      continue;
+
+    g_autofree gchar *manifest_path = g_build_filename(manifest_dir, filename, NULL);
+
+    g_autofree char *manifest_content = NULL;
+    gsize manifest_length = 0;
+
+    if (!g_file_get_contents(manifest_path, &manifest_content, &manifest_length, error))
+      return TRUE;
+
+    g_autoptr(JsonParser) parser = json_parser_new ();
+    g_autoptr(GError) json_error = NULL;
+
+    if (!json_parser_load_from_data(parser, manifest_content, manifest_length, &json_error)) {
+      g_warning("Failed to parse JSON: %s", json_error->message);
+      continue;
+    }
+
+    JsonNode *root = json_parser_get_root(parser);
+    if (!root || json_node_get_node_type(root) != JSON_NODE_OBJECT) {
+      g_warning("Root must be a JSON object in file: %s", filename);
+      continue;
+    }
+
+    JsonObject *root_obj = json_node_get_object (root);
+    if (!json_object_has_member(root_obj, "manifests")) {
+      g_warning("Missing 'manifests' object in file: %s", filename);
+      continue; 
+    }
+
+    JsonNode *manifests_node = json_object_get_member(root_obj, "manifests");
+    if (json_node_get_node_type(manifests_node) != JSON_NODE_OBJECT) {
+      g_warning("'manifests' must be an object in file: %s", filename);
+      continue;
+    }
+
+    JsonObject *manifests_obj = json_node_get_object(manifests_node);
+    if (!json_object_has_member(manifests_obj, "upgrade_files")) {
+      g_warning("Missing 'upgrade_files' array in file: %s", filename);
+      continue;
+    }
+
+    JsonNode *files_node = json_object_get_member(manifests_obj, "upgrade_files");
+    if (json_node_get_node_type(files_node) != JSON_NODE_ARRAY) {
+      g_warning("'upgrade_files' must be an array in file: %s", filename);
+      continue;
+    }
+
+    JsonArray *files_array = json_node_get_array (files_node);
+    guint length = json_array_get_length (files_array);
+
+    for (guint i = 0; i < length; i++)
+      {
+        JsonNode *element = json_array_get_element (files_array, i);
+        
+        if (json_node_get_node_type (element) != JSON_NODE_VALUE || json_node_get_value_type (element) != G_TYPE_STRING)
+        {
+          g_warning("Invalid element type at index %d in file: %s", i, filename);
+          continue;
+        }
+        const char *file_path = json_node_get_string (element);
+        
+        // Determine target directory and checksum based on path prefix
+        int target_dfd;
+        g_autofree char *source_subpath = NULL;
+        g_autofree char *target_dir = NULL;
+        
+        if (g_str_has_prefix (file_path, "/etc"))
+          {
+            target_dfd = etc_upper_dfd;
+            if (g_str_has_prefix (file_path, "/etc/"))
+              source_subpath = g_strdup_printf ("/usr/etc/%s", file_path + 5);
+            else if (strcmp (file_path, "/etc") == 0)
+              source_subpath = g_strdup ("/usr/etc");
+            else
+              source_subpath = g_strdup_printf ("/usr/etc%s", file_path + 4);
+            // Remove /etc/ prefix for target_dir
+            if (g_str_has_prefix (file_path, "/etc/"))
+              {
+                const char *path_after_etc = file_path + 5;
+                const char *last_slash = strrchr (path_after_etc, '/');
+                target_dir = last_slash ? g_strndup (path_after_etc, last_slash - path_after_etc) : g_strdup (".");
+              }
+            else
+              {
+                target_dir = g_strdup (".");
+              }
+          }
+        else if (g_str_has_prefix (file_path, "/var/opt"))
+          {
+            /* /var/opt: checkout from pending_hash to local var dir (not overlay) */
+            target_dfd = var_local_dfd;
+            source_subpath = g_strdup (file_path);
+            /* target_dir relative to var/; for /var/opt/foo/bar -> "opt/foo" */
+            if (g_str_has_prefix (file_path, "/var/opt/"))
+              {
+                const char *path_after_var_opt = file_path + 9; // Skip "/var/opt/"
+                const char *last_slash = strrchr (path_after_var_opt, '/');
+                if (last_slash)
+                  target_dir = g_strdup_printf ("opt/%.*s", (int)(last_slash - path_after_var_opt), path_after_var_opt);
+                else
+                  target_dir = g_strdup ("opt");
+              }
+            else
+              {
+                /* /var/opt (exact match) */
+                target_dir = g_strdup ("opt");
+              }
+            g_debug ("/var/opt file: checkout from pending_hash=%s to local var", curr_csum);
+          }
+        else if (g_str_has_prefix (file_path, "/var"))
+          {
+            target_dfd = var_upper_dfd;
+            source_subpath = g_strdup (file_path);
+            // Remove /var/ prefix for target_dir
+            if (g_str_has_prefix (file_path, "/var/"))
+              {
+                const char *path_after_var = file_path + 5; // Skip "/var/"
+                const char *last_slash = strrchr (path_after_var, '/');
+                target_dir = last_slash ? g_strndup (path_after_var, last_slash - path_after_var) : g_strdup (".");
+              }
+            else
+              {
+                target_dir = g_strdup (".");
+              }
+          }
+        else
+          {
+            // Skip files that don't start with /etc or /var
+            g_debug("Skipping file (not /etc or /var): %s", file_path);
+            continue;
+          }
+
+        g_debug ("Checking out file: source_subpath=%s, target_dir=%s", source_subpath, target_dir);
+        
+        // 检查目标目录是否存在，如果不存在则创建
+        if (strcmp(target_dir, ".") != 0) {
+          struct stat stbuf;
+          if (!glnx_fstatat_allow_noent (target_dfd, target_dir, &stbuf, AT_SYMLINK_NOFOLLOW, error))
+            return FALSE;
+          
+          if (errno == ENOENT) {
+            // 目录不存在，创建父目录
+            g_debug("Target directory does not exist, creating: %s", target_dir);
+            if (!glnx_shutil_mkdir_p_at (target_dfd, target_dir, 0755, cancellable, error)) {
+              g_prefix_error(error, "Failed to create target directory '%s': ", target_dir);
+              return FALSE;
+            }
+          } else if (errno == 0) {
+            // 目录已存在，检查是否为目录
+            if (!S_ISDIR(stbuf.st_mode)) {
+              g_set_error(error, G_IO_ERROR, G_IO_ERROR_EXISTS,
+                          "Target path exists but is not a directory: %s", target_dir);
+              return FALSE;
+            }
+          }
+        }
+        
+        // 检出文件到对应的 *-upper 目录或本地 var 目录 (/var/opt)
+        OstreeRepoCheckoutAtOptions co_opts = {
+          .force_copy = TRUE,
+          .subpath = source_subpath,
+          .overwrite_mode = OSTREE_REPO_CHECKOUT_OVERWRITE_UNION_FILES
+        };
+        g_autoptr(GError) local_error = NULL;
+        if (!ostree_repo_checkout_at (self->repo, &co_opts, target_dfd, target_dir,
+                                      ostree_deployment_get_csum (deployment), cancellable, &local_error))
+        {
+          if (g_error_matches(local_error, G_IO_ERROR, G_IO_ERROR_NOT_FOUND)){
+            g_debug("File does not exist, skipping: %s", file_path);
+            continue;
+          }
+        }
+      }
+  }
+  g_debug ("Process manifests successfully");
+  return TRUE;
+}
+static GThreadPool *initramfs_pool = NULL;
+static GThreadPool *finalize_pool = NULL;
+static GMutex pool_mutex;
+static GCond tasks_complete_cond;
+static gint tasks_running = 0;
+
+static void task_complete_callback(gpointer user_data) {
+  g_mutex_lock(&pool_mutex);
+  tasks_running--;
+  if (tasks_running == 0)
+    g_cond_signal(&tasks_complete_cond);
+  g_mutex_unlock(&pool_mutex);
+}
+
+static void initramfs_update_task_func(gpointer data, gpointer user_data){
+  InitramfsUpdateTask *task = data;
+  GError **error = user_data;
+  /*update initramfs*/
+  OstreeDeployment *curr_deployment = ostree_sysroot_get_booted_deployment(task->self);
+  if (task->new_deployment && (task->new_deployments_len > task->old_deployments_len) && pre_mount(task->self, curr_deployment, task->new_deployment))
+  {
+    ostree_sysroot_rebuild_dkms(task->self, task->new_deployment);
+    deploy_initramfs(task->new_deployment);
+  }
+  //if(progress) update_progress_deploy(progress, 86, 100, "Processing...", FALSE);
+  {
+    g_autofree char *msg
+        = g_strdup_printf ("%s; bootconfig swap: %s; bootversion: %s, deployment count change: %i",
+                           (task->bootloader_is_atomic ? "Transaction complete" : "Bootloader updated"),
+                           task->requires_new_bootversion ? "yes" : "no", task->new_subbootdir,
+                           task->new_deployments_len - task->old_deployments_len);
+    const gchar *bootloader_config = ostree_repo_get_bootloader (ostree_sysroot_repo (task->self));
+    ot_journal_send (
+        "MESSAGE_ID=" SD_ID128_FORMAT_STR, SD_ID128_FORMAT_VAL (OSTREE_DEPLOYMENT_COMPLETE_ID),
+        "MESSAGE=%s", msg, "OSTREE_BOOTLOADER=%s",
+        task->bootloader ? _ostree_bootloader_get_name (task->bootloader) : "none",
+        "OSTREE_BOOTLOADER_CONFIG=%s", bootloader_config, "OSTREE_BOOTLOADER_ATOMIC=%s",
+        task->bootloader_is_atomic ? "yes" : "no", "OSTREE_DID_BOOTSWAP=%s",
+        task->requires_new_bootversion ? "yes" : "no", "OSTREE_N_DEPLOYMENTS=%u", task->new_deployments_len,
+        "OSTREE_SYNCFS_ROOT_MSEC=%" G_GUINT64_FORMAT, task->syncstats.root_syncfs_msec,
+        "OSTREE_SYNCFS_BOOT_MSEC=%" G_GUINT64_FORMAT, task->syncstats.boot_syncfs_msec, NULL);
+    _ostree_sysroot_emit_journal_msg (task->self, msg);
+  }
+  g_debug ("OSTREE_DEPLOYMENT_COMPLETE1");
+  task_complete_callback(NULL);
+}
+
+static void deployment_finalize_task_func(gpointer data, gpointer user_data) {
+  DeploymentFinalizeTask *task = data;
+  GError **error = user_data;
+  if(task->new_deployments_len > task->old_deployments_len)
+  {
+    g_autoptr (GFile) sysroot_deployment_root = NULL;
+    sysroot_deployment_root = ostree_sysroot_get_deployment_directory(task->self, task->new_deployment);
+    g_autofree char *sysroot_deployment_directory = g_file_get_path(sysroot_deployment_root);
+    char full_sysroot_deployment_directory[NAME_MAX];
+    snprintf(full_sysroot_deployment_directory, sizeof(full_sysroot_deployment_directory), "%s%s", sysroot_deployment_directory, POST_DEPLOY_DIR);
+    /*Call execute_scripts and pass in the full path*/
+    execute_scripts(full_sysroot_deployment_directory);
+    process_manifest(task->self, task->new_deployment, task->cancellable, error);
+    // /*Deployment completed, read configuration file, delete redundant deployments*/
+    // ostree_delete_deployment(task->self);
+  }
+  /*deployment delete*/
+  else if(task->new_deployments_len < task->old_deployments_len)
+    execute_scripts(POST_UNDEPLOY_DIR);
+  g_debug ("OSTREE_DEPLOYMENT_COMPLETE2");
+  task_complete_callback(NULL);
+}
+/**
+ * ostree_sysroot_write_deployments_with_options:
+ * @self: Sysroot
+ * @new_deployments: (element-type OstreeDeployment): List of new deployments
+ * @opts: Options
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Assuming @new_deployments have already been deployed in place on disk via
+ * ostree_sysroot_deploy_tree(), atomically update bootloader configuration. By
+ * default, no post-transaction cleanup will be performed. You should invoke
+ * ostree_sysroot_cleanup() at some point after the transaction, or specify
+ * `do_postclean` in @opts.  Skipping the post-transaction cleanup is useful
+ * if for example you want to control pruning of the repository.
+ *
+ * Since: 2017.4
+ */
+gboolean
+ostree_sysroot_write_deployments_with_options (OstreeSysroot *self, OstreeAsyncProgress *progress, GPtrArray *new_deployments,
+                                               OstreeSysrootWriteDeploymentsOpts *opts,
+                                               GCancellable *cancellable, GError **error)
+{
+  g_assert (self->loadstate == OSTREE_SYSROOT_LOAD_STATE_LOADED);
+
+  if (!_ostree_sysroot_ensure_writable (self, error))
+    return FALSE;
+
+  const bool skip_early_prune = (self->opt_flags & OSTREE_SYSROOT_GLOBAL_OPT_NO_EARLY_PRUNE) > 0;
+  if (!skip_early_prune && !opts->disable_auto_early_prune
+      && !auto_early_prune_old_deployments (self, new_deployments, cancellable, error))
+    return FALSE;
+
+  if(progress) update_progress_deploy(progress, 68, 100, "Processing...", FALSE);
+  /* Dealing with the staged deployment is quite tricky here. This function is
+   * primarily concerned with writing out "finalized" deployments which have
+   * bootloader entries. Originally, we simply dropped the staged deployment
+   * here unconditionally. Now, the high level strategy is to retain it, but
+   * *only* if it's the first item in the new deployment list - otherwise, it's
+   * silently dropped.
+   */
+
+  OstreeDeployment * new_deployment = NULL;
+
+  g_autoptr (GPtrArray) new_deployments_copy = g_ptr_array_new ();
+  gboolean removed_staged = (self->staged_deployment != NULL);
+  if (new_deployments->len > 0)
+    {
+      /*The latest addition to the array is defined as a newly deployed deployment*/
+      new_deployment = g_ptr_array_index(new_deployments, 0);
+      OstreeDeployment *first = new_deployments->pdata[0];
+      /* If the first deployment is the staged, we filter it out for now */
+      g_assert (first);
+      if (first == self->staged_deployment)
+        {
+          g_assert (ostree_deployment_is_staged (first));
+
+          /* In this case note staged was retained */
+          removed_staged = FALSE;
+        }
+
+      /* Create a copy without any staged deployments */
+      for (guint i = 0; i < new_deployments->len; i++)
+        {
+          OstreeDeployment *deployment = new_deployments->pdata[i];
+          if (!ostree_deployment_is_staged (deployment))
+            g_ptr_array_add (new_deployments_copy, deployment);
+        }
+      new_deployments = new_deployments_copy;
+    }
+  const char *revision = ostree_deployment_get_csum(new_deployment);
+  if(progress) update_progress_deploy(progress, 70, 100, "Processing...", FALSE);
+  /* Take care of removing the staged deployment's on-disk state if we should */
+  if (removed_staged)
+    {
+      g_assert (self->staged_deployment);
+      g_assert (self->staged_deployment == self->deployments->pdata[0]);
+
+      if (!glnx_unlinkat (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED, 0, error))
+        return FALSE;
+
+      if (!_ostree_sysroot_rmrf_deployment (self, self->staged_deployment, cancellable, error))
+        return FALSE;
+
+      /* Delete the lock if there was any. */
+      if (!ot_ensure_unlinked_at (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED_LOCKED, error))
+        return FALSE;
+
+      /* Clear it out of the *current* deployments list to maintain invariants */
+      self->staged_deployment = NULL;
+      g_ptr_array_remove_index (self->deployments, 0);
+    }
+  const guint nonstaged_current_len = self->deployments->len - (self->staged_deployment ? 1 : 0);
+  if(progress) update_progress_deploy(progress, 72, 100, "Processing...", FALSE);
+  /* Assign a bootserial to each new deployment.
+   */
+  assign_bootserials (new_deployments);
+
+  /* Determine whether or not we need to touch the bootloader
+   * configuration.  If we have an equal number of deployments with
+   * matching bootloader configuration, then we can just swap the
+   * subbootversion bootlinks.
+   */
+  if(progress) update_progress_deploy(progress, 74, 100, "Processing...", FALSE);
+  gboolean requires_new_bootversion = FALSE;
+
+  OstreeRepo *repo = ostree_sysroot_repo (self);
+  if (new_deployments->len != nonstaged_current_len)
+    requires_new_bootversion = TRUE;
+  else
+    {
+      gboolean is_noop = TRUE;
+      for (guint i = 0; i < new_deployments->len; i++)
+        {
+          OstreeDeployment *cur_deploy = self->deployments->pdata[i];
+          if (ostree_deployment_is_staged (cur_deploy))
+            continue;
+          OstreeDeployment *new_deploy = new_deployments->pdata[i];
+          if (!deployment_bootconfigs_equal (repo, cur_deploy, new_deploy))
+            {
+              requires_new_bootversion = TRUE;
+              is_noop = FALSE;
+              break;
+            }
+          if (cur_deploy != new_deploy)
+            is_noop = FALSE;
+        }
+
+      /* If we're passed the same set of deployments, we don't need
+       * to drop into the rest of this function which deals with
+       * changing the bootloader config.
+       */
+      if (is_noop)
+        {
+          g_assert (!requires_new_bootversion);
+          /* However, if we dropped the staged deployment, we still
+           * need to do finalization steps such as regenerating
+           * the refs and bumping the mtime.
+           */
+          if (removed_staged)
+            {
+              if (!write_deployments_finish (self, cancellable, error))
+                return FALSE;
+            }
+          return TRUE;
+        }
+    }
+  if(progress) update_progress_deploy(progress, 76, 100, "Processing...", FALSE);
+  gboolean found_booted_deployment = FALSE;
+  for (guint i = 0; i < new_deployments->len; i++)
+    {
+      OstreeDeployment *deployment = new_deployments->pdata[i];
+      g_assert (!ostree_deployment_is_staged (deployment));
+
+      if (ostree_deployment_equal (deployment, self->booted_deployment))
+        found_booted_deployment = TRUE;
+
+      g_autoptr (GFile) deployment_root
+          = ostree_sysroot_get_deployment_directory (self, deployment);
+      if (!g_file_query_exists (deployment_root, NULL))
+        return glnx_throw (error, _("Unable to find expected deployment root: %s"),
+                           gs_file_get_path_cached (deployment_root));
+
+      ostree_deployment_set_index (deployment, i);
+    }
+
+  if (self->booted_deployment && !found_booted_deployment)
+    return glnx_throw (error, _("Attempting to remove booted deployment"));
+
+  gboolean bootloader_is_atomic = FALSE;
+  SyncStats syncstats = {
+    0,
+  };
+  g_autoptr (OstreeBootloader) bootloader = NULL;
+  g_autofree char *new_subbootdir = NULL;
+
+  if(progress) update_progress_deploy(progress, 78, 100, "Processing...", FALSE);
+  if (!requires_new_bootversion)
+    {
+      if (!create_new_bootlinks (self, self->bootversion, new_deployments, cancellable, error))
+        return FALSE;
+
+      if (!full_system_sync (self, &syncstats, cancellable, error))
+        return FALSE;
+
+      if (!swap_bootlinks (self, self->bootversion, new_deployments, &new_subbootdir, cancellable,
+                           error))
+        return FALSE;
+
+      bootloader_is_atomic = TRUE;
+    }
+  else
+    {
+      if (!_ostree_sysroot_query_bootloader (self, &bootloader, cancellable, error))
+        return FALSE;
+
+      bootloader_is_atomic = bootloader != NULL && _ostree_bootloader_is_atomic (bootloader);
+
+      if (!write_deployments_bootswap (self, new_deployments, opts, bootloader, &syncstats,
+                                       &new_subbootdir, cancellable, error))
+        return FALSE;
+    }
+  if(progress) update_progress_deploy(progress, 83, 100, "Processing...", FALSE);
+  write_detached_metadata_deployment_timestamp(self, repo, revision, "update-initramfs", error);
+  int old_deployments_len = self->deployments->len;
+
+  if (!write_deployments_finish (self, cancellable, error))
+  {
+    g_set_error(error,G_IO_ERROR, G_IO_ERROR_FAILED,_("Failed to finalize deployment transaction")); 
+    return FALSE;
+  }
+  static gsize cond_initialized = 0;
+  if (g_once_init_enter(&cond_initialized)) {
+    g_cond_init(&tasks_complete_cond);
+    g_once_init_leave(&cond_initialized, 1);
+  }
+
+  g_mutex_lock(&pool_mutex);
+  if (!initramfs_pool) {
+      initramfs_pool = g_thread_pool_new(initramfs_update_task_func, error, 2, FALSE, error);
+      if (!initramfs_pool) {
+          g_mutex_unlock(&pool_mutex);
+          return FALSE;
+      }
+  }
+  if (!finalize_pool) {
+      finalize_pool = g_thread_pool_new(deployment_finalize_task_func, error, 2, FALSE, error);
+      if (!finalize_pool) {
+          g_mutex_unlock(&pool_mutex);
+          return FALSE;
+      }
+  }
+  g_mutex_unlock(&pool_mutex);
+
+  //传入更新Intramfs 所需变量
+  InitramfsUpdateTask *initramfs_task = g_new0(InitramfsUpdateTask, 1);
+  initramfs_task->self = self;
+  initramfs_task->new_deployment = new_deployment;
+  initramfs_task->bootloader_is_atomic = bootloader_is_atomic;
+  initramfs_task->requires_new_bootversion = requires_new_bootversion;
+  initramfs_task->new_subbootdir = g_strdup(new_subbootdir);
+  initramfs_task->syncstats = syncstats;
+  initramfs_task->bootloader = bootloader;
+  initramfs_task->cancellable = cancellable;
+  initramfs_task->new_deployments_len = new_deployments->len;  // 设置新部署数组长度
+  initramfs_task->old_deployments_len = old_deployments_len;
+  
+  //传入数据迁移 所需变量
+  DeploymentFinalizeTask *finalize_task = g_new0(DeploymentFinalizeTask, 1);
+  finalize_task->self = self;
+  finalize_task->new_deployment = new_deployment;
+  finalize_task->cancellable = cancellable;
+  finalize_task->new_deployments_len = new_deployments->len;
+  finalize_task->old_deployments_len = old_deployments_len;
+
+  g_mutex_lock(&pool_mutex);
+  tasks_running = 2; // 两个任务要同时运行
+  g_mutex_unlock(&pool_mutex);
+  if(progress) update_progress_deploy(progress, 86, 100, "Processing...", FALSE);
+  // 提交initramfs_task任务到线程池
+  GError *task_error = NULL;
+  g_thread_pool_push(initramfs_pool, initramfs_task, &task_error);
+  if (task_error) {
+      g_propagate_error(error, task_error);
+      g_free(initramfs_task);
+      g_free(finalize_task);
+      return FALSE;
+  }
+  if(progress) update_progress_deploy(progress, 88, 100, "Processing...", FALSE);
+  // 提交finalize_task任务到线程池
+  task_error = NULL;
+  g_thread_pool_push(finalize_pool, finalize_task, &task_error);
+  if (task_error) {
+      g_propagate_error(error, task_error);
+      g_free(initramfs_task);
+      g_free(finalize_task);
+      return FALSE;
+  }
+  if(progress) update_progress_deploy(progress, 90, 100, "Processing...", FALSE);
+  // 等待两个任务都完成
+  g_mutex_lock(&pool_mutex);
+  while (tasks_running > 0) {
+    g_cond_wait(&tasks_complete_cond, &pool_mutex);
+  }
+  g_mutex_unlock(&pool_mutex);
+  
+  // 检查是否是新增部署点
+  if (new_deployments->len > old_deployments_len)
+    ostree_delete_deployment(self);
+
+  if(progress) update_progress_deploy(progress, 96, 100, "Processing...", FALSE);
+  /* recode deploy datetime */
+  GDateTime *dt = g_date_time_new_now_local();
+  g_autofree gchar *dt_str = g_date_time_format(dt, "%Y/%m/%d %H:%M:%S");
+  GKeyFile *origin = ostree_deployment_get_origin (new_deployment);
+  g_key_file_set_string (origin, "origin", "deploy_datetime", dt_str);
+  ostree_sysroot_write_origin_file(self, new_deployment, origin, cancellable, error);
+  g_date_time_unref (dt);
+  if(progress) update_progress_deploy(progress, 97, 100, "Processing...", FALSE);
+  /* And finally, cleanup of any leftover data.
+   */
+  if (opts->do_postclean)
+    {
+      if (!ostree_sysroot_cleanup (self, cancellable, error))
+        return glnx_prefix_error (error, _("Performing final cleanup"));
+    }
+  write_detached_metadata_deployment_timestamp(self, repo, revision, "finish", error);
+
+  return TRUE;
+}
+
+static gboolean
+allocate_deployserial (OstreeSysroot *self, const char *osname, const char *revision,
+                       int *out_deployserial, GCancellable *cancellable, GError **error)
+{
+  int new_deployserial = 0;
+  g_autoptr (GPtrArray) tmp_current_deployments = g_ptr_array_new_with_free_func (g_object_unref);
+
+  glnx_autofd int deploy_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, "ostree/deploy", TRUE, &deploy_dfd, error))
+    return FALSE;
+
+  if (!_ostree_sysroot_list_deployment_dirs_for_os (deploy_dfd, osname, tmp_current_deployments,
+                                                    cancellable, error))
+    return FALSE;
+
+  for (guint i = 0; i < tmp_current_deployments->len; i++)
+    {
+      OstreeDeployment *deployment = tmp_current_deployments->pdata[i];
+
+      if (strcmp (ostree_deployment_get_csum (deployment), revision) != 0)
+        continue;
+
+      new_deployserial
+          = MAX (new_deployserial, ostree_deployment_get_deployserial (deployment) + 1);
+    }
+
+  *out_deployserial = new_deployserial;
+  return TRUE;
+}
+
+void
+_ostree_deployment_set_bootconfig_from_kargs (OstreeDeployment *deployment,
+                                              char **override_kernel_argv)
+{
+  /* Create an empty boot configuration; we will merge things into
+   * it as we go.
+   */
+  g_autoptr (OstreeBootconfigParser) bootconfig = ostree_bootconfig_parser_new ();
+  ostree_deployment_set_bootconfig (deployment, bootconfig);
+
+  /* After this, install_deployment_kernel() will set the other boot
+   * options and write it out to disk.
+   */
+  if (override_kernel_argv)
+    {
+      g_autoptr (OstreeKernelArgs) kargs = ostree_kernel_args_new ();
+      ostree_kernel_args_append_argv (kargs, override_kernel_argv);
+      g_autofree char *new_options = ostree_kernel_args_to_string (kargs);
+      ostree_bootconfig_parser_set (bootconfig, "options", new_options);
+    }
+}
+
+// If the stateroot /var is uninitialized, copy the /var content from the deployment.
+// This is intended to mirror the semantics of Docker volumes.
+static gboolean
+prepare_deployment_var (OstreeSysroot *self, OstreeAsyncProgress *progress, OstreeDeployment *deployment, int deployment_dfd,
+                        GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Preparing deployment /var", error);
+
+  // Does the deployment have a var?  If not, we're done.  (Though this will probably
+  // cause problems at boot time)
+  {
+    g_auto (GLnxDirFdIterator) dfd_iter = {
+      0,
+    };
+    gboolean exists;
+
+    if (!ot_dfd_iter_init_allow_noent (deployment_dfd, "var", &dfd_iter, &exists, error))
+      return FALSE;
+    if (!exists)
+      {
+        g_debug ("deployment has no /var");
+        return TRUE;
+      }
+  }
+  if(progress) update_progress_deploy(progress, 39, 100, "Processing...", FALSE);
+
+  // Open the stateroot which holds the shared /var
+  const char *stateroot = ostree_deployment_get_osname (deployment);
+  g_autofree char *stateroot_path = g_build_filename ("ostree/deploy/", stateroot, "var", NULL);
+  glnx_autofd int stateroot_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, stateroot_path, FALSE, &stateroot_dfd, error))
+    return glnx_prefix_error (error, "Opening stateroot");
+  if(progress) update_progress_deploy(progress, 40, 100, "Processing...", FALSE);
+  // Check if the stateroot is empty
+  {
+    g_auto (GLnxDirFdIterator) dfd_iter = {
+      0,
+    };
+
+    if (!glnx_dirfd_iterator_init_at (stateroot_dfd, ".", FALSE, &dfd_iter, error))
+      return FALSE;
+
+    struct dirent *dent;
+
+    if (!glnx_dirfd_iterator_next_dent (&dfd_iter, &dent, cancellable, error))
+      return FALSE;
+
+    if (dent != NULL)
+      {
+        // We found existing content in the stateroot var, so we're done.
+        // There is no merge semantics.
+        g_debug ("Stateroot %s is non-empty", stateroot);
+        return TRUE;
+      }
+  }
+  if(progress) update_progress_deploy(progress, 42, 100, "Processing...", FALSE);
+
+  g_debug ("Copying initial deployment /var");
+  // At this point we should initialize the stateroot var with the content from
+  // the commit/image.  Note we need to force a copy; hopefully reflinks are available.
+  OstreeRepoCheckoutAtOptions co_opts
+      = { .force_copy = TRUE,
+          .subpath = "/var",
+          .overwrite_mode = OSTREE_REPO_CHECKOUT_OVERWRITE_UNION_FILES };
+  if (!ostree_repo_checkout_at (self->repo, &co_opts, stateroot_dfd, ".",
+                                ostree_deployment_get_csum (deployment), cancellable, error))
+    return FALSE;
+
+  if(progress) update_progress_deploy(progress, 45, 100, "Processing...", FALSE);
+  if (!glnx_fstatat_allow_noent (deployment_dfd, USRLIB_TMPFILES, NULL, AT_SYMLINK_NOFOLLOW, error))
+    return glnx_prefix_error (error, "Querying %s", USRLIB_TMPFILES);
+  if (errno == ENOENT)
+    {
+      g_debug ("deployment has no %s", USRLIB_TMPFILES);
+      // OK, this OS doesn't appear to use systemd (or tmpfiles.d at least).  For full
+      // backwards compatibility we create some standard things in the stateroot var.
+      if (!_ostree_sysroot_stateroot_legacy_var_init (stateroot_dfd, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+static gboolean
+require_stateroot (OstreeSysroot *self, const char *stateroot, GError **error)
+{
+  const char *osdeploypath = glnx_strjoina ("ostree/deploy/", stateroot);
+  if (!glnx_fstatat_allow_noent (self->sysroot_fd, osdeploypath, NULL, 0, error))
+    return FALSE;
+  if (errno == ENOENT)
+    return glnx_throw (error, "No such stateroot: %s", stateroot);
+  return TRUE;
+}
+
+/* The first part of writing a deployment. This primarily means doing the
+ * hardlink farm checkout, but we also compute some initial state.
+ */
+static gboolean
+sysroot_initialize_deployment (OstreeSysroot *self, OstreeAsyncProgress *progress, const char *osname, const char *revision,
+                               GKeyFile *origin, OstreeSysrootDeployTreeOpts *opts,
+                               OstreeDeployment **out_new_deployment, GCancellable *cancellable,
+                               GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Initializing deployment", error);
+
+  g_assert (osname != NULL || self->booted_deployment != NULL);
+  if(progress) update_progress_deploy(progress, 14, 100, "Processing...", FALSE);
+  if (osname == NULL)
+    osname = ostree_deployment_get_osname (self->booted_deployment);
+
+  if (!require_stateroot (self, osname, error))
+    return FALSE;
+
+  g_autofree char *stateroot_backing = g_strdup_printf ("ostree/deploy/%s/backing", osname);
+  if (!glnx_shutil_mkdir_p_at (self->sysroot_fd, stateroot_backing, 0700, cancellable, error))
+  {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Failed to create backing directory for OS '%s' at '%s'"), osname, stateroot_backing);
+    return FALSE;
+  }
+  if(progress) update_progress_deploy(progress, 16, 100, "Processing...", FALSE);
+  OstreeRepo *repo = ostree_sysroot_repo (self);
+
+  gint new_deployserial;
+  if (!allocate_deployserial (self, osname, revision, &new_deployserial, cancellable, error))
+  {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Failed to allocate deployment serial number for OS '%s'"), osname);
+    return FALSE;
+  }
+  if(progress) update_progress_deploy(progress, 17, 100, "Processing...", FALSE);
+  g_autoptr (OstreeDeployment) new_deployment
+      = ostree_deployment_new (0, osname, revision, new_deployserial, NULL, -1);
+  ostree_deployment_set_origin (new_deployment, origin);
+  /* Check out the userspace tree onto the filesystem */
+  glnx_autofd int deployment_dfd = -1;
+  write_detached_metadata_deployment_timestamp(self, repo, revision, "checkout-tree", error);
+  if (!checkout_deployment_tree (self, NULL,repo, new_deployment, revision, &deployment_dfd, cancellable,
+                                 error))
+  {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Failed to checkout deployment tree for revision '%s'"),revision);
+    return FALSE;
+  }
+  if(progress) update_progress_deploy(progress, 23, 100, "Processing...", FALSE);
+  g_autoptr (OstreeKernelLayout) kernel_layout = NULL;
+  if (!get_kernel_from_tree (self, deployment_dfd, &kernel_layout, cancellable, error))
+  {
+    g_set_error(error,G_IO_ERROR,G_IO_ERROR_NOT_FOUND, _("Missing kernel files in deployment"));
+    return FALSE;
+  }
+  if(progress) update_progress_deploy(progress, 26, 100, "Processing...", FALSE);
+  _ostree_deployment_set_bootcsum (new_deployment, kernel_layout->bootcsum);
+  _ostree_deployment_set_bootconfig_from_kargs (new_deployment,
+                                                opts ? opts->override_kernel_argv : NULL);
+  _ostree_deployment_set_overlay_initrds (new_deployment, opts ? opts->overlay_initrds : NULL);
+  if(progress) update_progress_deploy(progress, 28, 100, "Processing...", FALSE);
+  if (!prepare_deployment_etc (self, progress, repo, new_deployment, deployment_dfd, cancellable, error))
+  {
+    g_set_error(error,G_IO_ERROR, G_IO_ERROR_FAILED, _("Failed to setup /etc configuration"));
+    return FALSE; 
+  }
+  if(progress) update_progress_deploy(progress, 37, 100, "Processing...", FALSE);
+
+  if (!prepare_deployment_var (self, progress, new_deployment, deployment_dfd, cancellable, error))
+  {
+    g_set_error(error,G_IO_ERROR, G_IO_ERROR_FAILED, _("Failed to setup /var configuration"));
+    return FALSE; 
+  }
+  ot_transfer_out_value (out_new_deployment, &new_deployment);
+  return TRUE;
+}
+
+/* Get a directory fd for the /var of @deployment.
+ * Before we supported having /var be a separate mount point,
+ * this was easy. However, as https://github.com/ostreedev/ostree/issues/1729
+ * raised, in the primary case where we're
+ * doing a new deployment for the booted stateroot,
+ * we need to use /var/.  This code doesn't correctly
+ * handle the case of `ostree admin --sysroot upgrade`,
+ * nor (relatedly) the case of upgrading a separate stateroot.
+ */
+static gboolean
+get_var_dfd (OstreeSysroot *self, int osdeploy_dfd, OstreeDeployment *deployment, int *ret_fd,
+             GError **error)
+{
+  const char *booted_stateroot
+      = self->booted_deployment ? ostree_deployment_get_osname (self->booted_deployment) : NULL;
+
+  int base_dfd;
+  const char *base_path;
+  /* The common case is when we're doing a new deployment for the same stateroot (osname).
+   * If we have a separate mounted /var, then we need to use it - the /var in the
+   * stateroot will probably just be an empty directory.
+   *
+   * If the stateroot doesn't match, just fall back to /var in the target's stateroot.
+   */
+  if (g_strcmp0 (booted_stateroot, ostree_deployment_get_osname (deployment)) == 0)
+    {
+      base_dfd = AT_FDCWD;
+      base_path = "/var";
+    }
+  else
+    {
+      base_dfd = osdeploy_dfd;
+      base_path = "var";
+    }
+
+  return glnx_opendirat (base_dfd, base_path, TRUE, ret_fd, error);
+}
+
+static void
+child_setup_fchdir (gpointer data)
+{
+  int fd = (int)(uintptr_t)data;
+  int rc __attribute__ ((unused));
+
+  rc = fchdir (fd);
+}
+
+/*
+ * Derived from rpm-ostree's rust/src/bwrap.rs
+ */
+gboolean
+_ostree_sysroot_run_in_deployment (int deployment_dfd, const char *const *bwrap_argv,
+                                   const gchar *const *child_argv, gint *exit_status,
+                                   gchar **stdout, GError **error)
+{
+  static const gchar *const COMMON_ARGV[] = { "/usr/bin/bwrap",
+                                              "--dev",
+                                              "/dev",
+                                              "--proc",
+                                              "/proc",
+                                              "--dir",
+                                              "/run",
+                                              "--dir",
+                                              "/tmp",
+                                              "--chdir",
+                                              "/",
+                                              "--die-with-parent",
+                                              "--unshare-pid",
+                                              "--unshare-uts",
+                                              "--unshare-ipc",
+                                              "--unshare-cgroup-try",
+                                              "--ro-bind",
+                                              "/sys/block",
+                                              "/sys/block",
+                                              "--ro-bind",
+                                              "/sys/bus",
+                                              "/sys/bus",
+                                              "--ro-bind",
+                                              "/sys/class",
+                                              "/sys/class",
+                                              "--ro-bind",
+                                              "/sys/dev",
+                                              "/sys/dev",
+                                              "--ro-bind",
+                                              "/sys/devices",
+                                              "/sys/devices",
+                                              "--bind",
+                                              "usr",
+                                              "/usr",
+                                              "--bind",
+                                              "etc",
+                                              "/etc",
+                                              "--bind",
+                                              "var",
+                                              "/var",
+                                              "--symlink",
+                                              "/usr/lib",
+                                              "/lib",
+                                              "--symlink",
+                                              "/usr/lib32",
+                                              "/lib32",
+                                              "--symlink",
+                                              "/usr/lib64",
+                                              "/lib64",
+                                              "--symlink",
+                                              "/usr/bin",
+                                              "/bin",
+                                              "--symlink",
+                                              "/usr/sbin",
+                                              "/sbin",
+                                              NULL };
+
+  g_autoptr (GPtrArray) args = g_ptr_array_new ();
+
+  for (char **it = (char **)COMMON_ARGV; it && *it; it++)
+    g_ptr_array_add (args, *it);
+  for (char **it = (char **)bwrap_argv; it && *it; it++)
+    g_ptr_array_add (args, *it);
+
+  // Separate bwrap args from child args
+  g_ptr_array_add (args, "--");
+
+  for (char **it = (char **)child_argv; it && *it; it++)
+    g_ptr_array_add (args, *it);
+
+  g_ptr_array_add (args, NULL);
+
+  return g_spawn_sync (NULL, (char **)args->pdata, NULL, 0, &child_setup_fchdir,
+                       (gpointer)(uintptr_t)deployment_dfd, stdout, NULL, exit_status, error);
+}
+
+#ifdef HAVE_SELINUX
+/*
+ * Run semodule to check if the module content changed after merging /etc
+ * and rebuild the policy if needed.
+ */
+static gboolean
+sysroot_finalize_selinux_policy (int deployment_dfd, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Finalizing SELinux policy", error);
+  struct stat stbuf;
+  gint exit_status;
+  g_autofree gchar *stdout = NULL;
+
+  if (!glnx_fstatat_allow_noent (deployment_dfd, "etc/selinux/config", &stbuf, AT_SYMLINK_NOFOLLOW,
+                                 error))
+    return FALSE;
+
+  /* Skip the SELinux policy refresh if /etc/selinux/config doesn't exist. */
+  if (errno != 0)
+    return TRUE;
+
+  /*
+   * Skip the SELinux policy refresh if the --refresh
+   * flag is not supported by semodule.
+   */
+  static const gchar *const SEMODULE_HELP_ARGV[] = { "semodule", "--help", NULL };
+  if (!_ostree_sysroot_run_in_deployment (deployment_dfd, NULL, SEMODULE_HELP_ARGV, &exit_status,
+                                          &stdout, error))
+    return FALSE;
+  if (!g_spawn_check_exit_status (exit_status, error))
+    return glnx_prefix_error (error, _("failed to run semodule"));
+  if (!strstr (stdout, "--refresh"))
+    {
+      ot_journal_print (LOG_INFO, "semodule does not have --refresh");
+      return TRUE;
+    }
+
+  static const gchar *const SEMODULE_REBUILD_ARGV[] = { "semodule", "-N", "--refresh", NULL };
+
+  ot_journal_print (LOG_INFO, "Refreshing SELinux policy");
+  guint64 start_msec = g_get_monotonic_time () / 1000;
+  if (!_ostree_sysroot_run_in_deployment (deployment_dfd, NULL, SEMODULE_REBUILD_ARGV, &exit_status,
+                                          NULL, error))
+    return FALSE;
+  guint64 end_msec = g_get_monotonic_time () / 1000;
+  ot_journal_print (LOG_INFO, "Refreshed SELinux policy in %" G_GUINT64_FORMAT " ms",
+                    end_msec - start_msec);
+  return g_spawn_check_exit_status (exit_status, error);
+}
+#endif /* HAVE_SELINUX */
+
+static gboolean
+sysroot_initialize_deployment_backing (OstreeSysroot *self, OstreeDeployment *deployment,
+                                       OstreeSePolicy *sepolicy, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Preparing deployment backing dir", error);
+  g_autofree char *deployment_path = ostree_sysroot_get_deployment_dirpath (self, deployment);
+  g_autofree char *backing_relpath = _ostree_sysroot_get_deployment_backing_relpath (deployment);
+  struct stat stbuf;
+
+  if (!glnx_fstatat (self->sysroot_fd, deployment_path, &stbuf, AT_SYMLINK_NOFOLLOW, error))
+    return FALSE;
+
+  // Create the "backing" directory with additional data */
+  if (!glnx_ensure_dir (self->sysroot_fd, backing_relpath, 0700, error))
+    return glnx_prefix_error (error, "Creating backing dir");
+
+  // The root-transient holds overlayfs directories for the root
+  g_autofree char *rootovldir
+      = g_build_filename (backing_relpath, OSTREE_DEPLOYMENT_ROOT_TRANSIENT_DIR, NULL);
+  if (!glnx_ensure_dir (self->sysroot_fd, rootovldir, 0700, error))
+    return glnx_prefix_error (error, "Creating root ovldir");
+
+  // The overlayfs work (subdirectory of root-transient)
+  g_autofree char *workdir = g_build_filename (rootovldir, "work", NULL);
+  if (!glnx_ensure_dir (self->sysroot_fd, workdir, 0700, error))
+    return glnx_prefix_error (error, "Creating work dir");
+
+  // Create the overlayfs upper; this needs to have the same mode and SELinux label as the root
+  {
+    g_auto (OstreeSepolicyFsCreatecon) con = {
+      0,
+    };
+
+    if (!_ostree_sepolicy_preparefscreatecon (&con, sepolicy, "/", stbuf.st_mode, error))
+      return glnx_prefix_error (error, "Looking up SELinux label for /");
+    g_autofree char *upperdir = g_build_filename (rootovldir, "upper", NULL);
+    if (!glnx_ensure_dir (self->sysroot_fd, upperdir, stbuf.st_mode, error))
+      return glnx_prefix_error (error, "Creating upper dir");
+  }
+
+  return TRUE;
+}
+
+static const char* ostree_deploy_get_system_arch(void) {
+  struct utsname buf;
+  if (uname(&buf) == 0) {
+      if (strcmp(buf.machine, "aarch64") == 0)
+          return "arm64";
+      else if (strcmp(buf.machine, "x86_64") == 0)
+          return "x86_64";
+      else if (strcmp(buf.machine, "loongarch64") == 0)
+          return "loongarch64";
+      else if (strcmp(buf.machine, "sw_64") == 0)
+          return "sw_64";
+      return buf.machine;
+  }
+  return "system_unknown";
+}
+
+static const char* 
+_ostree_elf_machine_to_arch(guint16 e_machine)
+{
+  switch (e_machine) {
+  case EM_X86_64:  
+       g_debug("The elf file schema is x86_64");
+       return "x86_64";
+  case EM_AARCH64: 
+       g_debug("The elf file schema is arm_64");
+       return "arm64";
+  case 0x9916:
+       g_debug("The elf file schema is sw_64");
+       return "sw_64";
+  case 0x102:
+       g_debug("The elf file schema is loongarch64");
+       return "loongarch64";
+  default:         
+       g_debug("Unknown elf file architecture");
+       return "elf_unknown";
+  }
+}
+
+static gboolean
+verify_deployment_arch(OstreeSysroot *self, OstreeDeployment *deployment, GError **error)
+{
+    g_autofree char *deploy_path = ostree_sysroot_get_deployment_dirpath(self, deployment);
+    g_autofree char *full_path = g_build_filename(deploy_path, "usr/bin/ostree", NULL);
+    // g_autoptr(GFile) ostree_bin = g_file_new_for_path(full_path);
+    g_debug("realPath : %s,%s",g_file_get_path(self->path),full_path);
+    g_autoptr(GFile) ostree_bin = g_file_resolve_relative_path(self->path,full_path);
+    g_print("deploy real path is : %s",g_file_get_path(ostree_bin));
+    g_debug("deploy real path is : %s",g_file_get_path(ostree_bin));
+
+    g_autofree char *content = NULL;
+    gsize len = 0;
+    if (!g_file_load_contents(ostree_bin, NULL, &content, &len, NULL, error))
+      {
+        g_debug("Unknown ELF file architecture: %s", full_path);
+        // g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, "Unknown ELF file architecture: %s", full_path);
+        return FALSE;
+      }        
+
+    if (len < EI_CLASS + 1) 
+      {
+        g_debug("Invalid ELF file: %s", full_path);
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Invalid ELF file: %s"), full_path);
+        return FALSE;
+      }
+
+    const char *system_arch = ostree_deploy_get_system_arch();
+    g_debug("System architecture: %s", system_arch);
+    const char *file_arch = NULL;
+    switch (content[EI_CLASS]) {
+    case ELFCLASS32: {
+        Elf32_Ehdr *ehdr = (Elf32_Ehdr*)content;
+        file_arch = _ostree_elf_machine_to_arch(ehdr->e_machine);
+        g_debug("ELF file architecture: %s", file_arch);
+        break;
+    }
+    case ELFCLASS64: {
+        Elf64_Ehdr *ehdr = (Elf64_Ehdr*)content;
+        file_arch = _ostree_elf_machine_to_arch(ehdr->e_machine);
+        g_debug("ELF file architecture: %s", file_arch);
+        break;
+    }
+    default:
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Unknown ELF file architecture: %s"), full_path);
+        g_debug("Unknown ELF file architecture: %s", full_path);
+        return FALSE;
+    }
+
+    if (g_strcmp0(file_arch, system_arch) != 0)
+      {
+        g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED, _("Architecture mismatch: Deployment (%s) vs System (%s)"), file_arch, system_arch);
+        g_debug("Architecture mismatch: Deployment (%s) vs System (%s)", file_arch, system_arch);
+        return FALSE;
+      }
+
+    return TRUE;
+}
+
+
+static gboolean
+sysroot_finalize_deployment (OstreeSysroot *self, OstreeAsyncProgress *progress, OstreeDeployment *deployment,
+                             OstreeDeployment *merge_deployment, GCancellable *cancellable,
+                             GError **error)
+{
+  if (!verify_deployment_arch(self, deployment, error))
+  {
+    g_debug("The architecture does not match and the deployment fails");
+    return FALSE;
+  }
+  g_debug("The architecture matches and the deployment continues");
+
+  GLNX_AUTO_PREFIX_ERROR ("Finalizing deployment", error);
+  g_autofree char *deployment_path = ostree_sysroot_get_deployment_dirpath (self, deployment);
+  glnx_autofd int deployment_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, deployment_path, TRUE, &deployment_dfd, error))
+    return FALSE;
+
+  OstreeBootconfigParser *bootconfig = ostree_deployment_get_bootconfig (deployment);
+
+  /* If the kargs weren't set yet, then just pick it up from the merge deployment. In the
+   * deploy path, overrides are set as part of sysroot_initialize_deployment(). In the
+   * finalize-staged path, they're set by OstreeSysroot when reading the staged GVariant. */
+  if (merge_deployment && ostree_bootconfig_parser_get (bootconfig, "options") == NULL)
+    {
+      OstreeBootconfigParser *merge_bootconfig
+          = ostree_deployment_get_bootconfig (merge_deployment);
+      if (merge_bootconfig)
+        {
+          const char *kargs = ostree_bootconfig_parser_get (merge_bootconfig, "options");
+          ostree_bootconfig_parser_set (bootconfig, "options", kargs);
+        }
+    }
+
+  if (merge_deployment)
+    {
+      /* And do the /etc merge */
+      // if (!merge_configuration_from (self, merge_deployment, deployment, deployment_dfd,
+      //                                 cancellable, error))
+      //    return FALSE;
+
+#ifdef HAVE_SELINUX
+      //if (!sysroot_finalize_selinux_policy (deployment_dfd, error))
+        //return FALSE;
+#endif /* HAVE_SELINUX */
+    }
+
+  const char *osdeploypath
+      = glnx_strjoina ("ostree/deploy/", ostree_deployment_get_osname (deployment));
+  glnx_autofd int os_deploy_dfd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, osdeploypath, TRUE, &os_deploy_dfd, error))
+    return FALSE;
+  glnx_autofd int var_dfd = -1;
+  if (!get_var_dfd (self, os_deploy_dfd, deployment, &var_dfd, error))
+    return FALSE;
+
+  /* Ensure that the new deployment does not have /etc/.updated or
+   * /var/.updated so that systemd ConditionNeedsUpdate=/etc|/var services run
+   * after rebooting.
+   */
+  if (!ot_ensure_unlinked_at (deployment_dfd, "etc/.updated", error))
+    return FALSE;
+  if (!ot_ensure_unlinked_at (var_dfd, ".updated", error))
+    return FALSE;
+
+  g_autoptr (OstreeSePolicy) sepolicy = ostree_sepolicy_new_at (deployment_dfd, cancellable, error);
+  if (!sepolicy)
+    return FALSE;
+
+  if (!selinux_relabel_var_if_needed (self, sepolicy, os_deploy_dfd, cancellable, error))
+    return FALSE;
+
+  if (!sysroot_initialize_deployment_backing (self, deployment, sepolicy, error))
+  {
+    g_set_error(error,G_IO_ERROR,G_IO_ERROR_FAILED, _("Failed to initialize deployment backing store"));
+    return FALSE;
+  }
+  if(progress) update_progress_deploy(progress, 59, 100, "Processing...", FALSE);  
+  /* Rewrite the origin using the final merged selinux config, just to be
+   * conservative about getting the right labels.
+   */
+  if (!write_origin_file_internal (self, sepolicy, deployment,
+                                   ostree_deployment_get_origin (deployment),
+                                   GLNX_FILE_REPLACE_NODATASYNC, cancellable, error))
+  {
+    g_set_error(error,
+               G_IO_ERROR,G_IO_ERROR_FAILED, _("Failed to write origin file for deployment"));    
+    return FALSE;
+  }
+    
+  if(progress) update_progress_deploy(progress, 61, 100, "Processing...", FALSE); 
+  /* Seal it */
+  if (!(self->debug_flags & OSTREE_SYSROOT_DEBUG_MUTABLE_DEPLOYMENTS))
+    {
+      if (!ostree_sysroot_deployment_set_mutable (self, deployment, FALSE, cancellable, error))
+      {
+        g_set_error(error,G_IO_ERROR,G_IO_ERROR_FAILED, _("Could not finalize deployment as immutable"));
+        return FALSE;
+      }
+    }
+
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_deploy_tree_with_options:
+ * @self: Sysroot
+ * @osname: (nullable): osname to use for merge deployment
+ * @revision: Checksum to add
+ * @origin: (nullable): Origin to use for upgrades
+ * @provided_merge_deployment: (nullable): Use this deployment for merge path
+ * @opts: (nullable): Options
+ * @out_new_deployment: (out) (transfer full): The new deployment path
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Check out deployment tree with revision @revision, performing a 3
+ * way merge with @provided_merge_deployment for configuration.
+ *
+ * When booted into the sysroot, you should use the
+ * ostree_sysroot_stage_tree() API instead.
+ *
+ * Since: 2020.7
+ */
+gboolean
+ostree_sysroot_deploy_tree_with_options (OstreeSysroot *self, OstreeAsyncProgress *progress,const char *osname,
+                                         const char *revision, GKeyFile *origin,
+                                         OstreeDeployment *provided_merge_deployment,
+                                         OstreeSysrootDeployTreeOpts *opts,
+                                         OstreeDeployment **out_new_deployment,
+                                         GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Deploying tree", error);
+
+  if (!_ostree_sysroot_ensure_writable (self, error))
+    return FALSE;
+
+  g_autoptr (OstreeDeployment) deployment = NULL;
+  if (!sysroot_initialize_deployment (self, progress, osname, revision, origin, opts, &deployment,
+                                      cancellable, error))
+    return FALSE;
+
+  if(progress) update_progress_deploy(progress, 54, 100, "Processing...", FALSE);
+
+  if (!sysroot_finalize_deployment (self, progress, deployment, provided_merge_deployment, cancellable,
+                                    error))
+    return FALSE;
+  if(progress) update_progress_deploy(progress, 63, 100, "Processing...", FALSE);
+  *out_new_deployment = g_steal_pointer (&deployment);
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_deploy_tree:
+ * @self: Sysroot
+ * @osname: (nullable): osname to use for merge deployment
+ * @revision: Checksum to add
+ * @origin: (nullable): Origin to use for upgrades
+ * @provided_merge_deployment: (nullable): Use this deployment for merge path
+ * @override_kernel_argv: (nullable) (array zero-terminated=1) (element-type utf8): Use these as
+ * kernel arguments; if %NULL, inherit options from provided_merge_deployment
+ * @out_new_deployment: (out): The new deployment path
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Older version of ostree_sysroot_stage_tree_with_options().
+ *
+ * Since: 2018.5
+ */
+gboolean
+ostree_sysroot_deploy_tree (OstreeSysroot *self, OstreeAsyncProgress *progress,const char *osname, const char *revision,
+                            GKeyFile *origin, OstreeDeployment *provided_merge_deployment,
+                            char **override_kernel_argv, OstreeDeployment **out_new_deployment,
+                            GCancellable *cancellable, GError **error)
+{                       
+  OstreeSysrootDeployTreeOpts opts = { .override_kernel_argv = override_kernel_argv };
+  return ostree_sysroot_deploy_tree_with_options (self, progress, osname,revision, origin,
+                                                  provided_merge_deployment, &opts,
+                                                  out_new_deployment, cancellable, error);
+}
+
+/* Serialize information about a deployment to a variant, used by the staging
+ * code.
+ */
+static GVariant *
+serialize_deployment_to_variant (OstreeDeployment *deployment)
+{
+  g_auto (GVariantBuilder) builder = OT_VARIANT_BUILDER_INITIALIZER;
+  g_variant_builder_init (&builder, (GVariantType *)"a{sv}");
+  g_autofree char *name = g_strdup_printf ("%s.%d", ostree_deployment_get_csum (deployment),
+                                           ostree_deployment_get_deployserial (deployment));
+  g_variant_builder_add (&builder, "{sv}", "name", g_variant_new_string (name));
+  g_variant_builder_add (&builder, "{sv}", "osname",
+                         g_variant_new_string (ostree_deployment_get_osname (deployment)));
+  g_variant_builder_add (&builder, "{sv}", "bootcsum",
+                         g_variant_new_string (ostree_deployment_get_bootcsum (deployment)));
+
+  return g_variant_builder_end (&builder);
+}
+
+static gboolean
+require_str_key (GVariantDict *dict, const char *name, const char **ret, GError **error)
+{
+  if (!g_variant_dict_lookup (dict, name, "&s", ret))
+    return glnx_throw (error, _("Missing key: %s"), name);
+  return TRUE;
+}
+
+/* Reverse of the above; convert a variant to a deployment. Note that the
+ * deployment may not actually be present; this should be verified by
+ * higher level code.
+ */
+OstreeDeployment *
+_ostree_sysroot_deserialize_deployment_from_variant (GVariant *v, GError **error)
+{
+  g_autoptr (GVariantDict) dict = g_variant_dict_new (v);
+  const char *name = NULL;
+  if (!require_str_key (dict, "name", &name, error))
+    return FALSE;
+  const char *bootcsum = NULL;
+  if (!require_str_key (dict, "bootcsum", &bootcsum, error))
+    return FALSE;
+  const char *osname = NULL;
+  if (!require_str_key (dict, "osname", &osname, error))
+    return FALSE;
+  g_autofree char *checksum = NULL;
+  gint deployserial;
+  if (!_ostree_sysroot_parse_deploy_path_name (name, &checksum, &deployserial, error))
+    return NULL;
+  return ostree_deployment_new (-1, osname, checksum, deployserial, bootcsum, -1);
+}
+
+/**
+ * ostree_sysroot_stage_overlay_initrd:
+ * @self: Sysroot
+ * @fd: File descriptor to overlay initrd
+ * @out_checksum: (out) (transfer full): Overlay initrd checksum
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Stage an overlay initrd to be used in an upcoming deployment. Returns a checksum which
+ * can be passed to ostree_sysroot_deploy_tree_with_options() or
+ * ostree_sysroot_stage_tree_with_options() via the `overlay_initrds` array option.
+ *
+ * Since: 2020.7
+ */
+gboolean
+ostree_sysroot_stage_overlay_initrd (OstreeSysroot *self, int fd, char **out_checksum,
+                                     GCancellable *cancellable, GError **error)
+{
+  g_assert (fd != -1);
+  g_assert (out_checksum != NULL);
+
+  if (!glnx_shutil_mkdir_p_at (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED_INITRDS_DIR, 0755,
+                               cancellable, error))
+    return FALSE;
+
+  glnx_autofd int staged_initrds_dfd = -1;
+  if (!glnx_opendirat (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED_INITRDS_DIR, FALSE,
+                       &staged_initrds_dfd, error))
+    return FALSE;
+
+  g_auto (GLnxTmpfile) overlay_initrd = {
+    0,
+  };
+  if (!glnx_open_tmpfile_linkable_at (staged_initrds_dfd, ".", O_WRONLY | O_CLOEXEC,
+                                      &overlay_initrd, error))
+    return FALSE;
+
+  char checksum[_OSTREE_SHA256_STRING_LEN + 1];
+  {
+    g_autoptr (GOutputStream) output = g_unix_output_stream_new (overlay_initrd.fd, FALSE);
+    g_autoptr (GInputStream) input = g_unix_input_stream_new (fd, FALSE);
+    g_autofree guchar *digest = NULL;
+    if (!ot_gio_splice_get_checksum (output, input, &digest, cancellable, error))
+      return FALSE;
+    ot_bin2hex (checksum, (guint8 *)digest, _OSTREE_SHA256_DIGEST_LEN);
+  }
+
+  if (!glnx_link_tmpfile_at (&overlay_initrd, GLNX_LINK_TMPFILE_REPLACE, staged_initrds_dfd,
+                             checksum, error))
+    return FALSE;
+
+  *out_checksum = g_strdup (checksum);
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_stage_tree:
+ * @self: Sysroot
+ * @osname: (allow-none): osname to use for merge deployment
+ * @revision: Checksum to add
+ * @origin: (allow-none): Origin to use for upgrades
+ * @merge_deployment: (allow-none): Use this deployment for merge path
+ * @override_kernel_argv: (allow-none) (array zero-terminated=1) (element-type utf8): Use these as
+ * kernel arguments; if %NULL, inherit options from provided_merge_deployment
+ * @out_new_deployment: (out): The new deployment path
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Older version of ostree_sysroot_stage_tree_with_options().
+ *
+ * Since: 2018.5
+ */
+gboolean
+ostree_sysroot_stage_tree (OstreeSysroot *self, const char *osname, const char *revision,
+                           GKeyFile *origin, OstreeDeployment *merge_deployment,
+                           char **override_kernel_argv, OstreeDeployment **out_new_deployment,
+                           GCancellable *cancellable, GError **error)
+{
+  OstreeSysrootDeployTreeOpts opts = { .override_kernel_argv = override_kernel_argv };
+  return ostree_sysroot_stage_tree_with_options (self, osname, revision, origin, merge_deployment,
+                                                 &opts, out_new_deployment, cancellable, error);
+}
+
+/**
+ * ostree_sysroot_stage_tree_with_options:
+ * @self: Sysroot
+ * @osname: (allow-none): osname to use for merge deployment
+ * @revision: Checksum to add
+ * @origin: (allow-none): Origin to use for upgrades
+ * @merge_deployment: (allow-none): Use this deployment for merge path
+ * @opts: Options
+ * @out_new_deployment: (out): The new deployment path
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Like ostree_sysroot_deploy_tree(), but "finalization" only occurs at OS
+ * shutdown time.
+ *
+ * Since: 2020.7
+ */
+gboolean
+ostree_sysroot_stage_tree_with_options (OstreeSysroot *self, const char *osname,
+                                        const char *revision, GKeyFile *origin,
+                                        OstreeDeployment *merge_deployment,
+                                        OstreeSysrootDeployTreeOpts *opts,
+                                        OstreeDeployment **out_new_deployment,
+                                        GCancellable *cancellable, GError **error)
+{
+  GLNX_AUTO_PREFIX_ERROR ("Staging deployment", error);
+  if (!_ostree_sysroot_ensure_writable (self, error))
+    return FALSE;
+
+  OstreeDeployment *booted_deployment = ostree_sysroot_require_booted_deployment (self, error);
+  if (booted_deployment == NULL)
+    return glnx_prefix_error (error, _("Cannot stage deployment"));
+
+  g_autoptr (OstreeDeployment) deployment = NULL;
+  if (!sysroot_initialize_deployment (self, NULL, osname, revision, origin, opts, &deployment,
+                                      cancellable, error))
+    return FALSE;
+
+  /* Write out the origin file using the sepolicy from the non-merged root for
+   * now (i.e. using /usr/etc policy, not /etc); in practice we don't really
+   * expect people to customize the label for it.
+   */
+  {
+    g_autofree char *deployment_path = ostree_sysroot_get_deployment_dirpath (self, deployment);
+    glnx_autofd int deployment_dfd = -1;
+    if (!glnx_opendirat (self->sysroot_fd, deployment_path, FALSE, &deployment_dfd, error))
+      return FALSE;
+    g_autoptr (OstreeSePolicy) sepolicy
+        = ostree_sepolicy_new_at (deployment_dfd, cancellable, error);
+    if (!sepolicy)
+      return FALSE;
+    if (!write_origin_file_internal (self, sepolicy, deployment,
+                                     ostree_deployment_get_origin (deployment),
+                                     GLNX_FILE_REPLACE_NODATASYNC, cancellable, error))
+      return FALSE;
+  }
+
+  /* After here we defer action until shutdown. The remaining arguments (merge
+   * deployment, kargs) are serialized to a state file in /run.
+   */
+
+  /* "target" is the staged deployment */
+  g_autoptr (GVariantBuilder) builder = g_variant_builder_new ((GVariantType *)"a{sv}");
+  g_variant_builder_add (builder, "{sv}", "target", serialize_deployment_to_variant (deployment));
+
+  if (opts->locked)
+    g_variant_builder_add (builder, "{sv}", _OSTREE_SYSROOT_STAGED_KEY_LOCKED,
+                           g_variant_new_boolean (TRUE));
+
+  if (merge_deployment)
+    g_variant_builder_add (builder, "{sv}", "merge-deployment",
+                           serialize_deployment_to_variant (merge_deployment));
+
+  if (opts && opts->override_kernel_argv)
+    g_variant_builder_add (
+        builder, "{sv}", "kargs",
+        g_variant_new_strv ((const char *const *)opts->override_kernel_argv, -1));
+  if (opts && opts->overlay_initrds)
+    g_variant_builder_add (builder, "{sv}", "overlay-initrds",
+                           g_variant_new_strv ((const char *const *)opts->overlay_initrds, -1));
+
+  const char *parent = dirname (strdupa (_OSTREE_SYSROOT_RUNSTATE_STAGED));
+  if (!glnx_shutil_mkdir_p_at (AT_FDCWD, parent, 0755, cancellable, error))
+    return FALSE;
+
+  g_autoptr (GVariant) state = g_variant_ref_sink (g_variant_builder_end (builder));
+  if (!glnx_file_replace_contents_at (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED,
+                                      g_variant_get_data (state), g_variant_get_size (state),
+                                      GLNX_FILE_REPLACE_NODATASYNC, cancellable, error))
+    return FALSE;
+
+  /* If we have a previous one, clean it up */
+  if (self->staged_deployment)
+    {
+      if (!_ostree_sysroot_rmrf_deployment (self, self->staged_deployment, cancellable, error))
+        return FALSE;
+      // Also remove the lock; xref https://github.com/ostreedev/ostree/issues/3025
+      if (!ot_ensure_unlinked_at (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED_LOCKED, error))
+        return FALSE;
+    }
+
+  /* Bump mtime so external processes know something changed, and then reload. */
+  if (!_ostree_sysroot_bump_mtime (self, error))
+    return FALSE;
+  if (!ostree_sysroot_load (self, cancellable, error))
+    return FALSE;
+  /* Like deploy, we do a prepare cleanup; among other things, this ensures
+   * that a ref will be written for the staged tree.  See also
+   * https://github.com/ostreedev/ostree/pull/1566 though which
+   * adds an ostree_sysroot_cleanup_prune() API.
+   */
+  if (!ostree_sysroot_prepare_cleanup (self, NULL, cancellable, error))
+    return FALSE;
+
+  ot_transfer_out_value (out_new_deployment, &deployment);
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_change_finalization:
+ * @self: Sysroot
+ * @deployment: Deployment which must be staged
+ * @error: Error
+ *
+ * Given the target deployment (which must be the staged deployment) this API
+ * will toggle its "finalization locking" state.  If it is currently locked,
+ * it will be unlocked (and hence queued to apply on shutdown).
+ *
+ * Since: 2023.8
+ */
+_OSTREE_PUBLIC
+gboolean
+ostree_sysroot_change_finalization (OstreeSysroot *self, OstreeDeployment *deployment,
+                                    GError **error)
+{
+  GCancellable *cancellable = NULL;
+  g_assert (ostree_deployment_is_staged (deployment));
+
+  gboolean new_locked_state = !ostree_deployment_is_finalization_locked (deployment);
+
+  /* Read the staged state from disk */
+  glnx_autofd int fd = -1;
+  if (!glnx_openat_rdonly (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED, TRUE, &fd, error))
+    return FALSE;
+
+  g_autoptr (GBytes) contents = ot_fd_readall_or_mmap (fd, 0, error);
+  if (!contents)
+    return FALSE;
+  g_autoptr (GVariant) staged_deployment_data
+      = g_variant_new_from_bytes ((GVariantType *)"a{sv}", contents, TRUE);
+  g_autoptr (GVariantDict) staged_deployment_dict = g_variant_dict_new (staged_deployment_data);
+
+  g_variant_dict_insert (staged_deployment_dict, _OSTREE_SYSROOT_STAGED_KEY_LOCKED, "b",
+                         new_locked_state);
+  g_autoptr (GVariant) new_staged_deployment_data = g_variant_dict_end (staged_deployment_dict);
+
+  if (!glnx_file_replace_contents_at (fd, _OSTREE_SYSROOT_RUNSTATE_STAGED,
+                                      g_variant_get_data (new_staged_deployment_data),
+                                      g_variant_get_size (new_staged_deployment_data),
+                                      GLNX_FILE_REPLACE_NODATASYNC, cancellable, error))
+    return FALSE;
+
+  if (!new_locked_state)
+    {
+      /* Delete the legacy lock if there was any. */
+      if (!ot_ensure_unlinked_at (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED_LOCKED, error))
+        return FALSE;
+    }
+  else
+    {
+      /* Create the legacy lockfile; see also the code in ot-admin-builtin-deploy.c */
+      if (!glnx_shutil_mkdir_p_at (AT_FDCWD,
+                                   dirname (strdupa (_OSTREE_SYSROOT_RUNSTATE_STAGED_LOCKED)), 0755,
+                                   cancellable, error))
+        return FALSE;
+
+      glnx_autofd int lockfd = open (_OSTREE_SYSROOT_RUNSTATE_STAGED_LOCKED,
+                                     O_CREAT | O_WRONLY | O_NOCTTY | O_CLOEXEC, 0640);
+      if (lockfd == -1)
+        return glnx_throw_errno_prefix (error, "touch(%s)", _OSTREE_SYSROOT_RUNSTATE_STAGED_LOCKED);
+    }
+
+  return TRUE;
+}
+
+/* Invoked at shutdown time by ostree-finalize-staged.service */
+static gboolean
+_ostree_sysroot_finalize_staged_inner (OstreeSysroot *self, GCancellable *cancellable,
+                                       GError **error)
+{
+  /* It's totally fine if there's no staged deployment; perhaps down the line
+   * though we could teach the ostree cmdline to tell systemd to activate the
+   * service when a staged deployment is created.
+   */
+  if (!self->staged_deployment)
+    {
+      ot_journal_print (LOG_INFO, "No deployment staged for finalization");
+      return TRUE;
+    }
+
+  /* Check if finalization is locked. */
+  gboolean locked = false;
+  (void)g_variant_lookup (self->staged_deployment_data, _OSTREE_SYSROOT_STAGED_KEY_LOCKED, "b",
+                          &locked);
+  if (locked)
+    g_debug ("staged is locked via metadata");
+  else
+    {
+      if (!glnx_fstatat_allow_noent (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED_LOCKED, NULL, 0,
+                                     error))
+        return FALSE;
+      if (errno == 0)
+        locked = TRUE;
+    }
+  if (locked)
+    {
+      ot_journal_print (LOG_INFO, "Not finalizing; deployment is locked for finalization");
+      return TRUE;
+    }
+
+  /* Notice we send this *after* the trivial `return TRUE` above; this msg implies we've
+   * committed to finalizing the deployment. */
+  ot_journal_send ("MESSAGE_ID=" SD_ID128_FORMAT_STR,
+                   SD_ID128_FORMAT_VAL (OSTREE_DEPLOYMENT_FINALIZING_ID),
+                   "MESSAGE=Finalizing staged deployment", "OSTREE_OSNAME=%s",
+                   ostree_deployment_get_osname (self->staged_deployment), "OSTREE_CHECKSUM=%s",
+                   ostree_deployment_get_csum (self->staged_deployment), "OSTREE_DEPLOYSERIAL=%u",
+                   ostree_deployment_get_deployserial (self->staged_deployment), NULL);
+
+  g_assert (self->staged_deployment_data);
+
+  g_autoptr (OstreeDeployment) merge_deployment = NULL;
+  g_autoptr (GVariant) merge_deployment_v = NULL;
+  if (g_variant_lookup (self->staged_deployment_data, "merge-deployment", "@a{sv}",
+                        &merge_deployment_v))
+    {
+      g_autoptr (OstreeDeployment) merge_deployment_stub
+          = _ostree_sysroot_deserialize_deployment_from_variant (merge_deployment_v, error);
+      if (!merge_deployment_stub)
+        return FALSE;
+      for (guint i = 0; i < self->deployments->len; i++)
+        {
+          OstreeDeployment *deployment = self->deployments->pdata[i];
+          if (ostree_deployment_equal (deployment, merge_deployment_stub))
+            {
+              merge_deployment = g_object_ref (deployment);
+              break;
+            }
+        }
+
+      if (!merge_deployment)
+        return glnx_throw (error, _("Failed to find merge deployment %s.%d for staged"),
+                           ostree_deployment_get_csum (merge_deployment_stub),
+                           ostree_deployment_get_deployserial (merge_deployment_stub));
+    }
+
+  /* Unlink the staged state now; if we're interrupted in the middle,
+   * we don't want e.g. deal with the partially written /etc merge.
+   */
+  if (!glnx_unlinkat (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED, 0, error))
+    return FALSE;
+
+  if (!sysroot_finalize_deployment (self, NULL, self->staged_deployment, merge_deployment, cancellable,
+                                    error))
+    return FALSE;
+  ot_journal_print (LOG_INFO, "Finalized deployment");
+
+  /* Now, take ownership of the staged state, as normally the API below strips
+   * it out.
+   */
+  g_autoptr (OstreeDeployment) staged = g_steal_pointer (&self->staged_deployment);
+  staged->staged = FALSE;
+  g_ptr_array_remove_index (self->deployments, 0);
+
+  /* TODO: Proxy across flags too?
+   *
+   * But note that we always use NO_CLEAN to avoid adding more latency at
+   * shutdown, and also because e.g. rpm-ostree wants to own the cleanup
+   * process.
+   */
+  OstreeSysrootSimpleWriteDeploymentFlags flags
+      = OSTREE_SYSROOT_SIMPLE_WRITE_DEPLOYMENT_FLAGS_NO_CLEAN;
+  if (!ostree_sysroot_simple_write_deployment (self, NULL, ostree_deployment_get_osname (staged), staged,
+                                               merge_deployment, flags, cancellable, error))
+    return FALSE;
+  ot_journal_print (LOG_INFO, "Finished writing deployment");
+
+  /* Do the basic cleanup that may impact /boot, but not the repo pruning */
+  if (!ostree_sysroot_prepare_cleanup (self, NULL, cancellable, error))
+    return FALSE;
+  ot_journal_print (LOG_INFO, "Cleanup complete");
+
+  // Cleanup will have closed some FDs, re-ensure writability
+  if (!_ostree_sysroot_ensure_writable (self, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+/* Invoked at shutdown time by ostree-finalize-staged.service */
+gboolean
+_ostree_sysroot_finalize_staged (OstreeSysroot *self, GCancellable *cancellable, GError **error)
+{
+  g_autoptr (GError) finalization_error = NULL;
+  if (!_ostree_sysroot_ensure_boot_fd (self, error))
+    return FALSE;
+  if (!_ostree_sysroot_finalize_staged_inner (self, cancellable, &finalization_error))
+    {
+      g_autoptr (GError) writing_error = NULL;
+      g_assert_cmpint (self->boot_fd, !=, -1);
+      if (!glnx_file_replace_contents_at (self->boot_fd, _OSTREE_FINALIZE_STAGED_FAILURE_PATH,
+                                          (guint8 *)finalization_error->message, -1, 0, cancellable,
+                                          &writing_error))
+        {
+          // We somehow failed to write the failure message...that's not great.  Maybe ENOSPC on
+          // /boot.
+          g_printerr (_("Failed to write %s: %s\n"), _OSTREE_FINALIZE_STAGED_FAILURE_PATH,
+                      writing_error->message);
+        }
+      g_propagate_error (error, g_steal_pointer (&finalization_error));
+      return FALSE;
+    }
+  else
+    {
+      /* we may have failed in a previous invocation on this boot, but we were
+       * rerun again (likely manually) and passed this time; nuke any stamp */
+      if (!glnx_shutil_rm_rf_at (self->boot_fd, _OSTREE_FINALIZE_STAGED_FAILURE_PATH, cancellable,
+                                 error))
+        return FALSE;
+    }
+  return TRUE;
+}
+
+/* Invoked at bootup time by ostree-boot-complete.service */
+gboolean
+_ostree_sysroot_boot_complete (OstreeSysroot *self, GCancellable *cancellable, GError **error)
+{
+  if (!_ostree_sysroot_ensure_boot_fd (self, error))
+    return FALSE;
+
+  glnx_autofd int failure_fd = -1;
+  g_assert_cmpint (self->boot_fd, !=, -1);
+  if (!ot_openat_ignore_enoent (self->boot_fd, _OSTREE_FINALIZE_STAGED_FAILURE_PATH, &failure_fd,
+                                error))
+    return FALSE;
+  // If we didn't find a failure log, then there's nothing to do right now.
+  // (Actually this unit shouldn't even be invoked, but we may do more in the future)
+  if (failure_fd == -1)
+    return TRUE;
+  g_autofree char *failure_data = glnx_fd_readall_utf8 (failure_fd, NULL, cancellable, error);
+  if (failure_data == NULL)
+    return glnx_prefix_error (error, "Reading from %s", _OSTREE_FINALIZE_STAGED_FAILURE_PATH);
+  // Remove the file; we don't want to continually error out.
+  (void)unlinkat (self->boot_fd, _OSTREE_FINALIZE_STAGED_FAILURE_PATH, 0);
+  return glnx_throw (error, _("ostree-finalize-staged.service failed on previous boot: %s"),
+                     failure_data);
+}
+
+/**
+ * ostree_sysroot_deployment_set_kargs:
+ * @self: Sysroot
+ * @deployment: A deployment
+ * @new_kargs: (array zero-terminated=1) (element-type utf8): Replace deployment's kernel arguments
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Entirely replace the kernel arguments of @deployment with the
+ * values in @new_kargs.
+ */
+gboolean
+ostree_sysroot_deployment_set_kargs (OstreeSysroot *self, OstreeDeployment *deployment,
+                                     char **new_kargs, GCancellable *cancellable, GError **error)
+{
+  if (!_ostree_sysroot_ensure_writable (self, error))
+    return FALSE;
+
+  /* For now; instead of this do a redeployment */
+  g_assert (!ostree_deployment_is_staged (deployment));
+
+  g_autoptr (OstreeDeployment) new_deployment = ostree_deployment_clone (deployment);
+  OstreeBootconfigParser *new_bootconfig = ostree_deployment_get_bootconfig (new_deployment);
+
+  g_autoptr (OstreeKernelArgs) kargs = ostree_kernel_args_new ();
+  ostree_kernel_args_append_argv (kargs, new_kargs);
+  g_autofree char *new_options = ostree_kernel_args_to_string (kargs);
+  ostree_bootconfig_parser_set (new_bootconfig, "options", new_options);
+
+  g_autoptr (GPtrArray) new_deployments = g_ptr_array_new_with_free_func (g_object_unref);
+  for (guint i = 0; i < self->deployments->len; i++)
+    {
+      OstreeDeployment *cur = self->deployments->pdata[i];
+      if (cur == deployment)
+        g_ptr_array_add (new_deployments, g_object_ref (new_deployment));
+      else
+        g_ptr_array_add (new_deployments, g_object_ref (cur));
+    }
+
+  if (!ostree_sysroot_write_deployments (self, new_deployments, cancellable, error))
+    return FALSE;
+
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_deployment_set_kargs_in_place:
+ * @self: Sysroot
+ * @deployment: A deployment
+ * @kargs_str: (allow-none): Replace @deployment's kernel arguments
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * Replace the kernel arguments of @deployment with the values in @kargs_str.
+ */
+gboolean
+ostree_sysroot_deployment_set_kargs_in_place (OstreeSysroot *self, OstreeDeployment *deployment,
+                                              char *kargs_str, GCancellable *cancellable,
+                                              GError **error)
+{
+  if (!ostree_sysroot_initialize (self, error))
+    return FALSE;
+  if (!_ostree_sysroot_ensure_boot_fd (self, error))
+    return FALSE;
+  if (!_ostree_sysroot_ensure_writable (self, error))
+    return FALSE;
+
+  // handle staged deployment
+  if (ostree_deployment_is_staged (deployment))
+    {
+      /* Read the staged state from disk */
+      glnx_autofd int fd = -1;
+      if (!glnx_openat_rdonly (AT_FDCWD, _OSTREE_SYSROOT_RUNSTATE_STAGED, TRUE, &fd, error))
+        return FALSE;
+
+      g_autoptr (GBytes) contents = ot_fd_readall_or_mmap (fd, 0, error);
+      if (!contents)
+        return FALSE;
+      g_autoptr (GVariant) staged_deployment_data
+          = g_variant_new_from_bytes ((GVariantType *)"a{sv}", contents, TRUE);
+      g_autoptr (GVariantDict) staged_deployment_dict = g_variant_dict_new (staged_deployment_data);
+
+      g_autoptr (OstreeKernelArgs) kargs = ostree_kernel_args_from_string (kargs_str);
+      g_auto (GStrv) kargs_strv = ostree_kernel_args_to_strv (kargs);
+
+      g_variant_dict_insert (staged_deployment_dict, "kargs", "^a&s", kargs_strv);
+      g_autoptr (GVariant) new_staged_deployment_data = g_variant_dict_end (staged_deployment_dict);
+
+      if (!glnx_file_replace_contents_at (fd, _OSTREE_SYSROOT_RUNSTATE_STAGED,
+                                          g_variant_get_data (new_staged_deployment_data),
+                                          g_variant_get_size (new_staged_deployment_data),
+                                          GLNX_FILE_REPLACE_NODATASYNC, cancellable, error))
+        return FALSE;
+    }
+  else
+    {
+      OstreeBootconfigParser *new_bootconfig = ostree_deployment_get_bootconfig (deployment);
+      ostree_bootconfig_parser_set (new_bootconfig, "options", kargs_str);
+
+      g_autofree char *bootconf_name
+          = bootloader_entry_filename (self, self->deployments->len, deployment);
+
+      g_autofree char *bootconfdir = g_strdup_printf ("loader.%d/entries", self->bootversion);
+      glnx_autofd int bootconf_dfd = -1;
+      if (!glnx_opendirat (self->boot_fd, bootconfdir, TRUE, &bootconf_dfd, error))
+        return FALSE;
+
+      if (!ostree_bootconfig_parser_write_at (new_bootconfig, bootconf_dfd, bootconf_name,
+                                              cancellable, error))
+        return FALSE;
+    }
+
+  return TRUE;
+}
+
+/**
+ * ostree_sysroot_deployment_set_mutable:
+ * @self: Sysroot
+ * @deployment: A deployment
+ * @is_mutable: Whether or not deployment's files can be changed
+ * @cancellable: Cancellable
+ * @error: Error
+ *
+ * By default, deployment directories are not mutable.  This function
+ * will allow making them temporarily mutable, for example to allow
+ * layering additional non-OSTree content.
+ */
+gboolean
+ostree_sysroot_deployment_set_mutable (OstreeSysroot *self, OstreeDeployment *deployment,
+                                       gboolean is_mutable, GCancellable *cancellable,
+                                       GError **error)
+{
+  if (!_ostree_sysroot_ensure_writable (self, error))
+    return FALSE;
+
+  if (g_cancellable_set_error_if_cancelled (cancellable, error))
+    return FALSE;
+
+  g_autofree char *deployment_path = ostree_sysroot_get_deployment_dirpath (self, deployment);
+  glnx_autofd int fd = -1;
+  if (!glnx_opendirat (self->sysroot_fd, deployment_path, TRUE, &fd, error))
+    return FALSE;
+
+  if (!_ostree_linuxfs_fd_alter_immutable_flag (fd, !is_mutable, cancellable, error))
+    return FALSE;
+
+  return TRUE;
+}

@@ -1,0 +1,59 @@
+/*
+ *
+ *  * Copyright (C) 2023, KylinSoft Co., Ltd.
+ *  *
+ *  * This program is free software: you can redistribute it and/or modify
+ *  * it under the terms of the GNU General Public License as published by
+ *  * the Free Software Foundation, either version 3 of the License, or
+ *  * (at your option) any later version.
+ *  *
+ *  * This program is distributed in the hope that it will be useful,
+ *  * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *  * GNU General Public License for more details.
+ *  *
+ *  * You should have received a copy of the GNU General Public License
+ *  * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *  *
+ *  * Authors: iaom <zhangpengfei@kylinos.cn>
+ *
+ */
+
+#include "utils.h"
+#include <mutex>
+
+#include "window-manager.h"
+static UkuiSearch::ApplicationInfo *applicationInfo = nullptr;
+static std::once_flag flag;
+UkuiSearch::ApplicationInfo *Utils::getApplicationInfo()
+{
+    std::call_once(flag, [ & ] {
+        applicationInfo = new UkuiSearch::ApplicationInfo();
+    });
+    return applicationInfo;
+}
+QString Utils::desktopFileFromPid(uint pid)
+{
+    QString desktopFile;
+    getApplicationInfo()->tranPidToDesktopFp(pid, desktopFile);
+    return desktopFile;
+}
+
+QString Utils::desktopFileFromWid(const QString &wid)
+{
+    QString desktopFile;
+    getApplicationInfo()->desktopFilePathFromName(UkuiQuick::WindowManager::appId(wid), desktopFile);
+    if(desktopFile.isEmpty()) {
+        getApplicationInfo()->tranPidToDesktopFp(UkuiQuick::WindowManager::pid(wid),desktopFile);
+    }
+    return desktopFile;
+}
+
+QString Utils::desktopFilePathFromName(const QString&name)
+{
+    QString desktopFile;
+    getApplicationInfo()->desktopFilePathFromName(name, desktopFile);
+    return desktopFile;
+}
+
+

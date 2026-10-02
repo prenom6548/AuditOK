@@ -1,0 +1,273 @@
+#!/bin/sh
+# tlp-func-pm - Device Power Management Functions
+#
+# Copyright (c) 2024 Thomas Koch <linrunner at gmx.net> and others.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Needs: tlp-func-base
+
+# ----------------------------------------------------------------------------
+# Constants
+
+readonly ETHTOOL=ethtool
+
+readonly PCID=/sys/bus/pci/devices
+readonly PCIDRV=/sys/bus/pci/drivers
+readonly SLEEPMODE=/sys/power/mem_sleep
+
+# ----------------------------------------------------------------------------
+# Functions
+
+# --- PCI(e) Devices
+
+set_runtime_pm () { # set runtime power management
+    # $1: 0=ac mode, 1=battery mode
+
+    local address class control device driver drv_bl type
+    local pci_bl_adr=""
+    local pci_bl_drv=""
+    local pci_enable_adr pci_disable_adr
+
+    if [ "$1" = "1" ]; then
+        control=${RUNTIME_PM_ON_BAT:-}
+    else
+        control=${RUNTIME_PM_ON_AC:-}
+    fi
+
+    # permanent addresses
+    pci_enable_adr=${RUNTIME_PM_ENABLE:-}
+    pci_disable_adr=${RUNTIME_PM_DISABLE:-}
+
+    if [ -z "$control" ] && [ -z "$pci_enable_adr" ] && [ -z "$pci_disable_adr" ] ; then
+        # quit if completely unconfigured
+        echo_debug "pm" "set_runtime_pm($1).not_configured"
+        return 0
+    fi
+
+    case "$control" in
+        auto|on|"") # valid control value or no operation ("")
+            ;;
+
+        *) # invalid control value
+            echo_debug "pm" "set_runtime_pm($1).invalid: $control"
+            return 0
+            ;;
+    esac
+
+    if [ -n "$control" ]; then
+        # RUNTIME_PM_ON_AC/BAT is configured --> prepare denylists
+        # driver specific denylist:
+        # - undefined = use intrinsic default from /usr/share/tlp/defaults.conf
+        # - empty     = disable feature
+        drv_bl="$RUNTIME_PM_DRIVER_DENYLIST"
+
+        # pci address denylisting
+        pci_bl_adr=${RUNTIME_PM_DENYLIST:-}
+
+        # pci driver denylisting: corresponding pci addresses
+        pci_bl_drv=""
+
+        # cumulate pci addresses for devices with denylisted drivers
+        for driver in $drv_bl; do # iterate list
+            if [ -n "$driver" ] && [ -d "$PCIDRV/$driver" ]; then
+                # driver is active --> iterate over assigned devices
+                for device in "$PCIDRV/$driver/0000:"*; do
+                    # get short device address
+                    address=${device##/*/0000:}
+
+                    # add to list when not already contained
+                    if ! wordinlist "$address" "$pci_bl_drv"; then
+                        pci_bl_drv="$pci_bl_drv $address"
+                    fi
+                done # for device
+            fi # if driver
+        done # for driver
+    fi
+
+    # iterate pci(e) devices
+    for type in $PCID; do
+        for device in "$type"/*; do
+            if [ -f "$device/power/control" ]; then
+                # get short device address, class
+                address=${device##/*/0000:}
+                class=$(read_sysf "$device/class")
+
+                if wordinlist "$address" "$pci_enable_adr"; then
+                    # device should be permanently 'auto' (enabled)
+                    write_sysf "auto" "$device/power/control"
+                    echo_debug "pm" "set_runtime_pm($1).perm_auto: $device [$class]; rc=$?"
+                elif wordinlist "$address" "$pci_disable_adr"; then
+                    # device should be permanently 'on' (disabled)
+                    write_sysf "on" "$device/power/control"
+                    echo_debug "pm" "set_runtime_pm($1).perm_on: $device [$class]; rc=$?"
+                elif wordinlist "$address" "$pci_bl_adr"; then
+                    # device is in address denylist
+                    echo_debug "pm" "set_runtime_pm($1).deny_address: $device [$class]"
+                elif wordinlist "$address" "$pci_bl_drv"; then
+                    # device is in driver denylist
+                    echo_debug "pm" "set_runtime_pm($1).deny_driver: $device [$class]"
+                else
+                    case $control in
+                        auto|on)
+                            write_sysf "$control" "$device/power/control"
+                            echo_debug "pm" "set_runtime_pm($1).$control: $device [$class]; rc=$?"
+                            ;;
+
+                        "") # no operation i.e. apply RUNTIME_PM_ENABLE/DISABLE only
+                            echo_debug "pm" "set_runtime_pm($1).nop: $device [$class]"
+                            ;;
+                    esac
+                fi # if denylist
+            fi # if power/control
+        done # for device
+    done # for type
+
+    return 0
+}
+
+set_pcie_aspm () { # set pcie active state power management
+    # $1: 0=ac mode, 1=battery mode
+
+    local pwr=""
+
+    case "$1" in
+        0) pwr="${PCIE_ASPM_ON_AC:-}" ;;
+        1) pwr="${PCIE_ASPM_ON_BAT:-}" ;;
+        2) # reset on suspend only when configured
+            if [ -n "${PCIE_ASPM_ON_AC:-}${PCIE_ASPM_ON_BAT:-}" ]; then
+                pwr="default"
+            fi
+            ;;
+    esac
+
+    if [ -z "$pwr" ]; then
+        # do nothing if unconfigured
+        echo_debug "pm" "set_pcie_aspm($1).not_configured"
+        return 0
+    fi
+
+    if [ -f /sys/module/pcie_aspm/parameters/policy ]; then
+        if write_sysf "$pwr" /sys/module/pcie_aspm/parameters/policy; then
+            echo_debug "pm" "set_pcie_aspm($1): $pwr"
+        else
+            echo_debug "pm" "set_pcie_aspm($1).disabled_by_kernel"
+        fi
+    else
+        echo_debug "pm" "set_pcie_aspm($1).not_available"
+    fi
+
+    return 0
+}
+
+# -- Audio Devices
+
+set_sound_power_mode () { # set sound chip power modes
+    # $1: 0=ac mode, 1=battery mode
+
+    local pwr cpwr
+
+    # new config param
+    if [ "$1" = "1" ]; then
+        pwr=${SOUND_POWER_SAVE_ON_BAT:-}
+    else
+        pwr=${SOUND_POWER_SAVE_ON_AC:-}
+    fi
+
+    # when unconfigured consider legacy config param
+    [ -z "$pwr" ] && pwr=${SOUND_POWER_SAVE:-}
+
+    if [ -z "$pwr" ]; then
+        # do nothing if unconfigured
+        echo_debug "pm" "set_sound_power_mode($1).not_configured"
+        return 0
+    fi
+
+    cpwr="$SOUND_POWER_SAVE_CONTROLLER"
+
+    if [ -d /sys/module/snd_hda_intel ]; then
+        write_sysf "$pwr" /sys/module/snd_hda_intel/parameters/power_save
+        echo_debug "pm" "set_sound_power_mode($1).hda: $pwr; rc=$?"
+
+        if [ "$pwr" = "0" ]; then
+            write_sysf "N" /sys/module/snd_hda_intel/parameters/power_save_controller
+            echo_debug "pm" "set_sound_power_mode($1).hda_controller: N controller=$cpwr; rc=$?"
+        else
+            write_sysf "$cpwr" /sys/module/snd_hda_intel/parameters/power_save_controller
+            echo_debug "pm" "set_sound_power_mode($1).hda_controller: $cpwr; rc=$?"
+        fi
+    fi
+
+    if [ -d /sys/module/snd_ac97_codec ]; then
+        write_sysf "$pwr" /sys/module/snd_ac97_codec/parameters/power_save
+        echo_debug "pm" "set_sound_power_mode($1).ac97: $pwr; rc=$?"
+    fi
+
+    return 0
+}
+
+# --- LAN Devices
+
+get_ethifaces () { # get all eth devices -- retval: $_ethifaces
+    local ei eic
+    _ethifaces=""
+
+    for eic in "$NETD"/*/device/class; do
+        if [ "$(read_sysf "$eic")" = "0x020000" ] \
+            && [ ! -d "${eic%/class}/ieee80211" ]; then
+
+            ei=${eic%/device/class}; ei=${ei##*/}
+            _ethifaces="$_ethifaces $ei"
+        fi
+    done
+
+    _ethifaces="${_ethifaces# }"
+    return 0
+}
+
+disable_wake_on_lan () {  # disable WOL
+    local ei
+
+    if [ "$WOL_DISABLE" = "Y" ]; then
+        get_ethifaces
+        for ei in $_ethifaces; do
+            $ETHTOOL -s "$ei" wol d > /dev/null 2>&1
+            echo_debug "pm" "disable_wake_on_lan: $ei; rc=$?"
+        done
+    else
+        echo_debug "pm" "disable_wake_on_lan.not_configured"
+    fi
+
+    return 0
+}
+
+# --- Set suspend method
+
+set_mem_sleep () {
+    # $1: 0=ac mode, 1=battery mode
+
+    local susp
+
+    if [ "$1" = "1" ]; then
+        susp=${MEM_SLEEP_ON_BAT:-}
+    else
+        susp=${MEM_SLEEP_ON_AC:-}
+    fi
+
+    if [ -z "$susp" ]; then
+        # do nothing if unconfigured
+        echo_debug "pm" "set_mem_sleep($1).not_configured"
+        return 0
+    fi
+
+    if [ -f $SLEEPMODE ]; then
+        if write_sysf "$susp" $SLEEPMODE; then
+            echo_debug "pm" "set_mem_sleep($1): $susp"
+        else
+            echo_debug "pm" "set_mem_sleep($1).rejected_by_kernel"
+        fi
+    else
+        echo_debug "pm" "set_mem_sleep($1).not_available"
+    fi
+
+    return 0
+}

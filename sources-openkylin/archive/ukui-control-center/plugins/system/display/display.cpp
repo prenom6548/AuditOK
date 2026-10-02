@@ -1,0 +1,112 @@
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ *
+ * Copyright (C) 2019 KylinSoft  Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
+ */
+#include <QtWidgets>
+
+#include "display.h"
+#include "ui_display.h"
+#include "ukcccommon.h"
+using namespace ukcc;
+
+#include <KF5/KScreen/kscreen/getconfigoperation.h>
+#include <KF5/KScreen/kscreen/output.h>
+#include <QDebug>
+#include <QDBusInterface>
+#include <QDBusConnection>
+
+DisplaySet::DisplaySet() : mFirstLoad(true)
+{
+#ifdef MAVIS
+    pluginName = tr("Screen");
+#else
+    pluginName = tr("Display");
+#endif
+    pluginType = SYSTEM;
+}
+
+DisplaySet::~DisplaySet()
+{
+    if (pluginWidget) {
+        delete pluginWidget;
+        pluginWidget = nullptr;
+    }
+}
+
+QWidget *DisplaySet::pluginUi()
+{
+    if (mFirstLoad) {
+        requestBackend();
+        mFirstLoad = false;
+        pluginWidget = new Widget;
+        QObject::connect(new KScreen::GetConfigOperation(), &KScreen::GetConfigOperation::finished,
+                         [&](KScreen::ConfigOperation *op) {
+            pluginWidget->setConfig(qobject_cast<KScreen::GetConfigOperation *>(op)->config());
+        });
+    }
+    return pluginWidget;
+}
+
+QString DisplaySet::plugini18nName()
+{
+    return pluginName;
+}
+
+int DisplaySet::pluginTypes()
+{
+    return pluginType;
+}
+
+const QString DisplaySet::name() const
+{
+    return QStringLiteral("Display");
+}
+
+bool DisplaySet::isShowOnHomePage() const
+{
+    return true;
+}
+
+QIcon DisplaySet::icon() const
+{
+    return QIcon::fromTheme("system-computer-symbolic");
+}
+
+bool DisplaySet::isEnable() const
+{
+    return true;
+}
+
+void DisplaySet::requestBackend()
+{
+    QDBusInterface screenIft("org.kde.KScreen",
+                             "/",
+                             "org.kde.KScreen",
+                             QDBusConnection::sessionBus());
+    if (!screenIft.isValid()) {
+        QProcess process;
+        process.start("uname -m");
+        process.waitForFinished();
+        QString output = process.readAll();
+        output = output.simplified();
+
+        QString command = "/usr/lib/" + output + "-linux-gnu"
+                          +"/libexec/kf5/kscreen_backend_launcher";
+        QProcess::startDetached(command);
+    }
+}

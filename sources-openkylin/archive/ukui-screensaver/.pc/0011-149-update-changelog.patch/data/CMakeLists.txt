@@ -1,0 +1,13 @@
+install(FILES org.ukui.screensaver.gschema.xml DESTINATION /usr/share/glib-2.0/schemas)
+install(FILES ukui-screensaver.desktop DESTINATION /etc/xdg/autostart)
+install(FILES ukui-screensaver.directory DESTINATION /usr/share/desktop-directories)
+install(FILES ukui-screensavers.menu DESTINATION /etc/xdg/menus)
+install(FILES ukui-screensaver-qt DESTINATION /etc/pam.d)
+install(FILES screensaver-startup.sh DESTINATION /usr/bin)
+install(FILES ukui-screensaver-dialog.desktop DESTINATION /usr/share/applications)
+install(FILES org.ukui.screensaver.conf DESTINATION /etc/dbus-1/system.d)
+install(FILES ukui-greeter/ukui-greeter-wlcom.desktop DESTINATION /usr/share/xgreeters/)
+install(FILES ukui-greeter/97-ukui-greeter-wlcom.conf DESTINATION /usr/share/lightdm/lightdm.conf.d/)
+install(FILES ukui-greeter/start-greeter-session DESTINATION /usr/bin/)
+install(FILES ukui-greeter/start-quick-session DESTINATION /usr/bin/)
+

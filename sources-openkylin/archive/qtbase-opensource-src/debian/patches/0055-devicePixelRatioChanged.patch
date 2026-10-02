@@ -1,0 +1,411 @@
+From: Pinlong Han <hanpinlong@kylinos.cn>
+Date: Mon, 15 Jun 2026 14:25:10 +0800
+Subject: =?utf-8?b?56e75qSNZGV2aWNlUGl4ZWxSYXRpb0NoYW5nZWQ=?=
+
+---
+ src/corelib/kernel/qcoreevent.cpp         |  1 +
+ src/corelib/kernel/qcoreevent.h           |  2 ++
+ src/gui/kernel/qguiapplication.cpp        | 22 ++++++++++++++--
+ src/gui/kernel/qguiapplication_p.h        |  1 +
+ src/gui/kernel/qwindow.cpp                | 43 ++++++++++++++++++++++++++++---
+ src/gui/kernel/qwindow_p.h                |  3 +++
+ src/gui/kernel/qwindowsysteminterface.cpp |  9 +++++++
+ src/gui/kernel/qwindowsysteminterface.h   |  3 +++
+ src/gui/kernel/qwindowsysteminterface_p.h | 12 ++++++++-
+ src/widgets/kernel/qopenglwidget.cpp      |  2 +-
+ src/widgets/kernel/qwidget.cpp            |  2 ++
+ src/widgets/kernel/qwidgetwindow.cpp      | 24 +++++++++++++----
+ src/widgets/kernel/qwidgetwindow_p.h      |  3 ++-
+ src/widgets/widgets/qdockwidget.cpp       |  2 +-
+ 14 files changed, 114 insertions(+), 15 deletions(-)
+
+diff --git a/src/corelib/kernel/qcoreevent.cpp b/src/corelib/kernel/qcoreevent.cpp
+index b497532..2156f3f 100644
+--- a/src/corelib/kernel/qcoreevent.cpp
++++ b/src/corelib/kernel/qcoreevent.cpp
+@@ -118,6 +118,7 @@ QT_BEGIN_NAMESPACE
+     \value ContextMenu                      Context popup menu (QContextMenuEvent).
+     \value CursorChange                     The widget's cursor has changed.
+     \value DeferredDelete                   The object will be deleted after it has cleaned up (QDeferredDeleteEvent)
++    \value DevicePixelRatioChange           The devicePixelRatio has changed for this widget's or window's underlying backing store
+     \value DragEnter                        The cursor enters a widget during a drag and drop operation (QDragEnterEvent).
+     \value DragLeave                        The cursor leaves a widget during a drag and drop operation (QDragLeaveEvent).
+     \value DragMove                         A drag and drop operation is in progress (QDragMoveEvent).
+diff --git a/src/corelib/kernel/qcoreevent.h b/src/corelib/kernel/qcoreevent.h
+index 05af1a6..0df0ba8 100644
+--- a/src/corelib/kernel/qcoreevent.h
++++ b/src/corelib/kernel/qcoreevent.h
+@@ -286,6 +286,8 @@ public:
+ 
+         TabletTrackingChange = 219,             // tablet tracking state has changed
+ 
++        DevicePixelRatioChange = 222,
++
+         // 512 reserved for Qt Jambi's MetaCall event
+         // 513 reserved for Qt Jambi's DeleteOnMainThread event
+ 
+diff --git a/src/gui/kernel/qguiapplication.cpp b/src/gui/kernel/qguiapplication.cpp
+index 10915d3..2347c81 100644
+--- a/src/gui/kernel/qguiapplication.cpp
++++ b/src/gui/kernel/qguiapplication.cpp
+@@ -1138,8 +1138,8 @@ QScreen *QGuiApplication::screenAt(const QPoint &point)
+ */
+ qreal QGuiApplication::devicePixelRatio() const
+ {
+-    if (!qFuzzyIsNull(QGuiApplicationPrivate::m_maxDevicePixelRatio))
+-        return QGuiApplicationPrivate::m_maxDevicePixelRatio;
++    // if (!qFuzzyIsNull(QGuiApplicationPrivate::m_maxDevicePixelRatio))
++    //     return QGuiApplicationPrivate::m_maxDevicePixelRatio;
+ 
+     QGuiApplicationPrivate::m_maxDevicePixelRatio = 1.0; // make sure we never return 0.
+     for (QScreen *screen : qAsConst(QGuiApplicationPrivate::screen_list))
+@@ -2028,6 +2028,9 @@ void QGuiApplicationPrivate::processWindowSystemEvent(QWindowSystemInterfacePriv
+     case QWindowSystemInterfacePrivate::WindowScreenChanged:
+         QGuiApplicationPrivate::processWindowScreenChangedEvent(static_cast<QWindowSystemInterfacePrivate::WindowScreenChangedEvent *>(e));
+         break;
++    case QWindowSystemInterfacePrivate::WindowDevicePixelRatioChanged:
++        QGuiApplicationPrivate::processWindowDevicePixelRatioChangedEvent(static_cast<QWindowSystemInterfacePrivate::WindowDevicePixelRatioChangedEvent *>(e));
++        break;
+     case QWindowSystemInterfacePrivate::SafeAreaMarginsChanged:
+         QGuiApplicationPrivate::processSafeAreaMarginsChangedEvent(static_cast<QWindowSystemInterfacePrivate::SafeAreaMarginsChangedEvent *>(e));
+         break;
+@@ -2539,6 +2542,7 @@ void QGuiApplicationPrivate::processWindowScreenChangedEvent(QWindowSystemInterf
+     if (QWindow *window  = wse->window.data()) {
+         if (window->screen() == wse->screen.data())
+             return;
++
+         if (QWindow *topLevelWindow = window->d_func()->topLevelWindow(QWindow::ExcludeTransients)) {
+             if (QScreen *screen = wse->screen.data())
+                 topLevelWindow->d_func()->setTopLevelScreen(screen, false /* recreate */);
+@@ -2550,9 +2554,19 @@ void QGuiApplicationPrivate::processWindowScreenChangedEvent(QWindowSystemInterf
+             QWindowSystemInterfacePrivate::GeometryChangeEvent gce(window, QHighDpi::fromNativePixels(window->handle()->geometry(), window));
+             processGeometryChangeEvent(&gce);
+         }
++
++        QWindowPrivate::get(window)->updateDevicePixelRatio();
+     }
+ }
+ 
++void QGuiApplicationPrivate::processWindowDevicePixelRatioChangedEvent(QWindowSystemInterfacePrivate::WindowDevicePixelRatioChangedEvent *wde)
++{
++    if (wde->window.isNull())
++        return;
++
++    QWindowPrivate::get(wde->window)->updateDevicePixelRatio();
++}
++
+ void QGuiApplicationPrivate::processSafeAreaMarginsChangedEvent(QWindowSystemInterfacePrivate::SafeAreaMarginsChangedEvent *wse)
+ {
+     if (wse->window.isNull())
+@@ -3207,6 +3221,10 @@ void QGuiApplicationPrivate::processScreenLogicalDotsPerInchChange(QWindowSystem
+     emit s->logicalDotsPerInchChanged(s->logicalDotsPerInch());
+     s->d_func()->updateGeometriesWithSignals();
+ 
++    for (QWindow *window : QGuiApplication::allWindows())
++        if (window->screen() == e->screen)
++            QWindowPrivate::get(window)->updateDevicePixelRatio();
++
+     resetCachedDevicePixelRatio();
+ }
+ 
+diff --git a/src/gui/kernel/qguiapplication_p.h b/src/gui/kernel/qguiapplication_p.h
+index 261add1..90bf9a2 100644
+--- a/src/gui/kernel/qguiapplication_p.h
++++ b/src/gui/kernel/qguiapplication_p.h
+@@ -137,6 +137,7 @@ public:
+     static void processActivatedEvent(QWindowSystemInterfacePrivate::ActivatedWindowEvent *e);
+     static void processWindowStateChangedEvent(QWindowSystemInterfacePrivate::WindowStateChangedEvent *e);
+     static void processWindowScreenChangedEvent(QWindowSystemInterfacePrivate::WindowScreenChangedEvent *e);
++    static void processWindowDevicePixelRatioChangedEvent(QWindowSystemInterfacePrivate::WindowDevicePixelRatioChangedEvent *e);
+ 
+     static void processSafeAreaMarginsChangedEvent(QWindowSystemInterfacePrivate::SafeAreaMarginsChangedEvent *e);
+ 
+diff --git a/src/gui/kernel/qwindow.cpp b/src/gui/kernel/qwindow.cpp
+index ba2998a..0abc550 100644
+--- a/src/gui/kernel/qwindow.cpp
++++ b/src/gui/kernel/qwindow.cpp
+@@ -232,8 +232,10 @@ void QWindowPrivate::init(QScreen *targetScreen)
+ 
+     parentWindow = static_cast<QWindow *>(q->QObject::parent());
+ 
++    QScreen *connectScreen = targetScreen ? targetScreen : QGuiApplication::primaryScreen();
++
+     if (!parentWindow)
+-        connectToScreen(targetScreen ? targetScreen : QGuiApplication::primaryScreen());
++        connectToScreen(connectScreen);
+ 
+     // If your application aborts here, you are probably creating a QWindow
+     // before the screen list is populated.
+@@ -244,6 +246,22 @@ void QWindowPrivate::init(QScreen *targetScreen)
+     QGuiApplicationPrivate::window_list.prepend(q);
+ 
+     requestedFormat = QSurfaceFormat::defaultFormat();
++    devicePixelRatio = connectScreen->devicePixelRatio();
++
++    QObject::connect(q, &QWindow::screenChanged, q, [q, this](QScreen *){
++        // We may have changed scaling; trigger resize event if needed,
++        // except on Windows, where we send resize events during WM_DPICHANGED
++        // event handling. FIXME: unify DPI change handling across all platforms.
++#ifndef Q_OS_WIN
++        if (q->handle()) {
++            QWindowSystemInterfacePrivate::GeometryChangeEvent gce(q, QHighDpi::fromNativePixels(q->handle()->geometry(), q));
++            QGuiApplicationPrivate::processGeometryChangeEvent(&gce);
++        }
++#else
++        Q_UNUSED(q);
++#endif
++        updateDevicePixelRatio();
++    });
+ }
+ 
+ /*!
+@@ -558,6 +576,8 @@ void QWindowPrivate::create(bool recursive, WId nativeHandle)
+     QPlatformSurfaceEvent e(QPlatformSurfaceEvent::SurfaceCreated);
+     QGuiApplication::sendEvent(q, &e);
+ 
++    updateDevicePixelRatio();
++
+     if (needsUpdate)
+         q->requestUpdate();
+ }
+@@ -1312,14 +1332,29 @@ Qt::ScreenOrientation QWindow::contentOrientation() const
+ qreal QWindow::devicePixelRatio() const
+ {
+     Q_D(const QWindow);
++        return d->devicePixelRatio;
++}
++
++/*
++    Updates the cached devicePixelRatio value by polling for a new value.
++    Sends QEvent::DevicePixelRatioChange to the window if the DPR has changed.
++*/
++void QWindowPrivate::updateDevicePixelRatio()
++{
++    Q_Q(QWindow);
+ 
+     // If there is no platform window use the associated screen's devicePixelRatio,
+     // which typically is the primary screen and will be correct for single-display
+     // systems (a very common case).
+-    if (!d->platformWindow)
+-        return screen()->devicePixelRatio();
++    const qreal newDevicePixelRatio = platformWindow ?
++        platformWindow->devicePixelRatio() * QHighDpiScaling::factor(q) : q->screen()->devicePixelRatio();
++
++    if (newDevicePixelRatio == devicePixelRatio)
++        return;
+ 
+-    return d->platformWindow->devicePixelRatio() * QHighDpiScaling::factor(this);
++    devicePixelRatio = newDevicePixelRatio;
++    QEvent dprChangeEvent(QEvent::DevicePixelRatioChange);
++    QGuiApplication::sendEvent(q, &dprChangeEvent);
+ }
+ 
+ Qt::WindowState QWindowPrivate::effectiveState(Qt::WindowStates state)
+diff --git a/src/gui/kernel/qwindow_p.h b/src/gui/kernel/qwindow_p.h
+index 5a7ec51..44e7734 100644
+--- a/src/gui/kernel/qwindow_p.h
++++ b/src/gui/kernel/qwindow_p.h
+@@ -125,6 +125,8 @@ public:
+     void setAutomaticPositionAndResizeEnabled(bool a)
+     { positionAutomatic = resizeAutomatic = a; }
+ 
++    void updateDevicePixelRatio();
++
+     static QWindowPrivate *get(QWindow *window) { return window->d_func(); }
+ 
+     static Qt::WindowState effectiveState(Qt::WindowStates);
+@@ -144,6 +146,7 @@ public:
+     QString windowFilePath;
+     QIcon windowIcon;
+     QRect geometry;
++    qreal devicePixelRatio = 1.0;
+     Qt::WindowStates windowState = Qt::WindowNoState;
+     QWindow::Visibility visibility = QWindow::Hidden;
+     bool resizeEventPending = true;
+diff --git a/src/gui/kernel/qwindowsysteminterface.cpp b/src/gui/kernel/qwindowsysteminterface.cpp
+index 600cd9a..c6614c4 100644
+--- a/src/gui/kernel/qwindowsysteminterface.cpp
++++ b/src/gui/kernel/qwindowsysteminterface.cpp
+@@ -271,6 +271,13 @@ QT_DEFINE_QPA_EVENT_HANDLER(void, handleWindowScreenChanged, QWindow *window, QS
+     QWindowSystemInterfacePrivate::handleWindowSystemEvent<Delivery>(e);
+ }
+ 
++QT_DEFINE_QPA_EVENT_HANDLER(void, handleWindowDevicePixelRatioChanged, QWindow *window)
++{
++    QWindowSystemInterfacePrivate::WindowDevicePixelRatioChangedEvent *e =
++        new QWindowSystemInterfacePrivate::WindowDevicePixelRatioChangedEvent(window);
++    QWindowSystemInterfacePrivate::handleWindowSystemEvent<Delivery>(e);
++}
++
+ QT_DEFINE_QPA_EVENT_HANDLER(void, handleSafeAreaMarginsChanged, QWindow *window)
+ {
+     QWindowSystemInterfacePrivate::SafeAreaMarginsChangedEvent *e =
+@@ -879,6 +886,8 @@ void QWindowSystemInterface::handleScreenGeometryChange(QScreen *screen, const Q
+ 
+ void QWindowSystemInterface::handleScreenLogicalDotsPerInchChange(QScreen *screen, qreal dpiX, qreal dpiY)
+ {
++    QHighDpiScaling::updateHighDpiScaling();
++
+     const QDpi effectiveDpi = QPlatformScreen::overrideDpi(QDpi{dpiX, dpiY});
+     auto e = new QWindowSystemInterfacePrivate::ScreenLogicalDotsPerInchEvent(screen, effectiveDpi.first, effectiveDpi.second);
+     QWindowSystemInterfacePrivate::handleWindowSystemEvent(e);
+diff --git a/src/gui/kernel/qwindowsysteminterface.h b/src/gui/kernel/qwindowsysteminterface.h
+index 20baef1..17e0762 100644
+--- a/src/gui/kernel/qwindowsysteminterface.h
++++ b/src/gui/kernel/qwindowsysteminterface.h
+@@ -209,6 +209,9 @@ public:
+     template<typename Delivery = QWindowSystemInterface::DefaultDelivery>
+     static void handleWindowScreenChanged(QWindow *window, QScreen *newScreen);
+ 
++    template<typename Delivery = QWindowSystemInterface::DefaultDelivery>
++    static void handleWindowDevicePixelRatioChanged(QWindow *window);
++
+     template<typename Delivery = QWindowSystemInterface::DefaultDelivery>
+     static void handleSafeAreaMarginsChanged(QWindow *window);
+ 
+diff --git a/src/gui/kernel/qwindowsysteminterface_p.h b/src/gui/kernel/qwindowsysteminterface_p.h
+index dd6f29b..bacbbbc 100644
+--- a/src/gui/kernel/qwindowsysteminterface_p.h
++++ b/src/gui/kernel/qwindowsysteminterface_p.h
+@@ -100,7 +100,8 @@ public:
+         FlushEvents = 0x20,
+         WindowScreenChanged = 0x21,
+         SafeAreaMarginsChanged = 0x22,
+-        ApplicationTermination = 0x23
++        ApplicationTermination = 0x23,
++        WindowDevicePixelRatioChanged = 0x25,
+     };
+ 
+     class WindowSystemEvent {
+@@ -186,6 +187,15 @@ public:
+         QPointer<QScreen> screen;
+     };
+ 
++    class WindowDevicePixelRatioChangedEvent : public WindowSystemEvent {
++    public:
++        WindowDevicePixelRatioChangedEvent(QWindow *w)
++            : WindowSystemEvent(WindowDevicePixelRatioChanged), window(w)
++        { }
++
++        QPointer<QWindow> window;
++    };
++
+     class SafeAreaMarginsChangedEvent : public WindowSystemEvent {
+     public:
+         SafeAreaMarginsChangedEvent(QWindow *w)
+diff --git a/src/widgets/kernel/qopenglwidget.cpp b/src/widgets/kernel/qopenglwidget.cpp
+index b6b0479..493aff6 100644
+--- a/src/widgets/kernel/qopenglwidget.cpp
++++ b/src/widgets/kernel/qopenglwidget.cpp
+@@ -1474,7 +1474,7 @@ bool QOpenGLWidget::event(QEvent *e)
+             }
+         }
+         break;
+-    case QEvent::ScreenChangeInternal:
++    case QEvent::DevicePixelRatioChange:
+         if (d->initialized && d->paintDevice->devicePixelRatioF() != devicePixelRatioF())
+             d->recreateFbo();
+         break;
+diff --git a/src/widgets/kernel/qwidget.cpp b/src/widgets/kernel/qwidget.cpp
+index 69e0b00..e72b4c0 100644
+--- a/src/widgets/kernel/qwidget.cpp
++++ b/src/widgets/kernel/qwidget.cpp
+@@ -9084,6 +9084,8 @@ bool QWidget::event(QEvent *event)
+             const QWindow *win = te->window;
+             d->setWinId((win && win->handle()) ? win->handle()->winId() : 0);
+         }
++        break;
++    case QEvent::DevicePixelRatioChange:
+         if (d->data.fnt.d->dpi != logicalDpiY())
+             d->updateFont(d->data.fnt);
+ #ifndef QT_NO_OPENGL
+diff --git a/src/widgets/kernel/qwidgetwindow.cpp b/src/widgets/kernel/qwidgetwindow.cpp
+index 4165232..d85201e 100644
+--- a/src/widgets/kernel/qwidgetwindow.cpp
++++ b/src/widgets/kernel/qwidgetwindow.cpp
+@@ -168,7 +168,7 @@ QWidgetWindow::QWidgetWindow(QWidget *widget)
+         setSurfaceType(QSurface::RasterGLSurface);
+     }
+     connect(widget, &QObject::objectNameChanged, this, &QWidgetWindow::updateObjectName);
+-    connect(this, SIGNAL(screenChanged(QScreen*)), this, SLOT(handleScreenChange()));
++    connect(this, &QWidgetWindow::screenChanged, this, &QWidgetWindow::handleScreenChange);
+ }
+ 
+ QWidgetWindow::~QWidgetWindow()
+@@ -388,6 +388,10 @@ bool QWidgetWindow::event(QEvent *event)
+         m_widget->repaint();
+         return true;
+ 
++    case QEvent::DevicePixelRatioChange:
++        handleDevicePixelRatioChange();
++        break;
++
+     default:
+         break;
+     }
+@@ -751,22 +755,32 @@ void QWidgetWindow::updateMargins()
+     m_widget->data->fstrut_dirty = false;
+ }
+ 
+-static void sendScreenChangeRecursively(QWidget *widget)
++static void sendChangeRecursively(QWidget *widget, QEvent::Type type)
+ {
+-    QEvent e(QEvent::ScreenChangeInternal);
++    QEvent e(type);
+     QCoreApplication::sendEvent(widget, &e);
+     QWidgetPrivate *d = QWidgetPrivate::get(widget);
+     for (int i = 0; i < d->children.size(); ++i) {
+         QWidget *w = qobject_cast<QWidget *>(d->children.at(i));
+         if (w)
+-            sendScreenChangeRecursively(w);
++            sendChangeRecursively(w, type);
+     }
+ }
+ 
+ void QWidgetWindow::handleScreenChange()
+ {
+     // Send an event recursively to the widget and its children.
+-    sendScreenChangeRecursively(m_widget);
++    sendChangeRecursively(m_widget, QEvent::ScreenChangeInternal);
++
++    // Invalidate the backing store buffer and repaint immediately.
++    if (screen())
++        repaintWindow();
++}
++
++void QWidgetWindow::handleDevicePixelRatioChange()
++{
++    // Send an event recursively to the widget and its children.
++    sendChangeRecursively(m_widget, QEvent::DevicePixelRatioChange);
+ 
+     // Invalidate the backing store buffer and repaint immediately.
+     if (screen())
+diff --git a/src/widgets/kernel/qwidgetwindow_p.h b/src/widgets/kernel/qwidgetwindow_p.h
+index 5689e12..f68c1ce 100644
+--- a/src/widgets/kernel/qwidgetwindow_p.h
++++ b/src/widgets/kernel/qwidgetwindow_p.h
+@@ -120,9 +120,10 @@ protected:
+ 
+ private slots:
+     void updateObjectName();
+-    void handleScreenChange();
+ 
+ private:
++    void handleScreenChange();
++    void handleDevicePixelRatioChange();
+     void repaintWindow();
+     bool updateSize();
+     void updateMargins();
+diff --git a/src/widgets/widgets/qdockwidget.cpp b/src/widgets/widgets/qdockwidget.cpp
+index 93362f4..eebda65 100644
+--- a/src/widgets/widgets/qdockwidget.cpp
++++ b/src/widgets/widgets/qdockwidget.cpp
+@@ -153,7 +153,7 @@ bool QDockWidgetTitleButton::event(QEvent *event)
+ {
+     switch (event->type()) {
+     case QEvent::StyleChange:
+-    case QEvent::ScreenChangeInternal:
++    case QEvent::DevicePixelRatioChange:
+         m_iconSize = -1;
+         break;
+     default:

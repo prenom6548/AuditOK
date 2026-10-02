@@ -1,0 +1,303 @@
+From: Ryan Lee <ryan.lee@canonical.com>
+Date: Mon, 1 Jun 2026 14:28:33 +0800
+Subject: Pull the OpenVPN profile
+
+Bug-Ubuntu: https://bugs.launchpad.net/bugs/2146874
+
+As per the linked bug report, updating the profile to support
+systemd-resolved would require writing multiple new profiles, which has
+too much of a risk of regression in the upcoming 26.04 LTS release.
+Thus, pull the profile for the time being.
+---
+ profiles/apparmor.d/openvpn               | 137 ------------------------------
+ profiles/apparmor/profiles/extras/openvpn | 137 ++++++++++++++++++++++++++++++
+ 2 files changed, 137 insertions(+), 137 deletions(-)
+ delete mode 100644 profiles/apparmor.d/openvpn
+ create mode 100644 profiles/apparmor/profiles/extras/openvpn
+
+diff --git a/profiles/apparmor.d/openvpn b/profiles/apparmor.d/openvpn
+deleted file mode 100644
+index fe1289e..0000000
+--- a/profiles/apparmor.d/openvpn
++++ /dev/null
+@@ -1,137 +0,0 @@
+-#------------------------------------------------------------------
+-#    Copyright (C) 2024 Canonical Ltd.
+-#
+-#    This program is free software; you can redistribute it and/or
+-#    modify it under the terms of version 2 of the GNU General Public
+-#    License published by the Free Software Foundation.
+-#------------------------------------------------------------------
+-# vim: ft=apparmor
+-
+-abi <abi/4.0>,
+-
+-include <tunables/global>
+-
+-profile openvpn /usr/sbin/openvpn flags=(attach_disconnected) {
+-  include <abstractions/base>
+-  include <abstractions/consoles>
+-  include <abstractions/openssl>
+-  include <abstractions/nameservice>
+-
+-  capability dac_read_search,
+-  capability dac_override,
+-  capability net_admin,
+-
+-  # These are needed when user/group are set in a OpenVPN config file
+-  capability setuid,
+-  capability setgid,
+-
+-  # Needed for OpenVPN DCO; see LP: #2146980
+-  capability setpcap,
+-
+-  # Network access rules
+-  network inet dgram,
+-  network inet6 dgram,
+-  network raw,
+-  network inet stream,
+-  network inet6 stream,
+-
+-  # OpenVPN configuration and key files
+-  file r /etc/openvpn/{,**},
+-  file mr /usr/sbin/openvpn,
+-  # Configurations set up by NetworkManager
+-  file r @{HOME}/.cert/nm-openvpn/*,
+-  # Allow OpenVPN to read keys from most user places
+-  # If this gets removed later make sure to preserve the .cert carveout
+-  # above and add carveouts for .config/** and .sesame/*
+-  file r @{HOME}/**,
+-
+-  include <abstractions/private-files-strict>
+-
+-  # Unbreak --genkey and similar while preventing an OpenVPN daemon
+-  # running as root from covertly modifying user-generated keys
+-  file w /etc/openvpn/{,**},
+-  owner file w @{HOME}/**,
+-
+-  # To prompt password to users,
+-  file mrix /usr/bin/systemd-ask-password,
+-
+-  # TUN/TAP device
+-  file rw /dev/net/tun,
+-
+-  # Process-specific network route access
+-  file r @{PROC}/@{pid}/net/route,
+-
+-  # OpenVPN log and status files
+-  file rw /var/log/openvpn/*.log,
+-  file rw /var/log/openvpn/ipp.txt,
+-  file rw /{,var/}run/openvpn/*.{pid,status},
+-
+-  # integration with NetworkManager
+-  file rw @{run}/NetworkManager/nm-openvpn-*,
+-  file PUx /{usr/,}lib{exec,/NetworkManager}/nm-openvpn-service-openvpn-helper,
+-  # Account for upstream NetworkManager fix for CVE-2025-9615
+-  # These are certs to be imported by the OpenVPN NetworkManager plugin
+-  # See src/libnm-core-impl/nm-utils.c:nm_utils_copy_cert_as_user
+-  file r @{run}/NetworkManager/cert/@{rand6},
+-
+-  # integration with systemd notification system
+-  file w @{run}/systemd/notify,
+-  file w @{run}/user/@{uid}/systemd/notify,
+-
+-  # IP tool capability for network configuration
+-  file rCx /{,usr/}bin/ip,
+-
+-  # Sub-profile for IP tool restrictions
+-  profile ip /{,usr/}bin/ip {
+-    include <abstractions/base>
+-
+-    capability net_admin,
+-
+-    # Allow read access to IP tool binary
+-    file r /{,usr/}bin/ip,
+-
+-    # Allow write access to OpenVPN log
+-    file w /var/log/openvpn/openvpn.log,
+-  }
+-
+-  # update-resolv.conf file for openvpn env set
+-  file rCx /etc/openvpn/update-resolv-conf{,.sh} -> update-resolv,
+-
+-  # Sub-profile for /etc/openvpn/update-resolv-conf
+-  profile update-resolv flags=(attach_disconnected) {
+-    include <abstractions/base>
+-    include <abstractions/consoles>
+-    include <abstractions/nameservice-strict>
+-
+-    # To be able to manage firewall rules.
+-    capability net_admin,
+-
+-    network (bind,create,getattr,getopt,receive,send,setopt) netlink raw,
+-    unix (bind) type=stream addr=@[a-f0-9]*/bus/resolvconf/system,
+-
+-    file mrix /usr/bin/resolvectl,
+-    file mrix @{coreutil_dirs}sort,
+-
+-    owner r /etc/openvpn/update-resolv-conf,
+-    owner rw /run/dbus/system_bus_socket,
+-    owner mr /usr/bin/bash,
+-
+-    dbus (send) bus=system path="/org/freedesktop/DBus" interface="org.freedesktop.DBus" member="Hello",
+-    dbus (send) bus="system" path="/org/freedesktop/resolve1" interface="org.freedesktop.resolve1.Manager" member={SetLinkDNS,SetLinkDNSEx,SetLinkDomains,SetLinkDefaultRoute,RevertLink},
+-
+-    file r /etc/openvpn/update-resolv-conf.sh,
+-
+-    file rix /bin/sh,
+-    file rix /sbin/resolvconf,
+-    file rix @{coreutil_dirs}cut,
+-    file rix /{,usr/}bin/ip,
+-    file rix /{,usr/}bin/which{,.debianutils},
+-    file rix /{,usr/}bin/xtables-nft-multi,
+-
+-    file r /etc/iproute2/rt_tables,
+-    file r /etc/iproute2/rt_tables.d/,
+-  }
+-
+-  # Site-specific additions and overrides. See local/README for details.
+-  include if exists <local/openvpn>
+-}
+diff --git a/profiles/apparmor/profiles/extras/openvpn b/profiles/apparmor/profiles/extras/openvpn
+new file mode 100644
+index 0000000..fe1289e
+--- /dev/null
++++ b/profiles/apparmor/profiles/extras/openvpn
+@@ -0,0 +1,137 @@
++#------------------------------------------------------------------
++#    Copyright (C) 2024 Canonical Ltd.
++#
++#    This program is free software; you can redistribute it and/or
++#    modify it under the terms of version 2 of the GNU General Public
++#    License published by the Free Software Foundation.
++#------------------------------------------------------------------
++# vim: ft=apparmor
++
++abi <abi/4.0>,
++
++include <tunables/global>
++
++profile openvpn /usr/sbin/openvpn flags=(attach_disconnected) {
++  include <abstractions/base>
++  include <abstractions/consoles>
++  include <abstractions/openssl>
++  include <abstractions/nameservice>
++
++  capability dac_read_search,
++  capability dac_override,
++  capability net_admin,
++
++  # These are needed when user/group are set in a OpenVPN config file
++  capability setuid,
++  capability setgid,
++
++  # Needed for OpenVPN DCO; see LP: #2146980
++  capability setpcap,
++
++  # Network access rules
++  network inet dgram,
++  network inet6 dgram,
++  network raw,
++  network inet stream,
++  network inet6 stream,
++
++  # OpenVPN configuration and key files
++  file r /etc/openvpn/{,**},
++  file mr /usr/sbin/openvpn,
++  # Configurations set up by NetworkManager
++  file r @{HOME}/.cert/nm-openvpn/*,
++  # Allow OpenVPN to read keys from most user places
++  # If this gets removed later make sure to preserve the .cert carveout
++  # above and add carveouts for .config/** and .sesame/*
++  file r @{HOME}/**,
++
++  include <abstractions/private-files-strict>
++
++  # Unbreak --genkey and similar while preventing an OpenVPN daemon
++  # running as root from covertly modifying user-generated keys
++  file w /etc/openvpn/{,**},
++  owner file w @{HOME}/**,
++
++  # To prompt password to users,
++  file mrix /usr/bin/systemd-ask-password,
++
++  # TUN/TAP device
++  file rw /dev/net/tun,
++
++  # Process-specific network route access
++  file r @{PROC}/@{pid}/net/route,
++
++  # OpenVPN log and status files
++  file rw /var/log/openvpn/*.log,
++  file rw /var/log/openvpn/ipp.txt,
++  file rw /{,var/}run/openvpn/*.{pid,status},
++
++  # integration with NetworkManager
++  file rw @{run}/NetworkManager/nm-openvpn-*,
++  file PUx /{usr/,}lib{exec,/NetworkManager}/nm-openvpn-service-openvpn-helper,
++  # Account for upstream NetworkManager fix for CVE-2025-9615
++  # These are certs to be imported by the OpenVPN NetworkManager plugin
++  # See src/libnm-core-impl/nm-utils.c:nm_utils_copy_cert_as_user
++  file r @{run}/NetworkManager/cert/@{rand6},
++
++  # integration with systemd notification system
++  file w @{run}/systemd/notify,
++  file w @{run}/user/@{uid}/systemd/notify,
++
++  # IP tool capability for network configuration
++  file rCx /{,usr/}bin/ip,
++
++  # Sub-profile for IP tool restrictions
++  profile ip /{,usr/}bin/ip {
++    include <abstractions/base>
++
++    capability net_admin,
++
++    # Allow read access to IP tool binary
++    file r /{,usr/}bin/ip,
++
++    # Allow write access to OpenVPN log
++    file w /var/log/openvpn/openvpn.log,
++  }
++
++  # update-resolv.conf file for openvpn env set
++  file rCx /etc/openvpn/update-resolv-conf{,.sh} -> update-resolv,
++
++  # Sub-profile for /etc/openvpn/update-resolv-conf
++  profile update-resolv flags=(attach_disconnected) {
++    include <abstractions/base>
++    include <abstractions/consoles>
++    include <abstractions/nameservice-strict>
++
++    # To be able to manage firewall rules.
++    capability net_admin,
++
++    network (bind,create,getattr,getopt,receive,send,setopt) netlink raw,
++    unix (bind) type=stream addr=@[a-f0-9]*/bus/resolvconf/system,
++
++    file mrix /usr/bin/resolvectl,
++    file mrix @{coreutil_dirs}sort,
++
++    owner r /etc/openvpn/update-resolv-conf,
++    owner rw /run/dbus/system_bus_socket,
++    owner mr /usr/bin/bash,
++
++    dbus (send) bus=system path="/org/freedesktop/DBus" interface="org.freedesktop.DBus" member="Hello",
++    dbus (send) bus="system" path="/org/freedesktop/resolve1" interface="org.freedesktop.resolve1.Manager" member={SetLinkDNS,SetLinkDNSEx,SetLinkDomains,SetLinkDefaultRoute,RevertLink},
++
++    file r /etc/openvpn/update-resolv-conf.sh,
++
++    file rix /bin/sh,
++    file rix /sbin/resolvconf,
++    file rix @{coreutil_dirs}cut,
++    file rix /{,usr/}bin/ip,
++    file rix /{,usr/}bin/which{,.debianutils},
++    file rix /{,usr/}bin/xtables-nft-multi,
++
++    file r /etc/iproute2/rt_tables,
++    file r /etc/iproute2/rt_tables.d/,
++  }
++
++  # Site-specific additions and overrides. See local/README for details.
++  include if exists <local/openvpn>
++}

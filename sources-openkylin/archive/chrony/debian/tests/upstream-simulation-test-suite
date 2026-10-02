@@ -1,0 +1,49 @@
+#!/bin/sh
+# Upstream makes use of “clknetsim” to test how well “chronyd” controls the
+# system clocks in various conditions. Due to “clknetsim” not being available
+# in Debian, let’s use autopkgtest facility to build it in a container and
+# test “chronyd” from there.
+
+set -e
+
+testdir="$PWD/test/simulation"
+# See https://gitlab.com/chrony/clknetsim/-/commit/6ee99f50dec8a2c6f74d13a4fb510a15ca9152f5
+# This is just one commit before and avoids a build failure on armhf:
+# "Error: symbol `__open64_2' is already defined"
+clknetsim_ver=a2eb0b25
+clknetsim_src=https://gitlab.com/chrony/clknetsim/-/archive/"$clknetsim_ver"/clknetsim-"$clknetsim_ver".tar.gz
+clknetsim_archive=$(basename "$clknetsim_src")
+
+export CLKNETSIM_PATH="$AUTOPKGTEST_TMP"
+export CLKNETSIM_CONNECT_TIMEOUT=100
+
+# Always use the same seed to get deterministic results
+export CLKNETSIM_RANDOM_SEED=24508
+
+DEB_BUILD_ARCH=$(dpkg-architecture -qDEB_BUILD_ARCH)
+
+# The simulation tests are only supported on Linux.
+dpkg-architecture -ilinux-any || exit 77
+
+prepare_clknetsim() {
+    wget -P "$CLKNETSIM_PATH" "$clknetsim_src" 2>&1 || exit 77
+    tar -xvzf "$CLKNETSIM_PATH"/"$clknetsim_archive" \
+        -C "$CLKNETSIM_PATH" --strip-components=1 2>&1 || exit 77
+
+    if [ ! -x "$CLKNETSIM_PATH/clknetsim" ] && [ ! -e "$CLKNETSIM_PATH/clknetsim.so" ]; then
+        case "$DEB_BUILD_ARCH" in
+            armel|armhf)
+                CFLAGS="-D_LARGEFILE_SOURCE -D_FILE_OFFSET_BITS=64 -D_TIME_BITS=64" make -C "$CLKNETSIM_PATH" 2>&1
+                ;;
+            *)
+                make -C "$CLKNETSIM_PATH" 2>&1
+                ;;
+        esac
+    fi
+}
+
+run_test() {
+    cd "$testdir" && ./run
+}
+
+prepare_clknetsim && run_test

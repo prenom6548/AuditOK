@@ -1,0 +1,1699 @@
+From: Sam Hartman <hartmans@debian.org>
+Date: Thu, 26 Jun 2025 11:09:29 -0600
+Subject: pam_namespace from v1.7.1
+
+Pull in pam_namespace from v1.7.1. We did not have any local changes,
+and this includes the fix for CVE-2025-6020.
+
+The commits fall into the following categories:
+ * specific to this security issue
+
+ * error handling issues that are very likely correct and that it is
+   easier to take than to convince ourselves cannot be exploited in their
+   own right.
+
+ * Cleanup that made the patch for this security issue easier to audit
+   and that created abstractions needed by the patch for this security
+   issue.  I.E. it's obvious that since the issue was reported the
+   maintainers and reporters were working on cleaning up the code to get
+   a cleaner patch to this issue.
+
+ * harmless (replacing needless asprintf with strdup)
+---
+ modules/pam_namespace/namespace.conf.5.xml |    2 +-
+ modules/pam_namespace/namespace.init       |   56 +-
+ modules/pam_namespace/pam_namespace.8.xml  |    2 +-
+ modules/pam_namespace/pam_namespace.c      | 1086 ++++++++++++++++++----------
+ modules/pam_namespace/pam_namespace.h      |   14 +-
+ 5 files changed, 752 insertions(+), 408 deletions(-)
+
+diff --git a/modules/pam_namespace/namespace.conf.5.xml b/modules/pam_namespace/namespace.conf.5.xml
+index 15aef5c..54f9431 100644
+--- a/modules/pam_namespace/namespace.conf.5.xml
++++ b/modules/pam_namespace/namespace.conf.5.xml
+@@ -226,7 +226,7 @@
+     <para>
+       <citerefentry><refentrytitle>pam_namespace</refentrytitle><manvolnum>8</manvolnum></citerefentry>,
+       <citerefentry><refentrytitle>pam.d</refentrytitle><manvolnum>5</manvolnum></citerefentry>,
+-      <citerefentry><refentrytitle>pam</refentrytitle><manvolnum>7</manvolnum></citerefentry>
++      <citerefentry><refentrytitle>pam</refentrytitle><manvolnum>8</manvolnum></citerefentry>
+     </para>
+   </refsect1>
+ 
+diff --git a/modules/pam_namespace/namespace.init b/modules/pam_namespace/namespace.init
+index 1a6b624..8782178 100755
+--- a/modules/pam_namespace/namespace.init
++++ b/modules/pam_namespace/namespace.init
+@@ -1,25 +1,43 @@
+ #!/bin/sh
+-# It receives polydir path as $1, the instance path as $2,
+-# a flag whether the instance dir was newly created (0 - no, 1 - yes) in $3,
+-# and user name in $4.
++# It receives as arguments:
++# - $1 polydir path (see WARNING below)
++# - $2 instance path (see WARNING below)
++# - $3 flag whether the instance dir was newly created (0 - no, 1 - yes)
++# - $4 user name
++# - $5 flag whether the polydir path ($1) is safe (0 - unsafe, 1 -safe)
++# - $6 flag whether the instance path ($2) is safe (0 - unsafe, 1 - safe)
++#
++# WARNING: This script is invoked with full root privileges. Accessing
++# the polydir ($1) and the instance ($2) directories in this context may be
++# extremely dangerous as those can be under user control. The flags $5 and $6
++# are provided to let you know if all the segments part of the path (except the
++# last one) are owned by root and are writable by root only. If the path does
++# not meet these criteria, you expose yourself to possible symlink attacks when
++# accessing these path.
++# However, even if the path components are safe, the content of the
++# directories may still be owned/writable by a user, so care must be taken!
+ #
+ # The following section will copy the contents of /etc/skel if this is a
+ # newly created home directory.
+-if [ "$3" = 1 ]; then
+-        # This line will fix the labeling on all newly created directories
+-        [ -x /sbin/restorecon ] && /sbin/restorecon "$1"
+-        user="$4"
+-        passwd=$(getent passwd "$user")
+-        homedir=$(echo "$passwd" | cut -f6 -d":")
+-        if [ "$1" = "$homedir" ]; then
+-                gid=$(echo "$passwd" | cut -f4 -d":")
+-                cp -rT /etc/skel "$homedir"
+-                chown -R "$user":"$gid" "$homedir"
+-                mask=$(sed -E -n 's/^UMASK[[:space:]]+([^#[:space:]]+).*/\1/p' /etc/login.defs)
+-                mode=$(printf "%o" $((0777 & ~mask)))
+-                chmod ${mode:-700} "$homedir"
+-                [ -x /sbin/restorecon ] && /sbin/restorecon -R "$homedir"
+-        fi
+-fi
+ 
++# Executes only if the polydir path is safe
++if [ "$5" = 1 ]; then
++
++    if [ "$3" = 1 ]; then
++            # This line will fix the labeling on all newly created directories
++            [ -x /sbin/restorecon ] && /sbin/restorecon "$1"
++            user="$4"
++            passwd=$(getent passwd "$user")
++            homedir=$(echo "$passwd" | cut -f6 -d":")
++            if [ "$1" = "$homedir" ]; then
++                    gid=$(echo "$passwd" | cut -f4 -d":")
++                    cp -rT /etc/skel "$homedir"
++                    chown -R "$user":"$gid" "$homedir"
++                    mask=$(sed -E -n 's/^UMASK[[:space:]]+([^#[:space:]]+).*/\1/p' /etc/login.defs)
++                    mode=$(printf "%o" $((0777 & ~mask)))
++                    chmod ${mode:-700} "$homedir"
++                    [ -x /sbin/restorecon ] && /sbin/restorecon -R "$homedir"
++            fi
++    fi
++fi
+ exit 0
+diff --git a/modules/pam_namespace/pam_namespace.8.xml b/modules/pam_namespace/pam_namespace.8.xml
+index 0896372..a866d2e 100644
+--- a/modules/pam_namespace/pam_namespace.8.xml
++++ b/modules/pam_namespace/pam_namespace.8.xml
+@@ -392,7 +392,7 @@
+         <refentrytitle>mount</refentrytitle><manvolnum>8</manvolnum>
+       </citerefentry>,
+       <citerefentry>
+-        <refentrytitle>pam</refentrytitle><manvolnum>7</manvolnum>
++        <refentrytitle>pam</refentrytitle><manvolnum>8</manvolnum>
+       </citerefentry>.
+     </para>
+   </refsect1>
+diff --git a/modules/pam_namespace/pam_namespace.c b/modules/pam_namespace/pam_namespace.c
+index ba7910f..e7ff5b3 100644
+--- a/modules/pam_namespace/pam_namespace.c
++++ b/modules/pam_namespace/pam_namespace.c
+@@ -41,6 +41,8 @@
+ #include "pam_namespace.h"
+ #include "argv_parse.h"
+ 
++#define MAGIC_LNK_FD_SIZE 64
++
+ /* --- evaluating all files in VENDORDIR/security/namespace.d and /etc/security/namespace.d --- */
+ static const char *base_name(const char *path)
+ {
+@@ -63,6 +65,275 @@ static void close_fds_pre_exec(struct instance_data *idata)
+ 	}
+ }
+ 
++static void
++strip_trailing_slashes(char *str)
++{
++	char *p = str + strlen(str);
++
++	while (--p > str && *p == '/')
++		*p = '\0';
++}
++
++static int protect_mount(int dfd, const char *path, struct instance_data *idata)
++{
++	struct protect_dir_s *dir = idata->protect_dirs;
++	char tmpbuf[MAGIC_LNK_FD_SIZE];
++
++	while (dir != NULL) {
++		if (strcmp(path, dir->dir) == 0) {
++			return 0;
++		}
++		dir = dir->next;
++	}
++
++	if (pam_sprintf(tmpbuf, "/proc/self/fd/%d", dfd) < 0)
++		return -1;
++
++	dir = calloc(1, sizeof(*dir));
++
++	if (dir == NULL) {
++		return -1;
++	}
++
++	dir->dir = strdup(path);
++
++	if (dir->dir == NULL) {
++		free(dir);
++		return -1;
++	}
++
++	if (idata->flags & PAMNS_DEBUG) {
++		pam_syslog(idata->pamh, LOG_INFO,
++			"Protect mount of %s over itself", path);
++	}
++
++	if (mount(tmpbuf, tmpbuf, NULL, MS_BIND, NULL) != 0) {
++		int save_errno = errno;
++		pam_syslog(idata->pamh, LOG_ERR,
++			"Protect mount of %s failed: %m", tmpbuf);
++		free(dir->dir);
++		free(dir);
++		errno = save_errno;
++		return -1;
++	}
++
++	dir->next = idata->protect_dirs;
++	idata->protect_dirs = dir;
++
++	return 0;
++}
++
++/*
++ * Returns a fd to the given absolute path, acquired securely. This means:
++ * - iterating on each segment of the path,
++ * - not following user symlinks,
++ * - using race-free operations.
++ *
++ * Takes a bit mask to specify the operation mode:
++ * - SECURE_OPENDIR_PROTECT: call protect_mount() on each unsafe segment of path
++ * - SECURE_OPENDIR_MKDIR: create last segment of path if does not exist
++ * - SECURE_OPENDIR_FULL_FD: open the directory with O_RDONLY instead of O_PATH,
++ *     allowing more operations to be done with the returned fd
++ *
++ * Be aware that using SECURE_OPENDIR_PROTECT:
++ * - will modify some external state (global structure...) and should not be
++ *   called in cleanup code paths. See wrapper secure_opendir_stateless()
++ * - need a non-NULL idata to call protect_mount()
++ */
++static int secure_opendir(const char *path, int opm, mode_t mode,
++	struct instance_data *idata)
++{
++	char *p;
++	char *d;
++	char *dir;
++	int dfd = -1;
++	int dfd_next;
++	int save_errno;
++	int flags = O_DIRECTORY | O_CLOEXEC;
++	int rv = -1;
++	struct stat st;
++
++	if (opm & SECURE_OPENDIR_FULL_FD)
++		flags |= O_RDONLY;
++	else
++		flags |= O_PATH;
++
++	/* Check for args consistency */
++	if ((opm & SECURE_OPENDIR_PROTECT) && idata == NULL)
++		return -1;
++
++	/* Accept only absolute paths */
++	if (*path != '/')
++		return -1;
++
++	dir = p = strdup(path);
++	if (p == NULL)
++		return -1;
++
++	/* Assume '/' is safe */
++	dfd = open("/", flags);
++	if (dfd == -1)
++		goto error;
++
++	/* Needed to not loop too far and call openat() on NULL */
++	strip_trailing_slashes(p);
++
++	dir++;
++
++	/* In case path is '/' */
++	if (*dir == '\0') {
++		free(p);
++		return dfd;
++	}
++
++	while ((d=strchr(dir, '/')) != NULL) {
++		*d = '\0';
++
++		dfd_next = openat(dfd, dir, flags);
++		if (dfd_next == -1)
++			goto error;
++
++		if (fstat(dfd_next, &st) != 0) {
++			close(dfd_next);
++			goto error;
++		}
++
++		if ((flags & O_NOFOLLOW) && (opm & SECURE_OPENDIR_PROTECT)) {
++			/* we are inside user-owned dir - protect */
++			if (protect_mount(dfd_next, p, idata) == -1) {
++				close(dfd_next);
++				goto error;
++			}
++			/*
++			 * Reopen the directory to obtain a new descriptor
++			 * after protect_mount(), this is necessary in cases
++			 * when another directory is going to be mounted over
++			 * the given path.
++			 */
++			close(dfd_next);
++			dfd_next = openat(dfd, dir, flags);
++			if (dfd_next == -1)
++				goto error;
++		} else if (st.st_uid != 0
++		           || (st.st_mode & (S_IWGRP|S_IWOTH))) {
++			/* do not follow symlinks on subdirectories */
++			flags |= O_NOFOLLOW;
++		}
++
++		close(dfd);
++		dfd = dfd_next;
++
++		*d = '/';
++		dir = d + 1;
++	}
++
++	rv = openat(dfd, dir, flags);
++
++	if (rv == -1) {
++		if ((opm & SECURE_OPENDIR_MKDIR) && mkdirat(dfd, dir, mode) == 0)
++			rv = openat(dfd, dir, flags);
++
++		if (rv == -1)
++			goto error;
++	}
++
++	if ((flags & O_NOFOLLOW) && (opm & SECURE_OPENDIR_PROTECT)) {
++		/* we are inside user-owned dir - protect */
++		if (protect_mount(rv, p, idata) == -1) {
++			save_errno = errno;
++			close(rv);
++			rv = -1;
++			errno = save_errno;
++		}
++		/*
++		 * Reopen the directory to obtain a new descriptor after
++		 * protect_mount(), this is necessary in cases when another
++		 * directory is going to be mounted over the given path.
++		 */
++		close(rv);
++		rv = openat(dfd, dir, flags);
++	}
++
++error:
++	save_errno = errno;
++	free(p);
++	if (dfd >= 0)
++		close(dfd);
++	errno = save_errno;
++
++	return rv;
++}
++
++/*
++ * Returns a fd to the given path, acquired securely.
++ * It can be called in all situations, including in cleanup code paths, as
++ * it does not modify external state (no access to global structures...).
++ */
++static int secure_opendir_stateless(const char *path)
++{
++	return secure_opendir(path, 0, 0, NULL);
++}
++
++/*
++ * Umount securely the given path, even if the directories along
++ * the path are under user control. It should protect against
++ * symlinks attacks and race conditions.
++ */
++static int secure_umount(const char *path)
++{
++	int save_errno;
++	int rv = -1;
++	int dfd = -1;
++	char s_path[MAGIC_LNK_FD_SIZE];
++
++	dfd = secure_opendir_stateless(path);
++	if (dfd == -1)
++		return rv;
++
++	if (pam_sprintf(s_path, "/proc/self/fd/%d", dfd) < 0)
++		goto error;
++
++	/*
++	* We still have a fd open to path itself,
++	* so we need to do a lazy umount.
++	*/
++	rv = umount2(s_path, MNT_DETACH);
++
++error:
++	save_errno = errno;
++	close(dfd);
++	errno = save_errno;
++	return rv;
++}
++
++/*
++ * Rmdir the given path securely, protecting against symlinks attacks
++ * and race conditions.
++ * This function is currently called only in cleanup code paths where
++ * any errors returned are not handled, so do not handle them either.
++ * Basically, try to rmdir the path on a best-effort basis.
++ */
++static void secure_try_rmdir(const char *path)
++{
++	int dfd;
++	char *buf;
++	char *parent;
++
++	buf = strdup(path);
++	if (buf == NULL)
++		return;
++
++	parent = dirname(buf);
++
++	dfd = secure_opendir_stateless(parent);
++	if (dfd >= 0) {
++		unlinkat(dfd, base_name(path), AT_REMOVEDIR);
++		close(dfd);
++	}
++
++	free(buf);
++}
++
+ /* Evaluating a list of files which have to be parsed in the right order:
+  *
+  * - If etc/security/namespace.d/@filename@.conf exists, then
+@@ -188,7 +459,7 @@ static void unprotect_dirs(struct protect_dir_s *dir)
+ 	struct protect_dir_s *next;
+ 
+ 	while (dir != NULL) {
+-		umount(dir->dir);
++		secure_umount(dir->dir);
+ 		free(dir->dir);
+ 		next = dir->next;
+ 		free(dir);
+@@ -319,8 +590,7 @@ static int parse_iscript_params(char *params, struct polydir_s *poly)
+ 
+     if (*params != '\0') {
+ 	if (*params != '/') { /* path is relative to NAMESPACE_D_DIR */
+-		if (asprintf(&poly->init_script, "%s%s", NAMESPACE_D_DIR, params) == -1)
+-			return -1;
++		poly->init_script = pam_asprintf("%s%s", NAMESPACE_D_DIR, params);
+ 	} else {
+ 		poly->init_script = strdup(params);
+ 	}
+@@ -482,6 +752,7 @@ static int process_line(char *line, const char *home, const char *rhome,
+ 			struct instance_data *idata)
+ {
+     char *dir = NULL, *instance_prefix = NULL, *rdir = NULL;
++    const char *config_dir, *config_instance_prefix;
+     char *method, *uids;
+     char *tptr;
+     struct polydir_s *poly;
+@@ -490,7 +761,6 @@ static int process_line(char *line, const char *home, const char *rhome,
+     static const char *const var_names[] = {"HOME", "USER", NULL};
+     const char *var_values[] = {home, idata->user};
+     const char *rvar_values[] = {rhome, idata->ruser};
+-    size_t len;
+ 
+     /*
+      * skip the leading white space
+@@ -531,22 +801,19 @@ static int process_line(char *line, const char *home, const char *rhome,
+         goto erralloc;
+     }
+ 
+-    dir = config_options[0];
+-    if (dir == NULL) {
++    config_dir = config_options[0];
++    if (config_dir == NULL) {
+         pam_syslog(idata->pamh, LOG_NOTICE, "Invalid line missing polydir");
+         goto skipping;
+     }
+-    instance_prefix = config_options[1];
+-    if (instance_prefix == NULL) {
++    config_instance_prefix = config_options[1];
++    if (config_instance_prefix == NULL) {
+         pam_syslog(idata->pamh, LOG_NOTICE, "Invalid line missing instance_prefix");
+-        dir = NULL;
+         goto skipping;
+     }
+     method = config_options[2];
+     if (method == NULL) {
+         pam_syslog(idata->pamh, LOG_NOTICE, "Invalid line missing method");
+-        instance_prefix = NULL;
+-        dir = NULL;
+         goto skipping;
+     }
+ 
+@@ -561,19 +828,16 @@ static int process_line(char *line, const char *home, const char *rhome,
+     /*
+      * Expand $HOME and $USER in poly dir and instance dir prefix
+      */
+-    if ((rdir=expand_variables(dir, var_names, rvar_values)) == NULL) {
+-	    instance_prefix = NULL;
+-	    dir = NULL;
++    if ((rdir = expand_variables(config_dir, var_names, rvar_values)) == NULL) {
+ 	    goto erralloc;
+     }
+ 
+-    if ((dir=expand_variables(dir, var_names, var_values)) == NULL) {
+-	    instance_prefix = NULL;
++    if ((dir = expand_variables(config_dir, var_names, var_values)) == NULL) {
+ 	    goto erralloc;
+     }
+ 
+-    if ((instance_prefix=expand_variables(instance_prefix, var_names, var_values))
+-	    == NULL) {
++    if ((instance_prefix = expand_variables(config_instance_prefix,
++					    var_names, var_values)) == NULL) {
+ 	    goto erralloc;
+     }
+ 
+@@ -583,15 +847,8 @@ static int process_line(char *line, const char *home, const char *rhome,
+ 	    pam_syslog(idata->pamh, LOG_DEBUG, "Expanded instance prefix: '%s'", instance_prefix);
+     }
+ 
+-    len = strlen(dir);
+-    if (len > 0 && dir[len-1] == '/') {
+-	    dir[len-1] = '\0';
+-    }
+-
+-    len = strlen(rdir);
+-    if (len > 0 && rdir[len-1] == '/') {
+-	    rdir[len-1] = '\0';
+-    }
++    strip_trailing_slashes(dir);
++    strip_trailing_slashes(rdir);
+ 
+     if (dir[0] == '\0' || rdir[0] == '\0') {
+ 	    pam_syslog(idata->pamh, LOG_NOTICE, "Invalid polydir");
+@@ -606,14 +863,9 @@ static int process_line(char *line, const char *home, const char *rhome,
+ 	    goto skipping;
+     }
+ 
+-#define COPY_STR(dst, src, apd)                                \
+-	(snprintf((dst), sizeof(dst), "%s%s", (src), (apd)) != \
+-		  (ssize_t) (strlen(src) + strlen(apd)))
+-
+-    if (COPY_STR(poly->dir, dir, "")
+-	|| COPY_STR(poly->rdir, rdir, "")
+-	|| COPY_STR(poly->instance_prefix, instance_prefix,
+-		    poly->method == TMPDIR ? "XXXXXX" : "")) {
++    if (pam_sprintf(poly->dir, "%s", dir) < 0
++	|| pam_sprintf(poly->rdir, "%s", rdir) < 0
++	|| pam_sprintf(poly->instance_prefix, "%s", instance_prefix) < 0) {
+ 	pam_syslog(idata->pamh, LOG_NOTICE, "Pathnames too long");
+ 	goto skipping;
+     }
+@@ -896,6 +1148,23 @@ static char *md5hash(const char *instname, struct instance_data *idata)
+ }
+ 
+ #ifdef WITH_SELINUX
++static char *secure_getfilecon(pam_handle_t *pamh, const char *dir)
++{
++	char *ctx = NULL;
++	int dfd = secure_opendir(dir, SECURE_OPENDIR_FULL_FD, 0, NULL);
++	if (dfd < 0) {
++		pam_syslog(pamh, LOG_ERR, "Error getting fd to %s: %m", dir);
++		return NULL;
++	}
++	if (fgetfilecon(dfd, &ctx) < 0)
++		ctx = NULL;
++	if (ctx == NULL)
++		pam_syslog(pamh, LOG_ERR,
++			   "Error getting poly dir context for %s: %m", dir);
++	close(dfd);
++	return ctx;
++}
++
+ static int form_context(const struct polydir_s *polyptr,
+ 		char **i_context, char **origcon,
+ 		struct instance_data *idata)
+@@ -907,12 +1176,9 @@ static int form_context(const struct polydir_s *polyptr,
+ 	/*
+ 	 * Get the security context of the directory to polyinstantiate.
+ 	 */
+-	rc = getfilecon(polyptr->dir, origcon);
+-	if (rc < 0 || *origcon == NULL) {
+-		pam_syslog(idata->pamh, LOG_ERR,
+-				"Error getting poly dir context, %m");
++	*origcon = secure_getfilecon(idata->pamh, polyptr->dir);
++	if (*origcon == NULL)
+ 		return PAM_SESSION_ERR;
+-	}
+ 
+ 	if (polyptr->method == USER) return PAM_SUCCESS;
+ 
+@@ -1009,29 +1275,52 @@ static int form_context(const struct polydir_s *polyptr,
+ #endif
+ 
+ /*
+- * poly_name returns the name of the polyinstantiated instance directory
++ * From the instance differentiation string, set in the polyptr structure:
++ * - the absolute path to the instance dir,
++ * - the absolute path to the previous dir (parent),
++ * - the instance name (may be different than the instance differentiation string)
++ */
++static int set_polydir_paths(struct polydir_s *polyptr, const char *inst_differentiation)
++{
++	char *tmp;
++
++	if (pam_sprintf(polyptr->instance_absolute, "%s%s",
++	                polyptr->instance_prefix, inst_differentiation) < 0)
++		return -1;
++
++	polyptr->instname = strrchr(polyptr->instance_absolute, '/') + 1;
++
++	if (pam_sprintf(polyptr->instance_parent, "%s", polyptr->instance_absolute) < 0)
++		return -1;
++
++	tmp = strrchr(polyptr->instance_parent, '/') + 1;
++	*tmp = '\0';
++
++	return 0;
++}
++
++/*
++ * Set the name of the polyinstantiated instance directory
+  * based on the method used for polyinstantiation (user, context or level)
+  * In addition, the function also returns the security contexts of the
+  * original directory to polyinstantiate and the polyinstantiated instance
+  * directory.
+  */
+ #ifdef WITH_SELINUX
+-static int poly_name(const struct polydir_s *polyptr, char **i_name,
+-	char **i_context, char **origcon,
+-        struct instance_data *idata)
++static int poly_name(struct polydir_s *polyptr, char **i_context,
++        char **origcon, struct instance_data *idata)
+ #else
+-static int poly_name(const struct polydir_s *polyptr, char **i_name,
+-	struct instance_data *idata)
++static int poly_name(struct polydir_s *polyptr, struct instance_data *idata)
+ #endif
+ {
+     int rc;
++    char *inst_differentiation = NULL;
+     char *hash = NULL;
+     enum polymethod pm;
+ #ifdef WITH_SELINUX
+     char *rawcon = NULL;
+ #endif
+ 
+-    *i_name = NULL;
+ #ifdef WITH_SELINUX
+     *i_context = NULL;
+     *origcon = NULL;
+@@ -1065,10 +1354,8 @@ static int poly_name(const struct polydir_s *polyptr, char **i_name,
+ 
+     switch (pm) {
+         case USER:
+-	    if (asprintf(i_name, "%s", idata->user) < 0) {
+-		*i_name = NULL;
++	    if ((inst_differentiation = strdup(idata->user)) == NULL)
+ 		goto fail;
+-	    }
+ 	    break;
+ 
+ #ifdef WITH_SELINUX
+@@ -1078,26 +1365,25 @@ static int poly_name(const struct polydir_s *polyptr, char **i_name,
+ 		pam_syslog(idata->pamh, LOG_ERR, "Error translating directory context");
+ 		goto fail;
+ 	    }
+-	    if (polyptr->flags & POLYDIR_SHARED) {
+-		if (asprintf(i_name, "%s", rawcon) < 0) {
+-			*i_name = NULL;
+-			goto fail;
+-		}
+-	    } else {
+-		if (asprintf(i_name, "%s_%s", rawcon, idata->user) < 0) {
+-			*i_name = NULL;
+-			goto fail;
+-		}
+-	    }
++	    if (polyptr->flags & POLYDIR_SHARED)
++		inst_differentiation = strdup(rawcon);
++	    else
++		inst_differentiation = pam_asprintf("%s_%s", rawcon, idata->user);
++	    if (inst_differentiation == NULL)
++		goto fail;
+ 	    break;
+ 
+ #endif /* WITH_SELINUX */
+ 
+ 	case TMPDIR:
++	    if ((inst_differentiation = strdup("XXXXXX")) == NULL)
++		goto fail;
++	    goto success;
++
+ 	case TMPFS:
+-	    if ((*i_name=strdup("")) == NULL)
++	    if ((inst_differentiation=strdup("")) == NULL)
+ 		goto fail;
+-	    return PAM_SUCCESS;
++	    goto success;
+ 
+ 	default:
+ 	    if (idata->flags & PAMNS_DEBUG)
+@@ -1106,31 +1392,37 @@ static int poly_name(const struct polydir_s *polyptr, char **i_name,
+     }
+ 
+     if (idata->flags & PAMNS_DEBUG)
+-        pam_syslog(idata->pamh, LOG_DEBUG, "poly_name %s", *i_name);
++        pam_syslog(idata->pamh, LOG_DEBUG, "poly_name %s", inst_differentiation);
+ 
+-    if ((idata->flags & PAMNS_GEN_HASH) || strlen(*i_name) > NAMESPACE_MAX_DIR_LEN) {
+-        hash = md5hash(*i_name, idata);
++    if ((idata->flags & PAMNS_GEN_HASH) || strlen(inst_differentiation) > NAMESPACE_MAX_DIR_LEN) {
++        hash = md5hash(inst_differentiation, idata);
+         if (hash == NULL) {
+ 	    goto fail;
+         }
+         if (idata->flags & PAMNS_GEN_HASH) {
+-	    free(*i_name);
+-	    *i_name = hash;
++	    free(inst_differentiation);
++	    inst_differentiation = hash;
+ 	    hash = NULL;
+         } else {
+-	    char *newname;
+-	    if (asprintf(&newname, "%.*s_%s", NAMESPACE_MAX_DIR_LEN-1-(int)strlen(hash),
+-		*i_name, hash) < 0) {
++	    char *newname =
++		pam_asprintf("%.*s_%s",
++			     NAMESPACE_MAX_DIR_LEN - 1 - (int)strlen(hash),
++			     inst_differentiation, hash);
++	    if (newname == NULL)
+ 		goto fail;
+-	    }
+-	    free(*i_name);
+-	    *i_name = newname;
++	    free(inst_differentiation);
++	    inst_differentiation = newname;
+         }
+     }
+-    rc = PAM_SUCCESS;
+ 
++success:
++    if (set_polydir_paths(polyptr, inst_differentiation) == -1)
++        goto fail;
++
++    rc = PAM_SUCCESS;
+ fail:
+     free(hash);
++    free(inst_differentiation);
+ #ifdef WITH_SELINUX
+     freecon(rawcon);
+ #endif
+@@ -1141,187 +1433,109 @@ fail:
+ 	freecon(*origcon);
+ 	*origcon = NULL;
+ #endif
+-	free(*i_name);
+-	*i_name = NULL;
+     }
+     return rc;
+ }
+ 
+-static int protect_mount(int dfd, const char *path, struct instance_data *idata)
++static int check_inst_parent(int dfd, struct instance_data *idata)
+ {
+-	struct protect_dir_s *dir = idata->protect_dirs;
+-	char tmpbuf[64];
+-
+-	while (dir != NULL) {
+-		if (strcmp(path, dir->dir) == 0) {
+-			return 0;
+-		}
+-		dir = dir->next;
+-	}
+-
+-	dir = calloc(1, sizeof(*dir));
+-
+-	if (dir == NULL) {
+-		return -1;
+-	}
+-
+-	dir->dir = strdup(path);
++	struct stat instpbuf;
+ 
+-	if (dir->dir == NULL) {
+-		free(dir);
+-		return -1;
+-	}
++	/*
++	 * Stat the instance parent directory to make sure it's writable by
++	 * root only (unless the admin explicitly instructs to ignore the
++	 * instance parent mode by the "ignore_instance_parent_mode" argument).
++	 */
+ 
+-	snprintf(tmpbuf, sizeof(tmpbuf), "/proc/self/fd/%d", dfd);
++	if (idata->flags & PAMNS_IGN_INST_PARENT_MODE)
++		return PAM_SUCCESS;
+ 
+-	if (idata->flags & PAMNS_DEBUG) {
+-		pam_syslog(idata->pamh, LOG_INFO,
+-			"Protect mount of %s over itself", path);
++	if (fstat(dfd, &instpbuf) < 0) {
++		pam_syslog(idata->pamh, LOG_ERR,
++			"Error accessing instance parent, %m");
++		return PAM_SESSION_ERR;
+ 	}
+ 
+-	if (mount(tmpbuf, tmpbuf, NULL, MS_BIND, NULL) != 0) {
+-		int save_errno = errno;
++	if ((instpbuf.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO)) || instpbuf.st_uid != 0) {
+ 		pam_syslog(idata->pamh, LOG_ERR,
+-			"Protect mount of %s failed: %m", tmpbuf);
+-		free(dir->dir);
+-		free(dir);
+-		errno = save_errno;
+-		return -1;
++			"Mode of inst parent not 000 or owner not root");
++		return PAM_SESSION_ERR;
+ 	}
+ 
+-	dir->next = idata->protect_dirs;
+-	idata->protect_dirs = dir;
+-
+-	return 0;
++	return PAM_SUCCESS;
+ }
+ 
+-static int protect_dir(const char *path, mode_t mode, int do_mkdir,
+-	struct instance_data *idata)
++/*
++ * Check for a given absolute path that all segments except the last one are:
++ * 1. a directory owned by root and not writable by group or others
++ * 2. a symlink owned by root and referencing a directory respecting 1.
++ * Returns 0 if safe, -1 is unsafe.
++ * If the path is not accessible (does not exist, hidden under a mount...),
++ * returns -1 (unsafe).
++ */
++static int check_safe_path(const char *path, struct instance_data *idata)
+ {
+-	char *p = strdup(path);
+-	char *d;
+-	char *dir = p;
+-	int dfd = AT_FDCWD;
+-	int dfd_next;
+-	int save_errno;
+-	int flags = O_RDONLY | O_DIRECTORY;
+-	int rv = -1;
+-	struct stat st;
++    char *p = strdup(path);
++    char *d;
++    char *dir = p;
++    struct stat st;
+ 
+-	if (p == NULL) {
+-		goto error;
+-	}
++    if (p == NULL)
++        return -1;
+ 
+-	if (*dir == '/') {
+-		dfd = open("/", flags);
+-		if (dfd == -1) {
+-			goto error;
+-		}
+-		dir++;	/* assume / is safe */
+-	}
++    /* Check path is absolute */
++    if (p[0] != '/')
++        goto error;
+ 
+-	while ((d=strchr(dir, '/')) != NULL) {
+-		*d = '\0';
+-		dfd_next = openat(dfd, dir, flags);
+-		if (dfd_next == -1) {
+-			goto error;
+-		}
++    strip_trailing_slashes(p);
+ 
+-		if (dfd != AT_FDCWD)
+-			close(dfd);
+-		dfd = dfd_next;
++    /* Last segment of the path may be owned by the user */
++    if ((d = strrchr(dir, '/')) != NULL)
++        *d = '\0';
+ 
+-		if (fstat(dfd, &st) != 0) {
+-			goto error;
+-		}
++    while ((d=strrchr(dir, '/')) != NULL) {
+ 
+-		if (flags & O_NOFOLLOW) {
+-			/* we are inside user-owned dir - protect */
+-			if (protect_mount(dfd, p, idata) == -1)
+-				goto error;
+-		} else if (st.st_uid != 0 || st.st_gid != 0 ||
+-			(st.st_mode & S_IWOTH)) {
+-			/* do not follow symlinks on subdirectories */
+-			flags |= O_NOFOLLOW;
+-		}
+-
+-		*d = '/';
+-		dir = d + 1;
+-	}
+-
+-	rv = openat(dfd, dir, flags);
++        /* Do not follow symlinks */
++        if (lstat(dir, &st) != 0)
++            goto error;
+ 
+-	if (rv == -1) {
+-		if (!do_mkdir || mkdirat(dfd, dir, mode) != 0) {
+-			goto error;
+-		}
+-		rv = openat(dfd, dir, flags);
+-	}
+-
+-	if (flags & O_NOFOLLOW) {
+-		/* we are inside user-owned dir - protect */
+-		if (protect_mount(rv, p, idata) == -1) {
+-			save_errno = errno;
+-			close(rv);
+-			rv = -1;
+-			errno = save_errno;
+-		}
+-	}
+-
+-error:
+-	save_errno = errno;
+-	free(p);
+-	if (dfd != AT_FDCWD && dfd >= 0)
+-		close(dfd);
+-	errno = save_errno;
++        if (S_ISLNK(st.st_mode)) {
++            if (st.st_uid != 0) {
++                if (idata->flags & PAMNS_DEBUG)
++                    pam_syslog(idata->pamh, LOG_DEBUG,
++                            "Path deemed unsafe: Symlink %s should be owned by root", dir);
++                goto error;
++            }
+ 
+-	return rv;
+-}
++            /* Follow symlinks */
++            if (stat(dir, &st) != 0)
++                goto error;
++        }
+ 
+-static int check_inst_parent(char *ipath, struct instance_data *idata)
+-{
+-	struct stat instpbuf;
+-	char *inst_parent, *trailing_slash;
+-	int dfd;
+-	/*
+-	 * stat the instance parent path to make sure it exists
+-	 * and is a directory. Check that its mode is 000 (unless the
+-	 * admin explicitly instructs to ignore the instance parent
+-	 * mode by the "ignore_instance_parent_mode" argument).
+-	 */
+-	inst_parent = strdup(ipath);
+-	if (!inst_parent) {
+-		pam_syslog(idata->pamh, LOG_CRIT, "Error allocating pathname string");
+-		return PAM_SESSION_ERR;
+-	}
++        if (!S_ISDIR(st.st_mode)) {
++                if (idata->flags & PAMNS_DEBUG)
++                    pam_syslog(idata->pamh, LOG_DEBUG,
++                        "Path deemed unsafe: %s is expected to be a directory", dir);
++            goto error;
++        }
+ 
+-	trailing_slash = strrchr(inst_parent, '/');
+-	if (trailing_slash)
+-		*trailing_slash = '\0';
++        if (st.st_uid != 0 ||
++            ((st.st_mode & (S_IWGRP|S_IWOTH)) && !(st.st_mode & S_ISVTX))) {
++                if (idata->flags & PAMNS_DEBUG)
++                    pam_syslog(idata->pamh, LOG_DEBUG,
++                        "Path deemed unsafe: %s should be owned by root, and not be writable by group or others", dir);
++            goto error;
++        }
+ 
+-	dfd = protect_dir(inst_parent, 0, 1, idata);
++        *d = '\0';
++    }
+ 
+-	if (dfd == -1 || fstat(dfd, &instpbuf) < 0) {
+-		pam_syslog(idata->pamh, LOG_ERR,
+-			"Error creating or accessing instance parent %s, %m", inst_parent);
+-		if (dfd != -1)
+-			close(dfd);
+-		free(inst_parent);
+-		return PAM_SESSION_ERR;
+-	}
++    free(p);
++    return 0;
+ 
+-	if ((idata->flags & PAMNS_IGN_INST_PARENT_MODE) == 0) {
+-		if ((instpbuf.st_mode & (S_IRWXU|S_IRWXG|S_IRWXO)) || instpbuf.st_uid != 0) {
+-			pam_syslog(idata->pamh, LOG_ERR, "Mode of inst parent %s not 000 or owner not root",
+-					inst_parent);
+-			close(dfd);
+-			free(inst_parent);
+-			return PAM_SESSION_ERR;
+-		}
+-	}
+-	close(dfd);
+-	free(inst_parent);
+-	return PAM_SUCCESS;
++error:
++    free(p);
++    return -1;
+ }
+ 
+ /*
+@@ -1349,68 +1563,72 @@ static int inst_init(const struct polydir_s *polyptr, const char *ipath,
+ 	if ((polyptr->flags & POLYDIR_ISCRIPT) && polyptr->init_script)
+ 		init_script = polyptr->init_script;
+ 
+-	if (access(init_script, F_OK) == 0) {
+-		if (access(init_script, X_OK) < 0) {
+-			if (idata->flags & PAMNS_DEBUG)
+-				pam_syslog(idata->pamh, LOG_ERR,
+-						"Namespace init script not executable");
+-			return PAM_SESSION_ERR;
+-		} else {
+-			struct sigaction newsa, oldsa;
+-
+-			memset(&newsa, '\0', sizeof(newsa));
+-			newsa.sa_handler = SIG_DFL;
+-			if (sigaction(SIGCHLD, &newsa, &oldsa) == -1) {
+-				pam_syslog(idata->pamh, LOG_ERR, "failed to reset SIGCHLD handler");
+-				return PAM_SESSION_ERR;
+-			}
++	if (access(init_script, F_OK) != 0)
++		return PAM_SUCCESS;
+ 
+-			pid = fork();
+-			if (pid == 0) {
+-				static char *envp[] = { NULL };
++	if (access(init_script, X_OK) < 0) {
++		if (idata->flags & PAMNS_DEBUG)
++			pam_syslog(idata->pamh, LOG_ERR,
++					"Namespace init script not executable");
++		return PAM_SESSION_ERR;
++	}
++
++	struct sigaction newsa, oldsa;
++
++	memset(&newsa, '\0', sizeof(newsa));
++	newsa.sa_handler = SIG_DFL;
++	if (sigaction(SIGCHLD, &newsa, &oldsa) == -1) {
++		pam_syslog(idata->pamh, LOG_ERR, "failed to reset SIGCHLD handler");
++		return PAM_SESSION_ERR;
++	}
++
++	pid = fork();
++	if (pid == 0) {
++		static char *envp[] = { NULL };
+ #ifdef WITH_SELINUX
+-				if (idata->flags & PAMNS_SELINUX_ENABLED) {
+-					if (setexeccon(NULL) < 0)
+-						_exit(1);
+-				}
++		if (idata->flags & PAMNS_SELINUX_ENABLED) {
++			if (setexeccon(NULL) < 0)
++				_exit(1);
++		}
+ #endif
+-				/* Pass maximum privs when we exec() */
+-				if (setuid(geteuid()) < 0) {
+-					/* ignore failures, they don't matter */
+-				}
++		/* Pass maximum privs when we exec() */
++		if (setuid(geteuid()) < 0) {
++			/* ignore failures, they don't matter */
++		}
+ 
+-				close_fds_pre_exec(idata);
+-
+-				if (execle(init_script, init_script,
+-					polyptr->dir, ipath, newdir?"1":"0", idata->user, NULL, envp) < 0)
+-					_exit(1);
+-			} else if (pid > 0) {
+-				while (((rc = waitpid(pid, &status, 0)) == (pid_t)-1) &&
+-						(errno == EINTR));
+-				if (rc == (pid_t)-1) {
+-					pam_syslog(idata->pamh, LOG_ERR, "waitpid failed- %m");
+-					rc = PAM_SESSION_ERR;
+-					goto out;
+-				}
+-				if (!WIFEXITED(status) || WIFSIGNALED(status) > 0) {
+-					pam_syslog(idata->pamh, LOG_ERR,
+-							"Error initializing instance");
+-					rc = PAM_SESSION_ERR;
+-					goto out;
+-				}
+-			} else if (pid < 0) {
+-				pam_syslog(idata->pamh, LOG_ERR,
+-						"Cannot fork to run namespace init script, %m");
+-				rc = PAM_SESSION_ERR;
+-				goto out;
+-			}
+-			rc = PAM_SUCCESS;
+-out:
+-			(void) sigaction(SIGCHLD, &oldsa, NULL);
+-			return rc;
++		close_fds_pre_exec(idata);
++
++		execle(init_script, init_script,
++		       polyptr->dir, ipath,
++		       newdir ? "1":"0", idata->user,
++		       (check_safe_path(polyptr->dir, idata) == -1) ? "0":"1",
++		       (check_safe_path(ipath, idata) == -1) ? "0":"1",
++		       NULL, envp);
++		_exit(1);
++	} else if (pid > 0) {
++		while (((rc = waitpid(pid, &status, 0)) == (pid_t)-1) &&
++				(errno == EINTR));
++		if (rc == (pid_t)-1) {
++			pam_syslog(idata->pamh, LOG_ERR, "waitpid failed- %m");
++			rc = PAM_SESSION_ERR;
++			goto out;
+ 		}
++		if (!WIFEXITED(status) || WIFSIGNALED(status) > 0) {
++			pam_syslog(idata->pamh, LOG_ERR,
++					"Error initializing instance");
++			rc = PAM_SESSION_ERR;
++			goto out;
++		}
++	} else if (pid < 0) {
++		pam_syslog(idata->pamh, LOG_ERR,
++				"Cannot fork to run namespace init script, %m");
++		rc = PAM_SESSION_ERR;
++		goto out;
+ 	}
+-	return PAM_SUCCESS;
++	rc = PAM_SUCCESS;
++out:
++	(void) sigaction(SIGCHLD, &oldsa, NULL);
++	return rc;
+ }
+ 
+ static int create_polydir(struct polydir_s *polyptr,
+@@ -1460,14 +1678,16 @@ static int create_polydir(struct polydir_s *polyptr,
+     }
+ #endif
+ 
+-    rc = protect_dir(dir, mode, 1, idata);
++    rc = secure_opendir(dir,
++            SECURE_OPENDIR_PROTECT | SECURE_OPENDIR_MKDIR | SECURE_OPENDIR_FULL_FD,
++            mode, idata);
+     if (rc == -1) {
+             pam_syslog(idata->pamh, LOG_ERR,
+                        "Error creating directory %s: %m", dir);
+ #ifdef WITH_SELINUX
+             freecon(oldcon_raw);
+ #endif
+-            return PAM_SESSION_ERR;
++            return -1;
+     }
+ 
+ #ifdef WITH_SELINUX
+@@ -1488,9 +1708,9 @@ static int create_polydir(struct polydir_s *polyptr,
+ 		pam_syslog(idata->pamh, LOG_ERR,
+ 			   "Error changing mode of directory %s: %m", dir);
+                 close(rc);
+-                umount(dir); /* undo the eventual protection bind mount */
+-		rmdir(dir);
+-		return PAM_SESSION_ERR;
++		secure_umount(dir); /* undo the eventual protection bind mount */
++		secure_try_rmdir(dir);
++		return -1;
+ 	}
+     }
+ 
+@@ -1508,41 +1728,37 @@ static int create_polydir(struct polydir_s *polyptr,
+         pam_syslog(idata->pamh, LOG_ERR,
+                    "Unable to change owner on directory %s: %m", dir);
+         close(rc);
+-        umount(dir); /* undo the eventual protection bind mount */
+-	rmdir(dir);
+-	return PAM_SESSION_ERR;
++	secure_umount(dir); /* undo the eventual protection bind mount */
++	secure_try_rmdir(dir);
++	return -1;
+     }
+ 
+-    close(rc);
+-
+     if (idata->flags & PAMNS_DEBUG)
+ 	pam_syslog(idata->pamh, LOG_DEBUG,
+ 	           "Polydir owner %u group %u", uid, gid);
+ 
+-    return PAM_SUCCESS;
++    return rc;
+ }
+ 
+ /*
+- * Create polyinstantiated instance directory (ipath).
++ * Create polyinstantiated instance directory.
++ * To protect against races, changes are done on a fd to the parent of the
++ * instance directory (dfd_iparent) and a relative path (polyptr->instname).
++ * The absolute path (polyptr->instance_absolute) is only updated when creating
++ * a tmpdir and used for logging purposes.
+  */
+ #ifdef WITH_SELINUX
+-static int create_instance(struct polydir_s *polyptr, char *ipath, struct stat *statbuf,
+-        const char *icontext, const char *ocontext,
+-	struct instance_data *idata)
++static int create_instance(struct polydir_s *polyptr, int dfd_iparent,
++        struct stat *statbuf, const char *icontext, const char *ocontext,
++        struct instance_data *idata)
+ #else
+-static int create_instance(struct polydir_s *polyptr, char *ipath, struct stat *statbuf,
+-	struct instance_data *idata)
++static int create_instance(struct polydir_s *polyptr, int dfd_iparent,
++        struct stat *statbuf, struct instance_data *idata)
+ #endif
+ {
+     struct stat newstatbuf;
+     int fd;
+ 
+-    /*
+-     * Check to make sure instance parent is valid.
+-     */
+-    if (check_inst_parent(ipath, idata))
+-	return PAM_SESSION_ERR;
+-
+     /*
+      * Create instance directory and set its security context to the context
+      * returned by the security policy. Set its mode and ownership
+@@ -1551,29 +1767,39 @@ static int create_instance(struct polydir_s *polyptr, char *ipath, struct stat *
+      */
+ 
+     if (polyptr->method == TMPDIR) {
+-	if (mkdtemp(polyptr->instance_prefix) == NULL) {
+-            pam_syslog(idata->pamh, LOG_ERR, "Error creating temporary instance %s, %m",
+-			polyptr->instance_prefix);
+-	    polyptr->method = NONE; /* do not clean up! */
+-	    return PAM_SESSION_ERR;
+-	}
+-	/* copy the actual directory name to ipath */
+-	strcpy(ipath, polyptr->instance_prefix);
+-    } else if (mkdir(ipath, S_IRUSR) < 0) {
++        char s_path[PATH_MAX];
++        /*
++         * Create the template for mkdtemp() as a magic link based on
++         * our existing fd to avoid symlink attacks and races.
++         */
++        if (pam_sprintf(s_path, "/proc/self/fd/%d/%s", dfd_iparent, polyptr->instname) < 0
++            || mkdtemp(s_path) == NULL) {
++            pam_syslog(idata->pamh, LOG_ERR,
++                       "Error creating temporary instance dir %s, %m",
++                       polyptr->instance_absolute);
++            polyptr->method = NONE; /* do not clean up! */
++            return PAM_SESSION_ERR;
++        }
++
++        /* Copy the actual directory name to polyptr->instname */
++        strcpy(polyptr->instname, base_name(s_path));
++    } else if (mkdirat(dfd_iparent, polyptr->instname, S_IRUSR) < 0) {
+         if (errno == EEXIST)
+             return PAM_IGNORE;
+         else {
+             pam_syslog(idata->pamh, LOG_ERR, "Error creating %s, %m",
+-			ipath);
++                       polyptr->instance_absolute);
+             return PAM_SESSION_ERR;
+         }
+     }
+ 
+-    /* Open a descriptor to it to prevent races */
+-    fd = open(ipath, O_DIRECTORY | O_RDONLY);
++    /* Open a descriptor to prevent races, based on our existing fd. */
++    fd = openat(dfd_iparent, polyptr->instname,
++            O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+     if (fd < 0) {
+-	pam_syslog(idata->pamh, LOG_ERR, "Error opening %s, %m", ipath);
+-	rmdir(ipath);
++	pam_syslog(idata->pamh, LOG_ERR, "Error opening %s, %m",
++                polyptr->instance_absolute);
++	unlinkat(dfd_iparent, polyptr->instname, AT_REMOVEDIR);
+ 	return PAM_SESSION_ERR;
+     }
+ #ifdef WITH_SELINUX
+@@ -1583,17 +1809,19 @@ static int create_instance(struct polydir_s *polyptr, char *ipath, struct stat *
+         if (icontext) {
+             if (fsetfilecon(fd, icontext) < 0) {
+                 pam_syslog(idata->pamh, LOG_ERR,
+-			"Error setting context of %s to %s", ipath, icontext);
++			"Error setting context of %s to %s",
++                        polyptr->instance_absolute, icontext);
+                 close(fd);
+-		rmdir(ipath);
++                unlinkat(dfd_iparent, polyptr->instname, AT_REMOVEDIR);
+                 return PAM_SESSION_ERR;
+             }
+         } else {
+             if (fsetfilecon(fd, ocontext) < 0) {
+                 pam_syslog(idata->pamh, LOG_ERR,
+-			"Error setting context of %s to %s", ipath, ocontext);
++			"Error setting context of %s to %s",
++                        polyptr->instance_absolute, ocontext);
+ 		close(fd);
+-		rmdir(ipath);
++                unlinkat(dfd_iparent, polyptr->instname, AT_REMOVEDIR);
+                 return PAM_SESSION_ERR;
+             }
+         }
+@@ -1601,9 +1829,9 @@ static int create_instance(struct polydir_s *polyptr, char *ipath, struct stat *
+ #endif
+     if (fstat(fd, &newstatbuf) < 0) {
+         pam_syslog(idata->pamh, LOG_ERR, "Error stating %s, %m",
+-		ipath);
++		polyptr->instance_absolute);
+ 	close(fd);
+-	rmdir(ipath);
++        unlinkat(dfd_iparent, polyptr->instname, AT_REMOVEDIR);
+         return PAM_SESSION_ERR;
+     }
+     if (newstatbuf.st_uid != statbuf->st_uid ||
+@@ -1611,17 +1839,17 @@ static int create_instance(struct polydir_s *polyptr, char *ipath, struct stat *
+         if (fchown(fd, statbuf->st_uid, statbuf->st_gid) < 0) {
+             pam_syslog(idata->pamh, LOG_ERR,
+ 			"Error changing owner for %s, %m",
+-			ipath);
++			polyptr->instance_absolute);
+ 	    close(fd);
+-	    rmdir(ipath);
++            unlinkat(dfd_iparent, polyptr->instname, AT_REMOVEDIR);
+             return PAM_SESSION_ERR;
+         }
+     }
+     if (fchmod(fd, statbuf->st_mode & 07777) < 0) {
+         pam_syslog(idata->pamh, LOG_ERR, "Error changing mode for %s, %m",
+-			ipath);
++			polyptr->instance_absolute);
+ 	close(fd);
+-	rmdir(ipath);
++        unlinkat(dfd_iparent, polyptr->instname, AT_REMOVEDIR);
+         return PAM_SESSION_ERR;
+     }
+     close(fd);
+@@ -1640,9 +1868,12 @@ static int ns_setup(struct polydir_s *polyptr,
+ 	struct instance_data *idata)
+ {
+     int retval;
++    int dfd_iparent = -1;
++    int dfd_ipath = -1;
++    int dfd_pptrdir = -1;
+     int newdir = 1;
+-    char *inst_dir = NULL;
+-    char *instname = NULL;
++    char s_ipath[MAGIC_LNK_FD_SIZE];
++    char s_pptrdir[MAGIC_LNK_FD_SIZE];
+     struct stat statbuf;
+ #ifdef WITH_SELINUX
+     char *instcontext = NULL, *origcontext = NULL;
+@@ -1652,39 +1883,48 @@ static int ns_setup(struct polydir_s *polyptr,
+         pam_syslog(idata->pamh, LOG_DEBUG,
+                "Set namespace for directory %s", polyptr->dir);
+ 
+-    retval = protect_dir(polyptr->dir, 0, 0, idata);
++    dfd_pptrdir = secure_opendir(polyptr->dir, SECURE_OPENDIR_PROTECT, 0, idata);
+ 
+-    if (retval < 0 && errno != ENOENT) {
+-	pam_syslog(idata->pamh, LOG_ERR, "Polydir %s access error: %m",
+-		polyptr->dir);
+-	return PAM_SESSION_ERR;
+-    }
+-
+-    if (retval < 0) {
+-	if ((polyptr->flags & POLYDIR_CREATE) &&
+-		create_polydir(polyptr, idata) != PAM_SUCCESS)
+-		return PAM_SESSION_ERR;
+-    } else {
+-	close(retval);
++    if (dfd_pptrdir < 0) {
++        if (errno != ENOENT || !(polyptr->flags & POLYDIR_CREATE)) {
++            pam_syslog(idata->pamh, LOG_ERR, "Polydir %s access error: %m",
++                    polyptr->dir);
++            return PAM_SESSION_ERR;
++        }
++        dfd_pptrdir = create_polydir(polyptr, idata);
++        if (dfd_pptrdir < 0)
++            return PAM_SESSION_ERR;
+     }
+ 
+     if (polyptr->method == TMPFS) {
+-	if (mount("tmpfs", polyptr->dir, "tmpfs", polyptr->mount_flags, polyptr->mount_opts) < 0) {
+-	    pam_syslog(idata->pamh, LOG_ERR, "Error mounting tmpfs on %s, %m",
+-		polyptr->dir);
+-            return PAM_SESSION_ERR;
+-	}
++        /*
++         * There is no function mount() that operate on a fd, so instead, we
++         * get the magic link corresponding to the fd and give it to mount().
++         * This protects against potential races exploitable by an unpriv user.
++         */
++        if (pam_sprintf(s_pptrdir, "/proc/self/fd/%d", dfd_pptrdir) < 0) {
++            pam_syslog(idata->pamh, LOG_ERR, "Error pam_sprintf s_pptrdir");
++            goto error_out;
++        }
+ 
+-	if (polyptr->flags & POLYDIR_NOINIT)
+-	    return PAM_SUCCESS;
++        if (mount("tmpfs", s_pptrdir, "tmpfs", polyptr->mount_flags, polyptr->mount_opts) < 0) {
++            pam_syslog(idata->pamh, LOG_ERR, "Error mounting tmpfs on %s, %m",
++                       polyptr->dir);
++            goto error_out;
++        }
+ 
+-	return inst_init(polyptr, "tmpfs", idata, 1);
++        if (polyptr->flags & POLYDIR_NOINIT) {
++            retval = PAM_SUCCESS;
++            goto cleanup;
++        }
++
++        retval = inst_init(polyptr, "tmpfs", idata, 1);
++        goto cleanup;
+     }
+ 
+-    if (stat(polyptr->dir, &statbuf) < 0) {
+-	pam_syslog(idata->pamh, LOG_ERR, "Error stating %s: %m",
+-		polyptr->dir);
+-        return PAM_SESSION_ERR;
++    if (fstat(dfd_pptrdir, &statbuf) < 0) {
++        pam_syslog(idata->pamh, LOG_ERR, "Error stating %s: %m", polyptr->dir);
++        goto error_out;
+     }
+ 
+     /*
+@@ -1693,15 +1933,16 @@ static int ns_setup(struct polydir_s *polyptr,
+      * security policy.
+      */
+ #ifdef WITH_SELINUX
+-    retval = poly_name(polyptr, &instname, &instcontext,
+-			&origcontext, idata);
++    retval = poly_name(polyptr, &instcontext, &origcontext, idata);
+ #else
+-    retval = poly_name(polyptr, &instname, idata);
++    retval = poly_name(polyptr, idata);
+ #endif
+ 
+     if (retval != PAM_SUCCESS) {
+-	if (retval != PAM_IGNORE)
++	if (retval != PAM_IGNORE) {
+ 		pam_syslog(idata->pamh, LOG_ERR, "Error getting instance name");
++                goto error_out;
++        }
+         goto cleanup;
+     } else {
+ #ifdef WITH_SELINUX
+@@ -1712,22 +1953,33 @@ static int ns_setup(struct polydir_s *polyptr,
+ #endif
+     }
+ 
+-    if (asprintf(&inst_dir, "%s%s", polyptr->instance_prefix, instname) < 0)
+-	goto error_out;
+-
+-    if (idata->flags & PAMNS_DEBUG)
+-        pam_syslog(idata->pamh, LOG_DEBUG, "instance_dir %s",
+-		inst_dir);
++    /*
++     * Gets a fd in a secure manner (we may be operating on a path under
++     * user control), and check it's compliant.
++     * Then, we should *always* operate on *this* fd and a relative path
++     * to be protected against race conditions.
++     */
++    dfd_iparent = secure_opendir(polyptr->instance_parent,
++            SECURE_OPENDIR_PROTECT | SECURE_OPENDIR_MKDIR, 0, idata);
++    if (dfd_iparent == -1) {
++	pam_syslog(idata->pamh, LOG_ERR,
++                "polyptr->instance_parent %s access error",
++                polyptr->instance_parent);
++        goto error_out;
++    }
++    if (check_inst_parent(dfd_iparent, idata)) {
++        goto error_out;
++    }
+ 
+     /*
+      * Create instance directory with appropriate security
+      * contexts, owner, group and mode bits.
+      */
+ #ifdef WITH_SELINUX
+-    retval = create_instance(polyptr, inst_dir, &statbuf, instcontext,
+-			 origcontext, idata);
++    retval = create_instance(polyptr, dfd_iparent, &statbuf, instcontext,
++                             origcontext, idata);
+ #else
+-    retval = create_instance(polyptr, inst_dir, &statbuf, idata);
++    retval = create_instance(polyptr, dfd_iparent, &statbuf, idata);
+ #endif
+ 
+     if (retval == PAM_IGNORE) {
+@@ -1739,19 +1991,48 @@ static int ns_setup(struct polydir_s *polyptr,
+         goto error_out;
+     }
+ 
++    /*
++     * Instead of getting a new secure fd, we reuse the fd opened on directory
++     * polyptr->instance_parent to ensure we are working on the same dir as
++     * previously, and thus ensure that previous checks (e.g. check_inst_parent())
++     * are still relevant.
++     */
++    dfd_ipath = openat(dfd_iparent, polyptr->instname,
++            O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
++    if (dfd_ipath == -1) {
++        pam_syslog(idata->pamh, LOG_ERR, "Error openat on %s, %m",
++                polyptr->instname);
++        goto error_out;
++    }
++
++    if (pam_sprintf(s_ipath, "/proc/self/fd/%d", dfd_ipath) < 0) {
++        pam_syslog(idata->pamh, LOG_ERR, "Error pam_sprintf s_ipath");
++        goto error_out;
++    }
++
++    if (pam_sprintf(s_pptrdir, "/proc/self/fd/%d", dfd_pptrdir) < 0) {
++        pam_syslog(idata->pamh, LOG_ERR, "Error pam_sprintf s_pptrdir");
++        goto error_out;
++    }
++
+     /*
+      * Bind mount instance directory on top of the polyinstantiated
+      * directory to provide an instance of polyinstantiated directory
+      * based on polyinstantiated method.
++     *
++     * Operates on magic links created from two fd obtained securely
++     * to protect against race conditions and symlink attacks. Indeed,
++     * the source and destination can be in a user controled path.
+      */
+-    if (mount(inst_dir, polyptr->dir, NULL, MS_BIND, NULL) < 0) {
+-        pam_syslog(idata->pamh, LOG_ERR, "Error mounting %s on %s, %m",
+-                   inst_dir, polyptr->dir);
++    if(mount(s_ipath, s_pptrdir, NULL, MS_BIND, NULL) < 0) {
++        pam_syslog(idata->pamh, LOG_ERR,
++                "Error mounting %s on %s (%s on %s), %m",
++                   s_ipath, s_pptrdir, polyptr->instance_absolute, polyptr->dir);
+         goto error_out;
+     }
+ 
+     if (!(polyptr->flags & POLYDIR_NOINIT))
+-	retval = inst_init(polyptr, inst_dir, idata, newdir);
++	retval = inst_init(polyptr, polyptr->instance_absolute, idata, newdir);
+ 
+     goto cleanup;
+ 
+@@ -1763,8 +2044,12 @@ error_out:
+     retval = PAM_SESSION_ERR;
+ 
+ cleanup:
+-    free(inst_dir);
+-    free(instname);
++    if (dfd_iparent != -1)
++        close(dfd_iparent);
++    if (dfd_ipath != -1)
++        close(dfd_ipath);
++    if (dfd_pptrdir != -1)
++        close(dfd_pptrdir);
+ #ifdef WITH_SELINUX
+     freecon(instcontext);
+     freecon(origcontext);
+@@ -1803,6 +2088,7 @@ static int cleanup_tmpdirs(struct instance_data *idata)
+ {
+     struct polydir_s *pptr;
+     pid_t rc, pid;
++    int dfd = -1;
+     struct sigaction newsa, oldsa;
+     int status;
+ 
+@@ -1814,7 +2100,17 @@ static int cleanup_tmpdirs(struct instance_data *idata)
+     }
+ 
+     for (pptr = idata->polydirs_ptr; pptr; pptr = pptr->next) {
+-	if (pptr->method == TMPDIR && access(pptr->instance_prefix, F_OK) == 0) {
++	if (pptr->method == TMPDIR) {
++
++            dfd = secure_opendir_stateless(pptr->instance_parent);
++            if (dfd == -1)
++                continue;
++
++            if (faccessat(dfd, pptr->instname, F_OK, AT_SYMLINK_NOFOLLOW) != 0) {
++                close(dfd);
++                continue;
++            }
++
+ 	    pid = fork();
+ 	    if (pid == 0) {
+ 		static char *envp[] = { NULL };
+@@ -1824,10 +2120,21 @@ static int cleanup_tmpdirs(struct instance_data *idata)
+ 			_exit(1);
+ 		}
+ #endif
++                if (fchdir(dfd) == -1) {
++                    pam_syslog(idata->pamh, LOG_ERR, "Failed fchdir to %s: %m",
++                            pptr->instance_absolute);
++                    _exit(1);
++                }
++
+ 		close_fds_pre_exec(idata);
+-		if (execle("/bin/rm", "/bin/rm", "-rf", pptr->instance_prefix, NULL, envp) < 0)
+-			_exit(1);
++
++		execle("/bin/rm", "/bin/rm", "-rf", pptr->instname, NULL, envp);
++		_exit(1);
+ 	    } else if (pid > 0) {
++
++                if (dfd != -1)
++                    close(dfd);
++
+ 		while (((rc = waitpid(pid, &status, 0)) == (pid_t)-1) &&
+ 		    (errno == EINTR));
+ 		if (rc == (pid_t)-1) {
+@@ -1840,6 +2147,10 @@ static int cleanup_tmpdirs(struct instance_data *idata)
+ 			"Error removing %s", pptr->instance_prefix);
+ 		}
+ 	    } else if (pid < 0) {
++
++                if (dfd != -1)
++                    close(dfd);
++
+ 		pam_syslog(idata->pamh, LOG_ERR,
+ 			"Cannot fork to cleanup temporary directory, %m");
+ 		rc = PAM_SESSION_ERR;
+@@ -1863,6 +2174,7 @@ out:
+ static int setup_namespace(struct instance_data *idata, enum unmnt_op unmnt)
+ {
+     int retval = 0, need_poly = 0, changing_dir = 0;
++    int dfd = -1;
+     char *cptr, *fptr, poly_parent[PATH_MAX];
+     struct polydir_s *pptr;
+ 
+@@ -1978,13 +2290,21 @@ static int setup_namespace(struct instance_data *idata, enum unmnt_op unmnt)
+ 			strcpy(poly_parent, "/");
+ 		    else if (cptr)
+ 			*cptr = '\0';
+-                    if (chdir(poly_parent) < 0) {
++
++                    dfd = secure_opendir_stateless(poly_parent);
++                    if (dfd == -1) {
++                        pam_syslog(idata->pamh, LOG_ERR,
++                            "Failed opening %s to fchdir: %m", poly_parent);
++                    }
++                    else if (fchdir(dfd) == -1) {
+                         pam_syslog(idata->pamh, LOG_ERR,
+-				"Can't chdir to %s, %m", poly_parent);
++                            "Failed fchdir to %s: %m", poly_parent);
+                     }
++                    if (dfd != -1)
++                        close(dfd);
+                 }
+ 
+-                if (umount(pptr->rdir) < 0) {
++            if (secure_umount(pptr->rdir) < 0) {
+ 		    int saved_errno = errno;
+ 		    pam_syslog(idata->pamh, LOG_ERR, "Unmount of %s failed, %m",
+ 			pptr->rdir);
+@@ -2054,7 +2374,7 @@ static int orig_namespace(struct instance_data *idata)
+ 			"Unmounting instance dir for user %d & dir %s",
+                        idata->uid, pptr->dir);
+ 
+-            if (umount(pptr->dir) < 0) {
++            if (secure_umount(pptr->dir) < 0) {
+                 pam_syslog(idata->pamh, LOG_ERR, "Unmount of %s failed, %m",
+                        pptr->dir);
+                 return PAM_SESSION_ERR;
+diff --git a/modules/pam_namespace/pam_namespace.h b/modules/pam_namespace/pam_namespace.h
+index 1799938..8a7a66b 100644
+--- a/modules/pam_namespace/pam_namespace.h
++++ b/modules/pam_namespace/pam_namespace.h
+@@ -44,21 +44,17 @@
+ #include <stdlib.h>
+ #include <errno.h>
+ #include <syslog.h>
+-#include <dlfcn.h>
+-#include <stdarg.h>
+ #include <pwd.h>
+ #include <grp.h>
+ #include <limits.h>
+ #include <sys/types.h>
+ #include <sys/stat.h>
+-#include <sys/resource.h>
+ #include <sys/mount.h>
+ #include <sys/wait.h>
+ #include <libgen.h>
+ #include <fcntl.h>
+ #include <sched.h>
+ #include <glob.h>
+-#include <locale.h>
+ #include "security/pam_modules.h"
+ #include "security/pam_modutil.h"
+ #include "security/pam_ext.h"
+@@ -126,6 +122,13 @@
+ #define NAMESPACE_POLYDIR_DATA "pam_namespace:polydir_data"
+ #define NAMESPACE_PROTECT_DATA "pam_namespace:protect_data"
+ 
++/*
++ * Operation mode for function secure_opendir()
++ */
++#define SECURE_OPENDIR_PROTECT     0x00000001
++#define SECURE_OPENDIR_MKDIR       0x00000002
++#define SECURE_OPENDIR_FULL_FD     0x00000004
++
+ /*
+  * Polyinstantiation method options, based on user, security context
+  * or both
+@@ -163,6 +166,9 @@ struct polydir_s {
+     char dir[PATH_MAX];    	       	/* directory to polyinstantiate */
+     char rdir[PATH_MAX];    	       	/* directory to unmount (based on RUSER) */
+     char instance_prefix[PATH_MAX];	/* prefix for instance dir path name */
++    char instance_absolute[PATH_MAX];	/* absolute path to the instance dir (instance_parent + instname) */
++    char instance_parent[PATH_MAX];	/* parent dir of the instance dir */
++    char *instname;			/* last segment of the path to the instance dir */
+     enum polymethod method;		/* method used to polyinstantiate */
+     unsigned int num_uids;		/* number of override uids */
+     uid_t *uid;				/* list of override uids */

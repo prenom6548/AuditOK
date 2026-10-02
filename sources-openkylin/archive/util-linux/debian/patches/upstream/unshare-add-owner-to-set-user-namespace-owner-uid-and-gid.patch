@@ -1,0 +1,176 @@
+From: Chris Webb <chris@arachsys.com>
+Date: Sun, 14 Dec 2025 23:18:33 +0000
+Subject: unshare: add --owner to set user namespace owner uid and gid
+
+As well as the mappings between lower and upper ids, a user namespace is
+associated with an owner user and group in its parent. These are set from
+the uid and gid when the unshare() call is made, and determine which user
+in the parent namespace has CAP_SYS_ADMIN in the child and can setns()
+into it.
+
+Add an --owner=<uid>:<gid> option which allows a privileged user to
+create a user namespace on behalf of another user, mapping parent ids
+and/or bind-mounting the namespace with privileges that the new owner
+would not have.
+
+Simplify the control flow around map_ids_from_child() vs mapping them
+inline to avoid too many special cases. We reset mapuser and mapgroup to
+-1 to signal that the mapping has been delegated to the child helper.
+
+For completeness, we maintain the semantics of --map-root-user and
+--map-current-user, binding the invoking user to root or itself in the
+new namespace. However, when --owner is used, these must be handled by
+a forked child as with --map-users and --map-groups.
+
+Signed-off-by: Chris Webb <chris@arachsys.com>
+---
+ bash-completion/unshare  |  1 +
+ sys-utils/unshare.1.adoc |  3 +++
+ sys-utils/unshare.c      | 45 ++++++++++++++++++++++++++++++++-------------
+ 3 files changed, 36 insertions(+), 13 deletions(-)
+
+diff --git a/bash-completion/unshare b/bash-completion/unshare
+index d421eb1..e4bbf2e 100644
+--- a/bash-completion/unshare
++++ b/bash-completion/unshare
+@@ -33,6 +33,7 @@ _unshare_module()
+ 				--mount-proc
+ 				--map-current-user
+ 				--map-root-user
++				--owner
+ 				--propagation
+ 				--setgroups
+ 				--help
+diff --git a/sys-utils/unshare.1.adoc b/sys-utils/unshare.1.adoc
+index 2bcc193..213aeed 100644
+--- a/sys-utils/unshare.1.adoc
++++ b/sys-utils/unshare.1.adoc
+@@ -121,6 +121,9 @@ Run the program only after the current effective user and group IDs have been ma
+ *-c*, *--map-current-user*::
+ Run the program only after the current effective user and group IDs have been mapped to the same UID and GID in the newly created user namespace. This option implies *--setgroups=deny* and *--user*. This option is equivalent to *--map-user=$(id -ru) --map-group=$(id -rg)*.
+ 
++*--owner* __uid__**:**__gid__::
++Set the owner user and group when creating a user namespace. These determine which user in the parent namespace has CAP_SYS_ADMIN in the new child namespace and can *setns*(2) into it. This option allows a privileged user to create a namespace on behalf of an unprivileged one, using its privileges to map ids and/or bind mount the namespace into the filesystem. It implies *--user*.
++
+ *--propagation* **private**|**shared**|**slave**|**unchanged**::
+ Recursively set the mount propagation flag in the new mount namespace. The default is to set the propagation to _private_. It is possible to disable this feature with the argument *unchanged*. The option is silently ignored when the mount namespace (*--mount*) is not requested.
+ 
+diff --git a/sys-utils/unshare.c b/sys-utils/unshare.c
+index 05db627..56146a7 100644
+--- a/sys-utils/unshare.c
++++ b/sys-utils/unshare.c
+@@ -691,8 +691,7 @@ static void map_ids_internal(const char *type, int ppid, struct map_range *chain
+  *
+  * Return: The pid of the child.
+  */
+-static pid_t map_ids_from_child(int *fd, uid_t mapuser,
+-				struct map_range *usermap, gid_t mapgroup,
++static pid_t map_ids_from_child(int *fd, struct map_range *usermap,
+ 				struct map_range *groupmap)
+ {
+ 	pid_t child, pid = 0;
+@@ -702,11 +701,6 @@ static pid_t map_ids_from_child(int *fd, uid_t mapuser,
+ 	if (child)
+ 		return child;
+ 
+-	if (usermap)
+-		add_single_map_range(&usermap, geteuid(), mapuser);
+-	if (groupmap)
+-		add_single_map_range(&groupmap, getegid(), mapgroup);
+-
+ 	if (geteuid() == 0) {
+ 		if (usermap)
+ 			map_ids_internal("uid_map", ppid, usermap);
+@@ -800,6 +794,7 @@ static void __attribute__((__noreturn__)) usage(void)
+ 		"                           map count users from outeruid to inneruid (implies --user)\n"), out);
+ 	fputs(_(" --map-groups <innergid>:<outergid>:<count>\n"
+ 		"                           map count groups from outergid to innergid (implies --user)\n"), out);
++	fputs(_(" --owner <uid>:<gid>       set the user namespace owner (implies --user)\n"), out);
+ 	fputs(USAGE_SEPARATOR, out);
+ 	fputs(_(" -f, --fork                fork before launching <program>\n"), out);
+ 	fputs(_(" --kill-child[=<signame>]  when dying, kill the forked child (implies --fork)\n"
+@@ -835,6 +830,7 @@ int main(int argc, char *argv[])
+ 		OPT_MAPGROUPS,
+ 		OPT_MAPAUTO,
+ 		OPT_MAPSUBIDS,
++		OPT_OWNER,
+ 	};
+ 	static const struct option longopts[] = {
+ 		{ "help",          no_argument,       NULL, 'h'             },
+@@ -861,6 +857,7 @@ int main(int argc, char *argv[])
+ 		{ "map-current-user", no_argument,    NULL, 'c'             },
+ 		{ "map-auto",      no_argument,       NULL, OPT_MAPAUTO     },
+ 		{ "map-subids",    no_argument,       NULL, OPT_MAPSUBIDS   },
++		{ "owner",         required_argument, NULL, OPT_OWNER       },
+ 		{ "propagation",   required_argument, NULL, OPT_PROPAGATION },
+ 		{ "setgroups",     required_argument, NULL, OPT_SETGROUPS   },
+ 		{ "keep-caps",     no_argument,       NULL, OPT_KEEPCAPS    },
+@@ -877,8 +874,8 @@ int main(int argc, char *argv[])
+ 	int setgrpcmd = SETGROUPS_NONE;
+ 	int unshare_flags = 0;
+ 	int c, forkit = 0;
+-	uid_t mapuser = -1;
+-	gid_t mapgroup = -1;
++	uid_t mapuser = -1, owneruser = -1;
++	gid_t mapgroup = -1, ownergroup = -1;
+ 	struct map_range *usermap = NULL;
+ 	struct map_range *groupmap = NULL;
+ 	int kill_child_signo = 0; /* 0 means --kill-child was not used */
+@@ -1022,6 +1019,12 @@ int main(int argc, char *argv[])
+ 			insert_map_range(&usermap, read_subid_range(_PATH_SUBUID, real_euid, 1));
+ 			insert_map_range(&groupmap, read_subid_range(_PATH_SUBGID, real_euid, 1));
+ 			break;
++		case OPT_OWNER:
++			unshare_flags |= CLONE_NEWUSER;
++			if (sscanf(optarg, "%u:%u%n", &owneruser, &ownergroup,
++					&c) < 2 || optarg[c])
++				errx(EXIT_FAILURE, _("failed to parse owner"));
++			break;
+ 		case OPT_SETGROUPS:
+ 			setgrpcmd = setgroups_str2id(optarg);
+ 			break;
+@@ -1093,9 +1096,25 @@ int main(int argc, char *argv[])
+ 	if (npersists && (unshare_flags & CLONE_NEWNS))
+ 		pid_bind = bind_ns_files_from_child(&fd_bind);
+ 
++	if (usermap || (mapuser != (uid_t) -1 && owneruser != (uid_t) -1)) {
++		add_single_map_range(&usermap, real_euid, mapuser);
++		mapuser = -1;
++	}
++
++	if (groupmap || (mapgroup != (uid_t) -1 && ownergroup != (uid_t) -1)) {
++		add_single_map_range(&groupmap, real_egid, mapgroup);
++		mapgroup = -1;
++	}
++
+ 	if (usermap || groupmap)
+-		pid_idmap = map_ids_from_child(&fd_idmap, mapuser, usermap,
+-					       mapgroup, groupmap);
++		pid_idmap = map_ids_from_child(&fd_idmap, usermap, groupmap);
++
++	if (ownergroup != (gid_t) -1 && setgroups(0, NULL) != 0)
++		err(EXIT_FAILURE, _("setgroups failed"));
++	if (ownergroup != (gid_t) -1 && setgid(ownergroup) != 0)
++		err(EXIT_FAILURE, _("setgid() failed"));
++	if (owneruser != (uid_t) -1 && setuid(owneruser) != 0)
++		err(EXIT_FAILURE, _("setuid() failed"));
+ 
+ 	if (-1 == unshare(unshare_flags))
+ 		err(EXIT_FAILURE, _("unshare failed"));
+@@ -1206,14 +1225,14 @@ int main(int argc, char *argv[])
+ #endif
+ 	}
+ 
+-        if (mapuser != (uid_t) -1 && !usermap)
++        if (mapuser != (uid_t) -1)
+ 		map_id(_PATH_PROC_UIDMAP, mapuser, real_euid);
+ 
+         /* Since Linux 3.19 unprivileged writing of /proc/self/gid_map
+          * has been disabled unless /proc/self/setgroups is written
+          * first to permanently disable the ability to call setgroups
+          * in that user namespace. */
+-	if (mapgroup != (gid_t) -1 && !groupmap) {
++	if (mapgroup != (gid_t) -1) {
+ 		if (setgrpcmd == SETGROUPS_ALLOW)
+ 			errx(EXIT_FAILURE, _("options --setgroups=allow and "
+ 					"--map-group are mutually exclusive"));

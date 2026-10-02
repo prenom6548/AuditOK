@@ -1,0 +1,210 @@
+/*
+ * Peony-Qt's Library
+ *
+ * Copyright (C) 2020, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Yue Lan <lanyue@kylinos.cn>
+ *
+ */
+
+#ifndef FILEUTILS_H
+#define FILEUTILS_H
+
+#define NO_BLOCKING
+#define BLOCKING
+
+#include "peony-core_global.h"
+#include "gobject-template.h"
+#include "gerror-wrapper.h"
+
+#include <QString>
+
+namespace Peony {
+class FileInfo;
+class PEONYCORESHARED_EXPORT FileUtils
+{
+public:
+    NO_BLOCKING static QString getQStringFromCString(char *c_string, bool free = true);
+    NO_BLOCKING static QString getFileUri(const GFileWrapperPtr &file);
+    NO_BLOCKING static QString getFileBaseName(const GFileWrapperPtr &file);
+    NO_BLOCKING static QString getUriBaseName(const QString &uri);
+    NO_BLOCKING static GFileWrapperPtr getFileParent(const GFileWrapperPtr &file);
+    NO_BLOCKING static QString getRelativePath(const GFileWrapperPtr &dir, const GFileWrapperPtr &file);
+    NO_BLOCKING static GFileWrapperPtr resolveRelativePath(const GFileWrapperPtr &dir, const QString &relativePath);
+    NO_BLOCKING static QString urlEncode(const QString& url);
+    NO_BLOCKING static QString urlDecode(const QString& url);
+    NO_BLOCKING static QString getBaseNameOfFile(const QString &file);/* 获取不带扩展名的base name */
+    NO_BLOCKING static QString encodePath(const QString &uri);
+
+    /**
+     * @return handled name
+     */
+    BLOCKING static QString handleDuplicateName (const QString& uri);
+    BLOCKING static QString handleFolderName (const QString& folderName);
+    BLOCKING static bool getFileHasChildren(const GFileWrapperPtr &file);
+    BLOCKING static bool getFileIsFolder(const GFileWrapperPtr &file);
+    BLOCKING static bool getFileIsFolder(const QString &uri);
+    BLOCKING static bool getFileIsSymbolicLink(const QString &uri);
+    BLOCKING static QStringList getChildrenUris(const QString &directoryUri);
+
+    NO_BLOCKING static QString handleDesktopFileName(const QString& uri, const QString& displayName);
+    NO_BLOCKING static QString getNonSuffixedBaseNameFromUri(const QString &uri);
+    BLOCKING static QString getFileDisplayName(const QString &uri);
+    BLOCKING static QString getFileIconName(const QString &uri, bool checkValid = true);
+
+    BLOCKING static GErrorWrapperPtr getEnumerateError(const QString &uri);
+    BLOCKING static QString getTargetUri(const QString &uri);
+    BLOCKING static QString getTargetPath(const QString &uri);
+    BLOCKING static QString getEncodedUri(const QString &uri);
+    BLOCKING static QString getSymbolicTarget(const QString &uri);
+    BLOCKING static bool isMountPoint(const QString& uri);
+    BLOCKING static QString getUnixDeviceForUri(const QString &uri);
+
+    NO_BLOCKING static bool stringStartWithChinese(const QString &string);
+    NO_BLOCKING static bool stringLesserThan(const QString &left, const QString &right);
+
+    NO_BLOCKING static const QString getParentUri(const QString &uri);
+    NO_BLOCKING static const QString getOriginalUri(const QString &uri);
+
+    NO_BLOCKING static QStringList standardPathList();
+    NO_BLOCKING static bool isStandardPath(const QString &uri);
+    NO_BLOCKING static bool isMobileDeviceFile(const QString &uri);
+    NO_BLOCKING static bool isSamePath(const QString &uri, const QString &targetUri);
+    NO_BLOCKING static bool containsStandardPath(const QStringList &list);
+    NO_BLOCKING static bool containsStandardPath(const QList<QUrl> &urls);
+
+
+    BLOCKING static bool isFileExsit(const QString &uri);
+    BLOCKING static bool isDataBlockHasUserFile();
+    NO_BLOCKING static QString getDataDirectoryUri(const QString &uri);
+
+    NO_BLOCKING static const QStringList toDisplayUris(const QStringList &args);
+
+    BLOCKING static bool isMountRoot(const QString &uri);
+
+    BLOCKING static bool queryVolumeInfo(const QString &volumeUri,
+                                QString &volumeName,
+                                QString &unixDeviceName,
+                                const QString &volumeDisplayName = nullptr);
+
+    BLOCKING static bool isReadonly (const QString&);
+    BLOCKING static bool isFileDirectory(const QString &uri);
+    BLOCKING static bool isMobileFile(const QString &uri);
+
+    BLOCKING static bool isFileUnmountable(const QString &uri);
+    BLOCKING static double getDeviceSize(const gchar * device_name);
+    BLOCKING static quint64 getFileTotalSize(const QString &uri);
+
+    static void handleVolumeLabelForFat32(QString &volumeName,const QString &unixDevcieName);
+    static QString getUnixDevice(const QString &uri);
+    static quint64 getFileSystemSize(QString uri);
+    static QString getFileSystemType(QString uri);
+    static QString getMobieDataPath();
+    static QString getFileSystemId(QString uri);
+    static QString getApplicationName(const QString &uri);
+    static bool isRemoteServerUri(const QString &uri);
+    static bool isEmptyDisc(const QString &unixDevice);/* 判断是否是空光盘 */
+    static bool isBusyDevice(const QString &unixDevice);/* 判断光盘是否正在使用 */
+    static quint64 getDiskFreeSpace(const gchar *path, bool &isState); /* 获取磁盘剩余空间*/
+
+    /**
+     * @brief Gets the localized display name of a desktop file, supporting X-Ubuntu-Gettext-Domain translation domain.
+     * @param desktopFilePath The path to the desktop file.
+     * @param fallbackName Fallback display name.
+     * @return The localized display name.
+     */
+    BLOCKING static QString getLocalizedDesktopName(const QString &desktopFilePath, const QString &fallbackName = QString());
+
+    NO_BLOCKING static QString getIconStringFromGIcon(GIcon *gicon, QString deviceFile = nullptr);
+    static QString getIconStringFromGIconThreadSafety(GIcon *gicon, QString deviceFile = nullptr);
+    static void   saveCreateTime (const QString& url);
+    static gint64 getCreateTimeOfMicro (const QString& url);
+    static QString handleSpecialSymbols(const QString &displayName);
+    BLOCKING static QString getFsTypeFromFile(const QString &fileUri);
+    static bool isFuseFileSystem(const QString &fileUri);
+    static bool isLongNameFileOfNotDel2Trash(const QString &fileUri);/* 判断是否是无法删除到回收站的长文件名文件 */
+    static QString getActualDirFromSearchUri(const QString& searchUri);
+    static QString updateFileIconName(const QString &uri, bool checkValid = false);
+    static QUrl removeFtpQuery(const QUrl &url);
+    static bool isSearchFilesParentWriteable(const QStringList &selectUris, bool isSearch);/* 选中的搜索出来的文件（夹）,其父目录是否有写权限 */
+    static bool isMountMatchFstab(GVolume* volume, const QString &mountPoint);
+    static QString getRootUnixDevice(const QString &mountPath);
+
+    /**
+      * @brief Determines if the given file content type is a compressed file.
+      *
+      * This method checks the MIME type of the file against a predefined list
+      * of compressed file types.
+      *
+      * @param contentType The contentType to be checked.
+      * @return true if the contentType is compressed, false otherwise.
+      */
+    NO_BLOCKING static bool isCompressedFile(const QString &contentType);
+    /**
+     * @brief Gets the list of compressed file MIME types.
+     *
+     * This method returns a static QStringList containing MIME types
+     * associated with various compressed file formats.
+     *
+     * @return A const reference to the QStringList of compressed file MIME types.
+     */
+    NO_BLOCKING static const QStringList& getCompressedTypes();
+
+    static bool isExecuteTargetUribyTrashUri(const QUrl& url, FileInfo * fileInfo);
+    static QStringList getPluginInstallPaths();
+    static QStringList getDesktopFilePaths();
+    static bool hashStickyBit(const QString &filePath);
+    static bool hasParentStickyBit(const QString &uri);
+    //static QString wrapTextForTooltip(const QString& text, const QPoint& globalPos,QFont& font);
+    static QString getRealUriFromIDMUri(const QString &uri);
+    static bool isIntelligentSpaceUri(const QString &uri);
+    static bool isFuseFileSystemForUri(const QString &uri);
+    static QString getFtpDefaultLocationUri(const QString &uri);
+
+    // Text encoding detection and conversion functions
+    NO_BLOCKING static QString detectTextEncoding(const QByteArray &content, const QString &fileName = QString());
+    NO_BLOCKING static QString detectFileEncoding(const QString &fileName, bool *isOk = nullptr);
+    NO_BLOCKING static QString decodeTextContent(const QByteArray &content, const QString &fileName = QString());
+    NO_BLOCKING static bool isDmSlaveDevice(const QString &dmDevice, const QString &physDevice);
+
+    static int getViewZoomLevel(const QString &uri);
+    static void setViewZoomLevel(const QString &uri, int zoomLevel);
+    static bool isSymbolLinkAndTargetDataPath(const QString &uri);
+    static QWidget *getMainWindow();
+    static bool isExecutableTypeFile(const QString &uri);
+
+    static bool cmdCopyFile(const QString &sourceFile, const QString &dest);
+    static bool isAppPathExist(const QString &filePath);
+    static QString calculateFileMd5(const QString &filePath);
+
+private:
+    FileUtils();
+};
+
+class FileUtilsPrivate
+{
+public:
+    BLOCKING static QString getFileIconName(const QString &uri);
+
+private:
+    FileUtilsPrivate()=delete;
+};
+
+}
+
+
+
+#endif // FILEUTILS_H

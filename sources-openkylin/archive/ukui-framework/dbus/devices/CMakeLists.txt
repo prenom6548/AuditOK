@@ -1,0 +1,8 @@
+add_subdirectory(screen)
+add_subdirectory(audio)
+add_subdirectory(bluetooth)
+add_subdirectory(network)
+add_subdirectory(power)
+add_subdirectory(touchpad)
+add_subdirectory(keyboard)
+add_subdirectory(mouse)

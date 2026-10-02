@@ -1,0 +1,45 @@
+/*
+ * Qt5-UKUI's Library
+ *
+ * Copyright (C) 2023, KylinSoft Co., Ltd.
+ *
+ * This library is free software; you can redistribute it and/or
+ * modify it under the terms of the GNU Lesser General Public
+ * License as published by the Free Software Foundation; either
+ * version 3 of the License, or (at your option) any later version.
+ *
+ * This library is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+ * Lesser General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Yan Wang <wangyan@kylinos.cn>
+ *
+ */
+
+#ifndef QQC2STYLEPLUGIN_H
+#define QQC2STYLEPLUGIN_H
+
+#include <QQmlExtensionPlugin>
+#include "styleparameter/tokenparameter.h"
+#include "styleparameter/ukuitoken.h"
+
+class Qqc2StylePlugin : public QQmlExtensionPlugin
+{
+    Q_OBJECT
+    Q_PLUGIN_METADATA(IID QQmlExtensionInterface_iid)
+
+public:
+    ~Qqc2StylePlugin();
+    void initializeEngine(QQmlEngine *engine, const char *uri) override;
+    void registerTypes(const char *uri) override;
+
+private:
+    UKUIQQC2Style::TokenParameter *m_token = nullptr;
+    UKUIQQC2Style::UKUIToken *m_platformthemeToken = nullptr;
+};
+
+#endif // QQC2STYLEPLUGIN_H

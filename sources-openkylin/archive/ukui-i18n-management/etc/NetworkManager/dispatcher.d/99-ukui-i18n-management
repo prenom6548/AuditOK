@@ -1,0 +1,31 @@
+#!/bin/bash
+# NetworkManager 网络连通性变化监听
+#
+# 当网络连通状态变为 full 时，重新触发语言包检测服务。
+# 覆盖场景：登录时无网络 → 用户手动连接网络后 → 弹出通知。
+
+LOG_TAG="ukui-i18n-management-dispatcher"
+
+log() {
+    logger -t "$LOG_TAG" "$@"
+}
+
+# NetworkManager dispatcher 参数：
+#   $1 = 设备名（如 wlan0）或 connectivity-change
+#   $2 = 动作（如 up / down / connectivity-change）
+# 本机 Kylin/UKUI 环境中 connectivity-change 事件在 $2，
+# 与 90-open_captive_portal 脚本一致。
+if [ "$1" = "connectivity-change" ] || [ "$2" = "connectivity-change" ]; then
+    state_lower=$(echo "${CONNECTIVITY_STATE:-}" | tr '[:upper:]' '[:lower:]')
+    log "connectivity-change, device=$1 action=$2 state=${CONNECTIVITY_STATE:-unset}"
+
+    if [ "$state_lower" = "full" ]; then
+        log "网络已连通，触发 ukui-i18n-management.service"
+        # oneshot + RemainAfterExit=yes 时 systemctl start 不会重新执行，
+        # 必须使用 restart 才能再次运行检测脚本
+        sleep 2
+        /bin/systemctl restart ukui-i18n-management.service
+    fi
+fi
+
+exit 0

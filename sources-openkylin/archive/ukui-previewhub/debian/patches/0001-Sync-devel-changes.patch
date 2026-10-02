@@ -1,0 +1,2233 @@
+From: Qxiangwenjie <xiangwenjie@kylinos.cn>
+Date: Tue, 11 Aug 2026 17:04:58 +0800
+Subject: Sync devel changes
+
+---
+ core/components/media-control-bar.cpp   | 369 ++++++++++++++++++++++++++++++++
+ core/components/media-control-bar.h     |  83 +++++++
+ core/components/preview-control-bar.cpp | 282 ++++++++++++++++++++++++
+ core/components/preview-control-bar.h   |  72 +++++++
+ core/components/slider.cpp              | 121 ++++++++++-
+ core/components/slider.h                |  15 +-
+ core/content-preview-page.cpp           |  11 +-
+ core/content-preview-page.h             |   4 +-
+ core/preview-page-manger.cpp            |   9 +-
+ core/preview-page-manger.h              |   3 +-
+ core/previewpage/audio.cpp              | 197 +++++++++--------
+ core/previewpage/audio.h                |  32 +--
+ core/previewpage/image.cpp              | 219 ++++++++++++-------
+ core/previewpage/image.h                |  16 +-
+ core/previewpage/text.cpp               |  21 +-
+ core/previewpage/video.cpp              | 140 ++++++------
+ core/previewpage/video.h                |  13 +-
+ include/ukui_previewhub_api.h           |  24 ++-
+ src/ukui_previewhub_api.cpp             |  10 +-
+ 19 files changed, 1352 insertions(+), 289 deletions(-)
+ create mode 100644 core/components/media-control-bar.cpp
+ create mode 100644 core/components/media-control-bar.h
+ create mode 100644 core/components/preview-control-bar.cpp
+ create mode 100644 core/components/preview-control-bar.h
+
+diff --git a/core/components/media-control-bar.cpp b/core/components/media-control-bar.cpp
+new file mode 100644
+index 0000000..8aa2124
+--- /dev/null
++++ b/core/components/media-control-bar.cpp
+@@ -0,0 +1,369 @@
++/*
++ * Peony-Qt's Library
++ *
++ * Copyright (C) 2026, KylinSoft Co, Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: Wenjie Xiang <xiangwenjie@kylinos.cn>
++ *
++ */
++
++#include "components/media-control-bar.h"
++
++#include <QCursor>
++#include <QEvent>
++#include <QHBoxLayout>
++#include <QMouseEvent>
++#include <QPainter>
++#include <QSignalBlocker>
++#include <QStyle>
++#include <QVBoxLayout>
++
++#include <limits>
++
++MediaControlBar::MediaControlBar(QWidget *parent)
++    : PreviewControlBar(parent)
++{
++    /* play button */
++    m_play_button = new QPushButton(this);
++    m_play_button->setIcon(mediaIcon(QStyle::SP_MediaPlay));
++    m_play_button->setFixedSize(28, 28);
++
++    connect(m_play_button, &QPushButton::clicked, this, &MediaControlBar::playPauseClicked);
++
++    /* position slider */
++    m_position_slider = new Slider(this);
++    m_position_slider->setProperty("handleVisible", false);
++
++    m_current_time_label = new QLabel(formatTime(0), this);
++    m_current_time_label->setAlignment(Qt::AlignCenter);
++    m_current_time_label->setMinimumWidth(42);
++
++    connect(m_position_slider, &Slider::valueChanged, this, [=](int position) {
++        m_current_time_label->setText(formatTime(position));
++    });
++    connect(m_position_slider, &Slider::sliderReleased, this, [=]() {
++        Q_EMIT positionChanged(m_position_slider->value());
++    });
++
++    m_duration_time_label = new QLabel(formatTime(0), this);
++    m_duration_time_label->setAlignment(Qt::AlignCenter);
++    m_duration_time_label->setMinimumWidth(42);
++
++    m_mute_button = new QPushButton(this);
++    m_mute_button->setIcon(mediaIcon(QStyle::SP_MediaVolume));
++    m_mute_button->setFixedSize(28, 28);
++    connect(m_mute_button, &QPushButton::clicked, this, [=]() {
++        if (m_volume_popup->isHidden()) {
++            showVolumePopup(true);
++        } else {
++            Q_EMIT muteToggled();
++        }
++    });
++
++    auto *layout = new QHBoxLayout(this);
++    layout->setContentsMargins(14, 7, 14, 7);
++    layout->setSpacing(8);
++    layout->addWidget(m_play_button);
++    layout->addWidget(m_current_time_label);
++    layout->addWidget(m_position_slider, 1);
++    layout->addWidget(m_duration_time_label);
++    layout->addWidget(m_mute_button);
++
++    m_volume_popup = new QWidget(parent ? parent : this);
++    m_volume_popup->setObjectName("videoVolumePopup");
++    m_volume_popup->setAttribute(Qt::WA_StyledBackground, true);
++    m_volume_popup->hide();
++
++    m_volume_label = new QLabel(m_volume_popup);
++    m_volume_label->setAlignment(Qt::AlignCenter);
++    m_volume_label->setMinimumWidth(36);
++
++    m_volume_slider = new QSlider(Qt::Vertical, m_volume_popup);
++    m_volume_slider->setRange(0, 100);
++    m_volume_slider->setValue(m_volume);
++    m_volume_slider->setFixedWidth(26);
++    m_volume_slider->setFocusPolicy(Qt::NoFocus);
++    connect(m_volume_slider, &QSlider::valueChanged, this, [=](int value) {
++        setVolume(value);
++        if (value > 0 && m_is_muted) {
++            m_is_muted = false;
++            Q_EMIT muteToggled();
++        }
++        Q_EMIT volumeChanged(value);
++    });
++
++    auto *volumeLayout = new QVBoxLayout(m_volume_popup);
++    volumeLayout->setContentsMargins(8, 8, 8, 10);
++    volumeLayout->setSpacing(4);
++    volumeLayout->addWidget(m_volume_label);
++    volumeLayout->addWidget(m_volume_slider, 1, Qt::AlignHCenter);
++
++    /* install event filters for mouse hover handling */
++    m_position_slider->installEventFilter(this);
++    m_volume_popup->installEventFilter(this);
++
++    /* watch parent for click-outside-to-hide-volume-popup */
++    if (parent)
++        parent->installEventFilter(this);
++}
++
++MediaControlBar::~MediaControlBar()
++{
++    delete m_volume_popup;
++}
++
++void MediaControlBar::setDuration(qint64 duration) {
++    const int sliderMaximum = static_cast<int>(qBound<qint64>(
++        0, duration, std::numeric_limits<int>::max()));
++    m_position_slider->setRange(0, sliderMaximum);
++    m_duration_time_label->setText(formatTime(duration));
++}
++
++void MediaControlBar::setPosition(qint64 position) {
++    if (m_position_slider->isSliderDown())
++        return;
++
++    const int sliderPosition = static_cast<int>(qBound<qint64>(
++        m_position_slider->minimum(), position, m_position_slider->maximum()));
++    m_position_slider->setValue(sliderPosition);
++}
++
++void MediaControlBar::setPlaying(bool playing) {
++    m_is_playing = playing;
++    m_play_button->setIcon(mediaIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
++}
++
++void MediaControlBar::setVolume(int volume) {
++    m_volume = volume;
++    if (!m_is_muted && m_volume_slider->value() != volume) {
++        const QSignalBlocker blocker(m_volume_slider);
++        m_volume_slider->setValue(volume);
++    }
++    updateVolumeControls();
++}
++
++void MediaControlBar::setMuted(bool muted) {
++    m_is_muted = muted;
++    const QSignalBlocker blocker(m_volume_slider);
++    m_volume_slider->setValue(muted ? 0 : m_volume);
++    updateVolumeControls();
++}
++
++void MediaControlBar::showBar(bool visible) {
++    if (!visible)
++        showVolumePopup(false);
++    PreviewControlBar::showBar(visible);
++}
++
++bool MediaControlBar::eventFilter(QObject *watched, QEvent *event) {
++    /* handle click-outside to hide volume popup */
++    if (isPreviewObject(watched) && event->type() == QEvent::MouseButtonPress &&
++        !m_volume_popup->isHidden()) {
++        QMouseEvent *me = static_cast<QMouseEvent *>(event);
++        QPoint globalPos = me->globalPos();
++        QPoint localInMute = m_mute_button->mapFromGlobal(globalPos);
++        QPoint localInPopup = m_volume_popup->mapFromGlobal(globalPos);
++        if (!m_mute_button->rect().contains(localInMute) &&
++            !m_volume_popup->rect().contains(localInPopup)) {
++            showVolumePopup(false);
++        }
++    }
++
++    /* handle events on our own sub-widgets */
++    if (watched == m_position_slider || watched == m_volume_popup) {
++        switch (event->type()) {
++        case QEvent::Enter:
++            if (watched == m_position_slider)
++                m_position_slider->setProperty("handleVisible", true);
++            break;
++        case QEvent::Leave:
++            if (watched == m_position_slider)
++                m_position_slider->setProperty("handleVisible", false);
++            break;
++        default:
++            break;
++        }
++        /* refresh the custom-painted handle after property change */
++        if ((watched == m_position_slider) &&
++            (event->type() == QEvent::Enter || event->type() == QEvent::Leave)) {
++            m_position_slider->update();
++        }
++    }
++
++    return PreviewControlBar::eventFilter(watched, event);
++}
++
++void MediaControlBar::resizeEvent(QResizeEvent *event) {
++    QWidget::resizeEvent(event);
++    positionVolumePopup();
++}
++
++bool MediaControlBar::isInteractionActive() const {
++    if (PreviewControlBar::isInteractionActive() ||
++        m_position_slider->isSliderDown() || m_volume_slider->isSliderDown()) {
++        return true;
++    }
++
++    return m_volume_popup && m_volume_popup->isVisible() &&
++           m_volume_popup->rect().contains(
++               m_volume_popup->mapFromGlobal(QCursor::pos()));
++}
++
++QString MediaControlBar::themeStyleSheet(bool dark) const {
++    const QString text = dark ? "#f1f1f1" : "#2d2d2d";
++    const QString hover = dark ? "rgba(255, 255, 255, 28)" : "rgba(0, 0, 0, 18)";
++    return PreviewControlBar::themeStyleSheet(dark) + QString(
++        "#previewControlBar QPushButton {"
++        "border: 0px;"
++        "background: transparent;"
++        "padding: 4px;"
++        "}"
++        "#previewControlBar QPushButton:hover {"
++        "background: %1;"
++        "border-radius: 4px;"
++        "}"
++        "#previewControlBar QLabel {"
++        "color: %2;"
++        "font-size: 12px;"
++        "background: transparent;"
++        "border: none;"
++        "}")
++        .arg(hover, text);
++}
++
++void MediaControlBar::themeChanged(bool dark) {
++    const QString popupBackground = dark ? "rgba(42, 42, 42, 235)" : "rgba(255, 255, 255, 235)";
++    const QString border = dark ? "rgba(255, 255, 255, 32)" : "rgba(0, 0, 0, 18)";
++    const QString text = dark ? "#f1f1f1" : "#2d2d2d";
++    const QString sliderBg = dark ? "rgba(255, 255, 255, 42)" : "rgba(0, 0, 0, 25)";
++    const QString handle = dark ? "#f4f4f4" : "#ffffff";
++    const QColor sliderColor = dark ? QColor(255, 255, 255, 42) : QColor(0, 0, 0, 25);
++    const QString positionSliderStyleSheet = QString(
++        "QSlider {"
++        "min-height: 18px;"
++        "background: transparent;"
++        "border: none;"
++        "}");
++    const QString popupStyleSheet = QString(
++        "#videoVolumePopup {"
++        "background-color: %1;"
++        "border: 1px solid %2;"
++        "border-radius: 8px;"
++        "}"
++        "#videoVolumePopup QLabel {"
++        "color: %3;"
++        "font-size: 12px;"
++        "}")
++        .arg(popupBackground, border, text);
++    const QString volumeSliderStyleSheet = QString(
++        "QSlider {"
++        "background: transparent;"
++        "border: none;"
++        "padding: 0px;"
++        "}"
++        "QSlider::groove:vertical {"
++        "width: 4px;"
++        "border-radius: 2px;"
++        "background: %1;"
++        "border: none;"
++        "}"
++        "QSlider::sub-page:vertical {"
++        "width: 4px;"
++        "border-radius: 2px;"
++        "background: %1;"
++        "border: none;"
++        "}"
++        "QSlider::add-page:vertical {"
++        "width: 4px;"
++        "border-radius: 2px;"
++        "background: #2f88ff;"
++        "border: none;"
++        "}"
++        "QSlider::handle:vertical {"
++        "width: 12px;"
++        "height: 12px;"
++        "margin: 0px -4px;"
++        "border-radius: 6px;"
++        "background: %2;"
++        "border: 2px solid #2f88ff;"
++        "}")
++        .arg(sliderBg, handle);
++    if (m_position_slider->styleSheet() != positionSliderStyleSheet)
++        m_position_slider->setStyleSheet(positionSliderStyleSheet);
++    m_position_slider->setProgressColors(QColor("#2f88ff"), sliderColor, QColor(handle));
++    if (m_volume_popup->styleSheet() != popupStyleSheet)
++        m_volume_popup->setStyleSheet(popupStyleSheet);
++    if (m_volume_slider->styleSheet() != volumeSliderStyleSheet)
++        m_volume_slider->setStyleSheet(volumeSliderStyleSheet);
++
++    m_play_button->setIcon(mediaIcon(m_is_playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
++    updateVolumeControls();
++}
++
++void MediaControlBar::updateVolumeControls() {
++    const int vol = m_is_muted ? 0 : m_volume;
++    m_volume_label->setText(QString("%1%").arg(vol));
++    m_mute_button->setIcon(mediaIcon(vol == 0 ? QStyle::SP_MediaVolumeMuted : QStyle::SP_MediaVolume));
++}
++
++void MediaControlBar::positionVolumePopup() {
++    if (!parentWidget())
++        return;
++
++    const QPoint buttonCenter = m_mute_button->mapTo(parentWidget(), QPoint(m_mute_button->width() / 2, 0));
++    const int containerWidth = parentWidget()->width();
++    const int popupWidth = 48;
++    const int maxHeight = qMax(96, buttonCenter.y() - 18);
++    const int popupHeight = qMin(150, maxHeight);
++    int popupX = buttonCenter.x() - popupWidth / 2;
++    popupX = qBound(8, popupX, qMax(8, containerWidth - popupWidth - 8));
++    int popupY = buttonCenter.y() - popupHeight - 10;
++    popupY = qMax(8, popupY);
++    m_volume_popup->setGeometry(popupX, popupY, popupWidth, popupHeight);
++}
++
++void MediaControlBar::showVolumePopup(bool visible) {
++    if (visible) {
++        positionVolumePopup();
++        m_volume_popup->show();
++        m_volume_popup->raise();
++        return;
++    }
++    m_volume_popup->hide();
++}
++
++QIcon MediaControlBar::mediaIcon(QStyle::StandardPixmap standardPixmap) const {
++    QPixmap pixmap = style()->standardIcon(standardPixmap).pixmap(18, 18);
++    if (pixmap.isNull())
++        return QIcon();
++
++    QPainter painter(&pixmap);
++    painter.setCompositionMode(QPainter::CompositionMode_SourceIn);
++    painter.fillRect(pixmap.rect(), isDarkTheme() ? QColor("#f1f1f1") : QColor("#202020"));
++    painter.end();
++    return QIcon(pixmap);
++}
++
++QString MediaControlBar::formatTime(qint64 milliseconds) const {
++    const qint64 seconds = qMax<qint64>(0, milliseconds / 1000);
++    const qint64 hours = seconds / 3600;
++    const qint64 minutes = seconds % 3600 / 60;
++    const qint64 secs = seconds % 60;
++
++    if (hours > 0)
++        return QString("%1:%2:%3").arg(hours).arg(minutes, 2, 10, QLatin1Char('0')).arg(secs, 2, 10, QLatin1Char('0'));
++    return QString("%1:%2").arg(minutes, 2, 10, QLatin1Char('0')).arg(secs, 2, 10, QLatin1Char('0'));
++}
+diff --git a/core/components/media-control-bar.h b/core/components/media-control-bar.h
+new file mode 100644
+index 0000000..da033e8
+--- /dev/null
++++ b/core/components/media-control-bar.h
+@@ -0,0 +1,83 @@
++/*
++ * Peony-Qt's Library
++ *
++ * Copyright (C) 2026, KylinSoft Co, Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: Wenjie Xiang <xiangwenjie@kylinos.cn>
++ *
++ */
++
++#ifndef MEDIACONTROLBAR_H
++#define MEDIACONTROLBAR_H
++
++#include <QLabel>
++#include <QPointer>
++#include <QPushButton>
++#include <QSlider>
++#include <QStyle>
++
++#include "components/preview-control-bar.h"
++#include "components/slider.h"
++
++class MediaControlBar : public PreviewControlBar
++{
++    Q_OBJECT
++public:
++    explicit MediaControlBar(QWidget *parent = nullptr);
++    ~MediaControlBar() override;
++
++    void setDuration(qint64 duration);
++    void setPosition(qint64 position);
++    void setPlaying(bool playing);
++    void setVolume(int volume);
++    void setMuted(bool muted);
++    void showBar(bool visible) override;
++
++Q_SIGNALS:
++    void playPauseClicked();
++    void positionChanged(qint64 position);
++    void volumeChanged(int volume);
++    void muteToggled();
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++    void resizeEvent(QResizeEvent *event) override;
++    bool isInteractionActive() const override;
++    QString themeStyleSheet(bool dark) const override;
++    void themeChanged(bool dark) override;
++
++private:
++    void updateVolumeControls();
++    void positionVolumePopup();
++    void showVolumePopup(bool visible);
++    QIcon mediaIcon(QStyle::StandardPixmap standardPixmap) const;
++    QString formatTime(qint64 milliseconds) const;
++
++    QPushButton *m_play_button;
++    QPushButton *m_mute_button;
++    QLabel *m_current_time_label;
++    QLabel *m_duration_time_label;
++    Slider *m_position_slider;
++    QPointer<QWidget> m_volume_popup;
++    QLabel *m_volume_label;
++    QSlider *m_volume_slider;
++
++    bool m_is_playing = false;
++    bool m_is_muted = false;
++    int m_volume = 100;
++};
++
++#endif // MEDIACONTROLBAR_H
+diff --git a/core/components/preview-control-bar.cpp b/core/components/preview-control-bar.cpp
+new file mode 100644
+index 0000000..129a1a0
+--- /dev/null
++++ b/core/components/preview-control-bar.cpp
+@@ -0,0 +1,282 @@
++/*
++ * Peony-Qt's Library
++ *
++ * Copyright (C) 2026, KylinSoft Co, Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: Wenjie Xiang <xiangwenjie@kylinos.cn>
++ *
++ */
++
++#include "components/preview-control-bar.h"
++
++#include <QApplication>
++#include <QCursor>
++#include <QEvent>
++#include <QPalette>
++#include <QTimer>
++
++namespace {
++constexpr int kHideDelayMs = 3000;
++}
++
++PreviewControlBar::PreviewControlBar(QWidget *parent)
++    : QWidget(parent)
++{
++    setObjectName("previewControlBar");
++    setAttribute(Qt::WA_StyledBackground, true);
++    setMouseTracking(true);
++    setFixedHeight(48);
++
++    m_opacity_effect = new QGraphicsOpacityEffect(this);
++    m_opacity_effect->setOpacity(1.0);
++    setGraphicsEffect(m_opacity_effect);
++
++    m_opacity_animation = new QPropertyAnimation(m_opacity_effect, "opacity", this);
++    m_opacity_animation->setDuration(180);
++    m_opacity_animation->setEasingCurve(QEasingCurve::OutCubic);
++    connect(m_opacity_animation, &QPropertyAnimation::finished, this, [this]() {
++        if (!m_bar_visible)
++            hide();
++    });
++
++    m_hide_timer = new QTimer(this);
++    m_hide_timer->setSingleShot(true);
++    m_hide_timer->setInterval(kHideDelayMs);
++    connect(m_hide_timer, &QTimer::timeout, this, [this]() {
++        if (isInteractionActive()) {
++            scheduleHide();
++            return;
++        }
++        showBar(false);
++    });
++
++    if (parent)
++        parent->installEventFilter(this);
++
++    // Defer the initial refresh until the most-derived control bar has
++    // finished constructing its child widgets.
++    scheduleThemeUpdate();
++    connect(qApp, &QGuiApplication::paletteChanged, this, [this]() {
++        scheduleThemeUpdate();
++    });
++}
++
++void PreviewControlBar::setPreviewWidget(QWidget *previewWidget)
++{
++    if (m_preview_widget == previewWidget)
++        return;
++
++    if (m_preview_widget) {
++        m_preview_widget->removeEventFilter(this);
++        const auto oldChildren = m_preview_widget->findChildren<QWidget *>();
++        for (QWidget *child : oldChildren) {
++            if (child != this && !isAncestorOf(child))
++                child->removeEventFilter(this);
++        }
++    }
++
++    m_preview_widget = previewWidget;
++    installPreviewEventFilters();
++    showBar(true);
++}
++
++void PreviewControlBar::setFloating(bool floating)
++{
++    if (m_floating == floating)
++        return;
++
++    m_floating = floating;
++    updateFloatingGeometry();
++}
++
++void PreviewControlBar::showBar(bool visible)
++{
++    if (visible) {
++        if (m_preview_widget)
++            scheduleHide();
++        else
++            m_hide_timer->stop();
++    } else {
++        m_hide_timer->stop();
++    }
++
++    if (m_bar_visible == visible)
++        return;
++
++    m_bar_visible = visible;
++    m_opacity_animation->stop();
++    m_opacity_animation->setStartValue(m_opacity_effect->opacity());
++    m_opacity_animation->setEndValue(visible ? 1.0 : 0.0);
++    if (visible) {
++        QWidget::show();
++        raise();
++    }
++    m_opacity_animation->start();
++}
++
++bool PreviewControlBar::eventFilter(QObject *watched, QEvent *event)
++{
++    if (watched == parentWidget() && event->type() == QEvent::Resize)
++        updateFloatingGeometry();
++
++    if (isPreviewObject(watched)) {
++        switch (event->type()) {
++        case QEvent::ChildAdded:
++            QTimer::singleShot(0, this, &PreviewControlBar::installPreviewEventFilters);
++            break;
++        case QEvent::Enter:
++        case QEvent::MouseMove:
++        case QEvent::MouseButtonPress:
++            showBar(true);
++            break;
++        case QEvent::Leave:
++            if (!isCursorInPreview())
++                scheduleHide();
++            break;
++        default:
++            break;
++        }
++    }
++
++    return QWidget::eventFilter(watched, event);
++}
++
++void PreviewControlBar::changeEvent(QEvent *event)
++{
++    QWidget::changeEvent(event);
++    if (event->type() == QEvent::PaletteChange ||
++        event->type() == QEvent::ApplicationPaletteChange ||
++        event->type() == QEvent::ThemeChange ||
++        event->type() == QEvent::StyleChange) {
++        scheduleThemeUpdate();
++    }
++}
++
++bool PreviewControlBar::isDarkTheme() const
++{
++    const QPalette currentPalette = qApp ? qApp->palette() : palette();
++    return currentPalette.color(QPalette::Window).lightness() < 128;
++}
++
++bool PreviewControlBar::isInteractionActive() const
++{
++    if (!m_bar_visible || !isVisible())
++        return false;
++
++    return rect().contains(mapFromGlobal(QCursor::pos()));
++}
++
++QString PreviewControlBar::themeStyleSheet(bool dark) const
++{
++    const QString background = dark ? "rgba(36, 36, 36, 210)" : "rgba(255, 255, 255, 220)";
++    const QString border = dark ? "rgba(255, 255, 255, 32)" : "rgba(0, 0, 0, 18)";
++    return QString(
++        "#previewControlBar {"
++        "background-color: %1;"
++        "border: 1px solid %2;"
++        "border-radius: 6px;"
++        "}")
++        .arg(background, border);
++}
++
++void PreviewControlBar::themeChanged(bool dark)
++{
++    Q_UNUSED(dark)
++}
++
++void PreviewControlBar::refreshThemeStyle()
++{
++    if (m_updating_theme)
++        return;
++
++    m_theme_update_pending = false;
++    m_updating_theme = true;
++    const bool dark = isDarkTheme();
++    const QString style = themeStyleSheet(dark);
++    if (styleSheet() != style)
++        setStyleSheet(style);
++    themeChanged(dark);
++    m_updating_theme = false;
++}
++
++bool PreviewControlBar::isCursorInPreview() const
++{
++    return m_preview_widget &&
++           m_preview_widget->rect().contains(
++               m_preview_widget->mapFromGlobal(QCursor::pos()));
++}
++
++bool PreviewControlBar::isPreviewObject(QObject *object) const
++{
++    if (!m_preview_widget || !object)
++        return false;
++
++    QObject *current = object;
++    while (current) {
++        if (current == m_preview_widget)
++            return true;
++        if (current == this)
++            return false;
++        current = current->parent();
++    }
++    return false;
++}
++
++void PreviewControlBar::installPreviewEventFilters()
++{
++    if (!m_preview_widget)
++        return;
++
++    m_preview_widget->setMouseTracking(true);
++    m_preview_widget->installEventFilter(this);
++    const auto children = m_preview_widget->findChildren<QWidget *>();
++    for (QWidget *child : children) {
++        if (child != this && !isAncestorOf(child)) {
++            child->setMouseTracking(true);
++            child->installEventFilter(this);
++        }
++    }
++}
++
++void PreviewControlBar::scheduleHide()
++{
++    if (m_preview_widget)
++        m_hide_timer->start();
++}
++
++void PreviewControlBar::updateFloatingGeometry()
++{
++    if (!m_floating || !parentWidget())
++        return;
++
++    const QRect rect = parentWidget()->rect();
++    const int sideMargin = rect.width() > 340 ? 36 : 8;
++    const int availableWidth = qMax(0, rect.width() - sideMargin * 2);
++    const int controlWidth = qMin(availableWidth, maximumWidth());
++    const int controlX = (rect.width() - controlWidth) / 2;
++    const int controlY = qMax(8, rect.height() - height() - 20);
++    setGeometry(controlX, controlY, controlWidth, height());
++    raise();
++}
++
++void PreviewControlBar::scheduleThemeUpdate()
++{
++    if (m_updating_theme || m_theme_update_pending)
++        return;
++
++    m_theme_update_pending = true;
++    QTimer::singleShot(0, this, &PreviewControlBar::refreshThemeStyle);
++}
+diff --git a/core/components/preview-control-bar.h b/core/components/preview-control-bar.h
+new file mode 100644
+index 0000000..2f5c457
+--- /dev/null
++++ b/core/components/preview-control-bar.h
+@@ -0,0 +1,72 @@
++/*
++ * Peony-Qt's Library
++ *
++ * Copyright (C) 2026, KylinSoft Co, Ltd.
++ *
++ * This library is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU Lesser General Public
++ * License as published by the Free Software Foundation; either
++ * version 3 of the License, or (at your option) any later version.
++ *
++ * This library is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
++ * Lesser General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this library.  If not, see <https://www.gnu.org/licenses/>.
++ *
++ * Authors: Wenjie Xiang <xiangwenjie@kylinos.cn>
++ *
++ */
++
++#ifndef PREVIEWCONTROLBAR_H
++#define PREVIEWCONTROLBAR_H
++
++#include <QGraphicsOpacityEffect>
++#include <QPointer>
++#include <QPropertyAnimation>
++#include <QWidget>
++
++class QTimer;
++
++class PreviewControlBar : public QWidget
++{
++    Q_OBJECT
++public:
++    explicit PreviewControlBar(QWidget *parent = nullptr);
++    ~PreviewControlBar() override = default;
++
++    void setPreviewWidget(QWidget *previewWidget);
++    void setFloating(bool floating);
++    virtual void showBar(bool visible);
++
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++    void changeEvent(QEvent *event) override;
++
++    bool isDarkTheme() const;
++    virtual bool isInteractionActive() const;
++    virtual QString themeStyleSheet(bool dark) const;
++    virtual void themeChanged(bool dark);
++    void refreshThemeStyle();
++    bool isPreviewObject(QObject *object) const;
++
++private:
++    bool isCursorInPreview() const;
++    void installPreviewEventFilters();
++    void scheduleHide();
++    void updateFloatingGeometry();
++    void scheduleThemeUpdate();
++
++    QPointer<QWidget> m_preview_widget;
++    QGraphicsOpacityEffect *m_opacity_effect;
++    QPropertyAnimation *m_opacity_animation;
++    QTimer *m_hide_timer;
++    bool m_bar_visible = true;
++    bool m_floating = false;
++    bool m_updating_theme = false;
++    bool m_theme_update_pending = false;
++};
++
++#endif // PREVIEWCONTROLBAR_H
+diff --git a/core/components/slider.cpp b/core/components/slider.cpp
+index 99f9776..116aa46 100644
+--- a/core/components/slider.cpp
++++ b/core/components/slider.cpp
+@@ -22,13 +22,126 @@
+ 
+ #include "slider.h"
+ 
++#include <QPainter>
++#include <QPainterPath>
++#include <QStyleOptionSlider>
++
++namespace {
++constexpr qreal kGrooveHeight = 8.0;
++}
++
+ Slider::Slider(QWidget *parent) : QSlider(parent) {
+     setOrientation(Qt::Horizontal);
+ }
+ 
++void Slider::setProgressColors(const QColor &played, const QColor &unplayed,
++                               const QColor &handle)
++{
++    m_played_color = played;
++    m_unplayed_color = unplayed;
++    m_handle_color = handle;
++    update();
++}
++
++void Slider::paintEvent(QPaintEvent *event)
++{
++    Q_UNUSED(event)
++
++    QPainter painter(this);
++    painter.setRenderHint(QPainter::Antialiasing);
++
++    const QRectF groove(0.0, (height() - kGrooveHeight) / 2.0,
++                        width(), kGrooveHeight);
++    const qreal range = maximum() - minimum();
++    const qreal progress = range > 0.0 ? (value() - minimum()) / range : 0.0;
++
++    QStyleOptionSlider option;
++    initStyleOption(&option);
++    const bool playedFromRight = option.upsideDown;
++    const qreal playedLength = qBound(0.0, progress, 1.0) * groove.width();
++    // A full groove-height segment keeps the leading cap rounded even when
++    // playback has only just started.
++    const qreal displayedLength = playedLength > 0.0
++        ? qMin(groove.width(), qMax(kGrooveHeight, playedLength))
++        : 0.0;
++
++    // Paint the unplayed groove first, then overlay a rounded played segment.
++    // The exposed background around its trailing cap forms the matching
++    // concave edge on the unplayed segment without leaving a transparent gap.
++    QPainterPath groovePath;
++    groovePath.addRoundedRect(groove, kGrooveHeight / 2.0,
++                              kGrooveHeight / 2.0);
++    painter.save();
++    painter.setClipPath(groovePath);
++    painter.fillRect(groove, m_unplayed_color);
++    if (displayedLength > 0.0) {
++        const QRectF playedRect(
++            playedFromRight ? groove.right() - displayedLength : groove.left(),
++            groove.top(), displayedLength, groove.height());
++        QPainterPath playedPath;
++        playedPath.addRoundedRect(playedRect, kGrooveHeight / 2.0,
++                                  kGrooveHeight / 2.0);
++        painter.fillPath(playedPath, m_played_color);
++    }
++    painter.restore();
++
++    if (property("handleVisible").toBool()) {
++        const qreal handleRadius = 6.0;
++        qreal handleX = playedFromRight ? groove.right() - playedLength
++                                       : groove.left() + playedLength;
++        handleX = qBound(handleRadius, handleX, width() - handleRadius);
++        painter.setBrush(m_handle_color);
++        painter.setPen(Qt::NoPen);
++        painter.drawEllipse(QPointF(handleX, groove.center().y()),
++                            handleRadius, handleRadius);
++    }
++}
++
+ void Slider::mousePressEvent(QMouseEvent *ev) {
+-    QSlider::mousePressEvent(ev);
+-    double pos = ev->pos().x() / (double)width();
+-    setValue(pos * (maximum() - minimum()) + minimum());
+-    Q_EMIT SliderClicked();
++    if (ev->button() != Qt::LeftButton) {
++        QSlider::mousePressEvent(ev);
++        return;
++    }
++
++    setSliderDown(true);
++    updateValueFromMouse(ev->pos());
++    ev->accept();
++}
++
++void Slider::mouseMoveEvent(QMouseEvent *ev) {
++    if (!isSliderDown()) {
++        QSlider::mouseMoveEvent(ev);
++        return;
++    }
++
++    updateValueFromMouse(ev->pos());
++    ev->accept();
++}
++
++void Slider::mouseReleaseEvent(QMouseEvent *ev) {
++    if (ev->button() != Qt::LeftButton || !isSliderDown()) {
++        QSlider::mouseReleaseEvent(ev);
++        return;
++    }
++
++    updateValueFromMouse(ev->pos());
++    setSliderDown(false);
++    ev->accept();
++}
++
++void Slider::updateValueFromMouse(const QPoint &position) {
++    QStyleOptionSlider option;
++    initStyleOption(&option);
++    const QRect groove = style()->subControlRect(QStyle::CC_Slider, &option,
++                                                 QStyle::SC_SliderGroove, this);
++    const QRect handle = style()->subControlRect(QStyle::CC_Slider, &option,
++                                                 QStyle::SC_SliderHandle, this);
++    const int sliderSpan = qMax(0, groove.width() - handle.width());
++    const int sliderPosition = qBound(0,
++                                      position.x() - groove.x() - handle.width() / 2,
++                                      sliderSpan);
++    const int value = QStyle::sliderValueFromPosition(minimum(), maximum(),
++                                                      sliderPosition, sliderSpan,
++                                                      option.upsideDown);
++    setSliderPosition(value);
+ }
+diff --git a/core/components/slider.h b/core/components/slider.h
+index 9062b1b..1be6354 100644
+--- a/core/components/slider.h
++++ b/core/components/slider.h
+@@ -25,6 +25,7 @@
+ 
+ #include <QSlider>
+ #include <QMouseEvent>
++#include <QColor>
+ 
+ class Slider : public QSlider
+ {
+@@ -32,10 +33,20 @@ class Slider : public QSlider
+ public:
+     explicit Slider(QWidget *parent = nullptr);
+     ~Slider() = default;
++    void setProgressColors(const QColor &played, const QColor &unplayed,
++                           const QColor &handle);
+ protected:
++    void paintEvent(QPaintEvent *event) override;
+     void mousePressEvent(QMouseEvent *ev) override;
+-Q_SIGNALS:
+-    void SliderClicked();
++    void mouseMoveEvent(QMouseEvent *ev) override;
++    void mouseReleaseEvent(QMouseEvent *ev) override;
++
++private:
++    void updateValueFromMouse(const QPoint &position);
++
++    QColor m_played_color = QColor("#2f88ff");
++    QColor m_unplayed_color = QColor("#d9d9d9");
++    QColor m_handle_color = Qt::white;
+ };
+ 
+ #endif // SLIDER_H
+diff --git a/core/content-preview-page.cpp b/core/content-preview-page.cpp
+index ec24b23..6f5e4a1 100644
+--- a/core/content-preview-page.cpp
++++ b/core/content-preview-page.cpp
+@@ -30,7 +30,9 @@
+ 
+ #include <QDebug>
+ 
+-ContentPreviewPage::ContentPreviewPage(QWidget *parent) : QStackedWidget(parent)
++ContentPreviewPage::ContentPreviewPage(QWidget *parent, bool simplePreview)
++    : QStackedWidget(parent),
++      m_simple_preview(simplePreview)
+ {
+     qDebug() << "Init ContentPreviewPage";
+ 
+@@ -42,7 +44,7 @@ ContentPreviewPage::ContentPreviewPage(QWidget *parent) : QStackedWidget(parent)
+     addWidget(m_empty_tab_widget);
+     setCurrentWidget(m_empty_tab_widget);
+ 
+-    m_page_manger = new PreviewPageManger(this);
++    m_page_manger = new PreviewPageManger(this, m_simple_preview);
+ }
+ 
+ ContentPreviewPage::~ContentPreviewPage()
+@@ -101,6 +103,11 @@ void ContentPreviewPage::cancel() {
+     qDebug() << "out cancel";
+ }
+ 
++void ContentPreviewPage::hideEvent(QHideEvent *event) {
++    m_page_manger->cancel();
++    QStackedWidget::hideEvent(event);
++}
++
+ void ContentPreviewPage::paintEvent(QPaintEvent *e) {
+     QPainter p(this);
+     p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+diff --git a/core/content-preview-page.h b/core/content-preview-page.h
+index 7e5f281..df68b57 100644
+--- a/core/content-preview-page.h
++++ b/core/content-preview-page.h
+@@ -35,7 +35,7 @@ class ContentPreviewPage : public QStackedWidget
+ {
+     Q_OBJECT
+ public:
+-    explicit ContentPreviewPage(QWidget *parent = nullptr);
++    explicit ContentPreviewPage(QWidget *parent = nullptr, bool simplePreview = false);
+     ~ContentPreviewPage();
+     void prepare(const QString &uri);
+     void startPreview();
+@@ -45,6 +45,7 @@ public:
+     }
+ 
+ protected:
++    void hideEvent(QHideEvent *event) override;
+     void paintEvent(QPaintEvent *e) override;
+ 
+ private:
+@@ -56,6 +57,7 @@ private:
+     PreviewHubFileWatcher *m_watcher = nullptr;
+ 
+     bool m_support = true;
++    bool m_simple_preview = false;
+ };
+ 
+ #endif // CONTENTPREVIEWPAGE_H
+diff --git a/core/preview-page-manger.cpp b/core/preview-page-manger.cpp
+index 60387b6..7cd0e07 100644
+--- a/core/preview-page-manger.cpp
++++ b/core/preview-page-manger.cpp
+@@ -22,11 +22,11 @@
+ 
+ #include "preview-page-manger.h"
+ 
+-PreviewPageManger::PreviewPageManger(ContentPreviewPage *preview_page) :
++PreviewPageManger::PreviewPageManger(ContentPreviewPage *preview_page, bool simplePreview) :
+     the_preview_page(preview_page),
+-    m_current_page(nullptr)
++    m_current_page(nullptr),
++    m_simple_preview(simplePreview)
+ {
+-
+ }
+ 
+ PreviewPageManger::~PreviewPageManger() {
+@@ -43,7 +43,7 @@ BasePreviewPage *PreviewPageManger::createPage(PreviewType cas) {
+     case PreviewType::Video:
+         return new VideoPreviewPage;
+     case PreviewType::Image:
+-        return new ImagePreviewPage;
++        return new ImagePreviewPage(m_simple_preview);
+     case PreviewType::Pdf:
+ #ifdef USE_WEBENGINE_PREVIEW
+ #ifdef USE_QTPDF
+@@ -86,4 +86,3 @@ void PreviewPageManger::cancel() {
+     if (m_current_page != nullptr)
+         m_current_page->cancel();
+ }
+-
+diff --git a/core/preview-page-manger.h b/core/preview-page-manger.h
+index b2d43c5..6b534c6 100644
+--- a/core/preview-page-manger.h
++++ b/core/preview-page-manger.h
+@@ -50,7 +50,7 @@ class PreviewPageManger
+     typedef PreviewFileType::PreviewType PreviewType;
+ public:
+     PreviewPageManger() = delete;
+-    explicit PreviewPageManger(ContentPreviewPage *preview_page);
++    explicit PreviewPageManger(ContentPreviewPage *preview_page, bool simplePreview);
+     ~PreviewPageManger();
+ 
+ public:
+@@ -65,6 +65,7 @@ private:
+ 
+     QMap<PreviewType, BasePreviewPage *> m_page_pool;
+     BasePreviewPage *m_current_page;
++    bool m_simple_preview;
+ };
+ 
+ #endif // PREVIEWPAGEMANGER_H
+diff --git a/core/previewpage/audio.cpp b/core/previewpage/audio.cpp
+index 7b4252d..639c5d8 100644
+--- a/core/previewpage/audio.cpp
++++ b/core/previewpage/audio.cpp
+@@ -22,17 +22,63 @@
+ 
+ #include "previewpage/audio.h"
+ 
+-#include <QStyle>
++#include <QHBoxLayout>
++#include <QVBoxLayout>
++
++static QString formatDuration(qint64 milliseconds)
++{
++    const qint64 seconds = qMax<qint64>(0, milliseconds / 1000);
++    const qint64 hours = seconds / 3600;
++    const qint64 minutes = seconds % 3600 / 60;
++    const qint64 secs = seconds % 60;
++
++    if (hours > 0) {
++        return QString("%1:%2:%3")
++            .arg(hours)
++            .arg(minutes, 2, 10, QLatin1Char('0'))
++            .arg(secs, 2, 10, QLatin1Char('0'));
++    }
++    return QString("%1:%2")
++        .arg(minutes, 2, 10, QLatin1Char('0'))
++        .arg(secs, 2, 10, QLatin1Char('0'));
++}
+ 
+ AudioPreviewPage::AudioPreviewPage(QWidget *parent) : BasePreviewPage(parent)
+ {
+     m_player = new QMediaPlayer(this, QMediaPlayer::LowLatency);
+ 
+-    /* play button */
+-    m_button = new QPushButton(this);
+-    m_button->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+-
+-    connect(m_button, &QPushButton::clicked, this, [=]() {
++    /* file information */
++    m_icon = new QLabel(this);
++    m_icon->setFixedSize(112, 112);
++    m_icon->setAlignment(Qt::AlignCenter);
++
++    m_file_name_label = new QLabel(this);
++    m_file_name_label->setWordWrap(true);
++    m_file_name_label->setStyleSheet("font-size: 24px;");
++
++    m_duration_label = new QLabel(this);
++    m_duration_label->setStyleSheet("font-size: 14px;");
++
++    auto *details_layout = new QVBoxLayout;
++    details_layout->setContentsMargins(0, 0, 0, 0);
++    details_layout->setSpacing(10);
++    details_layout->addStretch();
++    details_layout->addWidget(m_file_name_label);
++    details_layout->addWidget(m_duration_label);
++    details_layout->addStretch();
++
++    auto *information_layout = new QHBoxLayout;
++    information_layout->setContentsMargins(0, 0, 0, 0);
++    information_layout->setSpacing(36);
++    information_layout->addWidget(m_icon);
++    information_layout->addLayout(details_layout);
++
++    /* media control bar */
++    m_control_bar = new MediaControlBar(this);
++    m_control_bar->setPreviewWidget(this);
++    m_control_bar->setFloating(true);
++
++    connect(m_control_bar, &MediaControlBar::playPauseClicked, this, [this]() {
+         switch (m_player->state()) {
+         case QMediaPlayer::PlayingState:
+             m_player->pause();
+@@ -43,117 +89,82 @@ AudioPreviewPage::AudioPreviewPage(QWidget *parent) : BasePreviewPage(parent)
+         }
+     });
+ 
+-    connect(m_player, &QMediaPlayer::stateChanged, this, [=](QMediaPlayer::State state) {
+-        switch(state) {
+-        case QMediaPlayer::PlayingState:
+-            m_button->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+-            timer->start();
+-            break;
+-        default:
+-            m_button->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+-            timer->stop();
+-            break;
+-        }
++    connect(m_player, &QMediaPlayer::stateChanged, this, [this](QMediaPlayer::State state) {
++        m_control_bar->setPlaying(state == QMediaPlayer::PlayingState);
+     });
+ 
+     /* loop play */
+-    connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [=](QMediaPlayer::MediaStatus status) {
++    connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
+         if (status == QMediaPlayer::EndOfMedia) {
+             m_player->setPosition(0);
+             m_player->play();
+         }
+     });
+ 
+-    /* time event */
+-    timer = new QTimer();
+-    timer->setInterval(1000 / 4);
+-    connect(timer, &QTimer::timeout, this, [=](){
+-        m_progress->setValue(m_player->position());
+-        qDebug() << m_player->position() << " " << m_player->duration() ;
++    connect(m_player, &QMediaPlayer::positionChanged, this, [this](qint64 position) {
++        m_control_bar->setPosition(position);
+     });
+ 
+-    /* position slider */
+-    m_progress = new Slider(this);
+-    connect(m_player, &QMediaPlayer::durationChanged, this, [=]() {
+-        m_progress->setRange(0, m_player->duration());
+-    });
+-    m_progress->setValue(0);
+-    connect(m_progress, &Slider::sliderMoved, this, [=]() {
+-        timer->stop();
++    connect(m_player, &QMediaPlayer::durationChanged, this, [this](qint64 duration) {
++        updateDuration(duration);
++        m_control_bar->setDuration(duration);
++        m_control_bar->setPosition(m_player->position());
+     });
+-    connect(m_progress, &Slider::sliderReleased, this, [=]() {
+-        m_player->setPosition(m_progress->value());
+-        timer->start();
++
++    connect(m_control_bar, &MediaControlBar::positionChanged, this, [this](qint64 position) {
++        m_player->setPosition(position);
+     });
+-    connect(m_progress, &Slider::SliderClicked, this, [=]() {
+-        m_player->setPosition(m_progress->value());
++
++    /* volume */
++    connect(m_control_bar, &MediaControlBar::volumeChanged, m_player, &QMediaPlayer::setVolume);
++    connect(m_control_bar, &MediaControlBar::muteToggled, this, [this]() {
++        m_player->setMuted(!m_player->isMuted());
+     });
++    connect(m_player, &QMediaPlayer::volumeChanged, m_control_bar, &MediaControlBar::setVolume);
++    connect(m_player, &QMediaPlayer::mutedChanged, m_control_bar, &MediaControlBar::setMuted);
++
++    base_layout->setContentsMargins(14, 0, 14, 18);
++    base_layout->addStretch();
++    base_layout->addLayout(information_layout);
++    base_layout->setAlignment(information_layout, Qt::AlignHCenter);
++    base_layout->addStretch();
+ 
+-    /* icon */
+-    m_icon = new IconButton(this);
+-    m_icon->setIconSize(QSize(96, 96));
+-    connect(m_player, QOverload<>::of(&QMediaPlayer::metaDataChanged), this, &AudioPreviewPage::updateMeta);
+-
+-    /* set layout */
+-    m_form = new QFormLayout;
+-    m_title_label = new QLabel(this);
+-    m_title_label->setWordWrap(true);
+-    m_form->addRow(tr("Title:"), m_title_label);
+-    m_author_label = new QLabel(this);
+-    m_form->addRow(tr("Author:"), m_author_label);
+-
+-    m_form->setFieldGrowthPolicy(QFormLayout::FieldsStayAtSizeHint);
+-    m_form->setFormAlignment(Qt::AlignHCenter);
+-    m_form->setLabelAlignment(Qt::AlignRight);
+-
+-    base_layout->addWidget(m_icon);
+-    QWidget *form = new QWidget(this);
+-    form->setLayout(m_form);
+-    form->setMaximumHeight(100);
+-    base_layout->addWidget(form);
+-    base_layout->addWidget(m_progress);
+-    base_layout->addWidget(m_button);
++    m_control_bar->setVolume(m_player->volume());
++    m_control_bar->setMuted(m_player->isMuted());
+ }
+ 
+-void AudioPreviewPage::updateInfo(PreviewHubFileInfo *info) {
++void AudioPreviewPage::updateInfo(PreviewHubFileInfo *info)
++{
++    stopPlayback();
++    const QIcon icon = QIcon::fromTheme(info->iconName(), QIcon::fromTheme("audio-x-generic"));
++    m_icon->setPixmap(icon.pixmap(96, 96));
++    m_file_name_label->setText(info->desktopName());
++    updateDuration(0);
++
+     m_player->setMedia(QUrl(info->uri()));
+     m_player->play();
+-    timer->start();
+-    m_base_icon = QIcon::fromTheme(info->iconName(), QIcon::fromTheme("text-x-generic"));
+-    // default value
+-    m_title_label->setText(info->desktopName());
+-    m_author_label->setText(tr("unknown"));
++    m_player->setMuted(false);
++    m_control_bar->showBar(true);
+ }
+ 
+-void AudioPreviewPage::cancel() {
++void AudioPreviewPage::cancel()
++{
+     qDebug() << "AudioPreviewPage::cancel";
+-    m_player->stop();
++    stopPlayback();
+ }
+ 
+-void AudioPreviewPage::updateMeta() {
+-    QVariant cover_val = m_player->metaData("CoverArtImage");
+-    const QIcon &icon = QIcon(QPixmap::fromImage(cover_val.value<QImage>()));
+-    m_icon->setIcon(icon.isNull() ? m_base_icon : icon);
+-
+-    QVariant title = m_player->metaData("Title");
+-    if (title.isValid())
+-        m_title_label->setText(title.toString());
+-
+-    QVariant autor = m_player->metaData("ContributingArtist");
+-    if (autor.isValid())
+-        m_author_label->setText(autor.toString());
+-    else {
+-        QVariant composer = m_player->metaData("Composer");
+-        if(composer.isValid())
+-            m_author_label->setText(composer.toString());
+-    }
+-    // qDebug() << m_player->availableMetaData() << "\n";
+-}
++void AudioPreviewPage::stopPlayback()
++{
++    m_control_bar->setPosition(0);
+ 
++    if (m_player->state() != QMediaPlayer::StoppedState)
++        m_player->stop();
+ 
+-void AudioPreviewPage::resizeEvent(QResizeEvent* event) {
+-    int width = event->size().width() - 50;
+-    width = qMax(width, 96);
+-    width = qMin(width, 256);
+-    m_icon->setIconSize(QSize(width, width * 2/3));
++    m_player->setMedia(QMediaContent());
++    m_control_bar->setDuration(0);
++}
++
++void AudioPreviewPage::updateDuration(qint64 duration)
++{
++    m_duration_label->setText(tr("Duration:") + QLatin1Char(' ') + formatDuration(duration));
+ }
+diff --git a/core/previewpage/audio.h b/core/previewpage/audio.h
+index d38ee8d..afe4e58 100644
+--- a/core/previewpage/audio.h
++++ b/core/previewpage/audio.h
+@@ -24,48 +24,32 @@
+ #define AUDIOPREVIEWPAGE_H
+ 
+ #include <QMediaPlayer>
+-#include <QPushButton>
+ #include <QLabel>
+-#include <QTimer>
+-#include <QFormLayout>
+ 
+ #include "previewpage/base.h"
+-#include "components/slider.h"
+-#include "components/icon-button.h"
++#include "components/media-control-bar.h"
+ 
+ class AudioPreviewPage : public BasePreviewPage
+ {
+     Q_OBJECT
+ public:
+     explicit AudioPreviewPage(QWidget *parent = nullptr);
+-    ~AudioPreviewPage() = default;
+ 
+ private:
+-    QPushButton *m_button;
+-    QPushButton *volume_button;
+-    Slider *m_progress;
+-    QTimer *timer;
+-    QMediaPlayer *m_player;
+-
+-    QIcon m_base_icon;
+-    IconButton *m_icon;
+-    QFormLayout *m_form;
+-    QLabel *m_title_label;
+-    QLabel *m_author_label;
+-//    QLabel *m_time_modified_label;
+-//    QLabel *m_time_access_label;
++    void stopPlayback();
++    void updateDuration(qint64 duration);
+ 
+-    void updateMeta();
++    QMediaPlayer *m_player;
++    QLabel *m_icon;
++    QLabel *m_file_name_label;
++    QLabel *m_duration_label;
++    MediaControlBar *m_control_bar;
+ 
+     // BasePreviewPage interface
+ public Q_SLOTS:
+     void updateInfo(PreviewHubFileInfo *info) override;
+ public:
+     void cancel() override;
+-
+-    // QWidget interface
+-protected:
+-    void resizeEvent(QResizeEvent* size) override;
+ };
+ 
+ #endif // AUDIOPREVIEWPAGE_H
+diff --git a/core/previewpage/image.cpp b/core/previewpage/image.cpp
+index 0953bb3..4912819 100644
+--- a/core/previewpage/image.cpp
++++ b/core/previewpage/image.cpp
+@@ -23,31 +23,51 @@
+ #include "previewpage/image.h"
+ 
+ #include <QEvent>
++#include <QIcon>
+ #include <QImage>
+ #include <QMouseEvent>
++#include <QPainter>
++#include <QTransform>
+ #include <QWheelEvent>
+ 
+-ImagePreviewPage::ImagePreviewPage(QWidget *parent) : BasePreviewPage(parent)
++namespace {
++constexpr qreal kZoomStep = 0.05;
++constexpr qreal kMinimumScale = 0.05;
++constexpr int kToolBarWidth = 352;
++constexpr int kToolButtonSize = 36;
++}
++
++ImagePreviewPage::ImagePreviewPage(bool simplePreview, QWidget *parent)
++    : BasePreviewPage(parent),
++      m_simple_preview(simplePreview)
+ {
+-    m_image_scene = new QGraphicsScene;
+-    m_image_item = new QGraphicsPixmapItem;
++    m_image_scene = new QGraphicsScene(this);
++    m_image_item = nullptr;
+     m_image_view = new QGraphicsView(m_image_scene, this);
+ 
+     this->setMouseTracking(true);
+     m_image_view->setMouseTracking(true);
+     m_image_view->viewport()->setMouseTracking(true);
+     m_image_view->viewport()->installEventFilter(this);
+-    m_image_item->setFlag(QGraphicsItem::ItemIsMovable, true);
++    m_image_view->setFrameShape(QFrame::NoFrame);
++    m_image_view->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
++    m_image_view->setBackgroundBrush(palette().brush(QPalette::Base));
+ 
+     m_scale = 1;
+     m_base_scale = 1;
+     m_is_moveing = false;
+     m_is_rotate90 = false;
+ 
+-    m_tool_bar = new QFrame(this);
++    m_tool_bar = new PreviewControlBar(this);
++    m_tool_bar->setMaximumWidth(kToolBarWidth);
++    m_tool_bar->setMinimumWidth(0);
+     m_tool_layout = new QHBoxLayout(m_tool_bar);
++    m_tool_layout->setContentsMargins(8, 0, 8, 0);
++    m_tool_layout->setSpacing(8);
++    m_tool_layout->setSizeConstraint(QLayout::SetNoConstraint);
++    m_tool_layout->addStretch();
+ 
+-    const QSize TOOL_BUTTON = QSize(24,24);
++    const QSize TOOL_BUTTON = QSize(kToolButtonSize, kToolButtonSize);
+     m_reduce_button = new QPushButton(m_tool_bar);
+     //m_reduce_button->setText("reduce");
+     m_reduce_button->setFixedSize(TOOL_BUTTON);
+@@ -55,6 +75,11 @@ ImagePreviewPage::ImagePreviewPage(QWidget *parent) : BasePreviewPage(parent)
+     m_tool_layout->addWidget(m_reduce_button);
+     connect(m_reduce_button, &QPushButton::clicked, this, &ImagePreviewPage::doReduce);
+ 
++    m_scale_label = new QLabel(m_tool_bar);
++    m_scale_label->setAlignment(Qt::AlignCenter);
++    m_scale_label->setFixedWidth(40);
++    m_tool_layout->addWidget(m_scale_label);
++
+     m_enlarge_button = new QPushButton(m_tool_bar);
+     //m_enlarge_button->setText("enlarge");
+     m_enlarge_button->setFixedSize(TOOL_BUTTON);
+@@ -69,13 +94,6 @@ ImagePreviewPage::ImagePreviewPage(QWidget *parent) : BasePreviewPage(parent)
+     m_tool_layout->addWidget(m_adaptive_button);
+     connect(m_adaptive_button, &QPushButton::clicked, this, &ImagePreviewPage::doAdaptive);
+ 
+-    m_rotate_button = new QPushButton(m_tool_bar);
+-    //m_rotate_button->setText("rotate");
+-    m_rotate_button->setFixedSize(TOOL_BUTTON);
+-    m_rotate_button->setFocusPolicy(Qt::NoFocus);
+-    m_tool_layout->addWidget(m_rotate_button);
+-    connect(m_rotate_button, &QPushButton::clicked, this, &ImagePreviewPage::doRotate);
+-
+     m_horizontal_flip_button = new QPushButton(m_tool_bar);
+     //m_horizontal_flip_button->setText("Hfilp");
+     m_horizontal_flip_button->setFixedSize(TOOL_BUTTON);
+@@ -90,44 +108,48 @@ ImagePreviewPage::ImagePreviewPage(QWidget *parent) : BasePreviewPage(parent)
+     m_tool_layout->addWidget(m_vertical_flip_button);
+     connect(m_vertical_flip_button, &QPushButton::clicked, this, &ImagePreviewPage::doVerticalFlip);
+ 
++    m_rotate_button = new QPushButton(m_tool_bar);
++    //m_rotate_button->setText("rotate");
++    m_rotate_button->setFixedSize(TOOL_BUTTON);
++    m_rotate_button->setFocusPolicy(Qt::NoFocus);
++    m_tool_layout->addWidget(m_rotate_button);
++    connect(m_rotate_button, &QPushButton::clicked, this, &ImagePreviewPage::doRotate);
++    m_tool_layout->addStretch();
++
+     initControlQss();
++    m_reduce_button->setVisible(!m_simple_preview);
++    m_scale_label->setVisible(!m_simple_preview);
++    m_enlarge_button->setVisible(!m_simple_preview);
+ 
++    base_layout->setContentsMargins(0, 0, 0, 0);
+     base_layout->addWidget(m_image_view);
+-    base_layout->addWidget(m_tool_bar);
++    m_tool_bar->setPreviewWidget(m_image_view);
++    m_tool_bar->setFloating(true);
+ }
+ 
+ ImagePreviewPage::~ImagePreviewPage() {
+-   m_image_scene->deleteLater();
+ }
+ 
+ void ImagePreviewPage::updateInfo(PreviewHubFileInfo *info) {
+     m_is_rotate90 = false;
++    m_scale = 1;
++    m_image_scene->clear();
+     QPixmap new_pixmap(info->filePath());
+     m_image_item = m_image_scene->addPixmap(new_pixmap);
+-    m_image_scene->setSceneRect(QRectF(new_pixmap.rect()));
++    m_image_item->setFlag(QGraphicsItem::ItemIsMovable, true);
++    m_image_item->setTransformationMode(Qt::SmoothTransformation);
++    updateSceneRect();
++    updateImageTransform(true);
+ }
+ 
+ void ImagePreviewPage::cancel() {
+     m_image_scene->clear();
+-}
+-
+-void ImagePreviewPage::paintEvent(QPaintEvent *event) {
+-    Q_UNUSED(event)
+-    m_image_view->resetTransform();
+-
+-    int height = m_image_item->pixmap().height();
+-    int width = m_image_item->pixmap().width();
+-    int max_height = m_image_view->height();
+-    int max_width = m_image_view->width();
+-    int pic_size = qMax(width, height);
+-    int max_size = qMin(max_width, max_height) - 5;
+-    m_base_scale = 1.0 * max_size / pic_size;
+-
+-    double val = m_scale * m_base_scale;
+-    m_image_view->scale(val, val);
++    m_image_item = nullptr;
+ }
+ 
+ void ImagePreviewPage::doHorizontalFlip() {
++    if (!m_image_item)
++        return;
+     /*QImage origin_image = m_image_item->pixmap().toImage();
+     QImage new_image = QImage(QSize(origin_image.width(), origin_image.height()),
+                                   QImage::Format_ARGB32);
+@@ -151,43 +173,62 @@ void ImagePreviewPage::doHorizontalFlip() {
+                     .translate(r.width() / 2, r.height() /2)
+                     .rotate(180, m_is_rotate90 ? Qt::XAxis : Qt::YAxis)
+                     .translate(-r.width() / 2, -r.height() / 2));
++    updateSceneRect();
+ }
+ 
+ void ImagePreviewPage::doVerticalFlip() {
++    if (!m_image_item)
++        return;
+     QRectF r = m_image_item->boundingRect();
+     m_image_item->setTransform(m_image_item->transform()
+                     .translate(r.width() / 2, r.height() /2)
+                     .rotate(180, m_is_rotate90 ? Qt::YAxis : Qt::XAxis)
+                     .translate(-r.width() / 2, -r.height() / 2));
++    updateSceneRect();
+ }
+ 
+ void ImagePreviewPage::doRotate() {
++    if (!m_image_item)
++        return;
+     QRectF r = m_image_item->boundingRect();
+     m_image_item->setTransform(m_image_item->transform()
+                     .translate(r.width() / 2, r.height() /2)
+                     .rotate(90)
+                     .translate(-r.width() / 2, -r.height() / 2));
+     m_is_rotate90 = !m_is_rotate90;
++    updateSceneRect();
++    updateImageTransform(true);
+ }
+ 
+ void ImagePreviewPage::doEnlarge() {
+-    m_scale += 0.05;
+-    this->repaint();
++    m_scale += kZoomStep;
++    applyImageTransform();
+ }
+ 
+ void ImagePreviewPage::doReduce() {
+-    if (m_scale > 0.06)
+-        m_scale -= 0.05;
+-    this->repaint();
++    m_scale = qMax(kMinimumScale, m_scale - kZoomStep);
++    applyImageTransform();
+ }
+ 
+ void ImagePreviewPage::doAdaptive() {
++    if (!m_image_item)
++        return;
+     m_scale = 1;
+     m_image_item->resetTransform();
++    m_is_rotate90 = false;
++    updateSceneRect();
++    updateImageTransform(true);
+ }
+ 
+ bool ImagePreviewPage::eventFilter(QObject *watched, QEvent *event) {
+-    qDebug() << event->type();
++    if (!m_image_item)
++        return BasePreviewPage::eventFilter(watched, event);
++
++    if (watched == m_image_view->viewport() && event->type() == QEvent::Resize) {
++        updateImageTransform(true);
++        return BasePreviewPage::eventFilter(watched, event);
++    }
++
+     if (event->type() == QEvent::Wheel) {
+         QWheelEvent *ev = static_cast<QWheelEvent *>(event);
+         if (ev->modifiers() & Qt::ControlModifier) {
+@@ -202,15 +243,19 @@ bool ImagePreviewPage::eventFilter(QObject *watched, QEvent *event) {
+     if (event->type() == QEvent::MouseButtonPress) {
+         QMouseEvent *ev = static_cast<QMouseEvent *>(event);
+         m_is_moveing = true;
+-        setCursor(Qt::CrossCursor);
++        setCursor(Qt::ClosedHandCursor);
+         m_last_point = ev->pos();
+     }
+     if (event->type() == QEvent::MouseMove && m_is_moveing) {
+         QMouseEvent *ev = static_cast<QMouseEvent *>(event);
+         //qDebug() << "R " << ev->pos() <<  ev->globalPos() << ev->screenPos();
+ 
+-        double dx = (ev->pos().x() - m_last_point.x()) / (m_base_scale * m_scale);
+-        double dy = (ev->pos().y() - m_last_point.y()) / (m_base_scale * m_scale);
++        const qreal scale = m_base_scale * m_scale;
++        if (qFuzzyIsNull(scale))
++            return BasePreviewPage::eventFilter(watched, event);
++
++        double dx = (ev->pos().x() - m_last_point.x()) / scale;
++        double dy = (ev->pos().y() - m_last_point.y()) / scale;
+ 
+         m_image_item->setTransform(m_image_item->transform().translate(dx, dy));
+         m_last_point = ev->pos();
+@@ -219,49 +264,78 @@ bool ImagePreviewPage::eventFilter(QObject *watched, QEvent *event) {
+         m_is_moveing = false;
+         setCursor(Qt::ArrowCursor);
+     }
+-    return QObject::eventFilter(watched, event);
++    return BasePreviewPage::eventFilter(watched, event);
+ }
+ 
+ void ImagePreviewPage::initControlQss() {
+     bool isdark = palette().color(QPalette::Base).lightness() < 128;
+-    m_tool_bar->setStyleSheet("QPushButton{border:0px;border-radius:4px;background:transparent;}");
++    const auto setButtonIcon = [](QPushButton *button, const QString &normal,
++                                  const QString &hover) {
++        QIcon icon;
++        icon.addFile(normal, QSize(), QIcon::Normal);
++        icon.addFile(hover, QSize(), QIcon::Active);
++        button->setIcon(icon);
++        button->setIconSize(QSize(24, 24));
++        button->setStyleSheet(
++            "QPushButton{border:0px;border-radius:4px;background:transparent;}");
++    };
+     if (isdark) {
+-        m_reduce_button->setStyleSheet("QPushButton{background-image: url(:/res/1reduce.png);}"
+-                                       "QPushButton:hover{background-image: url(:/res/1reduce_hover.png);}");
+-
+-        m_enlarge_button->setStyleSheet("QPushButton{background-image: url(:/res/1enlarge.png);}"
+-                                        "QPushButton::hover{background-image: url(:/res/1enlarge_hover.png);}");
+-
+-        m_adaptive_button->setStyleSheet("QPushButton{background:transparent;background-image: url(:/res/1adaptiveWidget.png);}"
+-                                         "QPushButton::hover{background-image: url(:/res/1adaptiveWidget_hover.png);}");
+-
+-        m_rotate_button->setStyleSheet("QPushButton{background-image: url(:/res/1rotate.png);}"
+-                                       "QPushButton::hover{background-image: url(:/res/1rotate_hover.png);}");
++        setButtonIcon(m_reduce_button, ":/res/1reduce.png", ":/res/1reduce_hover.png");
++        setButtonIcon(m_enlarge_button, ":/res/1enlarge.png", ":/res/1enlarge_hover.png");
++        setButtonIcon(m_adaptive_button, ":/res/1adaptiveWidget.png", ":/res/1adaptiveWidget_hover.png");
++        setButtonIcon(m_rotate_button, ":/res/1rotate.png", ":/res/1rotate_hover.png");
++        setButtonIcon(m_horizontal_flip_button, ":/res/1flipH.png", ":/res/1flipH_hover.png");
++        setButtonIcon(m_vertical_flip_button, ":/res/1flipV.png", ":/res/1flipV_hover.png");
++    } else {
++        setButtonIcon(m_reduce_button, ":/res/reduce.png", ":/res/reduce_hover.png");
++        setButtonIcon(m_enlarge_button, ":/res/enlarge.png", ":/res/enlarge_hover.png");
++        setButtonIcon(m_adaptive_button, ":/res/adaptiveWidget.png", ":/res/adaptiveWidget_hover.png");
++        setButtonIcon(m_rotate_button, ":/res/rotate.png", ":/res/rotate_hover.png");
++        setButtonIcon(m_horizontal_flip_button, ":/res/flipH.png", ":/res/flipH_hover.png");
++        setButtonIcon(m_vertical_flip_button, ":/res/flipV.png", ":/res/flipV_hover.png");
++    }
++    m_scale_label->setStyleSheet(QString("QLabel{color:%1;font-size:12px;background:transparent;}")
++                                     .arg(isdark ? "#f1f1f1" : "#2d2d2d"));
++}
+ 
+-        m_horizontal_flip_button->setStyleSheet("QPushButton{background-image: url(:/res/1flipH.png);}"
+-                                                "QPushButton::hover{background-image: url(:/res/1flipH_hover.png);}");
++void ImagePreviewPage::updateImageTransform(bool centerImage) {
++    if (!m_image_item || m_image_item->pixmap().isNull())
++        return;
+ 
+-        m_vertical_flip_button->setStyleSheet("QPushButton{background-image: url(:/res/1flipV.png);}"
+-                                              "QPushButton::hover{background-image: url(:/res/1flipV_hover.png);}");
+-    } else {
+-        m_reduce_button->setStyleSheet("QPushButton{background-image: url(:/res/reduce.png);}"
+-                                       "QPushButton:hover{background-image: url(:/res/reduce_hover.png);}");
++    const QSize viewportSize = m_image_view->viewport()->size();
++    if (viewportSize.isEmpty())
++        return;
+ 
+-        m_enlarge_button->setStyleSheet("QPushButton{background-image: url(:/res/enlarge.png);}"
+-                                        "QPushButton::hover{background-image: url(:/res/enlarge_hover.png);}");
++    const QPixmap pixmap = m_image_item->pixmap();
++    const QSize imageSize = m_is_rotate90
++        ? QSize(pixmap.height(), pixmap.width())
++        : pixmap.size();
++    m_base_scale = qMin(static_cast<qreal>(viewportSize.width()) / imageSize.width(),
++                        static_cast<qreal>(viewportSize.height()) / imageSize.height());
+ 
+-        m_adaptive_button->setStyleSheet("QPushButton{background:transparent;background-image: url(:/res/adaptiveWidget.png);}"
+-                                         "QPushButton::hover{background-image: url(:/res/adaptiveWidget_hover.png);}");
++    applyImageTransform(centerImage);
++}
+ 
+-        m_rotate_button->setStyleSheet("QPushButton{background-image: url(:/res/rotate.png);}"
+-                                       "QPushButton::hover{background-image: url(:/res/rotate_hover.png);}");
++void ImagePreviewPage::applyImageTransform(bool centerImage) {
++    if (!m_image_item)
++        return;
++
++    QTransform transform;
++    const qreal scale = m_base_scale * m_scale;
++    transform.scale(scale, scale);
++    m_image_view->setTransform(transform);
++    if (centerImage)
++        m_image_view->centerOn(m_image_item);
++    updateScaleLabel();
++}
+ 
+-        m_horizontal_flip_button->setStyleSheet("QPushButton{background-image: url(:/res/flipH.png);}"
+-                                                "QPushButton::hover{background-image: url(:/res/flipH_hover.png);}");
++void ImagePreviewPage::updateScaleLabel() {
++    m_scale_label->setText(QString::number(qRound(m_base_scale * m_scale * 100)) + "%");
++}
+ 
+-        m_vertical_flip_button->setStyleSheet("QPushButton{background-image: url(:/res/flipV.png);}"
+-                                              "QPushButton::hover{background-image: url(:/res/flipV_hover.png);}");
+-    }
++void ImagePreviewPage::updateSceneRect() {
++    if (m_image_item)
++        m_image_scene->setSceneRect(m_image_item->sceneBoundingRect());
+ }
+ 
+ void ImagePreviewPage::changeEvent(QEvent *event) {
+@@ -269,6 +343,7 @@ void ImagePreviewPage::changeEvent(QEvent *event) {
+     // 不监听 StyleChange，避免 initControlQss() 内 setStyleSheet 潜在的自触发。
+     if (event->type() == QEvent::PaletteChange) {
+         initControlQss();
++        m_image_view->setBackgroundBrush(palette().brush(QPalette::Base));
+     }
+     BasePreviewPage::changeEvent(event);
+ }
+diff --git a/core/previewpage/image.h b/core/previewpage/image.h
+index fb5af69..6233a66 100644
+--- a/core/previewpage/image.h
++++ b/core/previewpage/image.h
+@@ -27,17 +27,20 @@
+ 
+ #include <QGraphicsPixmapItem>
+ #include <QGraphicsView>
++#include <QLabel>
+ #include <QPushButton>
+ 
++#include "components/preview-control-bar.h"
++
+ class ImagePreviewPage : public BasePreviewPage
+ {
+     Q_OBJECT
+ public:
+-    explicit ImagePreviewPage(QWidget *parent = nullptr);
++    explicit ImagePreviewPage(bool simplePreview, QWidget *parent = nullptr);
+     ~ImagePreviewPage();
+ 
+ private:
+-    QGraphicsScene  *m_image_scene;
++    QGraphicsScene *m_image_scene;
+     QGraphicsView *m_image_view;
+     QGraphicsPixmapItem *m_image_item;
+ 
+@@ -45,6 +48,7 @@ private:
+     qreal m_base_scale;
+     bool m_is_rotate90;
+     bool m_is_moveing;
++    bool m_simple_preview;
+     QPoint m_last_point;
+ 
+     QPushButton *m_horizontal_flip_button;
+@@ -53,11 +57,16 @@ private:
+     QPushButton *m_enlarge_button;
+     QPushButton *m_rotate_button;
+     QPushButton *m_adaptive_button;
++    QLabel *m_scale_label;
+ 
+-    QFrame *m_tool_bar;
++    PreviewControlBar *m_tool_bar;
+     QHBoxLayout *m_tool_layout;
+ 
+     void initControlQss();
++    void updateImageTransform(bool centerImage = false);
++    void applyImageTransform(bool centerImage = false);
++    void updateScaleLabel();
++    void updateSceneRect();
+ 
+     void doHorizontalFlip();
+     void doVerticalFlip();
+@@ -75,7 +84,6 @@ public Q_SLOTS:
+ 
+     // QWidget interface
+ protected:
+-    void paintEvent(QPaintEvent *event) override;
+     void changeEvent(QEvent *event) override;
+ 
+     // QObject interface
+diff --git a/core/previewpage/text.cpp b/core/previewpage/text.cpp
+index 680b86b..b46b8aa 100644
+--- a/core/previewpage/text.cpp
++++ b/core/previewpage/text.cpp
+@@ -1,5 +1,7 @@
+ #include "previewpage/text.h"
+ 
++#include <QApplication>
++#include <QColor>
+ #include <QEvent>
+ 
+ /*
+@@ -52,10 +54,21 @@ TextPreviewPage::TextPreviewPage(QWidget *parent) : BasePreviewPage(parent)
+ 
+ void TextPreviewPage::applyTheme() {
+ #ifdef USE_KSyntaxHighlighting
+-    // 语法高亮器用自身 theme 写死前景色(脱离 palette)，需按当前 palette 明暗重新设定
+-    m_highlighter->setTheme((palette().color(QPalette::Base).lightness() < 128) ?
+-                                m_repository.defaultTheme(KSyntaxHighlighting::Repository::DarkTheme) :
+-                                m_repository.defaultTheme(KSyntaxHighlighting::Repository::LightTheme));
++    // 以应用级 palette 判断明暗（主题切换的源头，比子控件 palette 更可靠）
++    const bool is_dark = qApp->palette().color(QPalette::Base).lightness() < 128;
++    const auto theme = is_dark ?
++                m_repository.defaultTheme(KSyntaxHighlighting::Repository::DarkTheme) :
++                m_repository.defaultTheme(KSyntaxHighlighting::Repository::LightTheme);
++    m_highlighter->setTheme(theme);
++
++    // 关键：SyntaxHighlighter 只给有语法定义的 token 上色，普通文本(含纯 txt)
++    // 的前景/背景由编辑器 palette 决定，必须把 theme 的颜色显式写回编辑器 palette，
++    // 否则深色主题下正文仍用旧文字色（表现为黑字看不清）。
++    QPalette pal = m_text_edit->palette();
++    pal.setColor(QPalette::Base, QColor(theme.editorColor(KSyntaxHighlighting::Theme::BackgroundColor)));
++    pal.setColor(QPalette::Text, QColor(theme.textColor(KSyntaxHighlighting::Theme::Normal)));
++    m_text_edit->setPalette(pal);
++
+     m_highlighter->rehighlight();
+ #endif
+ }
+diff --git a/core/previewpage/video.cpp b/core/previewpage/video.cpp
+index 7e8e163..43ced70 100644
+--- a/core/previewpage/video.cpp
++++ b/core/previewpage/video.cpp
+@@ -22,26 +22,36 @@
+ 
+ #include "previewpage/video.h"
+ 
+-#include <QStyle>
+-#include <QSpacerItem>
++#include <QResizeEvent>
+ 
+ VideoPreviewPage::VideoPreviewPage(QWidget *parent) : BasePreviewPage(parent)
+ {
+     m_player = new QMediaPlayer(this, QMediaPlayer::VideoSurface);
+     m_video_item = new QGraphicsVideoItem;
+-    m_video_scene = new QGraphicsScene;
+-    m_video_view = new QGraphicsView(m_video_scene, this);
++    m_video_item->setAspectRatioMode(Qt::KeepAspectRatio);
++    m_video_scene = new QGraphicsScene(this);
++    m_video_container = new QWidget(this);
++    m_video_container->setMouseTracking(true);
++    m_video_view = new QGraphicsView(m_video_scene, m_video_container);
+     m_video_view->setDragMode(QGraphicsView::NoDrag);
+-    m_video_view->setStyleSheet("padding:0px;border:0px");
++    m_video_view->setAlignment(Qt::AlignCenter);
++    m_video_view->setFrameShape(QFrame::NoFrame);
++    m_video_view->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    m_video_view->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
++    m_video_view->setStyleSheet("padding:0px;border:0px;background:transparent");
++    m_video_view->setMouseTracking(true);
++    m_video_view->viewport()->setMouseTracking(true);
+ 
+     m_video_scene->addItem(m_video_item);
+     m_player->setVideoOutput(m_video_item);
+ 
+-    /* play button */
+-    m_play_button = new QPushButton(this);
+-    m_play_button->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
++    /* media control bar */
++    m_control_bar = new MediaControlBar(m_video_container);
++    m_control_bar->setPreviewWidget(m_video_container);
++    m_control_bar->setFloating(true);
+ 
+-    connect(m_play_button, &QPushButton::clicked, this, [=]() {
++    /* play/pause */
++    connect(m_control_bar, &MediaControlBar::playPauseClicked, this, [=]() {
+         switch (m_player->state()) {
+         case QMediaPlayer::PlayingState:
+             m_player->pause();
+@@ -53,99 +63,95 @@ VideoPreviewPage::VideoPreviewPage(QWidget *parent) : BasePreviewPage(parent)
+     });
+ 
+     connect(m_player, &QMediaPlayer::stateChanged, this, [=](QMediaPlayer::State state) {
+-        switch(state) {
+-        case QMediaPlayer::PlayingState:
+-            m_play_button->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
+-            timer->start();
+-            break;
+-        default:
+-            m_play_button->setIcon(style()->standardIcon(QStyle::SP_MediaPlay));
+-            timer->stop();
+-            break;
+-        }
++        m_control_bar->setPlaying(state == QMediaPlayer::PlayingState);
+     });
+ 
+     /* loop play */
+     connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [=](QMediaPlayer::MediaStatus status) {
+         if (status == QMediaPlayer::EndOfMedia) {
++            // Reloading avoids a GStreamer "internal data stream error" on replay.
+             m_player->setMedia(m_player->media());
+-            // if not reload, error:"internal data stream error"
+             m_player->setPosition(0);
+             m_player->play();
+         }
+     });
+ 
+-    /* time event */
+-    timer = new QTimer();
+-    timer->setInterval(1000 / 4);
+-    connect(timer, &QTimer::timeout, this, [=]() {
+-         m_position_slider->setValue(m_player->position());
+-         //qDebug() << m_player->position() << " " << m_player->duration() ;
++    connect(m_player, &QMediaPlayer::positionChanged, this, [=](qint64 position) {
++        m_control_bar->setPosition(position);
+     });
+ 
+     /* position slider */
+-    m_position_slider = new Slider(this);
+     connect(m_player, &QMediaPlayer::durationChanged, this, [=](qint64 duration) {
+-        m_position_slider->setRange(0, duration);
++        m_control_bar->setDuration(duration);
++        m_control_bar->setPosition(m_player->position());
++    });
++
++    connect(m_control_bar, &MediaControlBar::positionChanged, this, [=](qint64 position) {
++        m_player->setPosition(position);
+     });
+-    m_position_slider->setValue(0);
+ 
+-    connect(m_position_slider, &Slider::sliderMoved, this, [=]() {
+-        timer->stop();
++    /* volume */
++    connect(m_control_bar, &MediaControlBar::volumeChanged, this, [=](int volume) {
++        m_player->setVolume(volume);
++    });
++    connect(m_control_bar, &MediaControlBar::muteToggled, this, [=]() {
++        m_player->setMuted(!m_player->isMuted());
+     });
+-    connect(m_position_slider, &Slider::sliderReleased, this, [=]() {
+-        m_player->setPosition(m_position_slider->value());
+-        timer->start();
++    connect(m_player, &QMediaPlayer::volumeChanged, this, [=](int volume) {
++        m_control_bar->setVolume(volume);
+     });
+-    connect(m_position_slider, &Slider::SliderClicked, this, [=]() {
+-        m_player->setPosition(m_position_slider->value());
++    connect(m_player, &QMediaPlayer::mutedChanged, this, [=](bool muted) {
++        m_control_bar->setMuted(muted);
+     });
+ 
+     /* resize event */
+     connect(m_video_item, &QGraphicsVideoItem::nativeSizeChanged, this, [=]() {
+-        qDebug() << "nativeSizeChanged:" << m_video_item->boundingRect().isValid();
+-        QResizeEvent *event = new QResizeEvent(size(), size());
+-        Q_EMIT resizeEvent(event);
++        updateVideoGeometry();
+     });
+ 
+-    /* set layout */
+-    base_layout->addWidget(m_video_view, 30);
+-    //m_video_view->setSizePolicy(QSizePolicy::Expanding ,QSizePolicy::Expanding);
+-    base_layout->addStretch(1);
+-    base_layout->addWidget(m_position_slider);
+-    //base_layout->addSpacing(20);
+-    base_layout->addStretch(1);
+-    base_layout->addWidget(m_play_button);
+-    base_layout->addStretch(1);
++    /* layout */
++    base_layout->setContentsMargins(0, 0, 0, 0);
++    base_layout->addWidget(m_video_container);
++
++    m_control_bar->setVolume(m_player->volume());
++    m_control_bar->setMuted(m_player->isMuted());
+ }
+ 
+ VideoPreviewPage::~VideoPreviewPage() {
+-    m_video_scene->deleteLater();
++    stopPlayback();
+ }
+ 
+ void VideoPreviewPage::updateInfo(PreviewHubFileInfo *info) {
+-     m_player->setMedia(QUrl(info->uri()));
+-     m_player->play();
+-     qDebug() << m_video_item->boundingRect();
++    stopPlayback();
++    m_player->setMedia(QUrl(info->uri()));
++    m_player->play();
++    m_player->setMuted(false);
++    m_control_bar->showBar(true);
+ }
+ 
+ void VideoPreviewPage::cancel() {
+-    m_player->pause();
++    stopPlayback();
++}
++
++void VideoPreviewPage::stopPlayback() {
++    m_control_bar->setPosition(0);
++
++    if (m_player->state() != QMediaPlayer::StoppedState)
++        m_player->stop();
++
++    m_player->setMedia(QMediaContent());
++    m_control_bar->setDuration(0);
+ }
+ 
+ void VideoPreviewPage::resizeEvent(QResizeEvent *event) {
+-    qDebug() << "     VideoPreviewPage::resizeEvent" << event->size() << " "
+-             << m_video_item->boundingRect() << " " << m_video_item->nativeSize();
+-
+-    if (m_video_scene->sceneRect().isValid()) {
+-        qDebug() << m_video_scene->sceneRect() << " " << m_video_item->boundingRect();
+-        m_video_view->resetTransform();
+-        int height = m_video_scene->sceneRect().height();
+-        int width = m_video_scene->sceneRect().width();
+-        int max_height = m_video_view->height() - 5;
+-        int max_width = m_video_view->width() - 5;
+-        double val =  qMin(1.0 * max_width / width, 1.0 * max_height / height);
+-        m_video_view->scale(val, val);
+-        qDebug() << "Resize:" << val;
+-    }
++    BasePreviewPage::resizeEvent(event);
++    updateVideoGeometry();
++}
++
++void VideoPreviewPage::updateVideoGeometry() {
++    const QRect rect = m_video_container->rect();
++    m_video_view->setGeometry(rect);
++    m_video_scene->setSceneRect(rect);
++    m_video_item->setPos(0, 0);
++    m_video_item->setSize(rect.size());
+ }
+diff --git a/core/previewpage/video.h b/core/previewpage/video.h
+index e15750c..91fc8b8 100644
+--- a/core/previewpage/video.h
++++ b/core/previewpage/video.h
+@@ -27,12 +27,9 @@
+ #include <QGraphicsVideoItem>
+ #include <QGraphicsScene>
+ #include <QGraphicsView>
+-#include <QPushButton>
+-#include <QVBoxLayout>
+-#include <QTimer>
+ 
+ #include "previewpage/base.h"
+-#include "components/slider.h"
++#include "components/media-control-bar.h"
+ 
+ class VideoPreviewPage : public BasePreviewPage
+ {
+@@ -42,13 +39,15 @@ public:
+     ~VideoPreviewPage();
+ 
+ private:
++    void updateVideoGeometry();
++    void stopPlayback();
++
+     QMediaPlayer *m_player;
+     QGraphicsVideoItem *m_video_item;
+     QGraphicsScene *m_video_scene;
+     QGraphicsView *m_video_view;
+-    QPushButton *m_play_button;
+-    Slider *m_position_slider;
+-    QTimer *timer;
++    QWidget *m_video_container;
++    MediaControlBar *m_control_bar;
+ 
+     // BasePreviewPage interface
+ public:
+diff --git a/include/ukui_previewhub_api.h b/include/ukui_previewhub_api.h
+index e6d998a..0d723e7 100644
+--- a/include/ukui_previewhub_api.h
++++ b/include/ukui_previewhub_api.h
+@@ -7,12 +7,25 @@
+ extern "C" {
+ #endif
+ 
++/** Controls how much image-preview UI is shown. */
++typedef enum UkuiPreviewHubPreviewMode {
++    UKUI_PREVIEWHUB_PREVIEW_MODE_SIMPLE = 0,
++    UKUI_PREVIEWHUB_PREVIEW_MODE_COMPLEX = 1
++} UkuiPreviewHubPreviewMode;
++
+ /**
+  * Create the preview widget. Cast the return value to QWidget* in C++.
+  * @param parent_qwidget Parent QWidget*, or nullptr for a top-level preview widget.
+  */
+ UKUIPREVIEWHUB_EXPORT void *ukui_previewhub_preview_widget_create(void *parent_qwidget);
+ 
++/**
++ * Create the preview widget with the requested presentation mode.
++ * The legacy create function uses complex mode.
++ */
++UKUIPREVIEWHUB_EXPORT void *ukui_previewhub_preview_widget_create_with_mode(
++    void *parent_qwidget, UkuiPreviewHubPreviewMode mode);
++
+ UKUIPREVIEWHUB_EXPORT void ukui_previewhub_preview_widget_destroy(void *widget);
+ 
+ /**
+@@ -32,10 +45,17 @@ UKUIPREVIEWHUB_EXPORT void ukui_previewhub_preview_cancel(void *widget);
+ 
+ namespace UkuiPreviewHub {
+ 
++enum class PreviewMode {
++    Simple = UKUI_PREVIEWHUB_PREVIEW_MODE_SIMPLE,
++    Complex = UKUI_PREVIEWHUB_PREVIEW_MODE_COMPLEX
++};
++
+ /** Returns a QWidget* that hosts the shared preview implementation. */
+-inline QWidget *createPreviewWidget(QWidget *parent = nullptr)
++inline QWidget *createPreviewWidget(QWidget *parent = nullptr,
++                                    PreviewMode mode = PreviewMode::Complex)
+ {
+-    return static_cast<QWidget *>(ukui_previewhub_preview_widget_create(parent));
++    return static_cast<QWidget *>(ukui_previewhub_preview_widget_create_with_mode(
++        parent, static_cast<UkuiPreviewHubPreviewMode>(mode)));
+ }
+ 
+ inline void destroyPreviewWidget(QWidget *widget)
+diff --git a/src/ukui_previewhub_api.cpp b/src/ukui_previewhub_api.cpp
+index e12d2c5..d5f14ff 100644
+--- a/src/ukui_previewhub_api.cpp
++++ b/src/ukui_previewhub_api.cpp
+@@ -7,9 +7,17 @@
+ extern "C" {
+ 
+ void *ukui_previewhub_preview_widget_create(void *parent_qwidget)
++{
++    return ukui_previewhub_preview_widget_create_with_mode(
++        parent_qwidget, UKUI_PREVIEWHUB_PREVIEW_MODE_COMPLEX);
++}
++
++void *ukui_previewhub_preview_widget_create_with_mode(
++    void *parent_qwidget, UkuiPreviewHubPreviewMode mode)
+ {
+     QWidget *parent = static_cast<QWidget *>(parent_qwidget);
+-    return static_cast<void *>(new ContentPreviewPage(parent));
++    const bool simplePreview = mode == UKUI_PREVIEWHUB_PREVIEW_MODE_SIMPLE;
++    return static_cast<void *>(new ContentPreviewPage(parent, simplePreview));
+ }
+ 
+ void ukui_previewhub_preview_widget_destroy(void *widget)

@@ -1,0 +1,138 @@
+bubblewrap kernel requirements
+==============================
+
+bubblewrap can be used by various parts of the system to run
+partially-trusted programs in a sandboxed environment where their impact
+on system security is reduced. For example:
+
+- Flatpak uses bubblewrap to run partially-trusted, user-installable
+  apps in a sandboxed environment.
+
+- The glycin library uses bubblewrap to run image loaders in a sandboxed
+  environment, so that if there are security flaws in an image decoder
+  used by a thumbnailer, the process of generating thumbnails for a
+  maliciously crafted image cannot be used to attack the rest of the
+  system.
+
+bubblewrap can also be used to run trusted programs in a different
+environment, for example with different shared libraries available:
+
+- Flatpak uses bubblewrap to run apps with a predictable library stack
+  that does not match the rest of the system, even if those apps are
+  trusted and so do not need to be sandboxed for security.
+
+- Steam uses bubblewrap to run some games with a predictable library
+  stack that does not match the rest of the system.
+
+The necessary capabilities to do this can be obtained in one of two
+ways:
+
+- On kernels where unprivileged users can create new user namespaces,
+  bubblewrap's bwrap executable can be an ordinary unprivileged program.
+  This is the case by default on all modern versions of Debian and Ubuntu.
+
+- On kernels where this is not possible, bubblewrap will not work unless
+  the /usr/bin/bwrap executable is setuid root. Some bubblewrap and Flatpak
+  features will not work in this configuration for security reasons.
+
+Custom and third-party kernels
+------------------------------
+
+If you compile your own kernel, you will need at least
+CONFIG_NAMESPACES=y and preferably CONFIG_USER_NS=y.
+
+If you do not have CONFIG_UTS_NS=y, CONFIG_IPC_NS=y, CONFIG_USER_NS=y,
+CONFIG_PID_NS=y and CONFIG_NET_NS=y, then the corresponding bubblewrap
+features will not work.
+
+Configuring kernel.unprivileged_userns_clone
+--------------------------------------------
+
+This Debian-specific sysctl parameter controls whether unprivileged
+users are allowed to create new user namespaces.
+
+The default is 1 for all modern Debian and Ubuntu kernels.
+
+If it is set to 0, some attacks against the kernel are made more difficult,
+which can increase security. However, some user-space software will not
+be able to create a sandboxed environment or will have to rely on a
+setuid version of bubblewrap to create a sandboxed environment, which
+reduces security. The value of this sysctl parameter is a trade-off
+between different security risks.
+
+If this parameter is set to 0, bubblewrap and Flatpak will not work unless
+bwrap is made setuid root (see "Making bubblewrap setuid root" below).
+
+You can view the current setting with:
+
+    cat /proc/sys/kernel/unprivileged_userns_clone
+
+and temporarily set it to 0 or 1 (until the next reboot) with a command
+like:
+
+    sudo sysctl -w kernel.unprivileged_userns_clone=1
+
+It can be set permanently by using a file /etc/sysctl.d/*.conf:
+this requires either systemd as pid 1, or the procps package.
+For details please see sysctl.d(5) on systemd systems, or sysctl.conf(5)
+on systems using a non-default init.
+
+Configuring the maximum number of namespaces per user
+-----------------------------------------------------
+
+The number of user namespaces per user is limited. The default limit
+depends on the amount of RAM available.
+
+Setting this limit to 0 is the recommended way to disable user namespace
+creation if this is required as a security hardening measure. bubblewrap
+will not work with this limit set to 0, unless it is setuid root (see
+"Configuring whether bubblewrap is setuid root" below).
+
+The limit is given by the user.max_user_namespaces sysctl parameter.
+
+You can view the current setting with:
+
+    cat /proc/sys/user/max_user_namespaces
+
+and temporarily set it to a value (until the next reboot) with a
+command like:
+
+    sudo sysctl -w user.max_user_namespaces=1000
+
+To set it to a value during system startup, create a file in /etc/sysctl.d
+containing a line like this:
+
+    user.max_user_namespaces=1000
+
+Configuring whether bubblewrap is setuid root
+---------------------------------------------
+
+To use bubblewrap with kernel.unprivileged_userns_clone set to 0
+or user.max_user_namespaces set to 0, it is necessary to make the bwrap
+executable setuid root. This gives it the necessary capabilities to set
+up containers even when run by an otherwise unprivileged user, and was the
+configuration normally used in Debian 10.
+
+This can be a security risk: if there are bugs in bubblewrap, it might be
+possible for an unprivileged user to get root privileges by running a
+setuid version of the bwrap executable. CVE-2020-5291 and CVE-2016-8659
+are examples of bugs that had this effect in the past. However, it allows
+the kernel to be configured to disallow creation of user namespaces by
+unprivileged users, which prevents attacks like CVE-2016-3135 from being
+carried out against the kernel. This is a trade-off between different
+security risks.
+
+To avoid other attacks, some Flatpak and bubblewrap features are not
+available when bwrap is setuid root, and the absence of those features
+is known to break some Flatpak apps. For example, the Flatpak app for
+the Chromium web browser will not work with a setuid bwrap executable.
+
+To check whether the bwrap executable will be made setuid root after
+the next upgrade, use this command:
+
+    dpkg-statoverride --list /usr/bin/bwrap
+
+To force the bwrap executable to be setuid root, use these commands:
+
+    sudo dpkg-statoverride --quiet --remove /usr/bin/bwrap
+    sudo dpkg-statoverride --update --add root root 4755 /usr/bin/bwrap

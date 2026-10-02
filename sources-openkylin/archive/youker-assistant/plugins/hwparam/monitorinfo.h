@@ -1,0 +1,125 @@
+/*
+ * Copyright (C) 2021 KylinSoft Co., Ltd.
+ *
+ * Authors:
+ *  Yang Min yangmin@kylinos.cn
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>.
+ */
+
+#ifndef MONITORINFO_H
+#define MONITORINFO_H
+
+#include <QWidget>
+#include <kinfolistitem.h>
+#include <QScrollArea>
+#include <QVBoxLayout>
+#include <QMap>
+#include <QAbstractNativeEventFilter>
+#include <QMenu>
+#include <QAction>
+#include <QEvent>
+#include <map>
+#include <vector> 
+#include <QMouseEvent>
+
+#include "../../src/kajsondef.h"
+#include "kainfotitle.h"
+#include "kabaseinfopage.h"
+#ifdef signals
+#undef signals
+#endif
+#include "kalabel.h"
+#include <KF5/KScreen/kscreen/config.h>
+
+enum MNI_INDEX{
+    MONITORINFO_TITLE,
+    MONITORINFO_INVALID,
+    MONITORINFO_MANUFACTURER,
+    MONITORINFO_NAME,
+    MONITORINFO_SIZE,
+    MONITORINFO_RATIO,
+    MONITORINFO_RESOLUTION,
+    MONITORINFO_MAXAVARES,
+    MONITORINFO_ISMAIN,
+    MONITORINFO_GAMMA,
+    MONITORINFO_INTERFACE,
+    MONITORINFO_MODEL,
+    MONITORINFO_VISIBLEAREA,
+    MONITORINFO_YEAR,
+    MONITORINFO_WEEK,
+};
+
+class MonitorInfo : public KABaseInfoPage, public QAbstractNativeEventFilter
+{
+    Q_OBJECT
+public:
+    explicit MonitorInfo(QWidget *parent = nullptr);
+
+    void initUI();
+
+    void initConnections();
+    void updateInfoItems(QString strInfoJson);
+
+public Q_SLOTS:
+    void onUpdateInfo(QString strInfoJson) override;
+    void onRefreshInfo() override;
+
+private Q_SLOTS:
+    void slotOutputConnectedChanged();
+
+protected:
+    virtual bool nativeEventFilter(const QByteArray &eventType, void *message, long *result) override;
+    void mousePressEvent(QMouseEvent *event);
+    void contextMenuEvent(QContextMenuEvent *event);
+
+private:
+    void addInfoItems(unsigned uGroup, unsigned uId, QString strTitle, QString strContent, bool bMulti);
+    void clearInfoItems();
+    void chkNoDevice();
+    void RRScreenChangeEvent();
+    void setConfig(const KScreen::ConfigPtr &config);
+    void outputAdded(const KScreen::OutputPtr &output, bool connectChanged);
+
+private:
+    QString m_strInfoJson;
+    QString m_strPageInfo;
+    QString m_strCopyInfo;
+    KALabel* m_selectedLabel;
+    std::vector<QString> vecIndex;
+    std::vector<std::vector<QString>> vecItems;
+    std::map<QString, QString> mapPageInfo;
+    std::vector<std::map<QString, QString>> vecMapItems;
+
+    QVBoxLayout *m_mainLayout = nullptr;
+    QFrame *m_listFrame = nullptr;
+    QVBoxLayout *m_listLayout = nullptr;
+    QScrollArea *m_scrollFrame = nullptr;
+
+    QMap<unsigned,QMap<unsigned, QWidget*>> m_mapInfoItems;
+    int m_xrrEventBase = 0;
+    int m_xrrErrorBase = 0;
+    QMenu *m_rkeyMenu = nullptr;
+#if QT_VERSION <= QT_VERSION_CHECK(5, 12, 0)
+    KScreen::ConfigPtr mConfig;
+    KScreen::ConfigPtr mPrevConfig;
+    KScreen::OutputPtr res;                       // 这是outPutptr结果
+#else
+    KScreen::ConfigPtr mConfig     = nullptr;
+    KScreen::ConfigPtr mPrevConfig = nullptr;
+    KScreen::OutputPtr res         = nullptr;
+#endif
+};
+
+#endif // MONITORINFO_H

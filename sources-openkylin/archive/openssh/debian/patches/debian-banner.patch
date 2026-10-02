@@ -1,0 +1,170 @@
+From d4774f747a113dabaaaec12e001afc71bdf65161 Mon Sep 17 00:00:00 2001
+From: Kees Cook <kees@debian.org>
+Date: Sun, 9 Feb 2014 16:10:06 +0000
+Subject: Add DebianBanner server configuration option
+
+Setting this to "no" causes sshd to omit the Debian revision from its
+initial protocol handshake, for those scared by package-versioning.patch.
+
+Bug-Debian: http://bugs.debian.org/562048
+Forwarded: not-needed
+Last-Update: 2025-04-11
+
+Patch-Name: debian-banner.patch
+---
+ kex.c          |  5 +++--
+ kex.h          |  2 +-
+ servconf.c     | 10 ++++++++++
+ servconf.h     |  2 ++
+ sshconnect.c   |  2 +-
+ sshd-session.c |  2 +-
+ sshd_config.5  |  5 +++++
+ 7 files changed, 23 insertions(+), 5 deletions(-)
+
+diff --git a/kex.c b/kex.c
+index a19303633..0df4f2f3f 100644
+--- a/kex.c
++++ b/kex.c
+@@ -1236,7 +1236,7 @@ send_error(struct ssh *ssh, char *msg)
+  */
+ int
+ kex_exchange_identification(struct ssh *ssh, int timeout_ms,
+-    const char *version_addendum)
++    int debian_banner, const char *version_addendum)
+ {
+ 	int remote_major, remote_minor, mismatch, oerrno = 0;
+ 	size_t len, n;
+@@ -1254,7 +1254,8 @@ kex_exchange_identification(struct ssh *ssh, int timeout_ms,
+ 	if (version_addendum != NULL && *version_addendum == '\0')
+ 		version_addendum = NULL;
+ 	if ((r = sshbuf_putf(our_version, "SSH-%d.%d-%s%s%s\r\n",
+-	    PROTOCOL_MAJOR_2, PROTOCOL_MINOR_2, SSH_RELEASE,
++	    PROTOCOL_MAJOR_2, PROTOCOL_MINOR_2,
++	    debian_banner ? SSH_RELEASE : SSH_RELEASE_MINIMUM,
+ 	    version_addendum == NULL ? "" : " ",
+ 	    version_addendum == NULL ? "" : version_addendum)) != 0) {
+ 		oerrno = errno;
+diff --git a/kex.h b/kex.h
+index 56ad54c41..c7b254d0c 100644
+--- a/kex.h
++++ b/kex.h
+@@ -220,7 +220,7 @@ void	 kex_proposal_populate_entries(struct ssh *, char *prop[PROPOSAL_MAX],
+     const char *, const char *, const char *, const char *, const char *);
+ void	 kex_proposal_free_entries(char *prop[PROPOSAL_MAX]);
+ 
+-int	 kex_exchange_identification(struct ssh *, int, const char *);
++int	 kex_exchange_identification(struct ssh *, int, int, const char *);
+ 
+ struct kex *kex_new(void);
+ int	 kex_ready(struct ssh *, char *[PROPOSAL_MAX]);
+diff --git a/servconf.c b/servconf.c
+index a7a4a0098..b0ea7ceb1 100644
+--- a/servconf.c
++++ b/servconf.c
+@@ -219,6 +219,7 @@ initialize_server_options(ServerOptions *options)
+ 	options->sshd_session_path = NULL;
+ 	options->sshd_auth_path = NULL;
+ 	options->refuse_connection = -1;
++	options->debian_banner = -1;
+ }
+ 
+ /* Returns 1 if a string option is unset or set to "none" or 0 otherwise. */
+@@ -505,6 +506,8 @@ fill_default_server_options(ServerOptions *options)
+ 		options->sshd_auth_path = xstrdup(_PATH_SSHD_AUTH);
+ 	if (options->refuse_connection == -1)
+ 		options->refuse_connection = 0;
++	if (options->debian_banner == -1)
++		options->debian_banner = 1;
+ 
+ 	assemble_algorithms(options);
+ 
+@@ -589,6 +592,7 @@ typedef enum {
+ 	sExposeAuthInfo, sRDomain, sPubkeyAuthOptions, sSecurityKeyProvider,
+ 	sRequiredRSASize, sChannelTimeout, sUnusedConnectionTimeout,
+ 	sSshdSessionPath, sSshdAuthPath, sRefuseConnection,
++	sDebianBanner,
+ 	sDeprecated, sIgnore, sUnsupported
+ } ServerOpCodes;
+ 
+@@ -769,6 +773,7 @@ static struct {
+ 	{ "sshdsessionpath", sSshdSessionPath, SSHCFG_GLOBAL },
+ 	{ "sshdauthpath", sSshdAuthPath, SSHCFG_GLOBAL },
+ 	{ "refuseconnection", sRefuseConnection, SSHCFG_ALL },
++	{ "debianbanner", sDebianBanner, SSHCFG_GLOBAL },
+ 	{ NULL, sBadOption, 0 }
+ };
+ 
+@@ -2775,6 +2780,10 @@ process_server_config_line_depth(ServerOptions *options, char *line,
+ 		multistate_ptr = multistate_flag;
+ 		goto parse_multistate;
+ 
++	case sDebianBanner:
++		intptr = &options->debian_banner;
++		goto parse_flag;
++
+ 	case sDeprecated:
+ 	case sIgnore:
+ 	case sUnsupported:
+@@ -3330,6 +3339,7 @@ dump_config(ServerOptions *o)
+ 	dump_cfg_fmtint(sFingerprintHash, o->fingerprint_hash);
+ 	dump_cfg_fmtint(sExposeAuthInfo, o->expose_userauth_info);
+ 	dump_cfg_fmtint(sRefuseConnection, o->refuse_connection);
++	dump_cfg_fmtint(sDebianBanner, o->debian_banner);
+ 
+ 	/* string arguments */
+ 	dump_cfg_string(sPidFile, o->pid_file);
+diff --git a/servconf.h b/servconf.h
+index c3f501400..b510992e3 100644
+--- a/servconf.h
++++ b/servconf.h
+@@ -255,6 +255,8 @@ typedef struct {
+ 	char   *sshd_auth_path;
+ 
+ 	int	refuse_connection;
++
++	int	debian_banner;
+ }       ServerOptions;
+ 
+ /* Information about the incoming connection as used by Match */
+diff --git a/sshconnect.c b/sshconnect.c
+index b125d9202..dc3b7b4b8 100644
+--- a/sshconnect.c
++++ b/sshconnect.c
+@@ -1612,7 +1612,7 @@ ssh_login(struct ssh *ssh, Sensitive *sensitive, const char *orighost,
+ 	lowercase(host);
+ 
+ 	/* Exchange protocol version identification strings with the server. */
+-	if ((r = kex_exchange_identification(ssh, timeout_ms,
++	if ((r = kex_exchange_identification(ssh, timeout_ms, 1,
+ 	    options.version_addendum)) != 0)
+ 		sshpkt_fatal(ssh, r, "banner exchange");
+ 
+diff --git a/sshd-session.c b/sshd-session.c
+index 307088717..2de08287f 100644
+--- a/sshd-session.c
++++ b/sshd-session.c
+@@ -1273,7 +1273,7 @@ main(int ac, char **av)
+ 			fatal("login grace time setitimer failed");
+ 	}
+ 
+-	if ((r = kex_exchange_identification(ssh, -1,
++	if ((r = kex_exchange_identification(ssh, -1, options.debian_banner,
+ 	    options.version_addendum)) != 0)
+ 		sshpkt_fatal(ssh, r, "banner exchange");
+ 
+diff --git a/sshd_config.5 b/sshd_config.5
+index ceaeddc9d..d7b60308a 100644
+--- a/sshd_config.5
++++ b/sshd_config.5
+@@ -629,6 +629,11 @@ or
+ .Cm no .
+ The default is
+ .Cm yes .
++.It Cm DebianBanner
++Specifies whether the distribution-specified extra version suffix is
++included during initial protocol handshake.
++The default is
++.Cm yes .
+ .It Cm DenyGroups
+ This keyword can be followed by a list of group name patterns, separated
+ by spaces.

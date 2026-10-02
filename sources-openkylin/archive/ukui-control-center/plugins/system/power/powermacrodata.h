@@ -1,0 +1,73 @@
+/* -*- Mode: C; tab-width: 4; indent-tabs-mode: nil; c-basic-offset: 4 -*-
+ *
+ * Copyright (C) 2019 Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+ *
+ */
+#ifndef POWERMACRODATA_H
+#define POWERMACRODATA_H
+
+#define UKUI_QUICK_OPERATION_PANEL  "org.ukui.quick-operation.panel"
+#define ENERGYSAVINGMODE  "energysavingmode"
+#define IDLE_DIM_AC "idle-dim-ac"
+#define IDLE_DIM_BA "idle-dim-battery"
+#define BRIGHTNESS_AC "brightness-ac"
+
+#define POWERMANAGER_SCHEMA     "org.ukui.power-manager"
+#define ICONPOLICY              "icon-policy"
+#define SLEEP_COMPUTER_AC_KEY   "sleep-computer-ac"
+#define SLEEP_COMPUTER_BATT_KEY "sleep-computer-battery"
+#define SLEEP_DISPLAY_AC_KEY    "sleep-display-ac"
+#define SLEEP_DISPLAY_BATT_KEY  "sleep-display-battery"
+#define BUTTON_LID_AC_KEY       "button-lid-ac"
+#define BUTTON_LID_BATT_KET     "button-lid-battery"
+#define BUTTON_SUSPEND_KEY      "button-suspend"
+#define BUTTON_POWER_KEY        "button-power"
+#define IDLE_DIM_TIME_KEY       "idle-dim-time"
+#define HIBERNATE_KEY           "after-idle-action"
+#define PER_ACTION_KEY          "percentage-action"
+#define ACTION_CRI_BTY          "action-critical-battery"
+#define PER_ACTION_CRI          "percentage-critical"
+#define POWER_POLICY_AC         "power-policy-ac"
+#define POWER_POLICY_BATTARY    "power-policy-battery"
+#define LOCK_BLANK_SCREEN       "lock-blank-screen"
+#define PERCENTAGE_LOW          "percentage-low"
+#define LOW_BATTERY_AUTO_SAVE   "low-battery-auto-save"
+#define ON_BATTERY_AUTO_SAVE    "on-battery-auto-save"
+#define DISPLAY_LEFT_TIME_OF_CHARGE_AND_DISCHARGE   "dispaly-left-time-of-charge-and-discharge"
+
+#define SCREENSAVER_SCHEMA       "org.ukui.screensaver"
+#define SLEEP_ACTIVATION_ENABLED "sleep-activation-enabled"
+#define CLOSE_ACTIVATION_ENABLED "close-activation-enabled"
+#define SCREENLOCK_LOCK_KEY      "lock-enabled"
+#define SCREENLOCK_ACTIVE_KEY    "idle-activation-enabled"
+
+#define PRESENT_VALUE           "present"
+#define ALWAYS_VALUE            "always"
+#define CHARGE_VALUE            "charge"
+
+#define SESSION_SCHEMA          "org.ukui.session"
+#define IDLE_DELAY_KEY          "idle-delay"
+
+#define FIXES 60
+
+#define PERSONALSIE_SCHEMA     "org.ukui.control-center.personalise"
+#define PERSONALSIE_POWER_KEY  "custompower"
+#define ISWHICHCHECKED         "ischecked"
+#define POWER_MODE             "power-mode"
+
+#define STYLE_FONT_SCHEMA  "org.ukui.style"
+#endif // POWERMACRODATA_H

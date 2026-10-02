@@ -1,0 +1,225 @@
+#!/bin/sh
+# tlp-func-batt - Battery Feature Functions
+#
+# Copyright (c) 2024 Thomas Koch <linrunner at gmx.net> and others.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Needs: tlp-func-base, 34-tlp-func-platform
+
+# ----------------------------------------------------------------------------
+# Constants
+
+# shellcheck disable=SC2034
+readonly ACPIBATDIR=/sys/class/power_supply
+
+# ----------------------------------------------------------------------------
+# Functions
+
+init_batteries_thresholds () {
+    # apply thresholds from configuration to all batteries
+    # optional depending on active plugin when specified in $1
+    # - called from bg tasks tlp init [re]start/auto and tlp start
+    # $1: plugin list (space separated)
+    # rc: 0=ok/
+    #     1=battery not present/
+    #     2=threshold(s) out of range or non-numeric/
+    #     3=minimum start stop diff violated/
+    #     4=read error/
+    #     5=write error/
+    #     6=threshold write discarded by kernel or firmware/
+    #     255=no thresh api
+
+    local rc
+
+    # select battery feature driver
+    select_batdrv
+    # shellcheck disable=SC2154
+    if [ "$_bm_thresh" = "none" ]; then
+        # thresholds not available --> quit
+        echo_debug "bat" "set_charge_thresholds.no_method"
+        return 255
+    fi
+
+    # apply thresholds
+    # shellcheck disable=SC2154
+    if [ -z "$1" ]; then
+        batdrv_apply_configured_thresholds; rc=$?
+    elif wordinlist "$_batdrv_plugin" "$1"; then
+        batdrv_apply_configured_thresholds; rc=$?
+    fi
+
+    return $rc
+}
+
+setcharge_battery () {
+    # apply charge thresholds for a single battery
+    # - called from cmdline tlp setcharge/fullcharge/recalibrate
+    # $1: start charge threshold,
+    # $2: stop charge threshold
+    # $3: battery
+    # $4: error msg addenum
+    # rc: 0=ok/
+    #     1=battery not present/
+    #     2=threshold(s) out of range or non-numeric/
+    #     3=minimum start stop diff violated/
+    #     4=read error/
+    #     5=write error/
+    #     6=threshold write discarded by kernel or firmware/
+    #     255=no thresh api
+
+    local bat rc start_thresh stop_thresh
+    local use_cfg=0
+
+    # select battery feature driver
+    select_batdrv
+    # shellcheck disable=SC2154
+    if [ "$_bm_thresh" = "none" ]; then
+        # thresholds not available --> quit
+        printf "Error: battery charge thresholds%s not available.\n" "${4:-}" 1>&2
+        echo_debug "bat" "setcharge_battery.no_method"
+        return 255
+    fi
+
+    # check params
+    case $# in
+        0) # no args
+            bat=DEF   # use default(1st) battery
+            use_cfg=1 # use configured values
+            ;;
+
+        1) # assume $1 is battery
+            bat=$1
+            use_cfg=1 # use configured values
+            ;;
+
+        2) # assume $1,$2 are thresholds
+            start_thresh=$1
+            stop_thresh=$2
+            bat=DEF # use default(1st) battery
+            ;;
+
+        3|4) # assume $1,$2 are thresholds, $3 is battery
+            start_thresh=$1
+            stop_thresh=$2
+            bat=${3:-DEF}
+            ;;
+    esac
+
+    # check bat presence and/or get default(1st) battery
+    if batdrv_select_battery "$bat"; then
+        # battery present -> get configured values if requested
+        if [ $use_cfg -eq 1 ]; then
+            # shellcheck disable=SC2154
+            eval start_thresh="\$START_CHARGE_THRESH_${_bt_cfg_bat}"
+            # shellcheck disable=SC2154
+            eval stop_thresh="\$STOP_CHARGE_THRESH_${_bt_cfg_bat}"
+        fi
+    else
+        # battery not present
+        printf "Error: battery %s not present.\n" "$bat" 1>&2
+        echo_debug "bat" "setcharge_battery.not_present($bat)"
+        return 1
+    fi
+
+    # apply thresholds
+    if [ $use_cfg -eq 1 ]; then
+        # from configuration
+        batdrv_write_thresholds "$start_thresh" "$stop_thresh" 2 1; rc=$?
+    else
+        # from command line
+        batdrv_write_thresholds "$start_thresh" "$stop_thresh" 2; rc=$?
+    fi
+    return $rc
+}
+
+chargeonce_battery () {
+    # charge battery to upper threshold once
+    # $1: battery
+    # rc: 0=ok/1=battery no present/255=no api
+
+    local bat rc
+
+    # select battery feature driver
+    select_batdrv
+    if [ "$_bm_thresh" = "none" ]; then
+        # thresholds not available --> quit
+        printf "Error: battery charge thresholds not available.\n" 1>&2
+        echo_debug "bat" "chargeonce_battery.no_method"
+        return 255
+    fi
+
+    # check params
+    if [ $# -gt 0 ]; then
+        # parameter(s) given, check $1
+        bat=${1:-DEF}
+        bat=$(printf '%s' "$bat" | tr "[:lower:]" "[:upper:]")
+    else
+        # no parameters given, use default(1st) battery
+        bat=DEF
+    fi
+
+    # check bat presence and/or get default(1st) battery
+    if ! batdrv_select_battery "$bat"; then
+        # battery not present
+        printf "Error: battery %s not present.\n" "$bat" 1>&2
+        # shellcheck disable=SC2154
+        echo_debug "bat" "chargeonce_battery.not_present($_bat_str)"
+        return 1
+    fi
+
+    # apply temporary start threshold
+    batdrv_chargeonce; rc=$?
+    if [ $rc -eq 255 ]; then
+        printf "Error: chargeonce not available for your hardware.\n" 1>&2
+        echo_debug "bat" "chargeonce_battery.no_supported"
+        return 255
+    fi
+
+    return $rc
+}
+
+echo_discharge_locked () { # print "locked" message
+    echo "Error: another discharge/recalibrate operation is pending." 1>&2
+    return 0
+}
+
+discharge_battery () {
+    # discharge battery
+    # $1: battery
+    # rc: 0=ok/1=battery no present/255=no api
+
+    local bat rc
+
+    # select battery feature driver
+    select_batdrv
+    # shellcheck disable=SC2154
+    if [ "$_bm_dischg" = "none" ]; then
+        # no method available --> quit
+        echo "Error: battery discharge/recalibrate not available." 1>&2
+        echo_debug "bat" "discharge_battery.no_method"
+        return 255
+    fi
+
+    # check params
+    if [ $# -gt 0 ]; then
+        # parameter(s) given, check $1
+        bat=${1:-DEF}
+        bat=$(printf '%s' "$bat" | tr "[:lower:]" "[:upper:]")
+    else
+        # no parameters given, use default(1st) battery
+        bat=DEF
+    fi
+
+    # check bat presence and/or get default(1st) battery
+    if ! batdrv_select_battery "$bat"; then
+        # battery not present
+        echo "Error: battery $bat not present." 1>&2
+        echo_debug "bat" "discharge_battery.not_present($bat)"
+        return 1
+    fi
+
+    # execute discharge
+    batdrv_discharge; rc=$?
+
+    return $rc
+}

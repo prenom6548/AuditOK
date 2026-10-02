@@ -1,0 +1,1777 @@
+From: xibowen <xibowen@kylinos.cn>
+Date: Wed, 26 Aug 2026 16:50:41 +0800
+Subject: Update changelog 4.24.0.0-ok8
+
+---
+ .../directory-view-menu/directory-view-menu.cpp    |   5 +-
+ libpeony-qt/file-launcher/file-launch-action.cpp   |   6 +-
+ peony-qt-desktop/background-manager.cpp            |  76 ++++-
+ peony-qt-desktop/background-manager.h              |   5 +
+ peony-qt-desktop/controls/theme-style.cpp          |  33 ++-
+ peony-qt-desktop/controls/theme-style.h            |  16 +
+ peony-qt-desktop/desktop-item-proxy-model.cpp      |  15 +
+ .../desktop-organization-tool/main.qml             |  16 +-
+ peony-qt-desktop/qml-desktop/BackgroundItem.qml    | 101 ++++++-
+ peony-qt-desktop/qml-desktop/DesktopView.qml       |   2 +-
+ .../qml-desktop/pag/PAGRenderThread.cpp            | 186 ++++++++++--
+ peony-qt-desktop/qml-desktop/pag/PAGRenderThread.h |  16 +
+ peony-qt-desktop/qml-desktop/pag/PAGView.cpp       | 323 ++++++++++++++++++++-
+ peony-qt-desktop/qml-desktop/pag/PAGView.h         |  22 ++
+ src/control/sort-type-menu.cpp                     |  21 +-
+ src/control/toolbar-manager.cpp                    |  17 +-
+ src/control/toolbar-manager.h                      |   1 +
+ .../peony-qt-desktop/peony-qt-desktop_ko_KP.ts     |  55 ++--
+ 18 files changed, 823 insertions(+), 93 deletions(-)
+
+diff --git a/libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp b/libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp
+index 4d7b714..b2fab97 100644
+--- a/libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp
++++ b/libpeony-qt/controls/menu/directory-view-menu/directory-view-menu.cpp
+@@ -959,7 +959,10 @@ const QList<QAction *> DirectoryViewMenu::constructViewOpActions()
+         QList<QAction *> tmp;
+         QPixmap emptyPixmap(0, 0);
+         tmp<<sortTypeMenu->addAction(QIcon(emptyPixmap),tr("Name"));
+-        tmp<<sortTypeMenu->addAction(QIcon(emptyPixmap),tr("Time Modified"));
++        QString dateText = Peony::GlobalSettings::getInstance()->getValue(SHOW_CREATE_TIME).toBool()
++                           ? tr("Time Created")
++                           : tr("Time Modified");
++        tmp<<sortTypeMenu->addAction(QIcon(emptyPixmap), dateText);
+         tmp<<sortTypeMenu->addAction(tr("File Type"));
+         tmp<<sortTypeMenu->addAction(tr("File Size"));
+         tmp<<sortTypeMenu->addAction(tr("Original Path"));
+diff --git a/libpeony-qt/file-launcher/file-launch-action.cpp b/libpeony-qt/file-launcher/file-launch-action.cpp
+index 16ab0be..b640dcf 100644
+--- a/libpeony-qt/file-launcher/file-launch-action.cpp
++++ b/libpeony-qt/file-launcher/file-launch-action.cpp
+@@ -234,7 +234,7 @@ void FileLaunchAction::lauchFileSync(bool forceWithArg, bool skipDialog)
+     }
+ 
+     if (executable && !isDesktopFileAction() && !skipDialog && isExecutable) {
+-        QMessageBox msg;
++        QMessageBox msg(FileUtils::getMainWindow());
+         auto defaultAction = msg.addButton("By Default App", QMessageBox::ButtonRole::ActionRole);
+         defaultAction->setDefault(true);
+         auto exec = msg.addButton(tr("Execute Directly"), QMessageBox::ButtonRole::ActionRole);
+@@ -330,7 +330,7 @@ void FileLaunchAction::lauchFileAsync(bool forceWithArg, bool skipDialog)
+     }
+ 
+     if (executable && !isDesktopFileAction() && !skipDialog && isExecutable) {
+-        QMessageBox msg;
++        QMessageBox msg(FileUtils::getMainWindow());
+         auto defaultAction = msg.addButton(tr("By Default App"), QMessageBox::ButtonRole::ActionRole);
+         defaultAction->setDefault(true);
+         msg.setIcon(QMessageBox::Question);
+@@ -553,7 +553,7 @@ void FileLaunchAction::lauchFilesAsync(const QStringList files, bool forceWithAr
+     }
+ 
+     if (executable && !isDesktopFileAction() && !skipDialog && isExecutable) {
+-        QMessageBox msg;
++        QMessageBox msg(FileUtils::getMainWindow());
+         auto defaultAction = msg.addButton(tr("By Default App"), QMessageBox::ButtonRole::ActionRole);
+         defaultAction->setDefault(true);
+         msg.setIcon(QMessageBox::Question);
+diff --git a/peony-qt-desktop/background-manager.cpp b/peony-qt-desktop/background-manager.cpp
+index 7c86cca..b66134c 100644
+--- a/peony-qt-desktop/background-manager.cpp
++++ b/peony-qt-desktop/background-manager.cpp
+@@ -43,6 +43,23 @@
+ 
+ static BackgroundManager *global_instance = nullptr;
+ 
++/*! 判定路径是否为可播放的视频壁纸：后缀 .mp4 或 ISOBMFF 魔数（ftyp，offset 4）
++ *  cover: AccountsService 复制用户壁纸到 /var/lib/.../backgrounds/<user>（无扩展名）
++ *  时也能识别，避免冷启动被误判为静态图（QML Image 解码失败 + 视频永不启动） */
++static bool looksLikeVideoWallpaper(const QString &path)
++{
++    const QString lower = path.toLower();
++    if (lower.endsWith(QLatin1String(".mp4"))) {
++        return true;
++    }
++    QFile f(path);
++    if (!f.open(QIODevice::ReadOnly)) {
++        return false;
++    }
++    const QByteArray head = f.read(16);
++    return head.size() >= 12 && head.mid(4, 4) == QByteArrayLiteral("ftyp");
++}
++
+ /*! Returns pixel size for wallpaper scaling; handles .dib / odd formats where QImageReader::size() fails. */
+ static QSize readImagePixelSize(const QString &normalizedPath)
+ {
+@@ -183,6 +200,22 @@ QString BackgroundManager::getFrontImagePath() const
+     return encodedPath;
+ }
+ 
++// mp4 动态壁纸路径（解析后的本地有效路径；空串表示非视频壁纸）。
++// 该路径只驱动 QML 视频会话，绝不进入静态 back/front 图像层账本。
++QString BackgroundManager::getVideoWallpaperPath() const
++{
++    return m_videoWallpaperPath;
++}
++
++void BackgroundManager::setVideoWallpaperPath(const QString &path)
++{
++    if (m_videoWallpaperPath == path) {
++        return;
++    }
++    m_videoWallpaperPath = path;
++    Q_EMIT videoWallpaperChanged();
++}
++
+ QString BackgroundManager::getBackgroundOption() const
+ {
+     return m_backgroundOption;
+@@ -473,6 +506,16 @@ void BackgroundManager::initBackground()
+        return;
+     }
+ 
++    // 冷启动即 .mp4：与 switchBackground 同规则，不进静态 back/front 账本，
++    // 由 QML 视频会话呈现（首帧落地前静态层为空，由视频层尽快覆盖）
++    const QString normalizedDefaultBg = normalizeImagePath(defaultBg);
++    const bool isVideoWallpaper = looksLikeVideoWallpaper(normalizedDefaultBg);
++    if (isVideoWallpaper) {
++        setVideoWallpaperPath(normalizedDefaultBg);
++        return;
++    }
++    setVideoWallpaperPath(QString());
++
+     const QString bridged = pathForQmlWallpaperImage(defaultBg);
+     updateImagePaths(bridged, bridged);
+     // 在初始化阶段立即更新sourceSize，避免延迟更新导致qml端因为sourcesize延迟改变而reload image
+@@ -503,23 +546,38 @@ void BackgroundManager::switchBackground()
+     if (path.isEmpty()) {
+         setUsePureColor(true);
+         setColor(QColor(m_backgroundSettings->get(PRIMARYCOLOR).toString()));
++        setVideoWallpaperPath(QString());
+         updateImagePaths("", "");
+     } else {
+         setUsePureColor(false);
+         setColor(QColor(m_backgroundSettings->get(PRIMARYCOLOR).toString()));
+ 
+-        if (m_backImagePath.isEmpty() && m_frontImagePath.isEmpty()) {
+-            const QString bridged = pathForQmlWallpaperImage(path);
+-            updateImagePaths(bridged, bridged);
+-        } else {
+-            // front = new wallpaper (bridge .dib for Qt Quick Image); back = previous front layer
+-            updateImagePaths(m_frontImagePath, pathForQmlWallpaperImage(path));
+-        }
++        // 解析后的有效路径做视频壁纸判定（picture-filename 回退/account background
++        // 均已在此汇合，避免“静态已回退但视频会话仍抓已删除 mp4”的错位；
++        // 后缀 + ftyp 魔数双保险，账号服务复制出的无扩展名副本同样命中）
++        const QString normalizedVideoPath = normalizeImagePath(path);
++        const bool isVideoWallpaper = looksLikeVideoWallpaper(normalizedVideoPath);
++        if (!isVideoWallpaper) {
++            if (m_backImagePath.isEmpty() && m_frontImagePath.isEmpty()) {
++                const QString bridged = pathForQmlWallpaperImage(path);
++                updateImagePaths(bridged, bridged);
++            } else {
++                // front = new wallpaper (bridge .dib for Qt Quick Image); back = previous front layer
++                updateImagePaths(m_frontImagePath, pathForQmlWallpaperImage(path));
++            }
+ 
+ //        scheduleUpdateSourceSizes();
+-        updateSourceSizes();
++            updateSourceSizes();
+ 
+-        qDebug() << __func__ << __LINE__ << m_backImagePath << m_frontImagePath;
++            qDebug() << __func__ << __LINE__ << m_backImagePath << m_frontImagePath;
++        } else {
++            // mp4 不进 back/front 图像层账本：静态层保持最后一张有效静态图，
++            // 视频由 QML 视频会话呈现，避免 Image.Error 黑屏 / 切换序列错位
++            // （首次直接以 .mp4 为壁纸且两层皆空时，静态层暂时为空，由视频首帧尽快覆盖）
++            updateSourceSizes();
++            qDebug() << __func__ << __LINE__ << "video wallpaper:" << normalizedVideoPath;
++        }
++        setVideoWallpaperPath(isVideoWallpaper ? normalizedVideoPath : QString());
+ 
+         if (path != getAccountBackground()) {
+             setAccountBackground(path);
+diff --git a/peony-qt-desktop/background-manager.h b/peony-qt-desktop/background-manager.h
+index a2b60df..1e87f05 100644
+--- a/peony-qt-desktop/background-manager.h
++++ b/peony-qt-desktop/background-manager.h
+@@ -51,6 +51,7 @@ class BackgroundManager : public QObject
+     Q_PROPERTY(QColor color READ getColor WRITE setColor NOTIFY colorChanged)
+     Q_PROPERTY(QString backImagePath READ getBackImagePath NOTIFY backImagePathChanged)
+     Q_PROPERTY(QString frontImagePath READ getFrontImagePath NOTIFY frontImagePathChanged)
++    Q_PROPERTY(QString videoWallpaperPath READ getVideoWallpaperPath NOTIFY videoWallpaperChanged)
+     Q_PROPERTY(QSize frontImageSourceSize READ getFrontImageSourceSize NOTIFY frontImageSourceSizeChanged)
+     Q_PROPERTY(QSize backImageSourceSize READ getBackImageSourceSize NOTIFY backImageSourceSizeChanged)
+ 
+@@ -59,6 +60,7 @@ public:
+ 
+     Q_INVOKABLE QString getBackImagePath() const;
+     Q_INVOKABLE QString getFrontImagePath() const;
++    Q_INVOKABLE QString getVideoWallpaperPath() const;
+ 
+     Q_INVOKABLE QString getBackgroundOption() const;
+     Q_INVOKABLE void setBackgroundOption(const QString &backgroundOption);
+@@ -95,6 +97,7 @@ private:
+     QSize calculateWallpaperTargetSize(const QSize &originalSize, const QSize &screenSize) const;
+     bool isLeftGreaterThanRightSize(const QSize &left, const QSize &right) const;
+     QString normalizeImagePath(const QString &imagePath) const;
++    void setVideoWallpaperPath(const QString &path);
+     void updateSourceSizes();
+     void updateImagePaths(const QString &newBackPath, const QString &newFrontPath);
+     
+@@ -127,12 +130,14 @@ Q_SIGNALS:
+     void backImagePathChanged();
+     void frontImagePathChanged();
+     void forceUpdated();
++    void videoWallpaperChanged();
+     void frontImageSourceSizeChanged();
+     void backImageSourceSizeChanged();
+ 
+ private:
+     QString m_backImagePath;
+     QString m_frontImagePath;
++    QString m_videoWallpaperPath;
+     bool m_usePureColor = false;
+     QColor m_color = Qt::black;
+     QString m_backgroundOption;
+diff --git a/peony-qt-desktop/controls/theme-style.cpp b/peony-qt-desktop/controls/theme-style.cpp
+index ceb81f0..bc3d9cc 100644
+--- a/peony-qt-desktop/controls/theme-style.cpp
++++ b/peony-qt-desktop/controls/theme-style.cpp
+@@ -34,6 +34,35 @@ ThemeStyle::ThemeStyle(QObject *parent) : QObject(parent)
+             }
+         }
+     });
++
++    updateHighlightColors();
++    if (qApp) {
++        connect(qApp, &QApplication::paletteChanged, this, &ThemeStyle::updateHighlightColors);
++    }
++}
++
++void ThemeStyle::updateHighlightColors()
++{
++    QColor baseColor;
++    if (qApp) {
++        QVariant light = qApp->property("highlight-active");
++        QBrush brush = light.value<QBrush>();
++        baseColor = brush.color();
++    }
++
++    QColor newHighlight = baseColor;
++    newHighlight.setAlpha(255 * 0.8);
++    QColor newMidlight = baseColor;
++    newMidlight.setAlpha(255 * 0.5);
++
++    if (m_highlightColor != newHighlight) {
++        m_highlightColor = newHighlight;
++        Q_EMIT highlightColorChanged();
++    }
++    if (m_midlightColor != newMidlight) {
++        m_midlightColor = newMidlight;
++        Q_EMIT midlightColorChanged();
++    }
+ }
+ 
+ QColor ThemeStyle::highlight()
+@@ -41,7 +70,7 @@ QColor ThemeStyle::highlight()
+     QVariant light = qApp->property("highlight-active");
+     QBrush brush = light.value<QBrush>();
+     QColor color = brush.color();
+-    color.setAlpha(255*0.8);
++    color.setAlpha(255 * 0.8);
+     return color;
+ }
+ 
+@@ -50,7 +79,7 @@ QColor ThemeStyle::midlight()
+     QVariant light = qApp->property("highlight-active");
+     QBrush brush = light.value<QBrush>();
+     QColor color = brush.color();
+-    color.setAlpha(255*0.5);
++    color.setAlpha(255 * 0.5);
+     return color;
+ }
+ 
+diff --git a/peony-qt-desktop/controls/theme-style.h b/peony-qt-desktop/controls/theme-style.h
+index 8fa824d..6c2238d 100644
+--- a/peony-qt-desktop/controls/theme-style.h
++++ b/peony-qt-desktop/controls/theme-style.h
+@@ -4,16 +4,26 @@
+ #include <QObject>
+ #include <QFont>
+ #include <QPalette>
++#include <QColor>
+ class ThemeStylePrivate;
+ class ThemeStyle : public QObject
+ {
+     Q_OBJECT
+     Q_PROPERTY(int radius READ getRadius WRITE setRadius NOTIFY radiusChanged)
++    Q_PROPERTY(QColor highlightColor READ highlightColor NOTIFY highlightColorChanged)
++    Q_PROPERTY(QColor midlightColor READ midlightColor NOTIFY midlightColorChanged)
+ public:
+     ThemeStyle(QObject *parent = nullptr);
+ 
+     static ThemeStyle *instance();
+ 
++    QColor highlightColor() const {
++        return m_highlightColor;
++    }
++    QColor midlightColor() const {
++        return m_midlightColor;
++    }
++
+     Q_INVOKABLE QColor highlight();
+     Q_INVOKABLE QColor midlight();
+ 
+@@ -29,9 +39,15 @@ public:
+ 
+ Q_SIGNALS:
+     void radiusChanged();
++    void highlightColorChanged();
++    void midlightColorChanged();
+ 
+ private:
++    void updateHighlightColors();
++
+     int m_radius = 6;
++    QColor m_highlightColor;
++    QColor m_midlightColor;
+ };
+ 
+ 
+diff --git a/peony-qt-desktop/desktop-item-proxy-model.cpp b/peony-qt-desktop/desktop-item-proxy-model.cpp
+index 6185c0a..8c5801a 100644
+--- a/peony-qt-desktop/desktop-item-proxy-model.cpp
++++ b/peony-qt-desktop/desktop-item-proxy-model.cpp
+@@ -512,6 +512,21 @@ QVariantMap DesktopItemProxyModel::updateIconPositionsByOrgtool(const QStringLis
+             metaInfo->setMetaInfoInt(ORIGANIZATION_MANUAL_CREATE_PARTITION,0);
+         }
+         updateIconPositions(tmpurilist,action,row,QPoint(tmpPos.x() - metaPos.x(),tmpPos.y() - metaPos.y()),onItem);
++
++        // The item has been explicitly placed on the current desktop. Do not
++        // restore the stale position saved before the secondary screen was
++        // removed, otherwise it will jump back when that screen is reconnected.
++        auto updatedIndex = model->indexFromUri(uri);
++        if (updatedIndex.isValid()) {
++            model->setData(updatedIndex, QStringList(), ExtendScreenPositionRole);
++            if (SCREEN_MANAGER->displayMode() != ScreenManager::Extend) {
++                const QPoint placedPos = model->data(updatedIndex, PositionRole).toPoint();
++                model->setData(updatedIndex,
++                               QStringList{QString::number(placedPos.x()),
++                                           QString::number(placedPos.y())},
++                               SinglesSreenPositionRole);
++            }
++        }
+         result.insert(uri,tmpPos);
+         window->setFileMetaInfoPos(uri,QPoint(tmpPos.x(),tmpPos.y()));
+     }
+diff --git a/peony-qt-desktop/desktop-widgets/internal-widgets/desktop-organization-tool/main.qml b/peony-qt-desktop/desktop-widgets/internal-widgets/desktop-organization-tool/main.qml
+index 7988abf..f564811 100644
+--- a/peony-qt-desktop/desktop-widgets/internal-widgets/desktop-organization-tool/main.qml
++++ b/peony-qt-desktop/desktop-widgets/internal-widgets/desktop-organization-tool/main.qml
+@@ -748,7 +748,7 @@ WidgetItem {
+                 y: model.y - parent.bounds.y //- gridView.contentY
+                 width: root.width - tableView.leftMargin - tableView.rightMargin
+                 height: 32
+-                color: ThemeStyle.highlight()
++                color: ThemeStyle.highlightColor
+                 radius: 6
+                 Rectangle {
+                     id: tableViewIconRectdrag
+@@ -929,10 +929,10 @@ WidgetItem {
+                 Accessible.name: objectName
+                 radius: 6 // 设置圆角半径为6
+                 color: selected
+-                       && !delegateText.editing ? ThemeStyle.highlight(
+-                                                      ) : hovered
+-                                                  && !delegateText.editing ? ThemeStyle.midlight(
+-                                                                                 ) : "transparent"
++                       && !delegateText.editing ? ThemeStyle.highlightColor
++                                                  : hovered
++                                                  && !delegateText.editing ? ThemeStyle.midlightColor
++                                                                             : "transparent"
+             }
+             Keys.onShortcutOverride: event.accepted = false
+ 
+@@ -1367,9 +1367,9 @@ WidgetItem {
+                 height:listdele.height
+                 width: root.width
+                 anchors.fill:parent
+-                color: selected /*&& !delegateTextlist.editing*/ ? ThemeStyle.highlight() : hovered
+-                                                  && !delegateTextlist.editing ? ThemeStyle.midlight(
+-                                                                                 ) : "transparent"
++                color: selected /*&& !delegateTextlist.editing*/ ? ThemeStyle.highlightColor : hovered
++                                                  && !delegateTextlist.editing ? ThemeStyle.midlightColor
++                                                                                 : "transparent"
+                 radius: 6
+             }
+             Item {
+diff --git a/peony-qt-desktop/qml-desktop/BackgroundItem.qml b/peony-qt-desktop/qml-desktop/BackgroundItem.qml
+index eb632bb..1c47592 100644
+--- a/peony-qt-desktop/qml-desktop/BackgroundItem.qml
++++ b/peony-qt-desktop/qml-desktop/BackgroundItem.qml
+@@ -76,7 +76,12 @@ Item {
+ 
+     // 静态壁纸对应的同名 .pag 路径。它只是解锁瞬间的候选动画
+     // 普通启动、壁纸切换和显示模式变化都不会触发加载
++    // mp4 壁纸由独立 videoLoader 会话呈现；videoWallpaperPath 非空时本路径一律为空
++    // （防止同名 .pag 误判与两会话并发）
+     readonly property string pagLocalPath: {
++        if (backgroundManager.videoWallpaperPath !== "")
++            return ""
++
+         var opt = backgroundOption.toLowerCase()
+         if (opt !== "stretched" && opt !== "scaled" && opt !== "zoom")
+             return ""
+@@ -84,11 +89,15 @@ Item {
+         var path = frontImagePath
+         if (path.startsWith("file://"))
+             path = path.substring(7)
+-        if (path.endsWith(".pag"))
++        // 大小写不敏感判定与 C++ 侧一致（.PAG 同样生效），返回原始路径
++        var lowerPath = path.toLowerCase()
++        if (lowerPath.endsWith(".pag"))
+             return path
+         var dot = path.lastIndexOf(".")
+-        var pagPath = dot !== -1 ? path.substring(0, dot) + ".pag" : path + ".pag"
+-        return (backgroundManager.fileExists(pagPath) && platformWindow.isPrimary) ? pagPath : ""
++        var basePath = dot !== -1 ? path.substring(0, dot) : path
++        if (backgroundManager.fileExists(basePath + ".pag") && platformWindow.isPrimary)
++            return basePath + ".pag"
++        return ""
+     }
+ 
+     // DesktopView 的冷启动逻辑不应等待 PAG；动画仅作为解锁时的覆盖层
+@@ -102,6 +111,84 @@ Item {
+         onLoaded: root.startPendingUnlockOnView()
+     }
+ 
++    // ---- mp4 壁纸常驻会话（与 unlock 会话完全隔离）----
++    Loader {
++        id: videoLoader
++        anchors.fill: parent
++        active: false
++        sourceComponent: videoComponent
++    }
++
++    Component {
++        id: videoComponent
++        PAGView {
++            anchors.fill: parent
++            onPrepared: {
++                // 首帧已就绪（含 prepared-paused）；未锁定会话此时已自动进入可见播放
++                console.log("BackgroundItem: video wallpaper prepared, generation", generation)
++            }
++            onFailed: {
++                // 加载失败（文件损坏/已删除/不支持的编码）：保留静态壁纸，不自动重试
++                // （videoWallpaperPath 未变不会再次触发启动；stop 后 auto-restart 被清除）
++                console.warn("BackgroundItem: video wallpaper load failed:", reason)
++                root.stopVideoWallpaper()
++            }
++        }
++    }
++
++    readonly property string videoWallpaperPath: backgroundManager.videoWallpaperPath
++
++    function startVideoWallpaper() {
++        var path = root.videoWallpaperPath
++        if (path === "")
++            return
++        // 与 unlock 会话互斥：残留的 pag 预加载/等待会话先行取消；
++        // pagLocalPath 已因 videoWallpaperPath 非空返回空，后续 unlock 信号不会再起 pag
++        cancelUnlockPag()
++        videoLoader.active = true
++        if (!videoLoader.item)
++            return
++        var locked = windowManager.screenLocked
++        if (!videoLoader.item.beginWallpaperPlayback(path, locked, root.backgroundOption)) {
++            console.warn("BackgroundItem: begin video wallpaper failed:", path)
++            stopVideoWallpaper()
++        }
++    }
++
++    function stopVideoWallpaper() {
++        if (videoLoader.item)
++            videoLoader.item.stopWallpaperPlayback()
++        videoLoader.active = false
++        // 兜底：静态层若处于 Error/Empty（理论上 .mp4 不进账本不会发生），强制前层可见防黑屏
++        if (frontImage.status !== Image.Ready || backImage.status !== Image.Ready) {
++            frontImage.opacity = 1
++            backImage.opacity = 0
++        }
++    }
++
++    onVideoWallpaperPathChanged: {
++        if (root.videoWallpaperPath !== "") {
++            root.startVideoWallpaper()
++        } else {
++            root.stopVideoWallpaper()
++        }
++    }
++
++    Connections {
++        target: windowManager
++        function onScreenLockedChanged() {
++            if (!videoLoader.item)
++                return
++            if (windowManager.screenLocked) {
++                // 锁屏：结束当前播放并预加载首帧（prepared-paused，与 pag 锁屏预加载同款策略），
++                // 解锁后 resumeWallpaperPlayback 从头开始播放
++                root.startVideoWallpaper()
++            } else {
++                videoLoader.item.resumeWallpaperPlayback()
++            }
++        }
++    }
++
+     Component {
+         id: pagComponent
+         PAGView {
+@@ -458,11 +545,19 @@ Item {
+         updateImageAlignment()
+         updateImageSourceClipRect()
+         backgroundManager.forceUpdated()
++        // mp4 壁纸的 scaleMode 在会话加载时确定；显示方式变化后重建会话以应用新方式
++        // （仅 mp4 会话，pag 解锁动画逻辑不受影响）
++        if (root.videoWallpaperPath !== "")
++            root.startVideoWallpaper()
+     }
+ 
+     Component.onCompleted: {
+         if (platformWindow.isPrimary)
+             windowManager.requestInitialUnlockPreload()
++        // 冷启动即 mp4 壁纸：C++ 在 QML 实例化前已设好 videoWallpaperPath，
++        // 绑定初始值不会触发 onVideoWallpaperPathChanged，需在此补启动
++        if (root.videoWallpaperPath !== "")
++            root.startVideoWallpaper()
+     }
+ 
+ }
+diff --git a/peony-qt-desktop/qml-desktop/DesktopView.qml b/peony-qt-desktop/qml-desktop/DesktopView.qml
+index d745c4e..32a1b1c 100644
+--- a/peony-qt-desktop/qml-desktop/DesktopView.qml
++++ b/peony-qt-desktop/qml-desktop/DesktopView.qml
+@@ -536,7 +536,7 @@ WidgetContainerItem {
+                     anchors.fill:parent
+                     radius: themeStyle.radius
+                     visible: (selected && !delegateText.editing) || (hovered && !delegateText.editing)
+-                    color: selected && !delegateText.editing ? themeStyle.highlight() : hovered && !delegateText.editing ? themeStyle.midlight() : "transparent"
++                    color: selected && !delegateText.editing ? themeStyle.highlightColor : hovered && !delegateText.editing ? themeStyle.midlightColor : "transparent"
+                 }
+                 ParallelAnimation {
+                     id: initAnimation
+diff --git a/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.cpp b/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.cpp
+index ee73c68..c666bce 100644
+--- a/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.cpp
++++ b/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.cpp
+@@ -19,13 +19,41 @@
+ #include "PAGRenderThread.h"
+ 
+ #include <QDebug>
++#include <QOpenGLContext>
++#include <cstdlib>
++#include <cstring>
++#include <dlfcn.h>
+ #include <QElapsedTimer>
+ #include <QGuiApplication>
++#include <QFile>
+ #include <QUrl>
+ #include <QtMath>
+ #include <limits>
++#include <mutex>
+ #include "GPUDrawable.h"
+ 
++namespace {
++
++// 多屏会话共享同一个 QSG 全局 GL context（QGLWindow::createDevice 直接复用
++// OpenGLContextResource），而每个屏幕的 PAG 会话各自有工作线程并发 makeCurrent/
++// flush。QOpenGLContext 非线程安全，并发 GL 操作会使飞腾等 GPU 驱动崩溃
++// （实测 SIGSEGV 于 phytium_dri.so GLTexture::onRelease/purge 路径）。
++// 全局串行化所有 PAG 工作线程的 flush 段，恢复单工作线程语义。
++std::mutex g_pagGLLock;
++
++// ISOBMFF 魔数探测（offset 4 == "ftyp"）：识别 AccountsService 复制的无扩展名 mp4
++bool looksLikeMp4Magic(const QString& path) {
++  QFile f(path);
++  if (!f.open(QIODevice::ReadOnly)) {
++    return false;
++  }
++  const QByteArray head = f.read(16);
++  return head.size() >= 12 && head.mid(4, 4) == QByteArrayLiteral("ftyp");
++}
++
++
++}  // namespace
++
+ namespace pag {
+ 
+ PAGRenderThread::PAGRenderThread(const std::shared_ptr<GPUDrawable>& drawable)
+@@ -46,6 +74,23 @@ bool PAGRenderThread::matches(qulonglong generation, qulonglong windowEpoch,
+ void PAGRenderThread::loadAndPrepare(const QString& filePath, int scaleMode, int pixelWidth,
+                                      int pixelHeight, qulonglong generation,
+                                      qulonglong windowEpoch, qulonglong visibilityEpoch) {
++  loopEnabled_ = false;
++  loadCommon(filePath, scaleMode, pixelWidth, pixelHeight, generation, windowEpoch,
++             visibilityEpoch);
++}
++
++// mp4 壁纸常驻会话入口：与 loadAndPrepare 行为一致，仅多 loop 语义（末帧 wrap）
++void PAGRenderThread::loadVideoLoop(const QString& filePath, int scaleMode, int pixelWidth,
++                                    int pixelHeight, qulonglong generation,
++                                    qulonglong windowEpoch, qulonglong visibilityEpoch) {
++  loopEnabled_ = true;
++  loadCommon(filePath, scaleMode, pixelWidth, pixelHeight, generation, windowEpoch,
++             visibilityEpoch);
++}
++
++void PAGRenderThread::loadCommon(const QString& filePath, int scaleMode, int pixelWidth,
++                                 int pixelHeight, qulonglong generation,
++                                 qulonglong windowEpoch, qulonglong visibilityEpoch) {
+   unload();
+   generation_ = generation;
+   windowEpoch_ = windowEpoch;
+@@ -65,17 +110,32 @@ void PAGRenderThread::loadAndPrepare(const QString& filePath, int scaleMode, int
+   const auto localPath = filePath.startsWith(QLatin1String("file://"))
+                              ? QUrl(filePath).toLocalFile()
+                              : filePath;
+-  auto bytes = ByteData::FromPath(localPath.toLocal8Bit().constData());
+-  if (!bytes) {
+-    Q_EMIT loadFailed(generation_, windowEpoch_, visibilityEpoch_,
+-                      QStringLiteral("failed to read PAG file"));
+-    return;
+-  }
+-  file_ = PAGFile::Load(bytes->data(), bytes->length(), localPath.toLocal8Bit().constData());
+-  if (!file_) {
+-    Q_EMIT loadFailed(generation_, windowEpoch_, visibilityEpoch_,
+-                      QStringLiteral("failed to decode PAG file"));
+-    return;
++  // 外部视频壁纸（.mp4）由 libpag 直接按路径加载，避免大文件整读进内存；
++  // .pag 及静态壁纸路径保持原有加载逻辑完全不变。
++  // 后缀判定之外再探测 ISOBMFF 魔数（offset 4 "ftyp"）：AccountsService 复制壁纸到
++  // /var/lib/.../backgrounds/<user> 时会丢失扩展名，魔数保证这类副本仍走视频加载。
++  const bool isMp4 = localPath.endsWith(QLatin1String(".mp4"), Qt::CaseInsensitive) ||
++                     looksLikeMp4Magic(localPath);
++  if (isMp4) {
++    file_ = PAGFile::LoadFromVideo(localPath.toStdString());
++    if (!file_) {
++      Q_EMIT loadFailed(generation_, windowEpoch_, visibilityEpoch_,
++                        QStringLiteral("failed to load video wallpaper"));
++      return;
++    }
++  } else {
++    auto bytes = ByteData::FromPath(localPath.toLocal8Bit().constData());
++    if (!bytes) {
++      Q_EMIT loadFailed(generation_, windowEpoch_, visibilityEpoch_,
++                        QStringLiteral("failed to read PAG file"));
++      return;
++    }
++    file_ = PAGFile::Load(bytes->data(), bytes->length(), localPath.toLocal8Bit().constData());
++    if (!file_) {
++      Q_EMIT loadFailed(generation_, windowEpoch_, visibilityEpoch_,
++                        QStringLiteral("failed to decode PAG file"));
++      return;
++    }
+   }
+ 
+   player_.reset(new PAGPlayer());
+@@ -88,7 +148,7 @@ void PAGRenderThread::loadAndPrepare(const QString& filePath, int scaleMode, int
+   totalFrames_ = qMax(1, static_cast<int>(qRound64(file_->duration() * fps / 1000000.0)));
+   framePeriodNs_ = qMax<qint64>(1, qRound64(1000000000.0 / fps));
+   nextVisibleFrame_ = 0;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪工作线程加载会话时可切换 #if 1）
+   qDebug().noquote().nospace()
+       << "[PAG_SESSION] event=prepare gen=" << generation_
+       << " windowEpoch=" << windowEpoch_
+@@ -108,6 +168,10 @@ void PAGRenderThread::loadAndPrepare(const QString& filePath, int scaleMode, int
+  * ticketInFlight_ 保证上一帧尚未 swapped 时不会提交下一帧，从而保持帧序连续
+  */
+ void PAGRenderThread::submitFrame(int frame, PAGFrameTicket::Phase phase) {
++#if 0  // PAG 逐帧调试日志（默认关闭，排查问题时可切换 #if 1 临时启用）
++  qDebug().noquote().nospace()
++      << "[PAG_FRAME] stage=enter frame=" << frame;
++#endif
+   if (!player_ || !file_ || cancelling_ || ticketInFlight_ ||
+       (phase == PAGFrameTicket::VisiblePlayback && !visiblePlaybackStarted_)) {
+     return;
+@@ -115,7 +179,7 @@ void PAGRenderThread::submitFrame(int frame, PAGFrameTicket::Phase phase) {
+   // 新建 QGLWindow 的设备由场景图异步创建，未就绪时不能生成帧凭据
+   if (phase == PAGFrameTicket::PrepareHidden && !drawable_->getDevice()) {
+     prepareFramePending_ = true;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪设备未就绪挂起时可切换 #if 1）
+     qDebug().noquote().nospace()
+         << "[PAG_SESSION] event=prepare-device-pending gen=" << generation_
+         << " windowEpoch=" << windowEpoch_
+@@ -125,12 +189,26 @@ void PAGRenderThread::submitFrame(int frame, PAGFrameTicket::Phase phase) {
+   }
+   const double progress =
+       frame >= totalFrames_ - 1 ? 1.0 : (static_cast<double>(frame) + 0.1) / totalFrames_;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++  // 全局 GL 锁：多屏多工作线程并发 flush 同一共享 context 会崩溃驱动。
++  // 锁只覆盖 GL 段（setProgress+flush），不跨越 frameFlushed 事件投递，避免死锁。
++  std::lock_guard<std::mutex> glLock(g_pagGLLock);
++#if 0  // PAG 逐帧调试日志（默认关闭，排查问题时可切换 #if 1 临时启用）
+   QElapsedTimer renderTimer;
+   renderTimer.start();
+ #endif
+   player_->setProgress(progress);
++#if 0  // PAG 逐帧调试日志（默认关闭，排查问题时可切换 #if 1 临时启用）
++  qDebug().noquote().nospace()
++      << "[PAG_FRAME] stage=preflush frame=" << frame
++      << " progress=" << progress;
++#endif
+   const bool changed = player_->flush();
++  Q_UNUSED(changed)  // 逐帧日志默认关闭，保留变量以匹配调试期签名；日后启用 #if 1 日志时继续使用
++#if 0  // PAG 逐帧调试日志（默认关闭，排查问题时可切换 #if 1 临时启用）
++  qDebug().noquote().nospace()
++      << "[PAG_FRAME] stage=postflush frame=" << frame
++      << " changed=" << changed;
++#endif
+ 
+   prepareFramePending_ = false;
+   inFlight_.generation = generation_;
+@@ -140,7 +218,7 @@ void PAGRenderThread::submitFrame(int frame, PAGFrameTicket::Phase phase) {
+   inFlight_.visibilityEpoch = visibilityEpoch_;
+   inFlight_.phase = phase;
+   ticketInFlight_ = true;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // PAG 逐帧调试日志（默认关闭，排查问题时可切换 #if 1 临时启用）
+   qDebug().noquote().nospace()
+       << "[PAG_FRAME] phase=produced gen=" << inFlight_.generation
+       << " windowEpoch=" << inFlight_.windowEpoch
+@@ -164,7 +242,7 @@ void PAGRenderThread::retryPendingPrepare(qulonglong generation, qulonglong wind
+     return;
+   }
+   prepareFramePending_ = false;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪设备就绪重试时可切换 #if 1）
+   qDebug().noquote().nospace()
+       << "[PAG_SESSION] event=prepare-device-retry gen=" << generation_
+       << " windowEpoch=" << windowEpoch_
+@@ -185,6 +263,52 @@ void PAGRenderThread::startVisiblePlayback(qulonglong generation, qulonglong win
+   submitFrame(0, PAGFrameTicket::VisiblePlayback);
+ }
+ 
++// mp4 壁纸锁屏暂停：只停调度与钟，不 cancel、不 unload，保留 player/file/in-flight 语义
++// 在途票据仍会自然 swapped，停住画面即锁前最后一帧；暂停点由 nextVisibleFrame_ 记存
++void PAGRenderThread::pause() {
++  if (!player_ || !file_ || cancelling_) {
++    return;
++  }
++  invalidateFrameSchedule();
++  // 作废在途票据：锁屏瞬间的 in-flight 票据可能在屏幕熄灭/合成冻结期间永远等不到
++  // swapped 确认（QSG 无 vsync 不渲染），串行票据设计会把整个播放锁死到下次确认。
++  // 这里直接清空，迟到的 framePresented 会因票据不匹配被忽略，resume 后可立即续播。
++  ticketInFlight_ = false;
++#if 0  // 会话级日志（默认关闭；需要跟踪锁屏暂停时可切换 #if 1）
++  qDebug().noquote().nospace()
++      << "[PAG_SESSION] event=lock-pause gen=" << generation_
++      << " atFrame=" << nextVisibleFrame_ << "/" << totalFrames_
++      << " discardedInFlight";
++#endif
++}
++
++// mp4 壁纸解锁恢复：时钟 rebase 到 nextVisibleFrame_ 的帧周期位置
++// deadline = framePeriodNs_ * frame - nsecsElapsed，负偏移使恢复后首帧立即提交、
++// 后续帧 deadline 全部对齐，避免"冻结到下一帧周期"；rebase 只依赖 nextVisibleFrame_，历史无关
++// 若仍有 in-flight 票据（快速锁/解锁交替），只 rebase + 置启动位，由 swap 确认链路自然续链
++void PAGRenderThread::resume() {
++  if (!player_ || !file_ || cancelling_) {
++    return;
++  }
++  visiblePlaybackStarted_ = true;
++  playbackClock_.restart();
++  // rebase：把基线拨到"首帧周期槽位"，使首帧在下一个帧周期内出帧、后续帧 deadline 全对齐。
++  // 注意不能立即 submitFrame：立即提交会让后续帧的 (elapsed - offset) 补偿错误，
++  // 导致解锁后出现 offset(≈暂停帧×帧周期) 级的长停顿（实测 10-17s），wrap 分支已同步清 offset。
++  playbackOffsetNs_ = static_cast<qint64>(qMax(0, nextVisibleFrame_ - 1)) * framePeriodNs_;
++#if 0  // 会话级日志（默认关闭；需要跟踪解锁恢复时可切换 #if 1）
++  qDebug().noquote().nospace()
++      << "[PAG_SESSION] event=unlock-resume gen=" << generation_
++      << " atFrame=" << nextVisibleFrame_ << "/" << totalFrames_
++      << " inFlight=" << ticketInFlight_
++      << " offsetNs=" << playbackOffsetNs_;
++#endif
++  if (ticketInFlight_) {
++    return;
++  }
++  scheduleNextVisibleFrame();
++}
++
+ // 主线程确认票据已交换后，工作线程才推进可见帧序号
+ /*
+  * framePresented 来自主线程的 swapped 回调
+@@ -200,7 +324,7 @@ void PAGRenderThread::framePresented(const PAGFrameTicket& ticket) {
+     return;
+   }
+   if (ticket.phase == PAGFrameTicket::PrepareHidden) {
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪首帧呈现时可切换 #if 1）
+     qDebug().noquote().nospace()
+         << "[PAG_SESSION] event=prepare-presented gen=" << generation_
+         << " serial=" << ticket.serial;
+@@ -209,8 +333,24 @@ void PAGRenderThread::framePresented(const PAGFrameTicket& ticket) {
+     return;
+   }
+   if (ticket.frame >= totalFrames_ - 1) {
++    if (loopEnabled_) {
++      // mp4 壁纸循环：wrap 到帧 0（seek 已前置验证），不 emit playbackFinished
++      // 暂停期间（时钟无效）wrap 后 scheduleNextVisibleFrame 自然 no-op，resume 从帧 0 续播
++      playbackClock_.restart();
++      // 复位 rebase 残留：resume() 曾把 offset 拨到暂停帧周期，若不归零，wrap 后
++      // 首帧 deadline 会残留 offset 延迟（= 锁屏暂停帧×帧周期），导致每轮开头卡顿
++      playbackOffsetNs_ = 0;
++      nextVisibleFrame_ = 0;
++#if 0  // 会话级日志（默认关闭；需要跟踪循环回绕时可切换 #if 1）
++      qDebug().noquote().nospace()
++          << "[PAG_LOOP] event=wrap atFrame=" << ticket.frame << "/" << totalFrames_
++          << " serial=" << ticket.serial << " sentToFrame0";
++#endif
++      scheduleNextVisibleFrame();
++      return;
++    }
+     invalidateFrameSchedule();
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪非循环播放结束时切换 #if 1）
+     qDebug().noquote().nospace()
+         << "[PAG_SUMMARY] event=completed gen=" << generation_
+         << " expectedVisibleFrames=" << totalFrames_
+@@ -237,7 +377,7 @@ void PAGRenderThread::scheduleNextVisibleFrame() {
+   const auto visibilityEpoch = visibilityEpoch_;
+   const auto frame = nextVisibleFrame_;
+   const auto deadlineNs = framePeriodNs_ * static_cast<qint64>(frame);
+-  const auto remainingNs = deadlineNs - playbackClock_.nsecsElapsed();
++  const auto remainingNs = deadlineNs - (playbackClock_.nsecsElapsed() - playbackOffsetNs_);
+   if (remainingNs <= 0) {
+     submitFrame(frame, PAGFrameTicket::VisiblePlayback);
+     return;
+@@ -263,6 +403,7 @@ void PAGRenderThread::invalidateFrameSchedule() {
+   ++scheduleEpoch_;
+   visiblePlaybackStarted_ = false;
+   playbackClock_.invalidate();
++  playbackOffsetNs_ = 0;
+ }
+ 
+ // 取消会递增调度代次，使已经排队的定时器回调自动失效
+@@ -278,7 +419,7 @@ void PAGRenderThread::cancel(qulonglong generation, qulonglong windowEpoch,
+   cancelling_ = true;
+   prepareFramePending_ = false;
+   invalidateFrameSchedule();
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪取消会话时可切换 #if 1）
+   qDebug().noquote().nospace()
+       << "[PAG_SUMMARY] event=cancel gen=" << generation_
+       << " windowEpoch=" << windowEpoch_
+@@ -329,7 +470,7 @@ void PAGRenderThread::unloadIfDetached() {
+     const auto visibilityEpoch = visibilityEpoch_;
+     safeUnloadEmitted_ = true;
+     unload();
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪卸载会话时可切换 #if 1）
+     qDebug().noquote().nospace()
+         << "[PAG_SESSION] event=safe-unload gen=" << generation
+         << " windowEpoch=" << windowEpoch
+@@ -343,6 +484,9 @@ void PAGRenderThread::unload() {
+   invalidateFrameSchedule();
+   prepareFramePending_ = false;
+   ticketInFlight_ = false;
++  // player/file 释放包含 GL surface/纹理销毁，必须与其他工作线程的 flush 串行
++  // （见 g_pagGLLock 说明），否则并发释放共享 context 资源同样会崩溃驱动
++  std::lock_guard<std::mutex> glLock(g_pagGLLock);
+   player_.reset();
+   file_.reset();
+   totalFrames_ = 0;
+diff --git a/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.h b/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.h
+index 0d61d15..5f970b5 100644
+--- a/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.h
++++ b/peony-qt-desktop/qml-desktop/pag/PAGRenderThread.h
+@@ -75,6 +75,13 @@ class PAGRenderThread : public QThread {
+   void loadAndPrepare(const QString& filePath, int scaleMode, int pixelWidth, int pixelHeight,
+                       qulonglong generation, qulonglong windowEpoch,
+                       qulonglong visibilityEpoch);
++  // mp4 壁纸常驻会话：循环播放（末帧 wrap，不 emit playbackFinished）
++  void loadVideoLoop(const QString& filePath, int scaleMode, int pixelWidth, int pixelHeight,
++                     qulonglong generation, qulonglong windowEpoch,
++                     qulonglong visibilityEpoch);
++  // mp4 壁纸锁屏暂停/解锁恢复：暂停保留全部资源，恢复按 nextVisibleFrame_ 重定时钟基线
++  void pause();
++  void resume();
+   void startVisiblePlayback(qulonglong generation, qulonglong windowEpoch,
+                             qulonglong visibilityEpoch);
+   void retryPendingPrepare(qulonglong generation, qulonglong windowEpoch,
+@@ -94,12 +101,19 @@ class PAGRenderThread : public QThread {
+   void invalidateFrameSchedule();
+   void unloadIfDetached();
+   void unload();
++  // loadAndPrepare 与 loadVideoLoop 的公共加载体（循环标志由调用方先行设置）
++  void loadCommon(const QString& filePath, int scaleMode, int pixelWidth, int pixelHeight,
++                  qulonglong generation, qulonglong windowEpoch,
++                  qulonglong visibilityEpoch);
+ 
+   std::shared_ptr<GPUDrawable> drawable_;
+   std::unique_ptr<PAGPlayer> player_;
+   std::shared_ptr<PAGFile> file_;
+   PAGFrameTicket inFlight_;
+   QElapsedTimer playbackClock_;
++  // resume 时钟 rebase 偏移：playbackClock_.nsecsElapsed() - playbackOffsetNs_ 为帧时钟
++  // （QElapsedTimer 无加偏移 API，仅 resume 设置；unlock 路径恒为 0，行为不变）
++  qint64 playbackOffsetNs_ = 0;
+   bool ticketInFlight_ = false;
+   bool visiblePlaybackStarted_ = false;
+   bool cancelling_ = false;
+@@ -114,6 +128,8 @@ class PAGRenderThread : public QThread {
+   int totalFrames_ = 0;
+   int nextVisibleFrame_ = 0;
+   qint64 framePeriodNs_ = 33333333;
++  // mp4 壁纸循环模式：末帧 presented 后 wrap 到帧 0（不 emit playbackFinished）
++  bool loopEnabled_ = false;
+ };
+ 
+ }  // namespace pag
+diff --git a/peony-qt-desktop/qml-desktop/pag/PAGView.cpp b/peony-qt-desktop/qml-desktop/pag/PAGView.cpp
+index 937d854..bec9541 100644
+--- a/peony-qt-desktop/qml-desktop/pag/PAGView.cpp
++++ b/peony-qt-desktop/qml-desktop/pag/PAGView.cpp
+@@ -24,6 +24,10 @@
+ #include <QEvent>
+ #include <QMutexLocker>
+ #include <QQuickWindow>
++#include <QOpenGLContext>
++#include <cstdlib>
++#include <cstring>
++#include <dlfcn.h>
+ #include <QSGImageNode>
+ #include <QScreen>
+ #include <QUrl>
+@@ -56,6 +60,8 @@ PAGView::PAGView(QQuickItem* parent) : QQuickItem(parent) {
+           this, &PAGView::onLoadFailed, Qt::QueuedConnection);
+   connect(renderThread_.get(), &PAGRenderThread::safeToUnloadWorker,
+           this, &PAGView::onWorkerSafeToUnload, Qt::QueuedConnection);
++  connect(renderThread_.get(), &PAGRenderThread::cancelAcknowledged,
++          this, &PAGView::onCancelAcknowledged, Qt::QueuedConnection);
+ 
+   renderThread_->start();
+   renderThread_->setPriority(QThread::NormalPriority);
+@@ -153,7 +159,7 @@ bool PAGView::prepareUnlock(const QString& filePath, const QString& option,
+   // 节点保留：detach 已在 cancelPlayback 同步完成，直接进入正常播放流程。
+   waitingForDetach_ = false;
+   ++visibilityEpoch_;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪解锁会话请求时可切换 #if 1）
+   qDebug().noquote().nospace()
+       << "[PAG_SESSION] event=unlock-request gen=" << generation_
+       << " windowEpoch=" << windowEpoch_
+@@ -207,7 +213,7 @@ void PAGView::requestPendingFrameUpdate() {
+     return;
+   }
+   // 锁屏遮挡期间的更新可能未被场景图消费，解锁时重新请求一次即可
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪解锁后补帧请求时可切换 #if 1）
+   qDebug().noquote().nospace()
+       << "[PAG_SESSION] event=resume-pending-frame gen=" << generation_
+       << " pending=" << pendingTicketValid_
+@@ -216,6 +222,171 @@ void PAGView::requestPendingFrameUpdate() {
+   update();
+ }
+ 
++// mp4 壁纸常驻会话：与 unlock 会话隔离，触发源为 gsettings picture-filename=.mp4
++/*
++ * locked=true（冷启动已锁定/锁屏期间路径变化/锁屏期间窗口重建）：
++ *   首帧 PrepareHidden 完成后不启动可见播放（prepared-paused），解锁由
++ *   resumeWallpaperPlayback() 从帧 0 起播——复用 pag 锁屏预加载语义
++ * locked=false：首帧就绪后自动进入可见播放（onHiddenFramePresented 内检查 paused_）
++ */
++bool PAGView::beginWallpaperPlayback(const QString& filePath, bool locked, const QString& option) {
++  QMutexLocker locker(&stateMutex_);
++  cancelPlayback();
++  const auto localPath = filePath.startsWith(QLatin1String("file://"))
++                             ? QUrl(filePath).toLocalFile()
++                             : filePath;
++  if (localPath.isEmpty() || !QFileInfo::exists(localPath)) {
++    wallpaperActive_ = false;
++    paused_ = false;
++    return false;
++  }
++  wallpaperRestartScheduled_ = false;
++  pendingResumeAfterCancel_ = false;  // 新的显式会话意图取代挂起的解锁恢复
++  filePath_ = localPath;
++  // mp4 壁纸显示方式跟随 picture-options（scaleModeForOption 映射：
++  // scaled→Zoom、zoom→LetterBox、其余→Stretch）；空值兜底 scaled 保持原行为
++  option_ = option.isEmpty() ? QStringLiteral("scaled") : option;
++  ++generation_;
++  staticReady_ = true;
++  primary_ = true;
++  active_ = true;
++  cancelling_ = false;
++  loadingStarted_ = false;
++  wallpaperActive_ = true;
++  paused_ = locked;
++  // 锁定时窗口已稳定 → 0ms 直载并停于 prepared-paused（等价 pag 锁屏预加载）
++  skipStabilityDelay_ = locked;
++  visibleStartRetryCount_ = 0;
++  visibleFrameRepaintRequested_ = false;
++  waitingForDetach_ = false;
++  ++visibilityEpoch_;
++#if 0  // 会话级日志（默认关闭；需要跟踪会话开始/预加载可切换 #if 1）
++  qDebug().noquote().nospace()
++      << "[PAG_SESSION] event=wallpaper-request gen=" << generation_
++      << " windowEpoch=" << windowEpoch_
++      << " visibilityEpoch=" << visibilityEpoch_
++      << " locked=" << locked
++      << " skipStabilityDelay=" << skipStabilityDelay_;
++  qDebug().noquote().nospace()
++      << "[PAG_DEBUG] event=begin-wallpaper this=" << this
++      << " itemSize=" << width() << "x" << height()
++      << " dpr=" << (observedWindow_ ? observedWindow_->devicePixelRatio() : -1.0)
++      << " winSize=" << (observedWindow_ ? observedWindow_->width() : 0) << "x"
++      << (observedWindow_ ? observedWindow_->height() : 0)
++      << " option=" << option_;
++#endif
++  Q_EMIT filePathChanged(filePath_);
++  Q_EMIT activeChanged(true);
++  restartStabilityTimer();
++  return true;
++}
++
++// 停止壁纸会话：清除 wallpaperActive_（自动重启唯一正确的 recheck 依据），走通用取消
++void PAGView::stopWallpaperPlayback() {
++  QMutexLocker locker(&stateMutex_);
++  wallpaperActive_ = false;
++  paused_ = false;
++  pendingResumeAfterCancel_ = false;  // 停止意图取代挂起的解锁恢复
++  cancelPlayback();
++}
++
++void PAGView::pauseWallpaperPlayback() {
++  QMutexLocker locker(&stateMutex_);
++  if (!wallpaperActive_ || cancelling_ || paused_) {
++    return;
++  }
++  paused_ = true;
++  // 清空待确认票据：锁屏期间旧票据的 swapped 可能永远不来（屏幕熄灭/合成冻结），
++  // 挂着的 attached/pending 会让解锁后的新帧被 onFrameFlushed 丢弃（pending/attached 占用）。
++  // 节点上的纹理继续显示锁屏前最后一帧，画面冻结语义不变。
++  pendingTicketValid_ = false;
++  attachedTicketValid_ = false;
++  // 会话已被窗口变化取消（active_=false）时仍置 paused_：挂起中的自动重启必须落在
++  // prepared-paused；工作线程无会话则 pause no-op
++  if (active_) {
++    QMetaObject::invokeMethod(renderThread_.get(), "pause", Qt::QueuedConnection);
++  }
++}
++
++void PAGView::resumeWallpaperPlayback() {
++  QMutexLocker locker(&stateMutex_);
++  if (!wallpaperActive_) {
++    return;
++  }
++  // 解锁是既成事实：无论会话是否处于取消中都必须先解除锁定态，否则
++  // onCancelAcknowledged 触发的延迟重启会被 maybeRestart 的 paused_ 复查拦下（黑屏根因）
++  paused_ = false;
++  if (cancelling_) {
++    // cancel 的 ack 未回：挂起恢复意图，由 onCancelAcknowledged 确认取消后转为自动重启
++    pendingResumeAfterCancel_ = true;
++    return;
++  }
++  if (!active_) {
++    // 会话已被窗口/屏幕变化取消：立即排定重启（重启后从 prepared-paused 续为 playing）
++    maybeRestartWallpaperAfterCancel();
++    return;
++  }
++  QMetaObject::invokeMethod(renderThread_.get(), "resume", Qt::QueuedConnection);
++  if (!visibleFrameRepaintRequested_) {
++    visibleFrameRepaintRequested_ = true;
++    update();
++    if (window()) {
++      window()->update();
++    }
++  }
++}
++
++// 窗口/屏幕变化（热插拔、镜像、DPI、可见性、几何）取消壁纸会话后，延迟自动重启
++// 重启前复查 wallpaperActive_/paused_（timer 触发时复查，锁屏 200ms 内到达不丢失），
++// 幂等合并连续 cancel→restart，防止锁屏期间 DPMS/遮挡反复切换的乒乓
++void PAGView::maybeRestartWallpaperAfterCancel() {
++  QMutexLocker locker(&stateMutex_);
++  if (!wallpaperActive_ || wallpaperRestartScheduled_) {
++    return;
++  }
++  wallpaperRestartScheduled_ = true;
++  const auto delay = 200;  // 与 stabilityTimer 同量级
++  QTimer::singleShot(delay, this,
++                     [this]() {
++    QMutexLocker locker(&stateMutex_);
++    wallpaperRestartScheduled_ = false;
++    if (!wallpaperActive_ || active_ || paused_) {
++      return;  // 已停/已重启/锁屏（解锁后 resumeWallpaperPlayback 再排）
++    }
++    if (!windowIsReady()) {
++      maybeRestartWallpaperAfterCancel();  // 窗口暂未就绪，稍后重试
++      return;
++    }
++    beginWallpaperPlayback(filePath_, paused_, option_);
++  });
++}
++
++// cancelPlayback 的确认回调：清 cancelling_ 并兑现挂起的解锁恢复。
++// 此前未连接本信号，cancelling_ 只能等下次 begin/prepareUnlock 复位，
++// 锁屏期间会话被窗口事件取消后，解锁 resume 即被永久挡死（黑屏根因）。
++// 守卫只比对 generation：窗口事件在 cancel 后才递增 windowEpoch_，连发取消
++// 在渲染线程 matches 不过、不会产生第二笔 ack，严格比对会把唯一 ack 拒掉。
++void PAGView::onCancelAcknowledged(qulonglong generation, qulonglong windowEpoch,
++                                   qulonglong visibilityEpoch) {
++  Q_UNUSED(windowEpoch)
++  Q_UNUSED(visibilityEpoch)
++  QMutexLocker locker(&stateMutex_);
++  if (!cancelling_ || generation != cancelGeneration_) {
++    return;  // 已被新会话/新取消取代，或属于更早世代的迟到确认
++  }
++  cancelling_ = false;
++  const bool resumeRequested = pendingResumeAfterCancel_;
++  pendingResumeAfterCancel_ = false;
++  if (!wallpaperActive_) {
++    return;  // pag 解锁会话等非壁纸场景：仅复位 cancelling_，不触发自动重启
++  }
++  // resumeRequested：锁屏期间被取消、解锁在取消确认前到达（本 bug 主路径）
++  // !active_ && !paused_：兜底——任何未排定重启的非锁屏取消都在此自愈
++  if (resumeRequested || (!active_ && !paused_)) {
++    maybeRestartWallpaperAfterCancel();
++  }
++}
++
+ 
+ // 取消会话时先清空界面票据，再通知渲染线程停止，防止旧帧回写到新会话
+ void PAGView::cancelPlayback() {
+@@ -250,7 +421,12 @@ void PAGView::cancelPlayback() {
+   // 通知工作线程 nodeDetached（epoch 守卫 + safeUnloadEmitted_ 保证幂等），
+   // 使 unloadIfDetached 能执行资源释放；节点保留与否均需要该通知。
+   notifyNodeDetached();
+-  if (!workerLoadStarted && !nodeAttached_ && !waitingForDetach_) {
++  // 会话未到达工作线程（加载未派发）时，cancel() 在渲染线程可能因三元组不匹配而
++  // 静默（render 端状态仍属于上一个会话），必须靠 cancelEmptySession 采纳三元组并
++  // 回 cancelAcknowledged；节点保留（nodeAttached_）不构成障碍——cancelEmptySession
++  // 内部先查 player/file/ticketInFlight，worker 无资源时只是采纳+确认，无副作用。
++  // 缺了它，锁定期间窗口抖动抢占加载派发会把 cancelling_ 永久卡死（与主 bug 同症状）。
++  if (!workerLoadStarted && !waitingForDetach_) {
+     QMetaObject::invokeMethod(renderThread_.get(), "cancelEmptySession", Qt::QueuedConnection,
+                               Q_ARG(qulonglong, oldGeneration),
+                               Q_ARG(qulonglong, oldWindowEpoch),
+@@ -261,6 +437,12 @@ void PAGView::cancelPlayback() {
+ // 窗口尺寸变化会使旧渲染结果失效，递增 windowEpoch 隔离异步回调
+ void PAGView::geometryChanged(const QRectF& newGeometry, const QRectF& oldGeometry) {
+   QMutexLocker locker(&stateMutex_);
++  qDebug().noquote().nospace()
++      << "[PAG_DEBUG] event=geometry-changed this=" << this
++      << " active=" << active_ << " loading=" << loadingStarted_
++      << " new=" << newGeometry.width() << "x" << newGeometry.height()
++      << "@" << newGeometry.x() << "," << newGeometry.y()
++      << " old=" << oldGeometry.width() << "x" << oldGeometry.height();
+   QQuickItem::geometryChanged(newGeometry, oldGeometry);
+   if (newGeometry == oldGeometry) {
+     return;
+@@ -272,6 +454,7 @@ void PAGView::geometryChanged(const QRectF& newGeometry, const QRectF& oldGeomet
+         QMutexLocker locker(&stateMutex_);
+         ++windowEpoch_;
+       }
++      maybeRestartWallpaperAfterCancel();
+     } else {
+       skipStabilityDelay_ = false;
+       ++windowEpoch_;
+@@ -280,10 +463,85 @@ void PAGView::geometryChanged(const QRectF& newGeometry, const QRectF& oldGeomet
+   }
+ }
+ 
++
++// ---------------------------------------------------------------------------
++// 零拷贝就绪探测：QSG 渲染线程检查 EGL dma-buf import 能力，可用则通过
++// pag_zc_ready()（libffavc 导出符号）通知 ffavc，并写 PAG_VIDEO_ZERO_COPY_EGL
++// 供 tgfx 选库。三态：未设置=自动探测；"0"=强制关闭；"1"=强制启用（跳过探测）。
++// ---------------------------------------------------------------------------
++static void probeZeroCopyReadyAtRender() {
++  static bool probed = false;
++  const char* env = std::getenv("PAG_VIDEO_ZERO_COPY");
++  if (env != nullptr && std::strcmp(env, "0") == 0) {
++    return;  // 逃生舱强制关：不探测，行为与旧版一致
++  }
++  if (env != nullptr && std::strcmp(env, "1") == 0) {
++    return;  // 强制开：跳过能力探测，导入失败由 ffavc 侧 latch 回退兜底
++  }
++  if (probed) {
++    return;
++  }
++  if (QOpenGLContext::currentContext() == nullptr) {
++    // 尚未有 GL current（罕见时序）：不 latch，等下一次 beforeRendering 重试
++    return;
++  }
++  // 进入正式探测即 latch（平台能力不会在进程内变化）；无 GL current 例外已上移
++  probed = true;
++  // Kylin-wlcom 的 QSG 渲染上下文可能由私有 EGL 直接创建（绕过 glvnd loader，
++  // 此时 glvnd 的 eglGetCurrentDisplay 查不到）。依次尝试 glvnd 与已知私有 EGL，
++  // 找到"当前线程有 display 且支持 dma-buf import"的实现，并把库名写入
++  // PAG_VIDEO_ZERO_COPY_EGL 供 tgfx 消费侧使用同名库做导入。
++  const char* eglLibs[] = {
++      "libEGL.so.1",       // glvnd loader
++      "libEGL_leopard.so.0", "libEGL_fh2m.so.0", "libEGL_fh2m_l.so.0",
++      "libEGL_arise.so.0", "libEGL_mesa.so.0", "libEGL_ljm.so.0", "libEGL_mtgpu.so.0",
++      nullptr};
++  for (int li = 0; eglLibs[li] != nullptr; li++) {
++    void* egl = dlopen(eglLibs[li], RTLD_NOW | RTLD_NOLOAD);
++    if (egl == nullptr) {
++      continue;
++    }
++    auto eglGetCurrentDisplay = reinterpret_cast<void* (*)()>(dlsym(egl, "eglGetCurrentDisplay"));
++    auto eglQueryString = reinterpret_cast<const char* (*)(void*, int)>(dlsym(egl, "eglQueryString"));
++    auto eglGetProcAddress = reinterpret_cast<void* (*)(const char*)>(dlsym(egl, "eglGetProcAddress"));
++    if (eglGetCurrentDisplay == nullptr || eglQueryString == nullptr || eglGetProcAddress == nullptr ||
++        eglGetProcAddress("eglCreateImageKHR") == nullptr) {
++      continue;
++    }
++    void* dpy = eglGetCurrentDisplay();
++    if (dpy == nullptr) {
++      continue;
++    }
++    const char* exts = eglQueryString(dpy, 0x3055);  // EGL_EXTENSIONS
++    if (exts == nullptr || std::strstr(exts, "EGL_EXT_image_dma_buf_import") == nullptr ||
++        std::strstr(exts, "EGL_KHR_image_base") == nullptr) {
++      continue;
++    }
++    // 通知 ffavc 解码线程（新版 libffavc 读 atomic 通道，无 setenv/getenv 竞态；
++    // 兼容旧版：同时保留 READY env）。
++    setenv("PAG_VIDEO_ZERO_COPY_READY", "1", 1);
++    setenv("PAG_VIDEO_ZERO_COPY_EGL", eglLibs[li], 1);
++    static void (*zcReadyFn)(int) = []() {
++      void* h = dlopen("libffavc.so", RTLD_NOW | RTLD_NOLOAD);
++      if (h == nullptr) {
++        return static_cast<void (*)(int)>(nullptr);
++      }
++      return reinterpret_cast<void (*)(int)>(dlsym(h, "pag_zc_ready"));
++    }();
++    if (zcReadyFn != nullptr) {
++      zcReadyFn(1);
++    }
++    qInfo() << "[PAG_GL] zero-copy READY: EGL dma-buf import available via" << eglLibs[li];
++    return;
++  }
++  qWarning() << "[PAG_GL] zero-copy probe: no EGL implementation with current display + dma-buf import";
++}
++
+ void PAGView::onWindowChanged(QQuickWindow* window) {
+   QMutexLocker locker(&stateMutex_);
+   if (active_) {
+     cancelPlayback();
++    maybeRestartWallpaperAfterCancel();
+   }
+   if (observedWindow_) {
+     observedWindow_->removeEventFilter(this);
+@@ -292,6 +550,11 @@ void PAGView::onWindowChanged(QQuickWindow* window) {
+   observeScreen(nullptr);
+   observedWindow_ = window;
+   ++windowEpoch_;
++  qDebug().noquote().nospace()
++      << "[PAG_DEBUG] event=window-changed this=" << this
++      << " win=" << (window ? window->width() : 0) << "x" << (window ? window->height() : 0)
++      << " dpr=" << (window ? window->devicePixelRatio() : -1.0)
++      << " active=" << active_;
+   if (!window) {
+     cancelPlayback();
+     return;
+@@ -301,6 +564,9 @@ void PAGView::onWindowChanged(QQuickWindow* window) {
+   // 所挂接的帧凭据，不能消费 GUI 线程队列中无关交换对应的凭据
+   connect(window, &QQuickWindow::frameSwapped, this, &PAGView::onFrameSwapped,
+           Qt::DirectConnection);
++  // QSG 渲染线程、GL current：零拷贝能力探测现场（进程级一次）。
++  connect(window, &QQuickWindow::beforeRendering, this,
++          [window]() { probeZeroCopyReadyAtRender(); }, Qt::DirectConnection);
+   connect(window, &QQuickWindow::sceneGraphInvalidated,
+           this, &PAGView::onSceneGraphInvalidated, Qt::QueuedConnection);
+   connect(window, &QWindow::screenChanged, this, [this](QScreen* screen) {
+@@ -310,14 +576,20 @@ void PAGView::onWindowChanged(QQuickWindow* window) {
+       ++windowEpoch_;
+     }
+     observeScreen(screen);
++    maybeRestartWallpaperAfterCancel();
+   });
+-  connect(window, &QWindow::visibleChanged, this, [this](bool) {
++  connect(window, &QWindow::visibleChanged, this, [this](bool visible) {
+     if (active_) {
+       cancelPlayback();
+       {
+         QMutexLocker locker(&stateMutex_);
+         ++windowEpoch_;
+       }
++      qDebug().noquote().nospace()
++          << "[PAG_DEBUG] event=window-visible-cancel this=" << this
++          << " visible=" << visible << " gen=" << generation_
++          << " windowEpoch=" << windowEpoch_;
++      maybeRestartWallpaperAfterCancel();
+     }
+   });
+   observeScreen(window->screen());
+@@ -358,7 +630,7 @@ void PAGView::prepareAfterStableWindow() {
+   const int pixelWidth = qRound(width() * dpr);
+   const int pixelHeight = qRound(height() * dpr);
+   loadingStarted_ = true;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // 会话级日志（默认关闭；需要跟踪加载尺寸/时序可切换 #if 1）
+   qDebug().noquote().nospace()
+       << "[PAG_SESSION] event=load-dispatch gen=" << generation_
+       << " windowEpoch=" << windowEpoch_
+@@ -366,7 +638,9 @@ void PAGView::prepareAfterStableWindow() {
+       << " size=" << pixelWidth << "x" << pixelHeight
+       << " stabilityDelayMs=" << (skipStabilityDelay_ ? 0 : stabilityTimer_.interval());
+ #endif
+-  QMetaObject::invokeMethod(renderThread_.get(), "loadAndPrepare", Qt::QueuedConnection,
++  QMetaObject::invokeMethod(renderThread_.get(),
++                            wallpaperActive_ ? "loadVideoLoop" : "loadAndPrepare",
++                            Qt::QueuedConnection,
+                             Q_ARG(QString, filePath_),
+                             Q_ARG(int, scaleModeForOption(option_)),
+                             Q_ARG(int, pixelWidth), Q_ARG(int, pixelHeight),
+@@ -388,7 +662,7 @@ bool PAGView::ticketMatches(const PAGFrameTicket& ticket) const {
+ void PAGView::onFrameFlushed(const PAGFrameTicket& ticket) {
+   QMutexLocker locker(&stateMutex_);
+   if (!ticketMatches(ticket) || pendingTicketValid_ || attachedTicketValid_) {
+-#if 0
++#if 0  // 异常路径日志（默认关闭；排查丢弃帧/取消竞态时可切换 #if 1）
+     qDebug().noquote().nospace()
+         << "[PAG_CANCEL_TRACE] event=frame-flushed-discarded"
+         << " ticketGen=" << ticket.generation
+@@ -456,7 +730,7 @@ QSGNode* PAGView::updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) {
+   attachedTicketValid_ = true;
+   pendingTicketValid_ = false;
+   nodeAttached_ = true;
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // PAG 逐帧调试日志（默认关闭，排查问题时可切换 #if 1 临时启用）
+   qDebug().noquote().nospace()
+       << "[PAG_FRAME] phase=attached gen=" << attachedTicket_.generation
+       << " windowEpoch=" << attachedTicket_.windowEpoch
+@@ -523,7 +797,7 @@ void PAGView::onFrameSwapped() {
+     }
+   }
+ 
+-#if 0  // PAG 逐帧调试日志，排查问题时可临时启用
++#if 0  // PAG 逐帧调试日志（默认关闭，排查问题时可切换 #if 1 临时启用）
+   if (presentTicket) {
+     qDebug().noquote().nospace()
+         << "[PAG_FRAME] phase=swapped gen=" << presentedTicket.generation
+@@ -579,9 +853,16 @@ void PAGView::onWorkerSafeToUnload(qulonglong generation, qulonglong windowEpoch
+ 
+ void PAGView::onHiddenFramePresented(const PAGFrameTicket& ticket) {
+   QMutexLocker locker(&stateMutex_);
+-  if (ticketMatches(ticket) && ticket.phase == PAGFrameTicket::PrepareHidden) {
+-    Q_EMIT prepared(generation_);
++  if (!ticketMatches(ticket) || ticket.phase != PAGFrameTicket::PrepareHidden) {
++    return;
++  }
++  if (wallpaperActive_ && !paused_) {
++    // mp4 壁纸未锁定：首帧就绪即自动进入可见播放（prepared 回调检查 paused 态，
++    // 锁定中不启动可见播放，等价 pag 解锁瞬间起播语义；prepare 中解锁亦由此路径启动）
++    const auto generation = generation_;
++    beginVisiblePlayback(generation);
+   }
++  Q_EMIT prepared(generation_);
+ }
+ 
+ void PAGView::onPlaybackFinished(const PAGFrameTicket& ticket) {
+@@ -623,10 +904,22 @@ void PAGView::observeScreen(QScreen* screen) {
+     disconnect(observedScreen_, nullptr, this, nullptr);
+   }
+   observedScreen_ = screen;
++  qDebug().noquote().nospace()
++      << "[PAG_DEBUG] event=screen-observed this=" << this
++      << " screen=" << (screen ? screen->name() : "null")
++      << " dpr=" << (screen ? screen->devicePixelRatio() : -1.0)
++      << " geom=" << (screen ? screen->geometry().width() : 0) << "x"
++      << (screen ? screen->geometry().height() : 0);
+   if (!screen) {
+     return;
+   }
+   auto metricChanged = [this](qreal) {
++    qDebug().noquote().nospace()
++        << "[PAG_DEBUG] event=metric-changed(dpi) this=" << this
++        << " active=" << active_ << " loading=" << loadingStarted_
++        << " screenDpr=" << (observedScreen_ ? observedScreen_->devicePixelRatio() : -1.0)
++        << " winDpr=" << (observedWindow_ ? observedWindow_->devicePixelRatio() : -1.0)
++        << " item=" << width() << "x" << height();
+     if (!active_) {
+       return;
+     }
+@@ -636,6 +929,7 @@ void PAGView::observeScreen(QScreen* screen) {
+         QMutexLocker locker(&stateMutex_);
+         ++windowEpoch_;
+       }
++      maybeRestartWallpaperAfterCancel();
+     } else {
+       skipStabilityDelay_ = false;
+       ++windowEpoch_;
+@@ -644,6 +938,12 @@ void PAGView::observeScreen(QScreen* screen) {
+   };
+   connect(screen, &QScreen::logicalDotsPerInchChanged, this, metricChanged);
+   connect(screen, &QScreen::physicalDotsPerInchChanged, this, metricChanged);
++  connect(screen, &QScreen::geometryChanged, this, [this](const QRect& g) {
++    qDebug().noquote().nospace()
++        << "[PAG_DEBUG] event=screen-geometry-changed geom="
++        << g.width() << "x" << g.height() << "@" << g.x() << "," << g.y()
++        << " active=" << active_ << " loading=" << loadingStarted_;
++  });
+ }
+ 
+ void PAGView::notifyNodeDetached() {
+@@ -698,6 +998,7 @@ bool PAGView::eventFilter(QObject* watched, QEvent* event) {
+         QMutexLocker locker(&stateMutex_);
+         ++windowEpoch_;
+       }
++      maybeRestartWallpaperAfterCancel();
+     } else if (!loadingStarted_) {
+       restartStabilityTimer();
+     }
+diff --git a/peony-qt-desktop/qml-desktop/pag/PAGView.h b/peony-qt-desktop/qml-desktop/pag/PAGView.h
+index 1e1d176..c3a99cc 100644
+--- a/peony-qt-desktop/qml-desktop/pag/PAGView.h
++++ b/peony-qt-desktop/qml-desktop/pag/PAGView.h
+@@ -47,6 +47,14 @@ class PAGView : public QQuickItem {
+   Q_INVOKABLE void beginVisiblePlayback(qulonglong generation);
+   Q_INVOKABLE void cancelPlayback();
+   Q_INVOKABLE void requestPendingFrameUpdate();
++  // mp4 壁纸常驻会话（独立于 unlock 会话）：所有屏各建一个实例
++  // locked=true → 仅准备首帧（prepared-paused），待 unlock 后 resumeWallpaperPlayback 起播
++  // option 为显示方式（picture-options），空值按 scaled（Zoom）处理
++  Q_INVOKABLE bool beginWallpaperPlayback(const QString& filePath, bool locked,
++                                          const QString& option = QStringLiteral("scaled"));
++  Q_INVOKABLE void stopWallpaperPlayback();
++  Q_INVOKABLE void pauseWallpaperPlayback();
++  Q_INVOKABLE void resumeWallpaperPlayback();
+ 
+   void geometryChanged(const QRectF& newGeometry, const QRectF& oldGeometry) override;
+   QSGNode* updatePaintNode(QSGNode* oldNode, UpdatePaintNodeData*) override;
+@@ -75,12 +83,18 @@ class PAGView : public QQuickItem {
+                          qulonglong visibilityEpoch);
+   void onWorkerSafeToUnload(qulonglong generation, qulonglong windowEpoch,
+                             qulonglong visibilityEpoch);
++  void onCancelAcknowledged(qulonglong generation, qulonglong windowEpoch,
++                            qulonglong visibilityEpoch);
+   void onSceneGraphInvalidated();
+ 
+  private:
+   bool ticketMatches(const PAGFrameTicket& ticket) const;
+   bool windowIsReady() const;
+   void bumpWindowEpochAndCancel();
++  // mp4 壁纸会话被窗口/屏幕变化取消后的延迟自动重启；锁定（paused_）期间挂起，
++  // 解锁 resumeWallpaperPlayback 或暂停态解除后由它接管；stopWallpaperPlayback 清除
++  // wallpaperActive_ 后不再重启（防 churn 乒乓）
++  void maybeRestartWallpaperAfterCancel();
+   void observeScreen(QScreen* screen);
+   void notifyNodeDetached();
+   int scaleModeForOption(const QString& option) const;
+@@ -107,6 +121,14 @@ class PAGView : public QQuickItem {
+   bool waitingForDetach_ = false;
+   bool loadingStarted_ = false;
+   bool skipStabilityDelay_ = false;
++  // mp4 壁纸会话状态：wallpaperActive_ 表示常驻会话存在（含被窗口变化取消、等待自动重启）；
++  // paused_ 表示锁屏/锁定态（timer 触发重启用它做锁屏复查，见 maybeRestartWallpaperAfterCancel）
++  bool wallpaperActive_ = false;
++  bool paused_ = false;
++  bool wallpaperRestartScheduled_ = false;
++  // 解锁 resume 到达时会话仍在取消中（cancelAcknowledged 未回）：挂起恢复意图，
++  // 由 onCancelAcknowledged 清 cancelling_ 后转为自动重启；新的 begin/stop 意图覆盖时清除
++  bool pendingResumeAfterCancel_ = false;
+   int visibleStartRetryCount_ = 0;
+   bool visibleFrameRepaintRequested_ = false;
+   // 三个代次共同防止旧窗口或旧壁纸的异步回调污染当前会话
+diff --git a/src/control/sort-type-menu.cpp b/src/control/sort-type-menu.cpp
+index eed16e0..48c8072 100644
+--- a/src/control/sort-type-menu.cpp
++++ b/src/control/sort-type-menu.cpp
+@@ -149,7 +149,17 @@ QString SortTypeMenu::getSortTypeName(int type)
+     QString sortTypeName = "";
+     // 检查 type 是否在有效范围内
+     if (type >= 0 && type < m_sort_types->actions().count()) {
+-        sortTypeName = QString(tr("By %1")).arg(m_sort_types->actions().at(type)->text());
++        if (type == 1) {
++            auto action = m_sort_types->actions().at(1);
++            if (Peony::GlobalSettings::getInstance()->getValue(SHOW_CREATE_TIME).toBool()) {
++                action->setText(tr("Time Created"));
++            } else {
++                action->setText(tr("Time Modified"));
++            }
++            sortTypeName = QString(tr("By %1")).arg(action->text());
++        } else {
++            sortTypeName = QString(tr("By %1")).arg(m_sort_types->actions().at(type)->text());
++        }
+     }
+     return sortTypeName;
+ }
+@@ -193,6 +203,15 @@ void SortTypeMenu::setSortType(int type)
+ {
+     // 检查 type 是否在有效范围内
+     if (type >= 0 && type < m_sort_types->actions().count()) {
++        // 不论当前排序类型是什么，始终同步索引1（日期列）的动作文本
++        {
++            auto action = m_sort_types->actions().at(1);
++            if (Peony::GlobalSettings::getInstance()->getValue(SHOW_CREATE_TIME).toBool()) {
++                action->setText(tr("Time Created"));
++            } else {
++                action->setText(tr("Time Modified"));
++            }
++        }
+         m_sort_types->actions().at(type)->setChecked(true);
+         qDebug() << "Setting sort type:" << type;
+         if (m_sort_type != type) {
+diff --git a/src/control/toolbar-manager.cpp b/src/control/toolbar-manager.cpp
+index 7924671..5cc695a 100644
+--- a/src/control/toolbar-manager.cpp
++++ b/src/control/toolbar-manager.cpp
+@@ -97,17 +97,22 @@ ToolBarWidget::ToolBarWidget(QWidget *parent)
+ 
+     mainlayout->setContentsMargins(0, 0, 0, 0);
+     mainlayout->setSpacing(0);
+-    QFrame *line = new QFrame(this);
+-    line->setFrameShape(QFrame::HLine);
+-    line->setFixedHeight(1);
+-    line->setStyleSheet("background-color: #cccccc;");
+ 
+     mainlayout->addLayout(m_layout);
+-    mainlayout->addWidget(line);
+     setLayout(mainlayout);
+     setFixedHeight(48);
+ }
+ 
++void ToolBarWidget::paintEvent(QPaintEvent *e)
++{
++    QPainter p(this);
++    auto bgColor = qApp->palette().color(QPalette::Active, QPalette::Base);
++    p.fillRect(rect(), bgColor);
++    auto brush = qvariant_cast<QBrush>(qApp->property("button-active"));
++    p.setPen(brush.color());
++    p.drawLine(rect().bottomLeft(), rect().bottomRight());
++}
++
+ void ToolBarWidget::addButton(QToolButton *button)
+ {
+     if (!button) return;
+@@ -689,7 +694,7 @@ void ToolBarManager::createButtons()
+         if (!m_sortTypeMenuWidget || !m_window || !m_buttons.sortButton) {
+             return;
+         }
+-        if (SORT_COLUMN == key || key == USE_GLOBAL_DEFAULT_SORTING || SORT_UPDATE == key) {
++        if (SORT_COLUMN == key || key == USE_GLOBAL_DEFAULT_SORTING || SORT_UPDATE == key || SHOW_CREATE_TIME == key) {
+             QString sortTypeName = m_sortTypeMenuWidget->getSortTypeName(m_window->getCurrentSortColumn());
+             m_sortTypeMenuWidget->updateSortOrderName(m_window->getCurrentSortColumn());
+             m_buttons.sortButton->setText(sortTypeName);
+diff --git a/src/control/toolbar-manager.h b/src/control/toolbar-manager.h
+index 4e3b2b0..7b83be6 100644
+--- a/src/control/toolbar-manager.h
++++ b/src/control/toolbar-manager.h
+@@ -66,6 +66,7 @@ public:
+ Q_SIGNALS:
+     void layoutChanged();
+ protected:
++    void paintEvent(QPaintEvent *e) override;
+     void resizeEvent(QResizeEvent *e);
+     void showEvent(QShowEvent *event) override;
+ 
+diff --git a/translations/peony-qt-desktop/peony-qt-desktop_ko_KP.ts b/translations/peony-qt-desktop/peony-qt-desktop_ko_KP.ts
+index 12cdf83..a3dc08a 100644
+--- a/translations/peony-qt-desktop/peony-qt-desktop_ko_KP.ts
++++ b/translations/peony-qt-desktop/peony-qt-desktop_ko_KP.ts
+@@ -7,7 +7,7 @@
+         <location filename="../../peony-qt-desktop/desktop-window-manager.cpp" line="686"/>
+         <location filename="../../peony-qt-desktop/desktop-window-manager.cpp" line="691"/>
+         <source>New Partition</source>
+-        <translation type="unfinished"></translation>
++        <translation>새 분구 만들기</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-window-manager.cpp" line="1047"/>
+@@ -106,7 +106,7 @@
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="361"/>
+         <source>Store %1 selected files into a new partition</source>
+-        <translation type="unfinished"></translation>
++        <translation>%1개 파일을 새 분구에 수납</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="375"/>
+@@ -125,7 +125,7 @@
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="395"/>
+         <source>Text Document</source>
+-        <translation type="unfinished"></translation>
++        <translation>문서 파일</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="560"/>
+@@ -165,37 +165,37 @@
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="618"/>
+         <source>Time Modified</source>
+-        <translation type="unfinished"></translation>
++        <translation>시간 수정</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="652"/>
+         <source>Newest to oldest</source>
+-        <translation type="unfinished"></translation>
++        <translation>새것부터 오래된것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="653"/>
+         <source>Oldest to newest</source>
+-        <translation type="unfinished"></translation>
++        <translation>오래된것부터 새것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="656"/>
+         <source>Files from large to small</source>
+-        <translation type="unfinished"></translation>
++        <translation>큰것부터 작은것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="657"/>
+         <source>Files from small to large</source>
+-        <translation type="unfinished"></translation>
++        <translation>작은것부터 큰것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="684"/>
+         <source>Desktop Origanization</source>
+-        <translation type="unfinished"></translation>
++        <translation>바탕화면 정리</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="697"/>
+         <source>Create New Partiton</source>
+-        <translation type="unfinished"></translation>
++        <translation>새 분구 만들기</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="974"/>
+@@ -205,12 +205,12 @@
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="1146"/>
+         <source>Remove Desktop Widget</source>
+-        <translation type="unfinished"></translation>
++        <translation>바탕화면 작은 플러그인 제거</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="1169"/>
+         <source>Add Plugin</source>
+-        <translation type="unfinished"></translation>
++        <translation>플러그인 추가</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="617"/>
+@@ -261,7 +261,7 @@
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="153"/>
+         <source>Open Desktop in Window</source>
+-        <translation type="unfinished"></translation>
++        <translation>창에서 “바탕화면” 열기</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="837"/>
+@@ -364,7 +364,7 @@
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="987"/>
+         <source>Background Settings</source>
+-        <translation type="unfinished"></translation>
++        <translation>배경 설정</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-menu.cpp" line="993"/>
+@@ -377,17 +377,17 @@
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="317"/>
+         <source>Desktop Widget Manager</source>
+-        <translation type="unfinished"></translation>
++        <translation>바탕화면 플러그인 관리</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="568"/>
+         <source>Search application cards</source>
+-        <translation type="unfinished"></translation>
++        <translation>응용 프로그램 카드 검색</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="615"/>
+         <source>Click a card to add it to the desktop, or drag a card onto the desktop.</source>
+-        <translation type="unfinished"></translation>
++        <translation>카드를 클릭하여 바탕화면에 추가하거나 카드를 바탕화면에 끌어다 놓으십시오</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/widget-manager-dialog.cpp" line="617"/>
+@@ -416,12 +416,13 @@ Install widget packages to get started.</source>
+         <location filename="../../peony-qt-desktop/qml-desktop/WidgetManagerPreviewPane.qml" line="243"/>
+         <source>No desktop widgets found.
+ Install widget packages to get started.</source>
+-        <translation type="unfinished"></translation>
++        <translation>바탕화면 작은 플러그인을 찾지 못했습니다.
++플러그인 팩을 설치하여 사용을 시작하십시오.</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/qml-desktop/WidgetManagerPreviewPane.qml" line="242"/>
+         <source>No desktop widgets match &quot;%1&quot;.</source>
+-        <translation type="unfinished"></translation>
++        <translation>“%1”과(와) 일치하는 작은 플러그인이 없습니다.</translation>
+     </message>
+ </context>
+ <context>
+@@ -429,7 +430,7 @@ Install widget packages to get started.</source>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="20"/>
+         <source>Rename Partition</source>
+-        <translation type="unfinished"></translation>
++        <translation>분구 이름 바꾸기</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="24"/>
+@@ -459,7 +460,7 @@ Install widget packages to get started.</source>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="40"/>
+         <source>Time Modified</source>
+-        <translation type="unfinished"></translation>
++        <translation>시간 수정</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="44"/>
+@@ -484,22 +485,22 @@ Install widget packages to get started.</source>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="63"/>
+         <source>Newest to oldest</source>
+-        <translation type="unfinished"></translation>
++        <translation>새것부터 오래된것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="64"/>
+         <source>Oldest to newest</source>
+-        <translation type="unfinished"></translation>
++        <translation>오래된것부터 새것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="67"/>
+         <source>Files from large to small</source>
+-        <translation type="unfinished"></translation>
++        <translation>큰것부터 작은것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="68"/>
+         <source>Files from small to large</source>
+-        <translation type="unfinished"></translation>
++        <translation>작은것부터 큰것까지</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="89"/>
+@@ -514,7 +515,7 @@ Install widget packages to get started.</source>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="102"/>
+         <source>Text Document</source>
+-        <translation type="unfinished"></translation>
++        <translation>문서 파일</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="191"/>
+@@ -524,7 +525,7 @@ Install widget packages to get started.</source>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.cpp" line="197"/>
+         <source>Disband Partition</source>
+-        <translation type="unfinished"></translation>
++        <translation>분구 해산</translation>
+     </message>
+     <message>
+         <location filename="../../peony-qt-desktop/desktop-widgets/base/desktop-widgets-menu.h" line="69"/>

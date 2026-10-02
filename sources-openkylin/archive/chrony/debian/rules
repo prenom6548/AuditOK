@@ -1,0 +1,52 @@
+#!/usr/bin/make -f
+
+-include /usr/share/dpkg/buildtools.mk
+export CC
+
+include /usr/share/dpkg/architecture.mk
+
+export DEB_BUILD_MAINT_OPTIONS=hardening=+all
+
+BASE=debian/chrony
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	dh_auto_configure --  --mandir=/usr/share/man \
+		--sysconfdir=/etc/chrony \
+		--with-chronyc-user=_chrony \
+		--with-user=_chrony \
+		--enable-scfilter \
+		--chronyrundir=/run/chrony \
+		--with-ntp-era=$(shell date -d '1970-01-01 00:00:00+00:00' +'%s') \
+		--enable-ntp-signd \
+		--with-hwclockfile=/etc/adjtime \
+		--with-pidfile=/run/chrony/chronyd.pid \
+		--host-system=Linux
+
+override_dh_install:
+	dh_install
+	install -m 0640 -t $(BASE)/usr/share/chrony/ debian/chrony.keys
+	install -m 0755 -T examples/chrony.nm-dispatcher.dhcp ${BASE}/usr/lib/NetworkManager/dispatcher.d/20-chrony-dhcp
+	install -m 0755 -T examples/chrony.nm-dispatcher.onoffline $(BASE)/usr/lib/NetworkManager/dispatcher.d/20-chrony-onoffline
+	install -m 0644 -T examples/chrony.logrotate $(BASE)/etc/logrotate.d/chrony
+	dh_apparmor --profile-name=usr.sbin.chronyd -pchrony
+	install -D -p -m 0644 debian/chrony.dhcp $(BASE)/etc/dhcp/dhclient-exit-hooks.d/chrony
+
+override_dh_fixperms:
+	dh_fixperms -X usr/share/chrony/chrony.keys
+
+override_dh_installinit:
+	dh_installinit
+# Disable the system call filter on architectures mentioned below
+# due to missing support in libseccomp and/or in the Linux kernel.
+ifneq (,$(filter $(DEB_HOST_ARCH), alpha ia64 m68k sh4 sparc64))
+	sed -i '/DAEMON_OPTS=/s/"-F 1"/""/' $(BASE)/etc/default/chrony
+endif
+
+override_dh_installsystemd:
+	dh_installsystemd chrony.service
+	dh_installsystemd --name=chrony-wait --no-enable --no-start chrony-wait.service
+	dh_installsystemd --name=chrony-dnssrv@ chrony-dnssrv@.service
+	dh_installsystemd --name=chrony-dnssrv@ --no-enable --no-start chrony-dnssrv@.timer

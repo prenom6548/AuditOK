@@ -1,0 +1,233 @@
+#!/bin/sh
+# 90-generic - Battery plugin catchall for laptops that either not provide
+# a kernel interface for battery care or TLP doesn't support it yet.
+#
+# Copyright (c) 2024 Thomas Koch <linrunner at gmx.net> and others.
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+# Needs: tlp-func-base, 35-tlp-func-batt, tlp-func-stat
+
+batdrv_init () {
+    # detect hardware and initialize driver
+    # rc: 0 (catchall)
+    # retval: $_batdrv_plugin
+    #
+    # 1. determine present batteries
+    #    list of batteries (space separated)    --> retval $_batteries;
+    #
+    # 2. designate battery care as unsupported
+    #    reading battery data                   --> retval $_bm_read = "none",
+    #    reading/writing charging thresholds    --> retval $_bm_thresh = "none",
+    #    reading/writing force discharge        --> retval $_bm_dischg = "none":
+
+    _batdrv_plugin="generic"
+
+    # iterate batteries
+    local bs bd
+    _batteries=""
+    for bd in "$ACPIBATDIR"/*; do
+        if [ "$(read_sysf "$bd/type")" = "Battery" ] \
+            && [ "$(read_sysf "$bd/present")" = "1" ]; then
+            bs=${bd##/*/}
+            # ignore atypical power supplies and batteries
+            printf '%s\n' "$bs" | grep -E -q "$RE_PS_IGNORE" && continue
+            # record detected batteries and directories
+            if [ -n "$_batteries" ]; then
+                _batteries="$_batteries $bs"
+            else
+                _batteries="$bs"
+            fi
+        fi
+    done
+
+    # shellcheck disable=SC2034
+    _bm_read="none"
+    # shellcheck disable=SC2034
+    _bm_thresh="none"
+    # shellcheck disable=SC2034
+    _bm_dischg="none"
+
+    # shellcheck disable=SC2034
+    _batdrv_selected=$_batdrv_plugin
+    echo_debug "bat" "batdrv_init.${_batdrv_plugin}: batteries=$_batteries"
+    # catchall: always return 0
+    return 0
+}
+
+batdrv_select_battery () {
+    # determine battery acpidir
+    # $1: battery
+    # retval: $_bd_read:   directory with battery data sysfiles
+
+    local bat="$1"
+
+    # convert battery param to uppercase
+    bat="$(printf '%s' "$1" | tr "[:lower:]" "[:upper:]")"
+
+   _bd_read="$ACPIBATDIR/$bat"
+    return 0
+}
+
+batdrv_read_threshold () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.read_treshold.not_implemented"
+    return 255
+}
+
+batdrv_write_thresholds () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.write_tresholds.not_implemented"
+    return 255
+}
+
+batdrv_chargeonce () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.chargeonce.not_implemented"
+    return 255
+}
+
+batdrv_apply_configured_thresholds () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.apply_configured_thresholds.not_implemented"
+    return 255
+}
+
+batdrv_read_force_discharge () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.read_force_discharge.not_implemented"
+    return 255
+}
+
+batdrv_write_force_discharge () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.write_force_discharge.not_implemented"
+    return 255
+}
+
+batdrv_cancel_force_discharge () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.cancel_force_discharge.not_implemented"
+    return 255
+}
+
+batdrv_force_discharge_active () {
+    # function not implemented for generic hardware
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.force_discharge_active.not_implemented"
+    return 255
+}
+
+batdrv_discharge () {
+    # function not implemented for generic hardware
+
+    # Important: release lock from caller
+    unlock_tlp tlp_discharge
+
+    echo_debug "bat" "batdrv.${_batdrv_plugin}.discharge.not_implemented"
+    return 255
+}
+
+batdrv_show_battery_data () { # output battery data
+    # $1: 1=verbose
+    # global param: $_batteries
+    # rc: 0=ok/1=no batteries specified
+    local verbose=${1:-0}
+
+    printf "+++ Battery Care\n"
+    printf "Plugin: %s\n" "$_batdrv_plugin"
+    printf "Supported features: none available\n\n"
+
+    local bat lf
+    local bcnt=0
+    local ed ef en
+    local efsum=0
+    local ensum=0
+
+    if [ -z "$_batteries" ]; then
+        printf "+++ Battery Status\n"
+        printf "No batteries detected.\n\n"
+        return 1
+    fi
+
+    for bat in $_batteries; do # iterate batteries
+        batdrv_select_battery "$bat"
+
+        printf "+++ Battery Status: %s\n" "$bat"
+
+        printparm "%-59s = ##%s##" "$_bd_read/manufacturer"
+        printparm "%-59s = ##%s##" "$_bd_read/model_name"
+
+        print_battery_cycle_count "$_bd_read/cycle_count" "$(read_sysf "$_bd_read/cycle_count")"
+
+        if [ -f "$_bd_read/energy_full" ]; then
+            printparm "%-59s = ##%6d## [mWh]" "$_bd_read/energy_full_design" "" 000
+            printparm "%-59s = ##%6d## [mWh]" "$_bd_read/energy_full" "" 000
+            printparm "%-59s = ##%6d## [mWh]" "$_bd_read/energy_now" "" 000
+            printparm "%-59s = ##%6d## [mW]" "$_bd_read/power_now" "" 000
+
+            # store values for charge / capacity calculation below
+            ed=$(read_sysval "$_bd_read/energy_full_design")
+            ef=$(read_sysval "$_bd_read/energy_full")
+            en=$(read_sysval "$_bd_read/energy_now")
+            efsum=$((efsum + ef))
+            ensum=$((ensum + en))
+
+        elif [ -f "$_bd_read/charge_full" ]; then
+            printparm "%-59s = ##%6d## [mAh]" "$_bd_read/charge_full_design" "" 000
+            printparm "%-59s = ##%6d## [mAh]" "$_bd_read/charge_full" "" 000
+            printparm "%-59s = ##%6d## [mAh]" "$_bd_read/charge_now" "" 000
+            printparm "%-59s = ##%6d## [mA]" "$_bd_read/current_now" "" 000
+
+            # store values for charge / capacity calculation below
+            ed=$(read_sysval "$_bd_read/charge_full_design")
+            ef=$(read_sysval "$_bd_read/charge_full")
+            en=$(read_sysval "$_bd_read/charge_now")
+            efsum=$((efsum + ef))
+            ensum=$((ensum + en))
+
+        else
+            ed=0
+            ef=0
+            en=0
+        fi
+
+        print_batstate "$_bd_read/status"
+        printf "\n"
+
+        if [ "$verbose" -eq 1 ]; then
+            printparm "%-59s = ##%6s## [mV]" "$_bd_read/voltage_min_design" "" 000
+            printparm "%-59s = ##%6s## [mV]" "$_bd_read/voltage_now" "" 000
+            printf "\n"
+        fi
+
+        printparm "%-59s = ##%6d## [%%]" "$_bd_read/charge_control_start_threshold" "not available"
+        printparm "%-59s = ##%6d## [%%]" "$_bd_read/charge_control_end_threshold" "not available"
+        printf "\n"
+
+        # charge + capacity
+        lf=0
+        if [ "$ef" -ne 0 ]; then
+            perl -e 'printf ("%-59s = %6.1f [%%]\n", "Charge",   100.0 * '"$en"' / '"$ef"');'
+            lf=1
+        fi
+        if [ "$ed" -ne 0 ]; then
+            perl -e 'printf ("%-59s = %6.1f [%%]\n", "Capacity", 100.0 * '"$ef"' / '"$ed"');'
+            lf=1
+        fi
+        [ "$lf" -gt 0 ] && printf "\n"
+        bcnt=$((bcnt+1))
+
+    done
+
+    if [ $bcnt -gt 1 ] && [ $efsum -ne 0 ]; then
+        # more than one battery detected --> show charge total
+        perl -e 'printf ("%-59s = %6.1f [%%]\n", "+++ Charge total",   100.0 * '"$ensum"' / '"$efsum"');'
+        printf "\n"
+    fi
+
+    return 0
+}
+
+batdrv_recommendations () {
+    # no recommendations for generic hardware
+    return 0
+}

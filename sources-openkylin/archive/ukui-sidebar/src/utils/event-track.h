@@ -1,0 +1,43 @@
+/*
+ * Copyright (C) 2023, KylinSoft Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ */
+
+#ifndef UKUI_SIDEBAR_EVENT_TRACK_H
+#define UKUI_SIDEBAR_EVENT_TRACK_H
+
+#include <QObject>
+#include <qqml.h>
+
+namespace Sidebar {
+
+class EventTrack : public QObject
+{
+    Q_OBJECT
+public:
+    static EventTrack *qmlAttachedProperties(QObject *object);
+    static EventTrack *instance();
+
+    explicit EventTrack(QObject *parent = nullptr);
+    Q_INVOKABLE void sendSlideEvent(const QString& code, const QString& page, const QVariantMap &map = {});
+};
+
+} // Sidebar
+
+QML_DECLARE_TYPEINFO(Sidebar::EventTrack, QML_HAS_ATTACHED_PROPERTIES)
+
+
+#endif //UKUI_SIDEBAR_EVENT_TRACK_H

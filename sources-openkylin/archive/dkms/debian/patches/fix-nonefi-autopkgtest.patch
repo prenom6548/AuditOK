@@ -1,0 +1,129 @@
+From: Dimitri John Ledkov <dimitri.ledkov@canonical.com>
+Date: Mon, 1 Jun 2026 16:36:01 +0800
+Subject: Support running tests on systems with module signing
+
+ but without update-secureboot-policy.
+---
+ run_test.sh | 55 +++++++++++++++++++++++++++++++++++++++++--------------
+ 1 file changed, 41 insertions(+), 14 deletions(-)
+
+diff --git a/run_test.sh b/run_test.sh
+index 9999706..a6c00f3 100755
+--- a/run_test.sh
++++ b/run_test.sh
+@@ -76,12 +76,26 @@ modinfo_quad() {
+ 
+ SIGNING_MESSAGE=""
+ declare -i NO_SIGNING_TOOL
+-if [[ $# = 1 ]] && [[ $1 = "--no-signing-tool" ]]; then
+-    echo 'Ignore signing tool errors'
+-    NO_SIGNING_TOOL=1
+-else
+-    NO_SIGNING_TOOL=0
+-fi
++declare -i NO_UPDATE_SB_POLICY
++NO_SIGNING_TOOL=0
++NO_UPDATE_SB_POLICY=0
++only=
++
++for arg in "$@"; do
++    case $arg in
++        --no-signing-tool)
++            echo 'Ignore signing tool errors'
++            NO_SIGNING_TOOL=1
++            ;;
++        --no-update-sb-policy)
++            echo 'Ignore missing update-secureboot-policy errors'
++            NO_UPDATE_SB_POLICY=1
++            ;;
++        *)
++            only=$arg
++            ;;
++    esac
++done
+ 
+ # Some helpers
+ dkms_status_grep_dkms_module() {
+@@ -161,13 +175,17 @@ cert_serial() {
+     fi
+ }
+ 
++declare -i FORCE_SIGNING_MESSAGE
++FORCE_SIGNING_MESSAGE=0
+ set_signing_message() {
+     # $1: module name
+     # $2: module version
+     # $3: module file name if not the same as $1
+-    if (( NO_SIGNING_TOOL == 0 )); then
++    if (( NO_SIGNING_TOOL == 0 )) && (( NO_UPDATE_SB_POLICY == 0 )) || (( FORCE_SIGNING_MESSAGE == 1 )); then
+         SIGNING_MESSAGE="
+ Signing module /var/lib/dkms/$1/$2/build/${3:-$1}.ko"
++    else
++        SIGNING_MESSAGE=""
+     fi
+ }
+ 
+@@ -198,10 +216,6 @@ generalize_expected_output() {
+         sed -i '/^Secure Boot not enabled on this system./d' "${output_log}"
+         sed -i '/^Certificate or key are missing, generating them using update-secureboot-policy...$/d' "${output_log}"
+         sed -i '/^Certificate or key are missing, generating self signed certificate for MOK...$/d' "${output_log}"
+-    else
+-        sed -i "/^Binary .* not found, modules won't be signed$/d" "${output_log}"
+-        # Uncomment the following line to run this script with --no-signing-tool on platforms where the sign-file tool exists
+-        # sed -i '/^Signing module \/var\/lib\/dkms\/dkms_test\/1.0\/build\/dkms_test.ko$/d' "${output_log}"
+     fi
+     # OpenSSL non-critical errors while signing. Remove them to be more generic
+     sed -i '/^At main.c:/d' "${output_log}"
+@@ -413,14 +427,18 @@ if [[ $sign_file = "/usr/bin/kmodsign" ]]; then
+     SIGNING_PROLOGUE_cert="Public certificate (MOK): /var/lib/shim-signed/mok/MOK.der"
+ fi
+ 
+-if (( NO_SIGNING_TOOL == 0 )); then
++if (( NO_SIGNING_TOOL == 0 )) && (( NO_UPDATE_SB_POLICY == 0 )); then
+     SIGNING_PROLOGUE="${SIGNING_PROLOGUE_command}
+ ${SIGNING_PROLOGUE_key}
+ ${SIGNING_PROLOGUE_cert}
+ "
+-else
++elif (( NO_SIGNING_TOOL == 1 )); then
+     SIGNING_PROLOGUE="The kernel is built without module signing facility, modules won't be signed
+ "
++else
++    SIGNING_PROLOGUE="${SIGNING_PROLOGUE_command}
++Binary update-secureboot-policy not found, modules won't be signed
++"
+ fi
+ 
+ DKMS_VERSION="$(dkms --version)"
+@@ -440,7 +458,6 @@ run_with_expected_output dkms status -m dkms_test << EOF
+ EOF
+ rm /etc/dkms/framework.conf.d/dkms_test_framework.conf
+ 
+-only="${1:-}"
+ [[ $only ]] && echo "Running only '$only' tests"
+ 
+ if [[ ! $only || $only = basic ]]; then
+@@ -761,6 +778,13 @@ if (( NO_SIGNING_TOOL == 0 )); then
+     echo '*** Testing module signing'
+     ############################################################################
+ 
++    # The module signing tests use a framework configuration file to override
++    # the default signing keys and sign-file command. With a signing key
++    # configured, DKMS will not invoke the update-secureboot-policy tool, so
++    # NO_UPDATE_SB_POLICY should be ignored.
++    FORCE_SIGNING_MESSAGE=1
++    set_signing_message "dkms_test" "1.0"
++
+     echo 'Adding the test module'
+     run_with_expected_output dkms add test/dkms_test-1.0 << EOF
+ Creating symlink /var/lib/dkms/dkms_test/1.0/source -> /usr/src/dkms_test-1.0
+@@ -978,6 +1002,9 @@ EOF
+ 
+     echo 'Checking that the environment is clean again'
+     check_no_dkms_test
++
++    FORCE_SIGNING_MESSAGE=0
++    set_signing_message "dkms_test" "1.0"
+ fi
+ 
+ fi  # signing tests

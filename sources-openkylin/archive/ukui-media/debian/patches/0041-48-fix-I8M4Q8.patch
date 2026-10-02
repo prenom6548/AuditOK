@@ -1,0 +1,243 @@
+From: zhouyong <zhouyong01@kylinos.cn>
+Date: Wed, 24 Jul 2024 11:19:32 +0000
+Subject: !48 fix #I8M4Q8 Merge pull request !48 from zhouyong/openkylin/nile
+
+---
+ .../ukmedia_application_volume_widget.cpp          |  2 +-
+ .../ukmedia_application_volume_widget.h            |  2 +-
+ .../ukmedia_custom_class.cpp                       | 58 +++++++++++++++++++++-
+ .../ukmedia_custom_class.h                         | 23 ++++++++-
+ .../ukmedia_main_widget.cpp                        | 22 +++-----
+ .../ukmedia_system_volume_widget.cpp               |  2 +-
+ .../ukmedia_system_volume_widget.h                 |  2 +-
+ .../ukui-volume-control-applet-qt.pro              |  3 +-
+ 8 files changed, 92 insertions(+), 22 deletions(-)
+
+diff --git a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp
+index d492ad5..269f785 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.cpp
+@@ -68,7 +68,7 @@ ApplicationVolumeWidget::ApplicationVolumeWidget(QWidget *parent) : QWidget (par
+     systemVolumeBtn->setProperty("useButtonPalette",true);   //灰色按钮
+     systemVolumeBtn->setProperty("needTranslucent", true);   //灰色半透明按钮
+ 
+-    systemVolumeSlider = new UkmediaVolumeSlider(systemVolumeSliderWidget);
++    systemVolumeSlider = new AudioSlider(systemVolumeSliderWidget);
+     systemVolumeSlider->setOrientation(Qt::Horizontal);
+     systemVolumeSlider->setFocusPolicy(Qt::StrongFocus);
+     systemVolumeSlider->setProperty("needTranslucent", true); // Increase translucent effect
+diff --git a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h
+index 92395c8..44a7a4b 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h
++++ b/ukui-volume-control-applet-qt/ukmedia_application_volume_widget.h
+@@ -41,7 +41,7 @@ private:
+     QLabel *applicationLabel;
+     QLabel *systemVolumeLabel;
+     QPushButton *systemVolumeBtn;
+-    UkmediaVolumeSlider *systemVolumeSlider;
++    AudioSlider *systemVolumeSlider;
+     QLabel *systemVolumeDisplayLabel;
+ 
+     QWidget *systemVolumeSliderWidget;
+diff --git a/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp b/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp
+index d416ce4..42a9e9a 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_custom_class.cpp
+@@ -604,6 +604,63 @@ void UkuiSettingButton::mouseReleaseEvent(QMouseEvent *event)
+     return QLabel::mouseReleaseEvent(event);
+ }
+ 
++AudioSlider::AudioSlider(QWidget *parent)
++    : KSlider(parent)
++{
++    Q_UNUSED(parent);
++    setRange(0,100);
++    setSliderType(SmoothSlider);
++    setOrientation(Qt::Horizontal);
++    setFocusPolicy(Qt::StrongFocus);
++    setNodeVisible(false);
++}
++
++void AudioSlider::wheelEvent(QWheelEvent *e)
++{
++    if (this->value() - blueValue >= 10 || blueValue - this->value() >= 10) {
++        blueValue = value();
++        Q_EMIT blueValueChanged(blueValue);
++    }
++
++    return KSlider::wheelEvent(e);
++}
++
++void AudioSlider::keyReleaseEvent(QKeyEvent *e)
++{
++    if(e->key() == Qt::Key_VolumeMute) {
++        qDebug() << "UkmediaVolumeSlider keyReleaseEvent " << e->key();
++            // 过滤掉快捷键的操作
++            e->ignore(); // 忽略该事件
++            return;
++    }
++    Q_EMIT blueValueChanged(this->value());
++    return KSlider::keyReleaseEvent(e);
++}
++
++void AudioSlider::mouseMoveEvent(QMouseEvent *e)
++{
++    isMouseWheel = true;
++
++    if (this->value() - blueValue >= 10 || blueValue - this->value() >= 10) {
++        blueValue = value();
++        Q_EMIT blueValueChanged(blueValue);
++    }
++
++    return KSlider::mouseMoveEvent(e);
++}
++
++void AudioSlider::mouseReleaseEvent(QMouseEvent *e)
++{
++    isMouseWheel = false;
++    Q_EMIT blueValueChanged(this->value());
++
++    return KSlider::mouseReleaseEvent(e);
++}
++
++AudioSlider::~AudioSlider()
++{
++
++}
+ 
+ UkmediaVolumeSlider::UkmediaVolumeSlider(QWidget *parent,bool needTip)
+ {
+@@ -639,7 +696,6 @@ void UkmediaVolumeSlider::updateValue(QMouseEvent *e)
+     } else {
+         value = qRound(per*(this->maximum() - this->minimum())) + this->minimum();
+     }
+-
+     this->setValue(value);
+ }
+ 
+diff --git a/ukui-volume-control-applet-qt/ukmedia_custom_class.h b/ukui-volume-control-applet-qt/ukmedia_custom_class.h
+index 74945a4..585aaa8 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_custom_class.h
++++ b/ukui-volume-control-applet-qt/ukmedia_custom_class.h
+@@ -33,11 +33,12 @@
+ #include <QDebug>
+ #include <QTabWidget>
+ #include <QFrame>
++#include "kslider.h"
+ 
+ #define MIDDLE_COLOR 178
+ #define BACKGROUND_COLOR QColor(0,0,0,0)
+ 
+-
++using namespace kdk;
+ 
+ class UkmediaTrayIcon : public QSystemTrayIcon
+ {
+@@ -244,6 +245,26 @@ private Q_SLOTS:
+     void onPaletteChanged();
+ };
+ 
++class AudioSlider : public KSlider
++{
++    Q_OBJECT
++public:
++    AudioSlider(QWidget *parent = nullptr);
++    ~AudioSlider();
++    bool isMouseWheel = false;
++
++private:
++    int blueValue = 0;
++
++Q_SIGNALS:
++    void blueValueChanged(int value);   //针对蓝牙a2dp模式下滑动条跳动，以10为间隔设置音量
++
++protected:
++    void wheelEvent(QWheelEvent *e);
++    void keyReleaseEvent(QKeyEvent *e);
++    void mouseMoveEvent(QMouseEvent *e);
++    void mouseReleaseEvent(QMouseEvent *e);
++};
+ 
+ class UkmediaVolumeSlider : public QSlider
+ {
+diff --git a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+index 5546c91..5a88695 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_main_widget.cpp
+@@ -609,20 +609,12 @@ void UkmediaMainWidget::dealSlot()
+ 
+     connect(systemWidget->m_pInputListWidget,SIGNAL(currentRowChanged(int )),this,SLOT(inputListWidgetCurrentRowChangedSlot(int)));
+ 
+-
+-    connect(systemWidget->m_pSystemVolumeSlider,&UkmediaVolumeSlider::silderPressSignal,this,[=](){
+-        mousePress = true;
+-        mouseReleaseState = false;
+-    });
+-    connect(systemWidget->m_pSystemVolumeSlider,&UkmediaVolumeSlider::silderReleaseSignal,this,[=](){
+-        mouseReleaseState = true;
+-    });
+-    connect(appWidget->systemVolumeSlider,&UkmediaVolumeSlider::silderPressSignal,this,[=](){
+-        mousePress = true;
+-        mouseReleaseState = false;
++    connect(systemWidget->m_pSystemVolumeSlider,&QSlider::sliderReleased,this,[this](){
++        playAlertSound("audio-volume-change");
+     });
+-    connect(appWidget->systemVolumeSlider,&UkmediaVolumeSlider::silderReleaseSignal,this,[=](){
+-        mouseReleaseState = true;
++
++    connect(appWidget->systemVolumeSlider,&QSlider::sliderReleased,this,[this](){
++        playAlertSound("audio-volume-change");
+     });
+ 
+     m_pTimer = new QTimer(this);
+@@ -647,8 +639,8 @@ void UkmediaMainWidget::dealSlot()
+ 
+     connect(systemWidget->m_pSystemVolumeSlider,SIGNAL(valueChanged(int)),this,SLOT(systemVolumeSliderChangedSlot(int)));
+ 
+-    connect(systemWidget->m_pSystemVolumeSlider, &UkmediaVolumeSlider::blueValueChanged, this, &UkmediaMainWidget::systemVolumeSliderChangedSlotInBlue);
+-    connect(appWidget->systemVolumeSlider, &UkmediaVolumeSlider::blueValueChanged, this, &UkmediaMainWidget::systemVolumeSliderChangedSlotInBlue);
++    connect(systemWidget->m_pSystemVolumeSlider, &AudioSlider::blueValueChanged, this, &UkmediaMainWidget::systemVolumeSliderChangedSlotInBlue);
++    connect(appWidget->systemVolumeSlider, &AudioSlider::blueValueChanged, this, &UkmediaMainWidget::systemVolumeSliderChangedSlotInBlue);
+ 
+     connect(systemWidget->m_pSystemVolumeBtn,SIGNAL(clicked()),this,SLOT(systemVolumeButtonClickedSlot()));
+     connect(appWidget->systemVolumeBtn,SIGNAL(clicked()),this,SLOT(appWidgetMuteButtonCLickedSlot()));
+diff --git a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp
+index 9f3c547..d8b9800 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp
++++ b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.cpp
+@@ -57,7 +57,7 @@ UkmediaSystemVolumeWidget::UkmediaSystemVolumeWidget(QWidget *parent) : QWidget(
+     m_pSystemVolumeBtn->setProperty("useButtonPalette",true);   //灰色按钮
+     m_pSystemVolumeBtn->setProperty("needTranslucent", true);   //灰色半透明按钮
+ 
+-    m_pSystemVolumeSlider = new UkmediaVolumeSlider(m_pSysSliderWidget);
++    m_pSystemVolumeSlider = new AudioSlider(m_pSysSliderWidget);
+     m_pSystemVolumeSlider->setOrientation(Qt::Horizontal);
+     m_pSystemVolumeSlider->setFocusPolicy(Qt::StrongFocus);
+     m_pSystemVolumeSlider->setProperty("needTranslucent", true); // Increase translucent effect
+diff --git a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h
+index 3bdc0b8..5810a28 100644
+--- a/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h
++++ b/ukui-volume-control-applet-qt/ukmedia_system_volume_widget.h
+@@ -40,7 +40,7 @@ private:
+     QLabel *m_pOutputLabel;
+     QWidget     *m_pSysSliderWidget;
+     QLabel      *m_pSystemVolumeLabel;
+-    UkmediaVolumeSlider     *m_pSystemVolumeSlider;
++    AudioSlider     *m_pSystemVolumeSlider;
+     QLabel      *m_pSystemVolumeSliderLabel;
+ 
+     QFrame *volumeSettingFrame;
+diff --git a/ukui-volume-control-applet-qt/ukui-volume-control-applet-qt.pro b/ukui-volume-control-applet-qt/ukui-volume-control-applet-qt.pro
+index d5f05d8..dcd1a2d 100644
+--- a/ukui-volume-control-applet-qt/ukui-volume-control-applet-qt.pro
++++ b/ukui-volume-control-applet-qt/ukui-volume-control-applet-qt.pro
+@@ -44,7 +44,8 @@ PKGCONFIG += \
+     alsa \
+     kysdk-sysinfo \
+     kysdk-waylandhelper \
+-    Qt5X11Extras
++    Qt5X11Extras \
++    kysdk-qtwidgets
+ #    libwnck-1.0
+ 
+ LIBS += -lukui-log4qt -lukcc

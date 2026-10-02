@@ -1,0 +1,687 @@
+#!/bin/bash
+
+# 把这个文件放在 /usr/share/initramfs-tools/scripts/init-bottom/ 目录下。
+# 权限为 0755，在自动更新initrd时，这个脚本就被放到initrd中了，例如，
+# update-initramfs -u
+# 更新后，这个脚本将在initrd 运行到 local-bottom 阶段时自动执行。
+# 此时根分区已经挂载到了${rootmnt}下，可以直接访问该分区的文件。
+
+# PREREQ指定需要在什么脚本之后执行（同目录下的），也就是指定该脚本的依赖，以确定执行顺序。
+# 如果没有依赖，就可以是空字符串。 
+#PREREQ="security_set"
+PREREQ=""
+echo "run security_set first"
+
+prereqs()
+{
+	echo "$PREREQ"
+}
+
+case $1 in
+	prereqs)
+		prereqs
+		exit 0
+		;;
+esac
+
+# 上述部分是initramfs脚本的固定格式，不用动它。
+# 除非有依赖，才需要改 PREREQ 的值。
+
+echo $*
+BACKUP_FLAG=backup
+RESTORE_FLAG=restore
+ROLLBACK_FLAG=rollback-backup
+
+#设置日志路径，写日志做排查
+m_backupPath=${rootmnt}/data/.backup
+LOGFILE="${m_backupPath}/grub.log"
+
+#系统升级的备份点还原时，为保障断电后开机能继续还原，此处增加标志文件；还原成功后删除此文件；还原失败或断电还原未完成时，不删除此文件，等开启机器时init阶段根据是否存在标志文件继续进行系统还原。
+NEEDROOLBACKFILE="/data/.backup/roolback.txt"
+
+# 系统升级中断标志文件，存在的话还原至上一个备份点
+UPDATE_ERROR_FLAG_FILE="${rootmnt}/data/.backup/update-roolback"
+
+# Kare升级中断标志文件，存在的话还原至上一个备份点
+KARE_ERROR_FLAG_FILE="${rootmnt}/data/.backup/kare-roolback"
+
+touch $LOGFILE
+echo "开始执行备份还原脚本->" >>$LOGFILE
+echo $* >> $LOGFILE
+
+writeLogFile() {
+    echo $1 >>$LOGFILE
+}
+
+#. /scripts/security-functions
+show_text_mesg()
+{
+        echo "$1"
+}
+
+plymouth_is_running()
+{
+        if [ -e "/bin/plymouth" ] && /bin/plymouth --ping; then
+                return 0
+        else
+                return 1
+        fi
+}
+
+show_message()
+{
+        if plymouth_is_running; then
+                /bin/plymouth message --text="$1"
+                show_text_mesg "$1"
+        else
+                show_text_mesg "$1"
+        fi
+}
+
+clear_message()
+{
+        if plymouth_is_running; then
+                plymouth message --text=""
+        fi
+        clear
+}
+
+isEnglish()
+{
+        LOCALFILE="${rootmnt}/etc/default/locale"
+	if [ ! -e "$LOCALFILE" ]; then
+	    return 1
+	fi
+
+        localChinese=`grep -E  "^LANG" $LOCALFILE | grep -i "zh_CN.UTF"`
+        localVietnamese=`grep -E  "^LANG" $LOCALFILE | grep -i "vi_VN.UTF"`
+        localCantonese=`grep -E  "^LANG" $LOCALFILE | grep -i "zh_HK.UTF"`
+        localTibetan=`grep -E  "^LANG" $LOCALFILE | grep -i "bo_CN.UTF"`
+        localMongolian=`grep -E  "^LANG" $LOCALFILE | grep -i "mn_MN.UTF"`
+        #echo "localcontent: $localcontent"
+
+        if [ -n "$localMongolian" ]; then
+                #echo "系统支持蒙语"
+                return 6
+        elif [ -n "$localTibetan" ]; then
+                #echo "系统支持藏语"
+                return 5
+        elif [ -n "$localCantonese" ]; then
+                #echo "系统支持港文"
+                return 4
+        elif [ -n "$localVietnamese" ]; then
+                #echo "系统支持越南语"
+                return 3
+        elif [ -n "$localChinese" ]; then
+                #echo "系统支持中文"
+                return 2
+        else
+                 #echo "系统支持英文"
+                return 1
+        fi
+}
+
+isEnglish
+v_isEnglish=$?
+
+myoutput()
+{
+        #echo "v_isEnglish is "$v_isEnglish
+
+        #echo "first para: $1"
+        #echo "second para: $2"
+
+        if [ $v_isEnglish -eq 6 ]; then
+                echo $6
+                #plymouth message --text=$6
+                #echo "蒙语"
+		show_message "$6"
+        elif [ $v_isEnglish -eq 5 ]; then
+                echo $5
+                #plymouth message --text=$5
+                #echo "藏文"
+		show_message "$5"
+        elif [ $v_isEnglish -eq 4 ]; then
+                echo $4
+                #plymouth message --text=$4
+                #echo "港文"
+		show_message "$4"
+        elif [ $v_isEnglish -eq 3 ]; then
+                echo $3
+                #plymouth message --text=$3
+                #echo "越文"
+		show_message "$3"
+        elif [ $v_isEnglish -eq 2 ]; then
+                echo $2
+                #plymouth message --text=$2
+                #echo "中文"
+		show_message "$2"
+        else
+                echo $1
+                #plymouth message --text=$1
+                #echo "English"
+		show_message "$1"
+        fi
+}
+
+loop_wait()
+{
+  #去掉原来的死循环，退出
+  sleep 5
+  reboot -f
+	#while(true)
+	#do
+	#	sleep 1
+	#done
+}
+
+get_is_990_9a0() {
+    local ret=false
+    # 匹配 kirin 990 5g, kirin990, kirin 9006c
+    if egrep -qi 'kirin.?9[09]0' /proc/cpuinfo; then
+        ret=true
+    elif egrep -qi 'PANGU' /proc/cpuinfo; then
+        ret=true
+
+    fi
+    echo $ret
+}
+is_990_9a0=$(get_is_990_9a0)
+
+factory_restore_warnning()
+{
+  if [[ x${is_990_9a0} == x"true" && x${FACTORY_RESTORE} == "xy" ]]; then
+    is_sure=$(/bin/plymouth watch-keystroke)
+    local is_sure=
+    while :
+    do
+    if plymouth_is_running; then
+        myoutput "You are doing factory restoration. Are you sure to continue? [y/n]" "正在准备进行出厂还原操作，是否继续？[y/n]" "Đang chuẩn bị cho hoạt động khôi phục nhà máy, bạn có tiếp tục không? [y/n]" "正在準進行出廠還原操作，是否繼續？[y/n]" "སོགས་མཛེས་སང་སོགས་འཁོར་རིམ་འཁོར་བ་དང་དར་ར་མཐའ་འཁོར་བ་ཡོད་གཞི་རེད་དག་དག་ཡོད་དག？[y/n]" "үйлдвэрлэлийн стандаарттэй сэргээх үйл явцыг бэлтгэж байна, үргэлжлүүлэх үү?[y/n]"is_sure=$(/bin/plymouth watch-keystroke)
+        is_sure=$(/bin/plymouth watch-keystroke)
+        echo is_sure=$is_sure
+        case $is_sure in
+        y|Y)
+            break;;
+        n|N)
+            # 注意，reboot重启不了，可用reboot -f
+            reboot -f;;
+        *) ;;
+        esac
+    fi
+    done
+  fi
+}
+
+factory_restore_warnning_again()
+{
+  if [[ x${is_990_9a0} == x"true" && x"$FACTORY_RESTORE" = "xy" ]]; then
+    local is_sure=
+    while :
+    do
+    if plymouth_is_running; then
+        myoutput "Please confirm again whether to restore the system to factory defaults. Are you sure to continue? [y/n]" "请再一次确认是否进行系统出厂还原，是否继续？[y/n]" "Vui lòng xác nhận lại có tiến hành khôi phục hệ thống về trạng thái xuất xưởng không, có tiếp tục không? [y/n]" "請再一次確認是否進行系統出廠還原，是否繼續？[y/n]" "སྐྱོང་སྐྱིད་སྲིད་སྐྱོང་སྲུང་སྐྱོང་འདུག་དམིགས་ཡང་ལེགས་སྟངས་དག，སྒྲིག་འཛུགས་འདུག་དམིགས་ཡང་？[y/n]" "Системийг үйлдвэрлэсэн байдлаар сэргээх эсэхээ дахин баталгаажуулна , үргэлжлүүлэх ? [y/n]"
+        is_sure=$(/bin/plymouth watch-keystroke)
+        echo is_sure=$is_sure
+        case $is_sure in
+        y|Y)
+            break;;
+        n|N)
+            # 注意，reboot重启不了，可用reboot -f
+            reboot -f;;
+        *) ;;
+        esac
+    fi
+    done
+  fi
+}
+
+restore_warnning()
+{
+    local is_sure=
+    while :
+    do
+    if plymouth_is_running; then
+	if [ x"$FACTORY_RESTORE" = "xy" ]; then
+	    myoutput "This operation will delete all data and restore system to factory default state, data may be lost. Are you sure to continue? [y/n]" "本操作将会删除所有数据并恢复到出厂状态，有数据丢失风险，是否继续？[y/n]" "Thao tác này sẽ xóa tất cả dữ liệu và khôi phục về trạng thái xuất xưởng, có rủi ro mất dữ liệu, bạn có tiếp tục không? [y/n]" "本操作會刪除所有數據並回復到出廠狀態，有數據遺失風險，是否繼續？[y/n]" "འདྲ་སྟངས་ཀྱིས་ཡིག་འཛུགས་ཐམས་ཅད་དཔྱད་ཐུབ་དང་སྲིད་སྐྱོང་གྱི་གི་སྟངས་ལ་སྲུང་སྐྱོང་འདུག，ཡིག་འཛུགས་དགོས་འདོད་ལ་གལ་ཆེ་ཡོད་，སྒྲིག་འཛུགས་འདུག་དམིགས་ཡང་？[y/n]" "Энэ үйлдэл өгөгдлийг устгаж, үйлдвэрлэсэн байдлаар сэргээх бөгөөд өгөгдөл устах эрсдэл байдаг, үргэлжлүүлэх ? [y/n]"
+	else
+	    myoutput "This operation may delete some data, which may cause data loss. Are you sure to continue? [y/n]" "此操作可能会删除一些数据，造成丢失数据风险，是否继续？[y/n]" "Thao tác này có thể sẽ xóa một số dữ liệu, gây ra rủi ro mất dữ liệu, bạn có tiếp tục không? [y/n]"  "此操作可能會刪除部分數據，造成數據遺失風險，是否繼續？[y/n]" "འདྲ་སྟངས་ཀྱིས་ཡིག་འཛུགས་ཞིབ་ཤིག་དཔྱད་ཐུབ་འདི་མིན་，ཡིག་འཛུགས་དགོས་འདོད་ལ་གལ་ཆེ་ཡོད་，སྒྲིག་འཛུགས་འདུག་དམིགས་ཡང་？[y/n]" "Энэ үйлдэл зарим өгөгдлийг устгаж болзошгүй бөгөөд өгөгдөл устах эрсдэл төлбөрийн буюу, үргэлжлүүлэх ? [y/n]"
+	fi
+        is_sure=$(/bin/plymouth watch-keystroke)
+        echo is_sure=$is_sure
+        case $is_sure in
+        y|Y)
+            break;;
+        n|N)
+            # 注意，reboot重启不了，可用reboot -f
+            reboot -f;;
+        *) ;;
+        esac
+    fi
+    done
+}
+
+catFstabDataPath()
+{
+	echo "开始查看data分区" >>$LOGFILE
+	local name=$1
+	echo "name: {$name}"  >>$LOGFILE
+	#RC10系统下，initrd阶段，fstab文件为空，需要找一个ovl下得目录获取fstab
+	local ovlhash=`ls -l ${rootmnt}/sysroot/ostree/pkgs/|grep ovl-.*\.0$ | tail -1 |awk -F ' ' '{print $9}'`
+	echo "ovlhash: {$ovlhash}"  >>$LOGFILE
+	local fstabpath=${rootmnt}/sysroot/ostree/pkgs/${ovlhash}/etc-ovl/etc-lower/fstab
+	echo "fstabpath: {$fstabpath}"  >>$LOGFILE
+	#获取对应分区得UUID
+	local Uuid=$(cat ${fstabpath} |grep ${name} |grep UUID |awk  -F ' ' '{print $1}' | awk  -F '=' '{print $2}')
+	echo "Uuid: {$Uuid}"  >>$LOGFILE
+	#根据UUID获取对应分区名称
+	local devName=`ls -l /dev/disk/by-uuid/|grep ${Uuid} | awk  -F '../..' '{print $2}'`
+	echo "devName: {$devName}"  >>$LOGFILE
+	devPathData=/dev${devName}
+	echo "devPathData: {$devPathData}"  >>$LOGFILE
+}
+
+catFstabBootPath()
+{
+        echo "开始查看boot分区"  >>$LOGFILE
+        local name=$1
+        echo "name: {$name}"  >>$LOGFILE
+        #RC10系统下，initrd阶段，fstab文件为空，需要找一个ovl下得目录获取fstab
+        local ovlhash=`ls -l ${rootmnt}/sysroot/ostree/pkgs/|grep ovl-.*\.0$ | tail -1 |awk -F ' ' '{print $9}'`
+        echo "ovlhash: {$ovlhash}"  >>$LOGFILE
+        local fstabpath=${rootmnt}/sysroot/ostree/pkgs/${ovlhash}/etc-ovl/etc-lower/fstab
+        echo "fstabpath: {$fstabpath}"  >>$LOGFILE
+        #获取对应分区得UUID
+        local Uuid=$(cat ${fstabpath} |grep ${name} |grep UUID |grep -v /boot/efi |awk  -F ' ' '{print $1}' | awk  -F '=' '{print $2}')
+        echo "Uuid: {$Uuid}"  >>$LOGFILE
+        #根据UUID获取对应分区名称
+        local devName=`ls -l /dev/disk/by-uuid/|grep ${Uuid} | awk  -F '../..' '{print $2}'`
+        echo "devName: {$devName}"  >>$LOGFILE
+        devPathBoot=/dev${devName}
+        echo "devPathBoot: {$devPathBoot}"  >>$LOGFILE
+}
+
+mountFstabPath()
+{
+	echo "开始挂载分区"  >>$LOGFILE
+	name=$1
+	echo "name: {$name}"  >>$LOGFILE
+	#RC10系统下，initrd阶段，fstab文件为空，需要找一个ovl下得目录获取fstab
+	ovlhash=`ls -l ${rootmnt}/sysroot/ostree/pkgs/|grep ovl-.*\.0$ | tail -1 |awk -F ' ' '{print $9}'`
+	echo "ovlhash: {$ovlhash}"  >>$LOGFILE
+	fstabpath=${rootmnt}/sysroot/ostree/pkgs/${ovlhash}/etc-ovl/etc-lower/fstab
+	echo "fstabpath: {$fstabpath}"  >>$LOGFILE
+	#获取对应分区得UUID
+	Uuid=$(cat ${fstabpath} |grep ${name} |grep UUID |awk  -F ' ' '{print $1}' | awk  -F '=' '{print $2}')
+	echo "Uuid: {$Uuid}"  >>$LOGFILE
+	#根据UUID获取对应分区名称
+	devName=`ls -l /dev/disk/by-uuid/|grep ${Uuid} | awk  -F '../..' '{print $2}'`
+	echo "devName: {$devName}"  >>$LOGFILE
+	devPath=/dev${devName}
+	echo "devPath: {$devPath}"  >>$LOGFILE
+	#挂载对应分区
+	mount ${devPath} ${rootmnt}${name}
+}
+
+umountFstabPath()
+{
+        echo "开始卸载分区"  >>$LOGFILE
+        name=$1
+        echo "name: {$name}"  >>$LOGFILE
+        echo "umount: {${rootmnt}${name}}"  >>$LOGFILE
+        umount ${rootmnt}${name}
+}
+
+mountFstabBootPath()
+{
+        echo "开始挂载分区"
+        name=$1
+        echo $name
+        #RC10系统下，initrd阶段，fstab文件为空，需要找一个ovl下得目录获取fstab
+        ovlhash=`ls -l ${rootmnt}/sysroot/ostree/pkgs/|grep ovl-.*\.0$ | tail -1 |awk -F ' ' '{print $9}'`
+        echo $ovlhash
+        fstabpath=${rootmnt}/sysroot/ostree/pkgs/${ovlhash}/etc-ovl/etc-lower/fstab
+        echo $fstabpath
+        #获取对应分区得UUID
+        Uuid=$(cat ${fstabpath} |grep ${name} |grep UUID |grep -v /boot/efi |awk  -F ' ' '{print $1}' | awk  -F '=' '{print $2}')
+        echo $Uuid
+        #根据UUID获取对应分区名称
+        devName=`ls -l /dev/disk/by-uuid/|grep ${Uuid} | awk  -F '../..' '{print $2}'`
+        echo $devName
+        devPath=/dev${devName}
+        echo $devPath
+        #挂载对应分区
+        mount ${devPath} ${rootmnt}${name}
+}
+
+mountOtherPath()
+{
+	mount --bind /proc /root/proc
+	mount --bind /dev /root/dev
+	mount --bind /dev/pts /root/dev/pts
+	mount --bind /run /root/run
+	mount --bind /sys /root/sys
+}
+
+
+display_result()
+{
+        #myoutput  "返回值: $RET"
+        #sleep 3
+        RET=$1
+
+        if [ $RET -eq 1 ]; then
+                myoutput  "Can't find /etc/.bootinfo." "没有找到/etc/.bootinfo" "Không tìm thấy/etc/.bootinfo" "沒有找到/etc/.bootinfo" "沒有找到/etc/.bootinfo" "ལམ་ཐག /etc/.bootinfo མི་འཚམ་པ།" "/etc/.bootinfo бэлэглэгдээгүй байна"
+		loop_wait
+        elif [ $RET -eq 2 ]; then
+                myoutput  "Can't open /etc/.bootinfo." "无法打开/etc/.bootinfo" "Không thể mở/etc/.bootinfo" "無法開啟 /etc/.bootinfo" "ལམ་ཐག /etc/.bootinfo འཐེན་མི་ཐུབ།" "/etc/.bootinfo нээж чадсангүй"
+
+		loop_wait
+        elif [ $RET -eq 3 ]; then
+                myoutput  "/etc/.bootinfo is not correct." "/etc/.bootinfo不正确" "/etc/.bootinfo không đúng" "/etc/.bootinfo 不正確" "ལམ་ཐག /etc/.bootinfo ཡིན་མི་རིགས།" "/etc/.bootinfo буруу байна"
+		loop_wait
+        elif [ $RET -eq 4 ]; then
+                myoutput  "The backup disk space is not enough, please delete unnecessary backups." "备份分区空间不足，请删除过期或者不需要的备份" "Phân vùng sao lưu không đủ dung lượng, hãy xóa các bản sao lưu đã hết hạn hoặc không cần thiết" "備份分割區空間不足，請刪除過期或不需要的備份" "སྐྱེད་སྟངས་ཀྱི་སྐྱེད་སྟངས་སྟོབས་འདོད་མི་ཤེས་པ། དུས་འདུག་ཡང་ཡིན་མི་རིགས་ཀྱི་སྐྱེད་སྟངས་ལ་གཏོང་དག" "бэлэглэх хэсэгтийн зай хангалтгүй байна, өмнөх бэлэглэлт эсвэл хэрэггүй бэлэглэлтийг устга"
+		loop_wait
+        elif [ $RET -eq 5 ]; then
+                myoutput  "The backup disk must be /backup" "备份还原分区路径不是/backup" "Sao lưu khôi phục đường dẫn phân vùng không phải/backup" "備份還原分割區路徑不是 /backup" "སྐྱེད་སྟངས་སྲིད་སྟངས་ཀྱི་ལམ་ཐག /backup མི་ཡིན།" "бэлэглэлтээс сэргээх хэсэгтийн зам /backup биш байна"
+		loop_wait
+        elif [ $RET -eq 6 ]; then
+                myoutput  "There are not any good backups，and you can't restore the system." "没有有效的备份，不能还原系统" "Không có bản sao lưu hợp lệ, bạn không thể khôi phục lại hệ thống" "有效備份不存在，無法還原系統" "ལུགས་ཀྱི་སྐྱེད་སྟངས་མི་འཚམ་པ། སྐྱེད་སྟངས་སྲིད་མི་ཐུབ།" "дэлхий эрхлэлтийн бэлэглэлт байхгүй байна, системийн сэргээх боломжгүй"
+		loop_wait
+        elif [ $RET -eq 7 ]; then
+                myoutput  "The backup does not exist, and you can't restore it." "备份文件不存在，不能还原系统" "Các tập tin sao lưu không tồn tại và không thể khôi phục lại hệ thống" "備份檔案不存在，無法還原系統" "སྐྱེད་སྟངས་ཡིག་ཆ། མི་འཚམ་པ། སྐྱེད་སྟངས་སྲིད་མི་ཐུབ།" "бэлэглэлтийн файл байхгүй байна, системийн сэргээх боломжгүй"
+		loop_wait
+        elif [ $RET -eq 8 ]; then
+                myoutput  "Can't start the restore process, please redo it." "不能启动还原进程，请重新还原系统" "Không thể bắt đầu quá trình khôi phục, vui lòng khôi phục lại hệ thống" "無法啟動還原程序，請重新還原系統" "སྲིད་སེམས་འཁོར་རིམ་འཐེན་མི་ཐུབ། ས་གཉིས་སྲིད་སེམས་འཁོར་རིམ་བསྐོར་འདེད་དག" "сэргээх үйл явцыг эхлүүлэх боломжгүй байна, системийн сэргээх үйл явцыг дахин хийгээрэй" 
+		loop_wait
+        elif [ $RET -eq 9 ]; then
+                myoutput  "Failed to restore the system, please redo it." "还原失败，请重新还原系统" "Khôi phục thất bại, vui lòng khôi phục lại hệ thống" "還原失敗，請重新還原系統" "སྲིད་སེམས་འཁོར་རིམ་འབབ་ཤོར་བསུ་བ་བཟོ་ཡོད། ས་གཉིས་སྲིད་སེམས་འཁོར་རིམ་བསྐོར་འདེད་དག" "сэргээх үйл явц амжилтгүй боллоо, системийн сэргээх үйл явцыг дахин хийгээрэй"
+		loop_wait
+        elif [ $RET -eq 10 ]; then
+                myoutput  "Can't start the mount process for backup." "不能启动备份还原分区安装进程，请重新启动系统" "Không thể bắt đầu quá trình cài đặt phân vùng phục hồi sao lưu, vui lòng khởi động lại hệ thống" "無法啟動備份還原分割區安裝程序，請重新啟動系統" "སྐྱེད་སྟངས་སྲིད་སེམས་ཁག་ལེ་སཞིན་འཁོར་རིམ་འཐེན་མི་ཐུབ། ས་གཉིས་སོགས་འཁོར་རིམ་བསྐོར་འདེད་དག" "бэлэглэлтээс сэргээх хэсгийн суулгах үйл явцыг эхлүүлэх боломжгүй байна, системийг дахин эхлүүлгээрэй"
+		loop_wait
+        elif [ $RET -eq 11 ]; then
+                myoutput  "Failed to wait for the process for backup." "备份还原分区安装进程等待结束时出错，请重新启动系统" "Gặp lỗi khi quá trình cài đặt phân vùng khôi phục sao lưu chờ kết thúc, vui lòng khởi động lại hệ thống" "備份還原分割區安裝程序等待結束時發生錯誤，請重新啟動系統" "སྐྱེད་སྟངས་སྲིད་སེམས་ཁག་ལེ་སཞིན་འཁོར་རིམ་དར་ར་མཐའ་འཁོར་བ་འབབ་ཤོར་གསལ་བ་མི་ཐུབ། ས་གཉིས་སོགས་འཁོར་རིམ་བསྐོར་འདེད་དག" "бэлэглэлтээс сэргээх хэсгийн суулгах үйл явц дуусахыг хүлээж байх явцад алдаа гарлаа, системийг дахин эхлүүлгээрэй"
+		loop_wait
+        elif [ $RET -eq 12 ]; then
+                myoutput  "The backup disk does not exist or it is not mounted." "备份还原分区不存在或没有mount" "Phân vùng khôi phục sao lưu không tồn tại hoặc không có mount" "備份還原分割區不存在或未掛載" "སྐྱེད་སྟངས་སྲིད་སེམས་ཁག་ལེ་མི་འཚམ་ཡོད་གཞི་མི་མཐོན་སོགས་འབབ་ཤོར་བསུ་བ་བཟོ་ཡོད།" "бэлэглэлтээс сэргээх хэсэг байхгүй эсвэл монтировать хийгдээгүй байна"
+		loop_wait
+        elif [ $RET -eq 13 ]; then
+                myoutput  "Can't start the backup process." "不能启动备份进程，请重新备份系统" "Không thể khởi động quá trình sao lưu, vui lòng sao lưu lại hệ thống" "無法啟動備份程序，請重新備份系統" "སྐྱེད་སྟངས་འཁོར་རིམ་འཐེན་མི་ཐུབ། ས་གཉིས་སོགས་སྐྱེད་སྟངས་བསྐོར་འདེད་དག"  "бэлэглэх үйл явцыг эхлүүлэх боломжгүй байна, системийг дахин бэлэглэнгээрэй"
+		loop_wait
+        elif [ $RET -eq 14 ]; then
+                myoutput  "Failed to backup the system." "备份失败，请重新备份系统" "Sao lưu không thành công, vui lòng sao lưu lại hệ thống" "備份失敗，請重新備份系統" "སྐྱེད་སྟངས་འབབ་ཤོར་བསུ་བ་བཟོ་ཡོད། ས་གཉིས་སོགས་སྐྱེད་སྟངས་བསྐོར་འདེད་དག" "бэлэглэх үйл явц амжилтгүй боллоо, системийг дахин бэлэглэнгээрэй"
+		loop_wait
+        elif [ $RET -eq 15 ]; then
+                myoutput  "The usage of mount_fstab is not correct." "mount_fstab用法不正确，无法安装系统" "mount_fstab được sử dụng không chính xác và không thể cài đặt hệ thống" "mount_fstab 用法不正確，無法安裝系統" "mount_fstab ལག་བས་ཡིན་མི་རིགས། སོགས་སཞིན་མི་ཐུབ།" "mount_fstab-ийн ашиглалтыг буруу хийлээ, системийг суулгах боломжгүй байна" 
+		loop_wait
+        elif [ $RET -eq 16 ]; then
+                myoutput  "Failed to backup the system because /etc/fstab does not exist." "/etc/fstab不存在，无法备份系统" "/etc/fstab không tồn tại và không thể sao lưu hệ thống" "/etc/fstab 不存在，無法備份系統" "/etc/fstab མི་འཚམ་ཡོད་གཞི་སོགས་སྐྱེད་སྟངས་མི་ཐུབ།" "/etc/fstab байхгүй байна, системийг бэлэглэх боломжгүй байна"
+		loop_wait
+        elif [ $RET -eq 17 ]; then
+                myoutput  "Can't open /etc/fstab." "/etc/fstab打开失败，无法备份系统" "/etc/fstab mở không thành công và không thể sao lưu hệ thống" "/etc/fstab 開啟失敗，無法備份系統" "/etc/fstab འཐེན་འབབ་ཤོར་བསུ་བ་བཟོ་ཡོད། སོགས་སྐྱེད་སྟངས་མི་ཐུབ།" "/etc/fstab нээх явц амжилтгүй боллоо, системийг бэлэглэх боломжгүй байна"
+		loop_wait
+        elif [ $RET -eq 18 ]; then
+                myoutput  "Wrong arguments." "调用backup-auto-efi 参数错误" "Gọi tham số backup-auto-efi bị lỗi" "調用 backup-auto-efi 參數錯誤" "backup-auto-efi འཁོར་རིམ་གདམ་ཁ་ཡིན་མི་རིགས།" "backup-auto-efi-г дуудах параметр алдаатай байна"
+		loop_wait
+        elif [ $RET -eq 19 ]; then
+                myoutput  "Wrong with caculate disk size." "计算磁盘大小出错" "Lỗi tính toán kích thước đĩa" "計算磁碟大小發生錯誤" "དིང་སེམས་ཆེ་གསལ་གཏོང་འབབ་ཤོར་བསུ་བ་བཟོ་ཡོད།" "дискний хэмжээг тооцох явцад алдаа гарлаа"
+		loop_wait
+        elif [ $RET -eq 20 ]; then
+                myoutput  "Could not create /backup in initrd!" "无法在initrd中创建backup目录" "Không thể tạo thư mục backup trong initrd" "無法在 initrd 中建立 backup 目錄" "initrd གི་སོགས་ཐོན་སུ་backup ལམ་ཐག་གཏོང་མི་ཐུབ།" "initrd-д backup хавтас үүсгэх боломжгүй байна"
+		loop_wait
+        elif [ $RET -eq 21 ]; then
+                myoutput  "Could not mount backup partition in initrd!" "无法挂载备份还原分区" "Không thể gắn phân vùng khôi phục sao lưu " "無法掛載備份還原分割區" "སྐྱེད་སྟངས་སྲིད་སེམས་ཁག་ལེ་མཐོན་སོགས་འབབ་ཤོར་བསུ་བ་བཟོ་ཡོད།" "бэлэглэлтээс сэргээх хэсгийг монтировать хийх боломжгүй байна"
+        elif [ $RET -eq 22 ]; then
+                myoutput  "Could not create log directory in /backup!" "无法创建日志目录" "Không thể tạo thư mục nhật ký" "無法建立日誌目錄" "ལོ་ཙཱ་ལམ་ཐག་གཏོང་མི་ཐུབ།" "лог хавтас үүсгэх боломжгүй байна"
+		loop_wait
+        elif [ $RET -eq 23 ]; then
+                myoutput  "Could not create log file!" "无法创建日志文件" "Không thể tạo tập tin nhật ký" "無法建立日誌檔案" "ལོ་ཙཱ་ཡིག་ཆ་གཏོང་མི་ཐུབ།" "лог файл үүсгэх боломжгүй байна"
+		loop_wait
+		elif [ $RET -eq 30 ]; then
+                myoutput  "Could not find repo_factory!" "无法找到出厂备份仓库" "Không thể tìm thấy kho dự phòng gốc" "無法找到出廠備份倉庫" "སྐྱེད་འཛུགས་སྐྱེད་འཛུགས་ཀྱི་ལས་སྦྱོང་སྐྱེད་འཛུགས་སྦྱོང་ཁང་མ་མི་ཐོབ་པ།" "Үйлдвэрлэсэн бэлдэх хадгалах хавцраа олж чадсангүй"
+		loop_wait
+		elif [ $RET -eq 31 ]; then
+                myoutput  "Could not find factory_backuplist_xml!" "无法找到出厂备份元数据" "Không thể tìm thấy siêu dữ liệu sao lưu gốc" "無法找到出廠備份元數據" "སྐྱེད་འཛུགས་ཀྱི་ལས་སྦྱོང་སྐྱེད་འཛུགས་ཡིག་ཆ་ལས་མི་ཐོབ་པ།" "Үйлдвэрлэсэн бэлдэх метадатаа олж чадсангүй"
+		loop_wait
+		elif [ $RET -eq 32 ]; then
+                myoutput  "Could not find xml!" "无法找到系统备份元数据" "Không thể tìm thấy siêu dữ liệu sao lưu hệ thống" "無法找到系統備份元數據" "སྐྱེད་འཛུགས་ཀྱི་མཐུན་སྟངས་སྐྱེད་འཛུགས་ཡིག་ཆ་ལས་མི་ཐོབ་པ།" "Системийн бэлдэх метадатаа олж чадсангүй"
+		loop_wait
+        fi
+}
+
+#这里因为需要检测标记文件的存在，需要挂载data目录，但是系统还原之后和直接重启环境不同，需要分别处理
+#如果系统还原之后，启动会自带/root/data，无需挂载，但是普通重启没有，需要挂载
+#系统还原自带的情况下，不能卸载分区，否则会导致挂载不上。但是自己挂载的情况下，需要卸载
+
+bsign="false"
+if mount |grep -q "/root/data" ; then
+        echo "存在data目录"  >>$LOGFILE
+else
+        mountFstabPath "/data" >>$LOGFILE
+        bsign="true"
+        echo "不存在data目录"  >>$LOGFILE
+fi
+
+if [ -f "$UPDATE_ERROR_FLAG_FILE" ]; then
+        myoutput "The system upgrade failed, restoring to the version before the upgrade" "系统升级失败，正在还原至升级前版本" "The system upgrade failed, restoring to the version before the upgrade"  "The system upgrade failed, restoring to the version before the upgrade"  "The system upgrade failed, restoring to the version before the upgrade"
+        catFstabBootPath "/boot"
+        catFstabDataPath "/data"
+        backup-undeploy 0 $devPathBoot $devPathData
+
+        # 还原后删除对应文件
+        rm -f $UPDATE_ERROR_FLAG_FILE
+        myoutput  "The system has been restored." "系统还原完成" "Khôi phục hệ thống đã hoàn tất" "系統還原完成" "སྐྱོང་སྐྱིད་སྲུངགྲིབ་ཏུ" "Системийн сэргээлт дууссан"
+
+        sleep 3
+        reboot -f
+fi
+
+if [[ $bsign = "true" ]]; then
+        umountFstabPath "/data"
+else
+        echo "不需要卸载data目录"  >>$LOGFILE
+fi
+
+# 需要先指定BACKUP_FLAG，例如设置为 BACKUP_FLAG=backup，那么内核参数就可以选择下述两种方式的一种了
+# 1. backup  只要有backup，就表示需要备份
+# 2. backup=0 或者 backup=1 0表示不用备份，1表示需要备份。
+# 当然，还可以选择别的字符串做关键字，但一定要指定BACKUP_FLAG内容。
+#BACKUP_FLAG=
+NEED_BACKUP=
+NEED_RESTORE=
+NEED_ROLLBACK=
+NEED_RETAIN_USERDATA=
+NEED_ROLLBACK_KARE=
+# 针对 BACKUP_FLAG 为简单字符串（非键值对）的情况，可以这样获取内核参数。
+for x in $(cat /proc/cmdline); do
+        case $x in
+            backup)
+                    NEED_BACKUP=y
+                    ;;
+            restore)
+                    NEED_RESTORE=y
+                    ;;
+            restore-retain-userdata)
+				NEED_RESTORE=y
+				NEED_RETAIN_USERDATA=y
+                    ;;
+            rollback-backup)
+                    NEED_ROLLBACK=y
+                    ;;
+            factory-restore)
+                    NEED_RESTORE=y
+                    FACTORY_RESTORE=y
+                    ;;
+	    *)
+		    ;;
+	esac
+done
+
+if [ -f "$KARE_ERROR_FLAG_FILE" ]; then
+        NEED_ROLLBACK_KARE=y
+fi
+
+#for x in $(cat /proc/cmdline); do
+#       if [ "$x" = "$BACKUP_FLAG" ]; then
+#               NEED_BACKUP=y
+#       fi
+#done
+#
+#for x in $(cat /proc/cmdline); do
+#       if [ "$x" = "$RESTORE_FLAG" ]; then
+#               NEED_RESTORE=y
+#       fi
+#done
+#for x in $(cat /proc/cmdline); do
+#        if [ "$x" = "$ROLLBACK_FLAG" ]; then
+#                NEED_ROLLBACK=y
+#        fi
+#done
+
+#for x in $(cat /proc/cmdline); do
+#	if [ "$x" = "$BACKUP_FLAG" ]; then
+#		NEED_BACKUP=y
+#	fi
+#done
+#
+#for x in $(cat /proc/cmdline); do
+#	if [ "$x" = "$RESTORE_FLAG" ]; then
+#		NEED_RESTORE=y
+#	fi
+#done
+#for x in $(cat /proc/cmdline); do
+#        if [ "$x" = "$ROLLBACK_FLAG" ]; then
+#                NEED_ROLLBACK=y
+#        fi
+#done
+
+# 然后就可以根据 $NEED_BACKUP 来进行操作了。
+# 如果没有发现需要备份的标记，直接退出脚本，继续启动系统。
+
+if [ "$NEED_BACKUP" = "y" ]; then
+	reboot -f 
+fi
+
+if [ "$NEED_ROLLBACK_KARE" = "y" ]; then
+
+        myoutput  "Restoring the system, please wait for a moment." "正在还原系统" "Đang khôi phục hệ thống" "正喺度還原系統" "སྐྱེད་ཀྱི་སྐྱོང་སྐྱིད་སྲུང་སྐྱོང་འདུག" "Системийг сэргээж идэх"
+	#myoutput  "Restoring the system, please wait for a moment."
+
+        backup-grub --karerestore ${rootmnt} /data/.backup
+
+	RET=$?
+	display_result $RET
+
+        # 还原后删除对应文件
+        rm -f $KARE_ERROR_FLAG_FILE
+
+	myoutput  "The system has been restored." "系统还原完成" "Khôi phục hệ thống đã hoàn tất" "系統還原完成" "སྐྱོང་སྐྱིད་སྲུངགྲིབ་ཏུ" "Системийн сэргээлт дууссан"
+	#myoutput  "The system has been restored."
+	#/scripts/mount_fstab ${rootmnt} umount #because root 
+	sleep 3
+	reboot -f
+fi
+
+if [ "$NEED_RESTORE" = "y" ]; then
+	factory_restore_warnning
+	restore_warnning
+	factory_restore_warnning_again
+	#如果没有${rootmnt}/etc/fstab，则系统坏了，应该能还原，但需要在下一个版本中支持。
+
+	#先挂载/data分区以及/backup分区来存储数据和日志
+	mountFstabPath "/data"
+	mountFstabPath "/backup"
+
+	myoutput  "Restoring the system, please wait for a moment." "正在还原系统" "Đang khôi phục hệ thống" "正喺度還原系統" "སྐྱེད་ཀྱི་སྐྱོང་སྐྱིད་སྲུང་སྐྱོང་འདུག" "Системийг сэргээж идэх"
+	#myoutput  "Restoring the system, please wait for a moment."
+
+        if [ x"$FACTORY_RESTORE" = "xy" ];then
+			backup-grub --factoryrestore ${rootmnt} /data/.backup
+	else
+			backup-grub --autorestore ${rootmnt} /data/.backup
+	fi
+
+	RET=$?
+	display_result $RET
+
+	myoutput  "The system has been restored." "系统还原完成" "Khôi phục hệ thống đã hoàn tất" "系統還原完成" "སྐྱོང་སྐྱིད་སྲུངགྲིབ་ཏུ" "Системийн сэргээлт дууссан"
+	#myoutput  "The system has been restored."
+	#/scripts/mount_fstab ${rootmnt} umount #because root 
+	sleep 3
+	reboot -f
+fi
+
+
+if [ "$NEED_ROLLBACK" = "y" ]; then
+	factory_restore_warnning
+	restore_warnning
+	factory_restore_warnning_again
+	#如果没有${rootmnt}/etc/fstab，则系统坏了，应该能还原，但需要在下一个版本中支持。
+	if [ ! -e ${rootmnt}/etc/fstab ]; then
+	    if [ ! -e /etc/fstab-backup ]; then
+		#myoutput  "The system has been destroyed and you can restore it in the next version."
+		myoutput  "/etc/fstab does not exist." "/etc/fstab不存在，无法还原." "/etc/fstab không tồn tại, không thể khôi phục." "/etc/fstab 唔存在，冇办法还原。" "/etc/fstab མེད་ཡིན་，སྲུང་སྐྱོང་མི་ཐུབ་。" "/etc/fstab байхгүй байна, сэргээж чадхгүй байна."  
+		loop_wait
+	    fi
+	fi
+	if [ ! -e ${rootmnt}/etc/.bootinfo ]; then
+	    if [ ! -e /etc/.bootinfo ]; then
+		#myoutput  "The system has been destroyed and you can restore it in the next version."
+		myoutput  "/etc/.bootinfo does not exist." "/etc/.bootinfo不存在，无法还原." "/etc/.bootinfo không tồn tại, không thể khôi phục." "/etc/.bootinfo 唔存在，冇办法还原。" "/etc/.bootinfo མེད་ཡིན་，སྲུང་སྐྱོང་མི་ཐུབ་。" "/etc/.bootinfo байхгүй байна, сэргээж чадхгүй байна."
+		loop_wait
+	    fi
+	fi
+
+	#mount_fstab_efi ${rootmnt} mount
+	mkdir /backup
+	myoutput  "Restoring the system, please wait for a moment." "正在还原系统" "Đang khôi phục hệ thống" "正喺度還原系統" "སྐྱོང་སྐྱིད་སྲུང་སྐྱོང་འདུག" "Системийг сэргээж идэх"
+	#myoutput  "Restoring the system, please wait for a moment."
+	mount -o remount,rw ${rootmnt}
+        if [ $? -ne 0 ];then
+                myoutput  "Could not mount filesystem with rw arguments." "错误:无法以读写方式挂载根文件系统." "Lỗi: Không thể gắn hệ thống tệp gốc ở chế độ đọc và ghi." "錯誤：唔可以用讀寫模式掛載根檔案系統。" "སྐྱོང་སྐྱིད་：སྡེ་ཡིག་སྐྱོང་སྐྱིད་རྒྱུད་ཀྱི་དཔྱད་དཔྱད་སྦྱོང་ཐུབ་མི་འདུག。" "Алдаа: Үндсэн файл системийнг унших бичих гориомтой байрлуулах боломжгүй."
+                loop_wait
+
+        fi
+	#. /scripts/backup
+	backup-auto-efi --autorestore ${rootmnt} /backup {01234567-0123-0123-0123-0123456789ab}
+
+	RET=$?
+	display_result $RET
+
+	if [ ! -e ${rootmnt}/proc ]; then
+	    mkdir ${rootmnt}/proc
+	fi
+
+	if [ ! -e ${rootmnt}/sys ]; then
+	    mkdir ${rootmnt}/sys
+	fi
+
+	if [ ! -e ${rootmnt}/dev ]; then
+	    mkdir ${rootmnt}/dev
+	fi
+
+	if [ ! -e ${rootmnt}/run ]; then
+	    mkdir ${rootmnt}/run
+	fi
+
+	if [ ! -e ${rootmnt}/backup ]; then
+	    mkdir ${rootmnt}/backup
+	fi
+
+	myoutput  "The system has been rollbacked." "系统回滚完成" "Khôi phục lại hệ thống đã hoàn tất" "系統回滾完成" "སྐྱོང་སྐྱིད་ལས་འཁྱེལ་གྲིབ་ཏུ་" "Системийн буцах үйлдэл дууссан"
+	reboot -f
+fi
+
+# 否则
+# TODO 执行mount_fstab_efi ${rootmnt} mount备份操作
+
+# 此时根分区已经挂载在 ${rootmnt} 处了，直接使用 ${rootmnt} 就可以了。
+# 例如查看lsb-release文件
+# cat ${rootmnt}/etc/lsb-release
+# 如果想要根据 UUID 或 LABEL 来确定分区，还可以执行blkid命令。例如，
+# /sbin/blkid -U <UUID>   该命令返回UUID对应的分区设备
+# /sbin/blkid -L <LABEL>  该命令返回LABEL对应的分区设备
+# 如果需要安装一些命令，需要写一个initramfs的hook脚本。
+
+exit 0

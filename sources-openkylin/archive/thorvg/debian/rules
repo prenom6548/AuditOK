@@ -1,0 +1,46 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
+
+# openKylin currently provides no default compiler flags. Supply the usual
+# release, diagnostic, and hardening flags while honoring DEB_BUILD_OPTIONS.
+ifeq ($(strip $(shell dpkg-buildflags --get CXXFLAGS)),)
+  ifneq (,$(filter noopt,$(DEB_BUILD_OPTIONS)))
+    export DEB_CXXFLAGS_MAINT_APPEND = -O0 -g
+  else
+    export DEB_CXXFLAGS_MAINT_APPEND = -O3 -g
+  endif
+endif
+
+ifeq ($(strip $(shell dpkg-buildflags --get CPPFLAGS)),)
+  export DEB_CPPFLAGS_MAINT_APPEND = -D_FORTIFY_SOURCE=2
+  export DEB_CXXFLAGS_MAINT_APPEND += -fstack-protector-strong -Wformat -Werror=format-security
+  export DEB_LDFLAGS_MAINT_APPEND = -Wl,-z,relro -Wl,-z,now
+endif
+
+ifeq ($(DEB_HOST_ARCH_CPU),i386)
+  export DEB_CXXFLAGS_MAINT_APPEND += -msse2 -mfpmath=sse
+endif
+
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_configure:
+	dh_auto_configure -- \
+		-Dloaders=all \
+		-Dsavers=all \
+		-Dengines='cpu,gl' \
+		-Dbindings=capi \
+		-Dtools=all \
+		-Dtests=true \
+		-Db_pie=true \
+		-Dstrip=false
+
+# GL tests depend on the builder's EGL vendor and GPU setup. Keep the
+# deterministic unit tests in package builds and exercise GL separately in CI.
+override_dh_auto_test:
+	dh_auto_test -- --test-args='~[tvgGlCanvas]~[tvgGlEngine]'
+
+override_dh_auto_clean:
+	rm -f test/resources/test.gif
+	dh_auto_clean

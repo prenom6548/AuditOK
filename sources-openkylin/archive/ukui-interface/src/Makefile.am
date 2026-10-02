@@ -1,0 +1,4 @@
+NULL =
+
+SUBDIRS = common \
+	$(NULL)

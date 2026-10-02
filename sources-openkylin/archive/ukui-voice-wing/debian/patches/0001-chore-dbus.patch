@@ -1,0 +1,187 @@
+From: chenxuechao <chenxuechao@kylinos.cn>
+Date: Thu, 11 Jun 2026 13:53:46 +0800
+Subject: =?utf-8?b?Y2hvcmU6IOiwg+aVtOeBteePoOeQg2RidXM=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+适配灵珠球新的dbus，增加上屏字符串日志
+
+Bug: #605285
+Req: yes
+From: kylin
+Severity: Important
+Changelog-Bug: #605285 UKUI4.24-快捷键适配新灵珠独立应用
+Change-Id: Ie5447652c7fc5bf56097420be969b7f4b3539705
+---
+ src/config/configmonitor.cpp |  1 -
+ src/core/voiceInput.cpp      | 56 ++++++++++++++++++++++++++++++++------------
+ src/core/voiceInput.h        |  9 ++++++-
+ 3 files changed, 49 insertions(+), 17 deletions(-)
+
+diff --git a/src/config/configmonitor.cpp b/src/config/configmonitor.cpp
+index 0ea6670..ab45695 100644
+--- a/src/config/configmonitor.cpp
++++ b/src/config/configmonitor.cpp
+@@ -53,7 +53,6 @@ void ConfigMonitor::migrateLegacyShortcut()
+         return;
+     }
+ 
+-    m_gsettings->set(KEY_SHORTCUT, legacyShortcut);
+     legacySettings.set(LEGACY_KEY_SHORTCUT, QString());
+     VW_LOG(Logger::Level::Info) << "Migrated legacy shortcut to" << SCHEMA_ID
+                                 << KEY_SHORTCUT << ":" << legacyShortcut;
+diff --git a/src/core/voiceInput.cpp b/src/core/voiceInput.cpp
+index 6b29256..0b004f5 100644
+--- a/src/core/voiceInput.cpp
++++ b/src/core/voiceInput.cpp
+@@ -45,6 +45,10 @@ constexpr char kKylinAiAssistantService[] = "org.ukui.kylin_aiassistant";
+ constexpr char kKylinAiAssistantPath[] = "/org/ukui/kylin_aiassistant";
+ constexpr char kKylinAiAssistantInterface[] = "org.ukui.kylin_aiassistant";
+ 
++constexpr char kKylinPearlService[] = "org.ukui.kylin_pearl";
++constexpr char kKylinPearlPath[] = "/org/ukui/kylin_pearl";
++constexpr char kKylinPearlInterface[] = "org.ukui.kylin_pearl";
++
+ constexpr char kVolumeControlService[] = "org.ukui.volume.control";
+ constexpr char kVolumeControlPath[] = "/org/ukui/volume/control";
+ constexpr char kVolumeControlInterface[] = "org.ukui.volume.control";
+@@ -106,6 +110,7 @@ VoiceInput::VoiceInput(QObject *parent)
+             if (!text.isEmpty()) {
+                 const QString incremental = text.mid(m_lastInterimLength);
+                 if (!incremental.isEmpty()) {
++                    VW_LOG(Logger::Level::Debug) << "VoiceToStr: commit incremental ->" << incremental;
+                     commitString(incremental, 0);
+                 }
+                 m_lastInterimLength = text.length();
+@@ -116,6 +121,7 @@ VoiceInput::VoiceInput(QObject *parent)
+         connect(vt, &VoiceToStr::textRecognized, this, [this](const QString &text) {
+             VW_LOG(Logger::Level::Debug) << "VoiceToStr: final ->" << text;
+             if (!text.isEmpty()) {
++                VW_LOG(Logger::Level::Debug) << "VoiceToStr: commit final ->" << text;
+                 commitString(text, 1);
+             }
+             m_lastInterimLength = 0;
+@@ -151,50 +157,70 @@ void VoiceInput::onShortcutClicked()
+     callKylinAiAssistantAsync(QStringLiteral("showOrHideView"));
+ }
+ 
+-void VoiceInput::callKylinAiAssistantAsync(const QString &methodName,
+-                                           const QList<QVariant> &arguments)
++void VoiceInput::callDBusServiceAsync(const char *service,
++                                      const char *path,
++                                      const char *interface,
++                                      const QString &methodName,
++                                      const QList<QVariant> &arguments)
+ {
+     QDBusConnection bus = QDBusConnection::sessionBus();
+     if (!bus.isConnected()) {
+-        VW_LOG(Logger::Level::Error) << "kylin_aiassistant" << methodName
++        VW_LOG(Logger::Level::Error) << service << methodName
+                                      << "failed: session bus not connected";
+         return;
+     }
+ 
+     QDBusConnectionInterface *busIface = bus.interface();
+     if (!busIface) {
+-        VW_LOG(Logger::Level::Error) << "kylin_aiassistant" << methodName
++        VW_LOG(Logger::Level::Error) << service << methodName
+                                      << "failed: session bus interface unavailable";
+         return;
+     }
+ 
+-    if (!busIface->isServiceRegistered(QString::fromUtf8(kKylinAiAssistantService))) {
+-        VW_LOG(Logger::Level::Warning) << "kylin_aiassistant" << methodName
++    if (!busIface->isServiceRegistered(QString::fromUtf8(service))) {
++        VW_LOG(Logger::Level::Warning) << service << methodName
+                                        << "skipped: service not registered";
+         return;
+     }
+ 
+-    QDBusMessage msg = QDBusMessage::createMethodCall(kKylinAiAssistantService,
+-                                                        kKylinAiAssistantPath,
+-                                                        kKylinAiAssistantInterface,
+-                                                        methodName);
++    QDBusMessage msg = QDBusMessage::createMethodCall(service, path, interface, methodName);
+     if (!arguments.isEmpty()) {
+         msg.setArguments(arguments);
+     }
+     auto *watcher = new QDBusPendingCallWatcher(bus.asyncCall(msg), this);
+-    connect(watcher, &QDBusPendingCallWatcher::finished, this, [methodName, watcher]() {
++    connect(watcher, &QDBusPendingCallWatcher::finished, this, [service, methodName, watcher]() {
+         QDBusPendingReply<void> reply = *watcher;
+         if (reply.isError()) {
+-            VW_LOG(Logger::Level::Error) << "kylin_aiassistant" << methodName
++            VW_LOG(Logger::Level::Error) << service << methodName
+                                          << "failed:" << reply.error().name()
+                                          << reply.error().message();
+         } else {
+-            VW_LOG(Logger::Level::Debug) << "kylin_aiassistant" << methodName << "succeeded";
++            VW_LOG(Logger::Level::Debug) << service << methodName << "succeeded";
+         }
+         watcher->deleteLater();
+     });
+ }
+ 
++void VoiceInput::callKylinAiAssistantAsync(const QString &methodName,
++                                           const QList<QVariant> &arguments)
++{
++    callDBusServiceAsync(kKylinAiAssistantService,
++                         kKylinAiAssistantPath,
++                         kKylinAiAssistantInterface,
++                         methodName,
++                         arguments);
++}
++
++void VoiceInput::callKylinPearlAsync(const QString &methodName,
++                                     const QList<QVariant> &arguments)
++{
++    callDBusServiceAsync(kKylinPearlService,
++                         kKylinPearlPath,
++                         kKylinPearlInterface,
++                         methodName,
++                         arguments);
++}
++
+ bool VoiceInput::hasFocusWindow() const
+ {
+     QDBusInterface iface(kVoiceWingDBusService, kVoiceWingDBusPath,
+@@ -277,7 +303,7 @@ void VoiceInput::onShortcutLongPressed()
+ 
+     if (!hasFocusWindow()) {
+         VW_LOG(Logger::Level::Debug) << "no focused input window, show AI ball";
+-        callKylinAiAssistantAsync(QStringLiteral("showAIBall"), {true});
++        callKylinPearlAsync(QStringLiteral("showAIBall"), {true});
+         return;
+     }
+     m_focusAppName = appName();
+@@ -299,7 +325,7 @@ void VoiceInput::onShortcutReleased()
+ {
+     if (!m_voiceInputActive) {
+         VW_LOG(Logger::Level::Debug) << "voice input not active, hide AI ball";
+-        callKylinAiAssistantAsync(QStringLiteral("showAIBall"), {false});
++        callKylinPearlAsync(QStringLiteral("showAIBall"), {false});
+         return;
+     }
+ 
+diff --git a/src/core/voiceInput.h b/src/core/voiceInput.h
+index 16c11c4..860a24a 100644
+--- a/src/core/voiceInput.h
++++ b/src/core/voiceInput.h
+@@ -45,8 +45,15 @@ private:
+     QString appName() const;
+     void commitString(const QString &text, int flags);
+     void stopVoiceInput();
++    void callDBusServiceAsync(const char *service,
++                              const char *path,
++                              const char *interface,
++                              const QString &methodName,
++                              const QList<QVariant> &arguments = {});
+     void callKylinAiAssistantAsync(const QString &methodName,
+-                                 const QList<QVariant> &arguments = {});
++                                   const QList<QVariant> &arguments = {});
++    void callKylinPearlAsync(const QString &methodName,
++                             const QList<QVariant> &arguments = {});
+ 
+     VoiceInputWindow *m_window = nullptr;
+     MicrophoneMuteDialog *m_muteDialog = nullptr;

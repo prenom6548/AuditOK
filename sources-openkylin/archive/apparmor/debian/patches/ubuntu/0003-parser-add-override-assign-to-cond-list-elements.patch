@@ -1,0 +1,103 @@
+From: Georgia Garcia <georgia.garcia@canonical.com>
+Date: Mon, 16 Mar 2026 18:29:44 -0300
+Subject: [PATCH 3/5] parser: add override assign to cond list elements
+
+Signed-off-by: Georgia Garcia <georgia.garcia@canonical.com>
+---
+ parser/parser.h      |  1 +
+ parser/parser_lex.l  | 14 +++++++++++++-
+ parser/parser_yacc.y | 23 +++++++++++++++++++++++
+ 3 files changed, 37 insertions(+), 1 deletion(-)
+
+diff --git a/parser/parser.h b/parser/parser.h
+index 386a08f..3ee405f 100644
+--- a/parser/parser.h
++++ b/parser/parser.h
+@@ -121,6 +121,7 @@ enum class cond_comp {
+ 	NONE,
+ 	EQ,
+ 	IN,
++	SET,
+ };
+ 
+ struct cond_entry {
+diff --git a/parser/parser_lex.l b/parser/parser_lex.l
+index fd42c8f..4ed0e93 100644
+--- a/parser/parser_lex.l
++++ b/parser/parser_lex.l
+@@ -272,7 +272,7 @@ LIST_VALUE_ID_CHARS	([^ \t\n"!,]{-}[()]|\\[ ]|\\\t|\\\"|\\!|\\,|\\\(|\\\))
+ LIST_VALUE_QUOTED_ID_CHARS [^\0"]|\\\"
+ LIST_VALUE_ID	{LIST_VALUE_ID_CHARS}+
+ QUOTED_LIST_VALUE_ID	\"{LIST_VALUE_QUOTED_ID_CHARS}+\"
+-ID_CHARS_NOEQ	[^ \t\n"!,]{-}[=)]
++ID_CHARS_NOEQ	[^ \t\n"!,]{-}[:=)]
+ LEADING_ID_CHARS_NOEQ [^ \t\n"!,]{-}[=()+&]
+ ID_NOEQ		{ID_CHARS_NOEQ}|(,{ID_CHARS_NOEQ})
+ IDS_NOEQ	{LEADING_ID_CHARS_NOEQ}{ID_NOEQ}*
+@@ -484,6 +484,10 @@ IN_OP		in
+ 
+ 	{EQUALS} { RETURN_TOKEN(TOK_EQUALS); }
+ 
++	{OVERRIDE_ASSIGN}{WS}*/[^(\n]{-}{WS} { BEGIN_AND_RETURN(SUB_VALUE, TOK_OVERRIDE_ASSIGN); }
++
++	{OVERRIDE_ASSIGN} { RETURN_TOKEN(TOK_OVERRIDE_ASSIGN); }
++
+ 	/* Don't push state here as this is a transition start condition and
+ 	 * we want to return to the start condition that invoked <EXTCOND_MODE>
+ 	 * when LIST_VAL_ID is done
+@@ -526,6 +530,14 @@ IN_OP		in
+ 	{EQUALS}	{
+ 		PUSH_AND_RETURN(LIST_COND_VAL, TOK_EQUALS);
+ 	}
++
++	{OVERRIDE_ASSIGN}{WS}*{OPEN_PAREN}	{
++		PUSH_AND_RETURN(LIST_COND_PAREN_VAL, TOK_OVERRIDE_ASSIGN);
++	}
++
++	{OVERRIDE_ASSIGN}	{
++		PUSH_AND_RETURN(LIST_COND_VAL, TOK_OVERRIDE_ASSIGN);
++	}
+ }
+ 
+ <EXTCONDLIST_MODE>{
+diff --git a/parser/parser_yacc.y b/parser/parser_yacc.y
+index 95b05d1..20a8e88 100644
+--- a/parser/parser_yacc.y
++++ b/parser/parser_yacc.y
+@@ -1320,6 +1320,20 @@ cond: TOK_CONDID TOK_EQUALS TOK_VALUE
+ 		$$ = ent;
+ 	}
+ 
++cond: TOK_CONDID TOK_OVERRIDE_ASSIGN TOK_VALUE
++	{
++		struct cond_entry *ent;
++		struct value_list *value = new_value_list($3);
++		if (!value)
++			yyerror(_("Memory allocation error."));
++		ent = new_cond_entry($1, cond_comp::SET, value);
++		if (!ent) {
++			free_value_list(value);
++			yyerror(_("Memory allocation error."));
++		}
++		$$ = ent;
++	}
++
+ cond: TOK_CONDID TOK_EQUALS TOK_OPENPAREN valuelist TOK_CLOSEPAREN
+ 	{
+ 		struct cond_entry *ent = new_cond_entry($1, cond_comp::EQ, $4);
+@@ -1339,6 +1353,15 @@ cond: TOK_CONDID TOK_IN TOK_OPENPAREN valuelist TOK_CLOSEPAREN
+ 		$$ = ent;
+ 	}
+ 
++cond: TOK_CONDID TOK_OVERRIDE_ASSIGN TOK_OPENPAREN valuelist TOK_CLOSEPAREN
++	{
++		struct cond_entry *ent = new_cond_entry($1, cond_comp::SET, $4);
++
++		if (!ent)
++			yyerror(_("Memory allocation error."));
++		$$ = ent;
++	}
++
+ opt_conds: { /* nothing */ $$ = NULL; }
+ 	| opt_conds cond
+ 	{

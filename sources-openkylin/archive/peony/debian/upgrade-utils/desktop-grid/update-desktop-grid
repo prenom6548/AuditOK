@@ -1,0 +1,204 @@
+#!/bin/bash
+
+#获取meta-get命令的位置
+META_GET_COMMAND="/usr/bin/meta-get"
+
+#获取meta-conf-parser的位置
+META_CONF_PARSER_COMMAND="/usr/bin/meta-conf-parser"
+
+#打印坐标
+print_poses() {
+	y=$1
+	x=$2
+	echo x=$x
+	echo y=$y
+}
+
+#获取计算机目录的位置，fixme：判断计算机是否隐藏
+get_computer_position() {
+	user=$1
+	#fixme
+	poses=$(sudo -u ${user} ${META_GET_COMMAND} -t computer: / peony-qt-desktop-item-position 2>/dev/null)
+	echo "[computer:///]"
+	print_poses $poses
+}
+
+#获取回收站目录的位置，fixme：判断回收站是否隐藏
+get_trash_position() {
+        user=$1
+        #fixme
+        poses=$(sudo -u ${user} ${META_GET_COMMAND} -t trash: / peony-qt-desktop-item-position 2>/dev/null)
+        echo "[trash:///]"
+	print_poses $poses
+}
+
+#获取家目录的位置
+get_home_position() {
+	user=$1
+	home_dir=$2
+	#fixme
+	poses=$(sudo -u ${user} ${META_GET_COMMAND} -t home / peony-qt-desktop-item-position 2>/dev/null)
+	echo "[$home_dir]"
+	print_poses $poses
+}
+
+#获取桌面上单个文件的位置
+get_desktop_file_position() {
+	user=$1
+	home_dir=$2
+	child_path=$3
+	#relative_path=$(echo "$child_path" | sed "s|$home_dir||")
+	relative_path=$(echo "$child_path" | awk -v home="$home_dir" '{gsub(home, ""); print}')
+	#fixme 带空格的路径位置信息获取，判断是否为隐藏文件，快捷方式（尤其是从其它挂载点链接过来的文件）信息获取
+	poses=$(sudo -u ${user} ${META_GET_COMMAND} -t home "${relative_path}" peony-qt-desktop-item-position 2>/dev/null)
+	echo "[$child_path]"
+	print_poses $poses
+}
+
+#获取桌面上所有文件的位置
+get_desktop_files_position() {
+	#fixme 桌面路径带中文的情况无法正常获取文件信息
+	#fixme 桌面路径自定义场景需要处理metadata获取
+	user=$1
+	desktop_dir=$2
+	home_dir=$3
+	#relative_path=$(echo "$desktop_dir" | sed "s|$home_dir||")
+	relative_path=$(echo "$desktop_dir" | awk -v home="$home_dir" '{gsub(home, ""); print}')
+	if [ -n "$relative_path" ]; then
+		#echo "桌面相对于家目录的路径 ${relative_path}"
+		for child in "$desktop_dir"/*
+		do
+			# 检查文件是否存在，避免空匹配
+			if [ -e "$child" ]; then
+				get_desktop_file_position "$user" "$home_dir" "$child"
+			fi
+		done
+	else
+		echo "目前不支持自定义桌面路径网格计算"
+	fi
+}
+
+# 用户过滤函数
+is_valid_desktop_user() {
+	local user=$1
+	local home_dir=$2
+	
+	# 获取用户 UID
+	local uid=$(id -u "$user" 2>/dev/null)
+	if [ $? -ne 0 ]; then
+		return 1  # 用户不存在
+	fi
+	
+	# 过滤系统用户（UID < 1000，包括 root）
+	if [ "$uid" -lt 1000 ]; then
+		return 1
+	fi
+	
+	# 使用 case 语句过滤无效家目录路径
+	case "$home_dir" in
+		"/dev/null"|"/nonexistent"|"/"|"")
+			return 1
+			;;
+		/var/cache/*|/var/spool/*|/var/www/*|/var/list/*|/run/*)
+			return 1
+			;;
+		*)
+			# 继续检查
+			;;
+	esac
+	
+	# 检查家目录是否存在且可写
+	if [ ! -d "$home_dir" ] || [ ! -w "$home_dir" ]; then
+		return 1
+	fi
+	
+	# 过滤系统服务用户的 shell
+	local user_shell=$(getent passwd "$user" | cut -d: -f7)
+	case "$user_shell" in
+		"/usr/sbin/nologin"|"/bin/false"|"/sbin/nologin")
+			return 1
+			;;
+		*)
+			# 有效的登录 shell
+			;;
+	esac
+	
+	return 0  # 有效的桌面用户
+}
+
+#用户桌面图标网格计算
+calculate_user_desktop_grid() {
+	user=$1
+	home_dir=$(getent passwd "$user" | cut -d: -f6)
+	# 如果 home_dir 为空，尝试从 /etc/passwd 直接读取
+        if [ -z "$home_dir" ]; then
+		home_dir=$(awk -F: -v user="$user" '$1 == user {print $6}' /etc/passwd)
+        fi
+
+	desktop_dir=$(sudo -u "$user" xdg-user-dir DESKTOP 2>/dev/null)
+	if [ $? -eq 0 ] && [ -d "$desktop_dir" ]; then
+		#echo "计算用户$user的桌面网格"
+		get_computer_position "$user"
+		get_trash_position "$user"
+		get_home_position "$user" "$home_dir"
+		get_desktop_files_position "$user" "$desktop_dir" "$home_dir"
+		return 0
+	else
+		#echo "用户$user无桌面，略过"
+		return 1
+	fi
+}
+
+current_user=$(whoami)
+if [ "$current_user" = "root" ]; then
+	echo "更新桌面网格配置"
+else
+	echo "需要root用户执行"
+	exit 1
+fi
+
+#桌面图标网格重构升级更新前准备
+users=$(getent passwd | cut -d: -f1)
+
+for user in ${users}
+do
+	home_dir=$(getent passwd "$user" | cut -d: -f6)
+	# 如果 home_dir 为空，尝试从 /etc/passwd 直接读取
+        if [ -z "$home_dir" ]; then
+		home_dir=$(awk -F: -v user="$user" '$1 == user {print $6}' /etc/passwd)
+        fi
+	# 使用过滤函数
+	if ! is_valid_desktop_user "$user" "$home_dir"; then
+		continue
+	fi
+	
+	# 安全获取桌面目录
+	desktop_dir=$(sudo -u "$user" xdg-user-dir DESKTOP 2>/dev/null)
+	if [ $? -ne 0 ] || [ ! -d "$desktop_dir" ]; then
+		continue
+	fi
+	
+	# 配置文件创建和更新
+	config_file="$home_dir/.peony-desktop-grid.conf"
+	
+	# 清理旧配置
+	rm -f "$config_file"
+	
+	# 安全创建配置文件
+	if touch "$config_file" 2>/dev/null && chmod +rw "$config_file" 2>/dev/null; then
+		# 生成配置内容
+		if calculate_user_desktop_grid "$user" > "$config_file" 2>/dev/null; then
+			chmod -w "$config_file" 2>/dev/null
+			chown "$user" "$config_file" 2>/dev/null
+			
+			if [ -s "$config_file" ]; then
+				echo "更新 $user 桌面图标配置..."
+				sudo -u "$user" "$META_CONF_PARSER_COMMAND" 2>/dev/null || true
+			else
+				rm -f "$config_file"
+			fi
+		else
+			rm -f "$config_file"
+		fi
+	fi
+done

@@ -1,0 +1,126 @@
+#!/usr/bin/make -f
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+export MAKEFLAGS = -j4
+export DEB_BUILD_OPTIONS = parallel=4 #禁用自动检测，强制设置为4
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+export DEB_CFLAGS_MAINT_APPEND  = -Wall -pedantic
+# the following line can go away after the bookworm release
+# iff no backports to bullseye and/or buster are planned.
+# See #1025683 for a comprehension question. If this is cleared,
+# the export can be commented out (but stay around as reminder for backports)
+export DEB_LDFLAGS_MAINT_APPEND = -Wl,--as-needed
+DPKG_EXPORT_BUILDFLAGS = 1
+
+include /usr/share/dpkg/default.mk
+
+define CONFIGURE_ARGS
+	--with-all-insults
+	--with-pam --with-pam-login
+	--with-fqdn
+	--with-logging=syslog
+	--with-logfac=authpriv
+	--with-devel
+	--with-env-editor
+	--with-editor=/usr/bin/editor
+	--with-timeout=15
+	--with-password-timeout=0
+	--with-passprompt="[sudo] password for %p: "
+	--with-tty-tickets
+	--without-lecture
+	--disable-root-mailer
+	--with-sendmail=/usr/sbin/sendmail
+	--with-rundir=/run/sudo
+	--with-sssd --with-sssd-lib=/usr/lib/$(DEB_HOST_MULTIARCH)
+	--enable-zlib=system
+	--enable-admin-flag
+endef
+
+ifeq ($(DEB_HOST_ARCH_OS),linux)
+CONFIGURE_ARGS += --with-apparmor --with-selinux --with-linux-audit --enable-tmpfiles.d=/usr/lib/tmpfiles.d
+endif
+
+# Consistently use /bin/mv to ensure reproducible builds regardless of
+# building on a usrmerge or non-usrmerge system.
+CONFIGURE_ARGS += MVPROG=/bin/mv
+
+deb_systemdsystemunitdir = $(shell pkg-config --variable=systemdsystemunitdir systemd)
+
+%:
+		dh $@
+
+override_dh_auto_configure-arch:
+	dh_auto_configure --builddirectory build-simple -- $(strip $(CONFIGURE_ARGS)) \
+		--with-exampledir=/usr/share/doc/sudo/examples
+
+override_dh_autoreconf-indep:
+override_dh_auto_configure-indep:
+
+override_dh_auto_clean-arch override_dh_auto_build-arch:
+	$(patsubst override_dh_auto_%-arch,dh_auto_%, $@) --builddirectory build-simple
+
+override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	dh_auto_test --builddirectory build-simple
+endif
+
+override_dh_auto_install-arch:
+	dh_auto_install --builddirectory build-simple --destdir debian/sudo -- INSTALL_OWNER=
+
+	rm -f debian/sudo*/etc/sudoers \
+	      debian/sudo*/usr/share/doc/sudo*/LICENSE.md \
+	rm -rf debian/sudo*/run
+	find debian/sudo*/ -type f -name '*.la' | xargs rm -f
+
+	for pkg in sudo; do \
+		mv debian/$$pkg/etc/sudoers.dist \
+		   debian/$$pkg/usr/share/doc/$$pkg/examples/sudoers.dist; \
+		mkdir -p debian/$$pkg$(deb_systemdsystemunitdir)/; \
+		ln -s /dev/null debian/$$pkg$(deb_systemdsystemunitdir)/sudo.service; \
+	done
+
+	# rename sudo to sudo.ws for alternatives binaries
+	for pkg in sudo; do \
+		mv debian/$$pkg/usr/bin/sudo \
+           debian/$$pkg/usr/bin/sudo.ws; \
+		mv debian/$$pkg/usr/sbin/visudo \
+           debian/$$pkg/usr/sbin/visudo.ws; \
+		mv debian/$$pkg/usr/bin/sudoreplay \
+           debian/$$pkg/usr/bin/sudoreplay.ws; \
+		mv debian/$$pkg/usr/sbin/sudo_logservd \
+           debian/$$pkg/usr/sbin/sudo_logservd.ws; \
+		mv debian/$$pkg/usr/sbin/sudo_sendlog \
+           debian/$$pkg/usr/sbin/sudo_sendlog.ws; \
+		mv debian/$$pkg/usr/bin/cvtsudoers \
+           debian/$$pkg/usr/bin/cvtsudoers.ws; \
+	done
+
+	# rename sudo to sudo.ws for alternatives manpages
+	for pkg in sudo; do \
+		mv debian/$$pkg/usr/share/man/man8/sudo.8 \
+           debian/$$pkg/usr/share/man/man8/sudo.ws.8; \
+		mv debian/$$pkg/usr/share/man/man8/visudo.8 \
+           debian/$$pkg/usr/share/man/man8/visudo.ws.8; \
+		mv debian/$$pkg/usr/share/man/man5/sudoers.5 \
+           debian/$$pkg/usr/share/man/man5/sudoers.ws.5; \
+		mv debian/$$pkg/usr/share/man/man8/sudoreplay.8 \
+           debian/$$pkg/usr/share/man/man8/sudoreplay.ws.8; \
+		mv debian/$$pkg/usr/share/man/man8/sudo_logservd.8 \
+           debian/$$pkg/usr/share/man/man8/sudo_logservd.ws.8; \
+		mv debian/$$pkg/usr/share/man/man8/sudo_sendlog.8 \
+           debian/$$pkg/usr/share/man/man8/sudo_sendlog.ws.8; \
+		mv debian/$$pkg/usr/share/man/man1/cvtsudoers.1 \
+           debian/$$pkg/usr/share/man/man1/cvtsudoers.ws.1; \
+	done
+
+
+execute_after_dh_fixperms:
+	# fix executable libraries
+	chmod 0644 debian/sudo*/usr/libexec/sudo/*.so || true
+
+override_dh_fixperms:
+	dh_fixperms --exclude=usr/bin/sudo
+
+override_dh_installchangelogs:
+	dh_installchangelogs --exclude=HISTORY

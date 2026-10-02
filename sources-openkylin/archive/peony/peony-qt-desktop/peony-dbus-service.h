@@ -1,0 +1,74 @@
+/*
+ * Peony-Qt
+ *
+ * Copyright (C) 2020, KylinSoft Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: renpeijia <renpeijia@kylinos.cn>
+ *
+ */
+
+#ifndef PEONYDBUSSERVICE_H
+#define PEONYDBUSSERVICE_H
+
+#include <QCoreApplication>
+#include <QTimer>
+#include <QtDBus>
+#include <QDebug>
+#include <QObject>
+
+/*
+名称：org.ukui.peony
+对象路径：/org/ukui/peony
+接口：org.ukui.peony
+方法：GetSecurityConfigPath()//获取安全配置文件存放路径
+     ReloadSecurityConfig()// 重新加载安全配置
+*/
+namespace Peony {
+
+
+class PeonyDbusService:public QObject
+{
+    Q_OBJECT
+    Q_CLASSINFO("D-Bus Interface", "org.ukui.peony")
+
+public:    
+    explicit PeonyDbusService(QObject *parent=nullptr);
+    ~PeonyDbusService();
+
+   void DbusServerRegister();
+
+Q_SIGNALS:
+    void sendSrcAndDestUrisOfCopyDspsFiles(const QStringList& sourceUris, const QStringList& destUris);
+    void black_and_white_update();
+    void opreateFinishedOfEngrampa(const QString& path, bool finish);/* 第一个参数是解压/压缩的路径，第二个参数是操作是否完成；该信号用于归档管理器进行解压/压缩完成后通知文管 */
+    /// 任务栏请求桌面聚焦（焦点从任务栏切回桌面）
+    void focusDesktopRequested();
+public Q_SLOTS:
+    QString GetSecurityConfigPath();
+    int ReloadSecurityConfig();
+    void receiveSrcAndDestUrisOfCopy(const QStringList& sourceUris, const QStringList& destUris);
+    QString getBlackAndWhiteModel();
+    bool getBlackAndWhiteListExist(QString name);
+    QStringList getBWListInfo();
+    void sendEngrampaOpreateFinishSig(const QString& path, bool finish);
+    void renamingByPeony(QString uri,QStringList pos);//通知桌面文管正在重命名
+    /// 任务栏调用：将焦点从任务栏切回桌面（无参数，聚焦上次图标或第一个图标）
+    void activeFocus();
+private:
+};
+
+}
+#endif // PEONYDBUSSERVICE_H

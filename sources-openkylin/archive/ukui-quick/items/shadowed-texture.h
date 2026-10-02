@@ -1,0 +1,70 @@
+/*
+ *  SPDX-FileCopyrightText: 2020 Arjen Hiemstra <ahiemstra@heimr.nl>
+ *  SPDX-FileCopyrightText: 2025 iaom <zhangpengfei@kylinos.cn>
+ *
+ *  SPDX-License-Identifier: LGPL-2.0-or-later
+ */
+
+#pragma once
+
+#include "shadowed-rectangle.h"
+
+/**
+ * A rectangle with a shadow, using a QQuickItem as texture.
+ *
+ * This item will render a source item, with a shadow below it. The rendering is done
+ * using distance fields, which provide greatly improved performance. The shadow is
+ * rendered outside of the item's bounds, so the item's width and height are the
+ * rectangle's width and height.
+ *
+ */
+
+/* Add shadow for a round button:
+    Button {
+        id: roundButton
+        width: 100
+        height: 100
+        background.radius: 50
+        visible: false
+    }
+    ShadowedTexture {
+        source: roundButton
+        anchors.fill: parent
+        radius: 50
+        shadow {
+            size: 20
+            color: Qt.rgba(0, 0, 0, 1)
+            yOffset: 2
+        }
+
+        border {
+            width: 1
+            color: "blue"
+        }
+    }
+ */
+class ShadowedTexture : public ShadowedRectangle
+{
+    Q_OBJECT
+
+    /**
+     * This property holds the source item that will get rendered with the
+     * shadow.
+     */
+    Q_PROPERTY(QQuickItem *source READ source WRITE setSource NOTIFY sourceChanged)
+
+public:
+    ShadowedTexture(QQuickItem *parent = nullptr);
+    ~ShadowedTexture() override;
+
+    QQuickItem *source() const;
+    void setSource(QQuickItem *newSource);
+    Q_SIGNAL void sourceChanged();
+
+protected:
+    QSGNode *updatePaintNode(QSGNode *node, QQuickItem::UpdatePaintNodeData *data) override;
+
+private:
+    QQuickItem *m_source = nullptr;
+    bool m_sourceChanged = false;
+};

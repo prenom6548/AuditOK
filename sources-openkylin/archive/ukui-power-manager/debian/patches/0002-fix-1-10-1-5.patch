@@ -1,0 +1,140 @@
+From: kylin <kylin@kylinos.org>
+Date: Thu, 30 Jul 2026 14:04:32 +0800
+Subject: =?utf-8?b?Zml4OiDlhbPplK7nlLXph4/pmIjlgLzojIPlm7TnlLExJS0xMCXosIM=?=
+ =?utf-8?b?5pW05Li6MSUtNSU=?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset="utf-8"
+Content-Transfer-Encoding: 8bit
+
+关键电量阈值（percentage-action）下拉范围由1%-10%调整为1%-5%，
+将 percentage-critical 默认值由 10 调整为 5，下拉框范围据此动态决定；
+并对 setCurrentIndex 增加 qBound 越界保护，兼容旧配置。
+
+Bug: #651717
+From: kylin
+Severity: Important
+Changelog-Bug: #651717 【电源管理】关键电量阈值可以设置为1%-10%
+Change-Id: I4b42a973962ddcf4719938ad8db461428b5d8638
+---
+ power/power.cpp                                    | 52 ++++++++++++++++++++--
+ .../resources/org.ukui.power-manager.gschema.xml   |  2 +-
+ 2 files changed, 49 insertions(+), 5 deletions(-)
+
+diff --git a/power/power.cpp b/power/power.cpp
+index 8c45b64..4e4ea22 100644
+--- a/power/power.cpp
++++ b/power/power.cpp
+@@ -60,6 +60,39 @@ typedef enum {
+ 
+ int closeArray[7] = {5, 10, 15, 30, 60, 120, 0};
+ 
++// 回退时在 combo 里逐项 findData；不支持的项会自动跳过
++static const QStringList kCriticalBatteryActionFallback = {"hibernate", "suspend", "shutdown", "blank", "nothing"};
++static const QStringList kLidActionFallback = {"suspend", "hibernate", "shutdown", "blank", "nothing"};
++static const QStringList kPowerButtonActionFallback = {"interactive", "hibernate", "suspend", "shutdown"};
++
++static int actionComboIndex(QComboBox *comboBox, const QString &storedAction,
++                            const QStringList &fallbackOrder)
++{
++    const int storedIndex = comboBox->findData(storedAction);
++    if (storedIndex >= 0) {
++        return storedIndex;
++    }
++
++    for (const QString &action : fallbackOrder) {
++        const int index = comboBox->findData(action);
++        if (index >= 0) {
++            return index;
++        }
++    }
++    return comboBox->count() > 0 ? 0 : -1;
++}
++
++static void syncInvalidActionGsettings(QGSettings *settings, const char *key,
++                                       QComboBox *comboBox,
++                                       const QStringList &fallbackOrder)
++{
++    const QString storedAction = settings->get(key).toString();
++    const int resolvedIndex = actionComboIndex(comboBox, storedAction, fallbackOrder);
++    if (resolvedIndex >= 0
++        && comboBox->itemData(resolvedIndex).toString() != storedAction) {
++        settings->set(key, comboBox->itemData(resolvedIndex));
++    }
++}
+ 
+ Power::Power() : mFirstLoad(true)
+ {
+@@ -746,6 +779,8 @@ void Power::setupComponent()
+     if (m_isExistHibernate) {
+         mCloseLidComboBox->insertItem(4, closeLidStringList.at(4), "hibernate");
+     }
++    syncInvalidActionGsettings(settings, BUTTON_LID_AC_KEY, mCloseLidComboBox, kLidActionFallback);
++    syncInvalidActionGsettings(settings, BUTTON_LID_BATT_KET, mCloseLidComboBox, kLidActionFallback);
+ 
+     //按下电源键时
+     buttonStringList << tr("Interactive") << tr("Shutdown") << tr("Suspend") << tr("Hibernate");
+@@ -753,6 +788,7 @@ void Power::setupComponent()
+     mPowerKeyComboBox->insertItem(1, buttonStringList.at(1), "shutdown");
+     if (m_isExistSuspend) mPowerKeyComboBox->insertItem(2, buttonStringList.at(2), "suspend");
+     if (m_isExistHibernate) mPowerKeyComboBox->insertItem(3, buttonStringList.at(3), "hibernate");
++    syncInvalidActionGsettings(settings, BUTTON_POWER_KEY, mPowerKeyComboBox, kPowerButtonActionFallback);
+ 
+     //关闭显示器
+     closeStringList <<tr("1min")<< tr("5min") << tr("10min") << tr("15min") << tr("30min") << tr("1h") << tr("2h") << tr("Never");
+@@ -840,6 +876,7 @@ void Power::setupComponent()
+     mLowpowerComboBox2->insertItem(2, LowpowerStringList.at(2), "shutdown");
+     if (m_isExistSuspend) mLowpowerComboBox2->insertItem(3, LowpowerStringList.at(3), "suspend");
+     if (m_isExistHibernate) mLowpowerComboBox2->insertItem(4, LowpowerStringList.at(4), "hibernate");
++    syncInvalidActionGsettings(settings, ACTION_CRI_BTY, mLowpowerComboBox2, kCriticalBatteryActionFallback);
+ 
+     //低电量通知
+     for (int i = 1; i < 5; i++) {
+@@ -1071,7 +1108,9 @@ void Power::initCustomPlanStatus()
+     mLowSaveBtn->blockSignals(true);
+     mBatterySaveBtn->blockSignals(true);
+ 
+-    mPowerKeyComboBox->setCurrentIndex(mPowerKeyComboBox->findData(settings->get(BUTTON_POWER_KEY).toString()));
++    mPowerKeyComboBox->setCurrentIndex(actionComboIndex(mPowerKeyComboBox,
++                                                        settings->get(BUTTON_POWER_KEY).toString(),
++                                                        kPowerButtonActionFallback));
+     if (settings->get(SLEEP_COMPUTER_AC_KEY).toInt() == -1) {
+         m_acSleepComboBox->setCurrentIndex(m_acSleepComboBox->findData(0));
+     } else {
+@@ -1118,7 +1157,9 @@ void Power::initCustomPlanStatus()
+ 
+     setHintLable();
+ 
+-    mCloseLidComboBox->setCurrentIndex(mCloseLidComboBox->findData(settings->get(BUTTON_LID_AC_KEY).toString()));
++    mCloseLidComboBox->setCurrentIndex(actionComboIndex(mCloseLidComboBox,
++                                                        settings->get(BUTTON_LID_AC_KEY).toString(),
++                                                        kLidActionFallback));
+ 
+     if (isSupportHostLight && hostLightStripDbus != nullptr) {
+         mHostLightSButton->blockSignals(true);
+@@ -1157,8 +1198,11 @@ void Power::initCustomPlanStatus()
+         }
+ 
+     }
+-    m_lowpowerComboBox1->setCurrentIndex(settings->get(PER_ACTION_KEY).toInt() - 1);
+-    mLowpowerComboBox2->setCurrentIndex(mLowpowerComboBox2->findData(settings->get(ACTION_CRI_BTY).toString()));
++
++    m_lowpowerComboBox1->setCurrentIndex(qBound(0, settings->get(PER_ACTION_KEY).toInt() - 1, m_lowpowerComboBox1->count() - 1));
++    mLowpowerComboBox2->setCurrentIndex(actionComboIndex(mLowpowerComboBox2,
++                                                         settings->get(ACTION_CRI_BTY).toString(),
++                                                         kCriticalBatteryActionFallback));
+     mNoticeComboBox->setCurrentIndex(settings->get(PERCENTAGE_LOW).toInt()/10 - 1);
+ 
+     if (screensettings->keys().contains("sleepActivationEnabled")) {
+diff --git a/ukui-upower/resources/org.ukui.power-manager.gschema.xml b/ukui-upower/resources/org.ukui.power-manager.gschema.xml
+index 48c81ac..08e6d25 100644
+--- a/ukui-upower/resources/org.ukui.power-manager.gschema.xml
++++ b/ukui-upower/resources/org.ukui.power-manager.gschema.xml
+@@ -284,7 +284,7 @@
+       <description>The percentage of the battery when it is considered low. Only valid when use-time-for-policy is false.</description>
+     </key>
+     <key name="percentage-critical" type="i">
+-      <default>10</default>
++      <default>5</default>
+       <summary>Percentage considered critical</summary>
+       <description>The percentage of the battery when it is considered critical. Only valid when use-time-for-policy is false.</description>
+     </key>

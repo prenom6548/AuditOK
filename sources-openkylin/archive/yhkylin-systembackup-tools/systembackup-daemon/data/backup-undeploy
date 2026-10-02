@@ -1,0 +1,47 @@
+#!/bin/sh
+point=$1
+devPathBoot=$2
+devPathData=$3
+
+#bin/sh脚本下，很多指令不生效且会直接导致退出，所以status查询，数字计算等都不可在这类脚本中执行
+#后续可以考虑通过传入参数执行挂载
+
+mountOtherPath()
+{
+	mount --bind /run /root/run
+	mount --bind /sys /root/sys
+	mount --bind /proc /root/proc
+	# mount /dev/nvme0n1p2 /root/boot
+	# mount /dev/nvme0n1p5 /root/data
+	# mount /dev/nvme0n1p4 /root/backup
+
+	mount $devPathBoot /root/boot
+	mount $devPathData /root/data
+}
+
+
+umountOtherPath()
+{
+	umount /root/proc >>$PLOGFILE
+	umount /root/run >>$PLOGFILE
+	umount /root/sys >>$PLOGFILE
+	umount /root/boot >>$PLOGFILE
+	umount /root/data >>$PLOGFILE
+	# umount /root/backup >>$PLOGFILE
+}
+
+mountOtherPath
+
+mkdir -p /root/data/.backup/log/
+PLOGFILE=/root/data/.backup/log/deploy.log
+
+echo "查看需要删除的部署点序列号：">> $PLOGFILE
+# echo $totalPoints >> $PLOGFILE
+echo $point >> $PLOGFILE
+
+echo "查看系统部署点：" >> $PLOGFILE
+chroot ${rootmnt} /bin/sh -c "ostree admin status --skip-signatures" >> $PLOGFILE 2>&1
+
+chroot ${rootmnt} /bin/sh -c "ostree admin undeploy $point" >> $PLOGFILE
+
+umountOtherPath

@@ -1,0 +1,54 @@
+From: Jie Liu <liujie01@kylinos.cn>
+Date: Thu, 29 Aug 2024 17:31:21 +0800
+Subject: don't translate popup position to relative when its parent is
+ toplevel
+
+---
+ examples/widget.cpp      | 13 +++++++++++++
+ src/ukuishellsurface.cpp |  9 ++++++---
+ 2 files changed, 19 insertions(+), 3 deletions(-)
+
+diff --git a/examples/widget.cpp b/examples/widget.cpp
+index d324c09..e2d80ed 100644
+--- a/examples/widget.cpp
++++ b/examples/widget.cpp
+@@ -141,6 +141,19 @@ Widget::Widget(QWidget *parent)
+             setGeometry(geo[0].toInt(), geo[1].toInt(), geo[2].toInt(), geo[3].toInt());
+         }
+     });
++
++    // Set popup geometry
++    auto button8 = new QPushButton("Show Popup", this);
++    layout->addWidget(button8);
++    connect(button8, &QPushButton::clicked, [this] {
++        QDialog dialog(this);
++        dialog.setWindowTitle("Popup Dialog");
++        dialog.move(100, 100);
++        dialog.resize(400, 300);
++        dialog.setWindowFlags(Qt::Popup);
++        dialog.exec();
++    });
++
+     resize(800, 600);
+ }
+ 
+diff --git a/src/ukuishellsurface.cpp b/src/ukuishellsurface.cpp
+index 47b8f5e..a5a0b9d 100644
+--- a/src/ukuishellsurface.cpp
++++ b/src/ukuishellsurface.cpp
+@@ -309,9 +309,12 @@ void UkuiShellSurface::setPopup(QtWaylandClient::QWaylandWindow *parent)
+     Q_ASSERT(!m_toplevel && !m_popup);
+ 
+     auto positioner = new xdg_positioner(m_shell->create_positioner());
+-    // set_popup expects a position relative to the parent
+-    QPoint transientPos = m_window->geometry().topLeft(); // this is absolute
+-    transientPos -= parent->geometry().topLeft();
++    QPoint transientPos = m_window->geometry().topLeft(); // this is absolute position
++    // translate to relative position
++    auto *parentUkuiShellSurface = qobject_cast<UkuiShellSurface *>(parent->shellSurface());
++    if (parentUkuiShellSurface->popup()) {
++        transientPos -= parent->geometry().topLeft();
++    }
+     if (parent->decoration()) {
+         transientPos.setX(transientPos.x() + parent->decoration()->margins().left());
+         transientPos.setY(transientPos.y() + parent->decoration()->margins().top());

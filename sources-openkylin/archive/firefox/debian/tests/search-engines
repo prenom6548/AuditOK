@@ -1,0 +1,76 @@
+#!/usr/bin/python3
+# -*- coding: utf-8 -*-
+
+import platform
+from selenium import webdriver
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from urllib.parse import urlparse, parse_qs
+
+
+if __name__ == '__main__':
+    options = webdriver.firefox.options.Options()
+    options.binary_location = "/usr/bin/firefox"
+    options.add_argument("-headless")
+
+    # Starting with Firefox 89, search is handed off to the address bar by
+    # default (see https://bugzilla.mozilla.org/1699834). Since Selenium
+    # doesn't allow interacting with the address bar, this test can only work
+    # by reverting to the old behaviour. If/when this preference is removed,
+    # this test will also need to be removed.
+    options.set_preference(
+        "browser.newtabpage.activity-stream.improvesearch.handoffToAwesomebar",
+        False)
+
+    driver = webdriver.Firefox(options=options)
+
+    if platform.machine() == "armv7l":
+        # Override the User Agent string so that Google search doesn't serve
+        # mobile content (https://launchpad.net/bugs/1923090)
+        uastring = driver.execute_script("return navigator.userAgent;")
+        driver.quit()
+        options.set_preference("general.useragent.override",
+                               uastring.replace("armv7l", "armv8l"))
+        driver = webdriver.Firefox(options=options)
+
+    # The following search engines are expected to be present for every locale,
+    # and their label and netloc locale-independent
+    expected_engines = [
+        {'label': "Google", 'netloc': "www.google.com",
+         'params': {"client": "ubuntu"}},
+        {'label': "DuckDuckGo", 'netloc': "duckduckgo.com",
+         'params': {"t": "ffab"}},
+    ]
+
+    search_settings_page = "about:preferences#search"
+    homepage = "about:home"
+
+    def print_engines(prefix, engines):
+        print("{}{}".format(prefix,
+                            ", ".join(["[{}]".format(e) for e in engines])))
+
+    for i, v in enumerate(expected_engines):
+        driver.get(search_settings_page)
+        selector = driver.find_element_by_id("defaultEngine")
+        count = int(selector.get_attribute("itemCount"))
+        expected = v['label']
+        i = 0
+        while (selector.get_attribute("label") != expected) and (i < count):
+            i = i + 1
+            selector.send_keys(Keys.ARROW_DOWN)
+        assert selector.get_attribute("label") == expected, \
+               "Search engine not found: {}".format(expected)
+
+        driver.get(homepage)
+        driver.find_element_by_id("newtab-search-text").send_keys("foobarbaz")
+        driver.find_element_by_id("searchSubmit").click()
+        WebDriverWait(driver, 10).until(EC.url_changes(homepage))
+        print("search URL for {}: {}".format(expected, driver.current_url))
+        url = urlparse(driver.current_url)
+        assert url.netloc == v['netloc']
+        query = parse_qs(url.query)
+        for pk, pv in v['params'].items():
+            assert query[pk] == [pv]
+
+    driver.quit()

@@ -1,0 +1,35 @@
+From: Chris Webb <chris@arachsys.com>
+Date: Mon, 15 Dec 2025 18:48:29 +0000
+Subject: unshare: fix user namespace bind mounts
+
+unshare --user=<file> always fails because we no longer have CAP_SYS_ADMIN
+in the parent user namespace after unsharing to create the new one. As with
+unshare --mount=<file>, fork a child to make the bind mount instead.
+
+Signed-off-by: Chris Webb <chris@arachsys.com>
+---
+ sys-utils/unshare.c | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/sys-utils/unshare.c b/sys-utils/unshare.c
+index 02884bf..402dd49 100644
+--- a/sys-utils/unshare.c
++++ b/sys-utils/unshare.c
+@@ -1078,7 +1078,7 @@ int main(int argc, char *argv[])
+ 	/* clear any inherited settings */
+ 	signal(SIGCHLD, SIG_DFL);
+ 
+-	if (npersists && (unshare_flags & CLONE_NEWNS))
++	if (npersists && (unshare_flags & (CLONE_NEWNS | CLONE_NEWUSER)))
+ 		pid_bind = bind_ns_files_from_child(&fd_bind);
+ 
+ 	if (usermap || (mapuser != (uid_t) -1 && owneruser != (uid_t) -1)) {
+@@ -1149,7 +1149,7 @@ int main(int argc, char *argv[])
+ 
+ 	if (npersists && (pid || !forkit)) {
+ 		/* run in parent */
+-		if (pid_bind && (unshare_flags & CLONE_NEWNS))
++		if (pid_bind && (unshare_flags & (CLONE_NEWNS | CLONE_NEWUSER)))
+ 			sync_with_child(pid_bind, fd_bind);
+ 		else
+ 			/* simple way, just bind */

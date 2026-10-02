@@ -1,0 +1,80 @@
+#!/bin/bash
+
+set -e
+
+. utils
+echo "18setup-bootloader start"
+
+karch=$(uname -m)
+# # 字符串包含
+if [[ ${karch} =~ "mips" ]] || [[ ${karch} =~ "loongarch" ]]; then
+    do_mips_bootloader
+    return 0
+elif [[ ${karch} =~ "sw_64" ]]; then
+    do_sw64_bootloader
+    return 0
+fi
+
+BOOT_METHOD="UEFI"
+if [[ "${is_efi}" = "false" ]]; then
+    BOOT_METHOD="legacy"
+fi
+
+
+disk=""
+get_boot_disk()
+{
+	disk_menu=$(lsblk -d | grep disk | awk '{print $1}')
+	# echo ${#disk_menu[@]}
+	bootdisk=""
+    for i in ${disk_menu}
+    do
+		bootdisk=$(lsblk /dev/$i  | grep "/$")
+		if [ -n "$bootdisk" ];then
+			disk="/dev/$i"
+			break
+		fi
+    done
+	echo $disk
+}
+
+case ${BOOT_METHOD} in
+  "UEFI")
+    # TODO, 统一安装
+    if ! dpkg -l | grep -q grub-efi; then
+        apt install -y grub-efi efibootmgr
+    fi
+
+    if [ -e /boot/efi/EFI/ ];then
+        rm -rf /boot/efi/EFI/*
+    fi
+
+    grub-install || \
+        echo "grub-install for uefi failed!!!"
+    ;;
+  "legacy")
+    if [[ $(uname -m) != "aarch64" ]]; then
+        apt install -y grub-pc
+    fi
+    get_boot_disk
+    grub-install --no-floppy --force "${disk}" || \
+        msg "grub-install for legacy failed!!!"
+
+    ;;
+esac
+
+# 兼容性考虑
+copy_efi() {
+    if [[ $(uname -m) = "aarch64" ]]; then
+        if [[ -f /boot/efi/EFI/kylin/grubaa64.efi ]]; then
+            mkdir -p /boot/efi/EFI/neokylin
+            cp /boot/efi/EFI/kylin/grubaa64.efi /boot/efi/EFI/neokylin/grubaa64.efi
+            mkdir -p /boot/efi/EFI/boot
+            cp /boot/efi/EFI/kylin/grubaa64.efi /boot/efi/EFI/boot/grubaa64.efi
+	    fi
+    fi
+}
+
+copy_efi
+
+echo "18setup-bootloader end"

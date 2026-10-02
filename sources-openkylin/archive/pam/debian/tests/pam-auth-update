@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# Copyright 2023, Sam Hartman
+# This code may be redistributed under the same terms as Linux Pam
+# itself, or at your pution, under the GNU General Public License,
+# version 3. 
+
+set -x
+
+fail() {
+    echo "$@" 2>&1
+    exit 1
+}
+
+
+# Confirm enabling pam_mkhomedir updates common-session
+grep mkhomedir /etc/pam.d/* && fail pam_mkhomedir already enabled
+pam-auth-update --enable mkhomedir ||fail pam-auth-update enable failed
+grep mkhomedir /etc/pam.d/common-session ||fail pam_mkhomedir was not enabled
+
+# and confirm that it makes a home directory
+useradd -s /bin/bash pam_test
+su -c date pam_test
+test -d ~pam_test || fail pam_test home directory not made
+
+# confirm added options are preserved
+grep -i rounds /etc/pam.d/common-password &&fail rounds parameter already specified
+sed -i -e 's/obscure yescrypt/obscure yescrypt rounds=3/' /etc/pam.d/common-password
+grep rounds /etc/pam.d/common-password ||fail sed did not update common password
+
+( echo get libpam-runtime/profiles |debconf-communicate  |grep mkhomedir) || fail mkhomedir not in enabled profiles
+
+# Confirm removing mkhomedir preserves  rounds parameter
+pam-auth-update --disable mkhomedir ||fail pam-auth-update disable failed
+( echo get libpam-runtime/profiles |debconf-communicate |grep mkhomedir) && fail mkhomedir still in profiles
+grep mkhomedir /var/lib/pam/seen || fail mkhomedir removed from seen after disable
+grep  mkhomedir /etc/pam.d/common-session &&fail pam_mkhomedir not removed
+grep rounds  /etc/pam.d/common-password || fail rounds parameter not preserved

@@ -1,0 +1,1385 @@
+/*
+ * Peony-Qt
+ *
+ * Copyright (C) 2020, Tianjin KYLIN Information Technology Co., Ltd.
+ *
+ * This program is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program.  If not, see <https://www.gnu.org/licenses/>.
+ *
+ * Authors: Yue Lan <lanyue@kylinos.cn>
+ *
+ */
+
+#include "navigation-side-bar.h"
+#include "side-bar-model.h"
+#include "side-bar-proxy-filter-sort-model.h"
+#include "side-bar-abstract-item.h"
+#include "volume-manager.h"
+#include "volumeManager.h"
+#include "side-bar-menu.h"
+#include "side-bar-abstract-item.h"
+#include "bookmark-manager.h"
+#include "file-info.h"
+#include "file-info-job.h"
+#include "main-window.h"
+
+#include "global-settings.h"
+#include "manager-control.h"
+
+#include "file-enumerator.h"
+#include "gerror-wrapper.h"
+
+#include "file-utils.h"
+#include "plugin-manager.h"
+#include "vfs-plugin-manager.h"
+
+#include "x11-window-manager.h"
+#include "tag-management.h"
+#include "convenient-macros.h"
+#include "action-constants.h"
+
+#include <QHeaderView>
+#include <QPushButton>
+
+#include <QVBoxLayout>
+
+#include <QEvent>
+
+#include <QPainter>
+
+#include <QScrollBar>
+
+#include <QKeyEvent>
+
+#include <QUrl>
+#include <QDropEvent>
+#include <QMimeData>
+
+#include <QTimer>
+#include <QMessageBox>
+
+#include <QPainterPath>
+
+#include <QAccessible>
+#include <QAccessibleEvent>
+#include <QLabel>
+#include <QScreen>
+#include <QDebug>
+#include <QToolTip>
+#include <QtConcurrent>
+#include <QStandardPaths>
+#include <QApplication>
+#include "file-utils.h"
+#include <QTextLayout>
+#include <QTextLine>
+#include <QStyleHints>
+#ifdef KY_SDK_DATACOLLECT
+#include <kysdk/diagnosetest/libkydatacollect.h>
+#endif
+#include "idm-dbus-manager.h"
+#define NAVIGATION_SIDEBAR_ITEM_BORDER_RADIUS 4
+#define MINIMUM_COLUMN_SIZE 2
+
+using namespace Peony;
+NavigationSideBar::NavigationSideBar(QWidget *parent) : QTreeView(parent)
+{
+    // 无障碍：Tab 进入目录树时朗读区域名“目录树”。
+    // 只挂在 QTreeView 自身上（视图级 accessible），不向下继承到各树节点——
+    // 节点名仍由 Qt 内置 item a11y 从模型 DisplayRole 读取，不会被加前缀。
+    setAccessibleName(tr("Directory Tree"));
+
+    static NavigationSideBarStyle *global_style = new NavigationSideBarStyle;
+
+    header()->setMinimumSectionSize(30);
+
+    setSortingEnabled(true);
+
+    setIconSize(QSize(16, 16));
+
+    setProperty("useIconHighlightEffect", true);
+    //both default and highlight.
+    setProperty("iconHighlightEffectMode", 1);
+
+    this->verticalScrollBar()->setProperty("drawScrollBarGroove", false);
+
+    setDragDropMode(QTreeView::DropOnly);
+
+    setProperty("highlightMode", true);
+    setProperty("doNotBlur", true);
+    viewport()->setProperty("doNotBlur", true);
+
+    auto delegate = new NavigationSideBarItemDelegate(this);
+    setItemDelegate(delegate);
+
+    installEventFilter(this);
+
+    setFrameShape(QFrame::NoFrame);
+    setAutoFillBackground(true);
+    setBackgroundRole(QPalette::Base);
+//    setStyleSheet(".NavigationSideBar"
+//                  "{"
+//                  "border: 0px solid transparent"
+//                  "}");
+
+    //setStyle(global_style);
+
+//    setAttribute(Qt::WA_TranslucentBackground);
+//    viewport()->setAttribute(Qt::WA_TranslucentBackground);
+    header()->setSectionResizeMode(QHeaderView::Fixed);
+    header()->setStretchLastSection(true);
+    header()->setMinimumSectionSize(MINIMUM_COLUMN_SIZE);
+    header()->hide();
+
+    setContextMenuPolicy(Qt::CustomContextMenu);
+
+    setExpandsOnDoubleClick(false);
+
+    setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+
+    m_model = new Peony::SideBarModel(this);
+    m_proxy_model = new Peony::SideBarProxyFilterSortModel(this);
+    m_proxy_model->setSourceModel(m_model);
+
+    this->setModel(m_proxy_model);
+
+    // 展开/折叠后向正确的树项发 StateChanged，供屏幕朗读读「已展开/已折叠」
+    // （勿发到 viewport：AT-SPI 对不上节点，且此前 collapse 误标 expanded=true）
+    connect(this, &QTreeView::expanded, this, &NavigationSideBar::notifyItemExpandStateChanged);
+    connect(this, &QTreeView::collapsed, this, &NavigationSideBar::notifyItemExpandStateChanged);
+
+    setMouseTracking(true);//追踪鼠标
+    setAutoScrollMargin(0);
+
+    VolumeManager *volumeManager = VolumeManager::getInstance();
+    connect(volumeManager,&Peony::VolumeManager::volumeAdded,this,[=](const std::shared_ptr<Peony::Volume> &volume){
+        m_proxy_model->invalidate();//display DVD device in real time.
+    });
+    connect(volumeManager,&Peony::VolumeManager::volumeRemoved,this,[=](const std::shared_ptr<Peony::Volume> &volume){
+        m_proxy_model->invalidate();//The drive does not display when the DVD device is removed.
+        //qDebug() << "volumeRemoved:" <<QToolTip::text();
+        //fix abnormal pull out usb device tips not hide issue, link to bug#81190
+        if (QToolTip::isVisible()) {
+            QToolTip::hideText();
+        }
+    });
+    connect(volumeManager,&Peony::VolumeManager::driveDisconnected,this,[=](const std::shared_ptr<Peony::Drive> &drive){
+        m_proxy_model->invalidate();//Multiple udisk eject display problem
+    });
+        connect(volumeManager,&Peony::VolumeManager::mountAdded,this,[=](const std::shared_ptr<Peony::Mount> &mount){
+        m_proxy_model->invalidate();//display udisk in real time after format it.
+    });
+
+    connect(Experimental_Peony::VolumeManager::getInstance(), &Experimental_Peony::VolumeManager::signal_mountFinished,this,[=](){
+        //fix open mutiple peony window, mount in side bar crash issue, link to bug#116201,116589
+        if(!m_currSelectedItem)
+            return;
+        //规避182166的情况
+//        JumpDirectory(m_currSelectedItem->uri());
+//        qDebug()<<"挂载后跳转路径："<<m_currSelectedItem->uri();
+    });
+
+    connect(this, &QTreeView::clicked, [=](const QModelIndex &index) {
+        switch (index.column()) {
+        case 0: {
+            m_currSelectedItem = m_proxy_model->itemFromIndex(index);
+            //fix open mutiple peony window, mount in side bar crash issue, link to bug#116201,116589
+            if (! m_currSelectedItem)
+                break;
+            //continue to fix crash issue, related to bug#116201,116589
+            m_currSelectedItem->connect(m_currSelectedItem, &SideBarAbstractItem::destroyed, this, [=]{
+                m_currSelectedItem = nullptr;
+            });
+            if(m_currSelectedItem->isMountable()&&!m_currSelectedItem->isMounted())
+                m_currSelectedItem->mount();
+            else{
+                qDebug() << __func__ << __LINE__ << m_currSelectedItem->uri();
+                JumpDirectory(m_currSelectedItem->uri());
+#ifdef KY_SDK_DATACOLLECT
+                auto parent = index.parent();
+                //三级或以下子树跳转才收集数据，分析侧边栏树结构用户使用率
+                if (parent.isValid() && parent.parent().isValid()){
+                    sendKdkDataAsync();
+                }
+#endif
+            }
+            break;
+
+        }
+        case 1: {
+            auto item = m_proxy_model->itemFromIndex(index);
+            if (item->isMounted() || item->isEjectable()||item->isStopable()) {
+                if(item->getDevice().contains("/dev/sr") && FileUtils::isBusyDevice(item->getDevice())){/* 光盘在刻录数据、镜像等操作时,若处于busy状态时，不可弹出。link to bug#143293 */
+                    QMessageBox::information(this, tr("Tips"), tr("The device is in busy state, please perform this operation later."));
+                    break;
+                }
+                auto leftIndex = m_proxy_model->index(index.row(), 0, index.parent());
+                this->collapse(leftIndex);
+                item->ejectOrUnmount();
+            } else {
+                // if item is not unmountable, just be same with first column.
+                // fix #39716
+                if (!item->uri().isNull() && item->uri() != "idm:///") {
+                    Q_EMIT this->updateWindowLocationRequest(item->uri());
+                }
+
+                if (item->uri() == "idm:///") {
+                    Q_EMIT this->createVirtualTabAndSearch();
+                }
+            }
+            break;
+        }
+        default:
+            break;
+        }
+    });
+
+    connect(this, &QTreeView::customContextMenuRequested, this, [=](const QPoint &pos) {
+        auto index = indexAt(pos);
+        auto item = m_proxy_model->itemFromIndex(index);
+        if (item) {
+            if (item->type() != Peony::SideBarAbstractItem::SeparatorItem) {
+                QList<QAction *> actionList;
+                MainWindow *window = dynamic_cast<MainWindow *>(this->topLevelWidget());
+                IDMDBusManager::getInstance()->setActiveWindow(window);
+                //fix bug#216256, open data block in menu fail issue
+                auto curUri = item->uri();
+                if (item->uri() == "computer:///ukui-data-volume") {
+                    curUri = "file:///data";
+
+                    //story 28545, improve data block solution, when has no user file in /data, go to usershare
+                    //fix bug#239232, open in side bar menu not jump to usershare issue
+                    if (Peony::FileUtils::isFileExsit("file:///data/usershare"))
+                        curUri = "file:///data/usershare";
+                }
+
+                if (curUri.startsWith("ftp://")) {
+                    curUri = FileUtils::getFtpDefaultLocationUri(curUri);
+                }
+
+                if (!qApp->property("tabletMode").toBool()) {
+                    auto actionOpeninTab =new QAction(QIcon::fromTheme("tab-new-symbolic"), tr("Open In New Tab"));
+                    actionList<<actionOpeninTab;
+                    actionOpeninTab->setObjectName(OPEN_IN_NEW_TAB_ACTION);
+                    actionOpeninTab->setShortcut(QKeySequence("Ctrl+t"));
+                    connect(actionOpeninTab, &QAction::triggered, this, [=](){
+                        //story 28077, control start of peony
+                        if (!MANAGER_CONTROL->checkCanCreateNewView()) {
+                            return;
+                        }
+
+                        auto enumerator = new Peony::FileEnumerator;
+                        //fix bug#345018, open data block in menu fail issue
+                        enumerator->setEnumerateDirectory(curUri);
+                        enumerator->setAutoDelete();
+
+                        enumerator->connect(enumerator, &Peony::FileEnumerator::prepared, this, [=](const std::shared_ptr<Peony::GErrorWrapper> &err = nullptr, const QString &t = nullptr, bool critical = false){
+                            //fix bug#345018, open data block in menu fail issue
+                            auto targetUri = Peony::FileUtils::getTargetUri(curUri);
+                            if (!targetUri.isEmpty()) {
+                                auto enumerator2 = new Peony::FileEnumerator;
+                                enumerator2->setEnumerateDirectory(targetUri);
+                                enumerator2->connect(enumerator2, &Peony::FileEnumerator::prepared, this, [=](const std::shared_ptr<Peony::GErrorWrapper> &err = nullptr, const QString &t = nullptr, bool critical = false){
+                                    if (!critical) {
+                                        window->addNewTabs(QStringList()<<targetUri);
+                                        dynamic_cast<QWidget *>(window)->show();
+                                    } else {
+                                        auto info = FileInfo::fromUri(targetUri);
+                                        QMessageBox::critical(0, 0, tr("Can not open %1, %2").arg(info.get()->displayName()).arg(err.get()->message()));
+                                    }
+                                    enumerator2->deleteLater();
+                                });
+                                enumerator2->prepare();
+                            } else if (!err.get() && !critical) {
+                                window->addNewTabs(QStringList()<<curUri);
+                                dynamic_cast<QWidget *>(window)->show();
+                            }
+                        });
+
+                        enumerator->connect(enumerator, &Peony::FileEnumerator::prepared, [=](){
+                            enumerator->deleteLater();
+                        });
+
+                        enumerator->prepare();
+                    });
+                }
+
+                auto actionOpeninWindow =new QAction(QIcon::fromTheme("window-new-symbolic"), tr("Open In New Window"));
+                actionList<<actionOpeninWindow;
+                actionOpeninWindow->setObjectName(OPEN_IN_NEW_WINDOW_ACTION);
+                actionOpeninWindow->setShortcut(QKeySequence("Ctrl+n"));
+                connect(actionOpeninWindow, &QAction::triggered, this, [=](){
+                    //story 28077, control start of peony
+                    if (!MANAGER_CONTROL->checkCanCreateNewView()) {
+                        return;
+                    }
+                    auto enumerator = new Peony::FileEnumerator;
+                    enumerator->setEnumerateDirectory(curUri);
+                    enumerator->setAutoDelete();
+                    enumerator->connect(enumerator, &Peony::FileEnumerator::prepared, this, [=](const std::shared_ptr<Peony::GErrorWrapper> &err = nullptr, const QString &t = nullptr, bool critical = false){
+                        auto targetUri = Peony::FileUtils::getTargetUri(curUri);
+                        if (!targetUri.isEmpty()) {
+                            auto enumerator2 = new Peony::FileEnumerator;
+                            enumerator2->setEnumerateDirectory(targetUri);
+                            enumerator2->connect(enumerator2, &Peony::FileEnumerator::prepared, this, [=](const std::shared_ptr<Peony::GErrorWrapper> &err = nullptr, const QString &t = nullptr, bool critical = false){
+                                if (!critical) {
+                                    auto newWindow = window->create(targetUri);
+                                    dynamic_cast<QWidget *>(newWindow)->show();
+                                } else {
+                                    auto info = FileInfo::fromUri(targetUri);
+                                    QMessageBox::critical(0, 0, tr("Can not open %1, %2").arg(info.get()->displayName()).arg(err.get()->message()));
+                                }
+                                enumerator2->deleteLater();
+                            });
+                            enumerator2->prepare();
+                        } else if (!err.get() && !critical) {
+                            auto newWindow = window->create(curUri);
+                            dynamic_cast<QWidget *>(newWindow)->show();
+                        }
+                    });
+
+                    enumerator->connect(enumerator, &Peony::FileEnumerator::prepared, [=](){
+                        enumerator->deleteLater();
+                    });
+
+                    enumerator->prepare();
+                });
+                if (item->type() == SideBarAbstractItem::FileSystemItem) {
+                    if ((0 != QString::compare(item->uri(), "computer:///")) &&
+                        (0 != QString::compare(item->uri(), "filesafe:///"))) {
+                        for (const auto &actionItem : actionList) {
+                            if(item->isVolume()){/* 分区才去需要判断是否已挂载 */
+                                actionItem->setEnabled(item->isMounted());
+                                if(item->getDevice().contains("/dev/sr")){/* 光盘在刻录数据、镜像等操作时,即若处于busy状态时，该菜单置灰不可用。 */
+                                    actionItem->setDisabled(FileUtils::isBusyDevice(item->getDevice()));
+                                }
+                            }
+                        }
+                    }
+                }
+                Peony::SideBarMenu menu(item, nullptr,actionList, this);
+                menu.exec(mapToGlobal(pos));
+            }
+        }
+    });
+
+    connect(m_model, &QAbstractItemModel::dataChanged, this, [=](){
+        this->viewport()->update();
+        m_proxy_model->invalidate();
+    });
+
+    connect(selectionModel(), &QItemSelectionModel::selectionChanged, this, &QTreeView::doItemsLayout);
+
+    connect(Peony::GlobalSettings::getInstance(), &GlobalSettings::valueChanged, this, [=](const QString& key){
+        if (SHOW_NETWORK == key) {
+            for (int i = 0; i < m_proxy_model->rowCount(); ++i) {
+                auto index = m_proxy_model->index(i, 0);
+                auto item = m_proxy_model->itemFromIndex(index);
+                bool isShowNetwork = Peony::GlobalSettings::getInstance()->isExist(SHOW_NETWORK) ?
+                            Peony::GlobalSettings::getInstance()->getValue(SHOW_NETWORK).toBool() : true;
+                if (item->type() == SideBarAbstractItem::NetWorkItem) {
+                    this->setRowHidden(index.row(), index.parent(), !isShowNetwork);
+                    if (!isShowNetwork) {
+                        item->findChildrenAsync();
+                    }
+                    return;
+                }
+            }
+            this->viewport()->update();
+        }
+    });
+
+    connect(VFSPluginManager::getInstance(), &VFSPluginManager::updateVFSPlugin, this, [=](VFSPluginIface *vfsPIface, bool enable){
+        qDebug() << __func__ << vfsPIface->name() << enable;
+        for (int i = 0; i < m_proxy_model->rowCount(); ++i) {
+            auto index = m_proxy_model->index(i, 0);
+            auto item = m_proxy_model->itemFromIndex(index);
+            if (item->type() == SideBarAbstractItem::VFSItem
+                    && item->uri().contains(vfsPIface->uriScheme())
+                    && !item->uri().contains("computer:///")
+                    && vfsPIface->pluginType() == PluginInterface::VFSPlugin) {
+                if (m_currSelectedItem) {
+                    if (!m_currSelectedItem->uri().startsWith("file://") && enable) {
+                        JumpDirectory("computer:///");
+                    }
+                }
+                this->setRowHidden(index.row(), index.parent(), enable);
+                return;
+            }
+            //hide kmre
+            if (item->type() == SideBarAbstractItem::FavoriteItem
+                    && vfsPIface->uriScheme() == "kmre://"
+                    && vfsPIface->pluginType() == PluginInterface::VFSPlugin) {
+                if (m_currSelectedItem) {
+                    if (!m_currSelectedItem->uri().startsWith("file:///") && enable) {
+                        JumpDirectory("computer:///");
+                    }
+                }
+
+                for (int j = 0; j < m_proxy_model->rowCount(index); ++j) {
+                    auto tIndex = m_proxy_model->index(j, 0, index);
+                    auto tItem = m_proxy_model->itemFromIndex(tIndex);
+                    if (tItem->uri().startsWith("kmre:///")) {
+                        this->setRowHidden(tIndex.row(), tIndex.parent(), enable);
+                        return;
+                    }
+                }
+            }
+        }
+    });
+
+    connect(m_model, &SideBarModel::signal_collapsedChildren, this, [=](const QModelIndex &index){
+        QModelIndex modelIndex = m_proxy_model->mapFromSource(index);
+        collapse(modelIndex);
+    });
+
+    //expandToDepth(1);/* 快速访问、计算机、网络 各模块往下展开一层 */
+    for(int row =0; row < model()->rowCount();row++)
+    {
+        auto index = model()->index(row,0);
+        auto srcIndex = m_proxy_model->mapToSource(index);
+        auto item = m_model->itemFromIndex(srcIndex);
+        auto type = item->type();
+        if (item->type() != SideBarAbstractItem::VFSItem && item->type() != SideBarAbstractItem::SeparatorItem) {
+            doExpand(index);
+        }
+
+        QStringList disExtensions = GlobalSettings::getInstance()->getValue(DISABLED_EXTENSIONS).toStringList();
+        for (auto extensions : disExtensions) {
+            VFSPluginIface *pIface = dynamic_cast<VFSPluginIface*>(PluginManager::getInstance()->getPluginByFileName(extensions));
+            if (pIface && pIface->pluginType() == PluginInterface::VFSPlugin
+                    && item->type() == SideBarAbstractItem::VFSItem
+                    && !item->uri().contains("computer:///")
+                    && item->uri().contains(pIface->uriScheme())) {
+                this->setRowHidden(index.row(), index.parent(), true);
+            }
+
+            if (pIface && pIface->pluginType() == PluginInterface::VFSPlugin
+                    && item->type() == SideBarAbstractItem::FavoriteItem
+                    && pIface->uriScheme() == "kmre://"
+                    && item->uri().contains(pIface->uriScheme())) {
+                this->setRowHidden(index.row(), index.parent(), true);
+            }
+        }
+
+//        if(item->uri()=="filesafe:///")/* 文件保护箱默认不展开 */
+//            continue;
+//        expand(index);
+    }
+
+    /**
+     * @bug #278107: [Requirement 35207] [Start Menu] [Ribbon] Shortcut Entry-Computer Jump to the left side of the computer interface positioning error
+     *
+     * comment the following code
+     *
+     * @author: Renyg <renyangguang@kylinos.cn>
+     * @date:   2024-11-01
+     */
+#if 0
+    /* 打开文件管理器默认聚焦在家目录上 */
+    QString homeUri =  "file://" +  QStandardPaths::writableLocation(QStandardPaths::HomeLocation);
+    QItemSelectionModel *selectionModel = this->selectionModel();
+    for (int i = 0; i < m_proxy_model->rowCount(); ++i) {
+        auto index = m_proxy_model->index(i, 0);
+        auto item = m_proxy_model->itemFromIndex(index);
+        if (item->uri() == homeUri) {
+            auto index1 = m_proxy_model->index(i, 1);
+            this->setCurrentIndex(index);
+            /* 通过QItemSelection设置选中项 */
+            QItemSelection selection(index, index1);
+            selectionModel->select(selection, QItemSelectionModel::Select);
+        }
+    }//end
+#endif
+}
+
+void NavigationSideBar::sendKdkDataAsync()
+{
+#ifdef KY_SDK_DATACOLLECT
+    QtConcurrent::run([=]() {
+        //story 24997, collet second level tree child click event
+        KTrackData *node = kdk_dia_data_init(KEVENTSOURCE_DESKTOP,KEVENT_CLICK);
+        //传入事件描述“点击侧边栏展开子树”，上传点击事件，收集使用二级以上子树跳转数据
+        kdk_dia_upload_default(node,"peony","secondLevelChildClick");
+
+        //释放内存
+        kdk_dia_data_free(node);
+    });
+#endif
+}
+
+void NavigationSideBar::notifyItemExpandStateChanged(const QModelIndex &index)
+{
+    if (!index.isValid())
+        return;
+    // 无障碍未激活时发事件会被 Qt 丢掉；屏幕朗读开启后 isActive 为 true
+    if (!QAccessible::isActive())
+        return;
+
+    // QAccessibleTree 子项逻辑下标 = (viewIndex + header?1:0) * columnCount + column
+    // （header 即使 hide() 仍占无障碍前几项，与 Qt accessibleTable2Index 一致）
+    int visualRow = 0;
+    for (QModelIndex walk = indexAbove(index); walk.isValid(); walk = indexAbove(walk))
+        ++visualRow;
+
+    const int columns = qMax(1, model() ? model()->columnCount() : 1);
+    const int headerOffset = header() ? 1 : 0;
+    const int logicalChild = (visualRow + headerOffset) * columns + index.column();
+
+    // 对视图 QObject + setChild(逻辑子项)，AT-SPI 才落到具体 table cell。
+    // 注意：Qt 5.15 AtSpiAdaptor::notify 对 StateChanged 只转发 checked/active/disabled，
+    // expanded 会被静默丢掉，Orca 永远收不到 object:state-changed:expanded。
+    // 因此额外发 NameChanged（桥接层会转发 PropertyChange），由 Orca 补读展开态。
+    QAccessible::State changed;
+    changed.expanded = true;
+    QAccessibleStateChangeEvent stateEvent(this, changed);
+    stateEvent.setChild(logicalChild);
+    QAccessible::updateAccessibility(&stateEvent);
+
+    QAccessibleEvent nameEvent(this, QAccessible::NameChanged);
+    nameEvent.setChild(logicalChild);
+    QAccessible::updateAccessibility(&nameEvent);
+
+    qDebug() << "NavigationSideBar a11y expand notify"
+             << index.data(Qt::DisplayRole).toString()
+             << "visualRow" << visualRow
+             << "logicalChild" << logicalChild
+             << "isExpanded" << isExpanded(index);
+}
+
+void NavigationSideBar::doExpand(const QModelIndex &index)
+{
+    if (isExpanded(index))
+        return;
+    auto item = m_proxy_model->itemFromIndex(index);
+    connect(item, &SideBarAbstractItem::findChildrenFinished, this, [=]{
+        auto currentIndex = m_proxy_model->mapFromSource(item->firstColumnIndex());
+        this->expand(currentIndex);
+        // expand() 会发 QTreeView::expanded → notifyItemExpandStateChanged
+    });
+    item->findChildrenAsync();
+
+    auto globalSettings = Peony::GlobalSettings::getInstance();
+    bool isShowNetwork = globalSettings->isExist(SHOW_NETWORK) ? globalSettings->getValue(SHOW_NETWORK).toBool() : true;
+    QStringList disExtensions = globalSettings->getValue(DISABLED_EXTENSIONS).toStringList();
+    // 获取索引项并缓存到局部变量
+    auto itemType = item->type();
+    auto itemUri = item->uri();
+
+    if (itemType == SideBarAbstractItem::NetWorkItem && !isShowNetwork) {
+        // 如果不显示网络项目，则隐藏该行并退出
+        this->setRowHidden(index.row(), index.parent(), true);
+        return;
+    }
+
+    // 使用 QMap 缓存插件实例
+    PluginManager* pluginManager = PluginManager::getInstance();
+    QMap<QString, VFSPluginIface*> cachedPlugins;
+
+    // 遍历禁用的扩展列表
+    for (auto extension : disExtensions) {
+        // 如果插件未缓存，则动态转换并缓存
+        if (!cachedPlugins.contains(extension)) {
+            VFSPluginIface* pIface = dynamic_cast<VFSPluginIface*>(pluginManager->getPluginByFileName(extension));
+            cachedPlugins.insert(extension, pIface);
+        } else {
+            auto pIface = cachedPlugins[extension];
+
+            if (pIface && pIface->pluginType() == PluginInterface::VFSPlugin) {
+                bool isFileSystemItem = (itemType == SideBarAbstractItem::FileSystemItem);
+                bool isFavoriteItem = (itemType == SideBarAbstractItem::FavoriteItem);
+
+                if ((isFileSystemItem && !itemUri.contains("computer:///") && itemUri.contains(pIface->uriScheme())) ||
+                    (isFavoriteItem && pIface->uriScheme() == "kmre://" && itemUri.contains(pIface->uriScheme()))) {
+                    this->setRowHidden(index.row(), index.parent(), true);
+                    return;
+                }
+            }
+        }
+    }
+}
+
+void NavigationSideBar::doCollapse(const QModelIndex &index)
+{
+    if (!isExpanded(index))
+        return;
+    auto item = m_proxy_model->itemFromIndex(index);
+    this->collapse(index);
+    QTimer::singleShot(qApp->style()->styleHint(QStyle::SH_Widget_Animation_Duration), item, [=]{
+        item->clearChildren();
+    });
+}
+
+bool NavigationSideBar::eventFilter(QObject *obj, QEvent *e)
+{
+    return false;
+}
+
+bool NavigationSideBar::viewportEvent(QEvent *e)
+{
+    if (e->type() == QEvent::ToolTip) {
+        // 处理 ToolTip 事件的代码
+        QHelpEvent *helpEvent = static_cast<QHelpEvent*>(e);
+        QModelIndex itemIndex = indexAt(helpEvent->pos());
+        if (!itemIndex.isValid()) {
+            return QTreeView::viewportEvent(e);
+        }
+
+        //获取提示文本和index
+        QModelIndex parentIndex = itemIndex.parent();
+        QModelIndex firstColumnIndex;
+        QModelIndex secondColumnIndex;
+        if (parentIndex.isValid()) {
+            firstColumnIndex = model()->index(itemIndex.row(), 0, parentIndex);
+            secondColumnIndex = model()->index(itemIndex.row(), 1, parentIndex);
+        } else {
+            firstColumnIndex = model()->index(itemIndex.row(), 0);
+            secondColumnIndex = model()->index(itemIndex.row(), 1);
+        }
+        if (itemIndex.column() == 1) {
+            SideBarAbstractItem *item = static_cast<SideBarAbstractItem*>(m_proxy_model->mapToSource(secondColumnIndex).internalPointer());
+            if(itemIndex.isValid()){
+                if (item->type() == SideBarAbstractItem::VFSItem && item->uri() == "idm:///") {
+                    return QTreeView::viewportEvent(e);
+                }
+            }
+        }
+
+        QStyleOptionViewItem opt = viewOptions();
+        QString text = firstColumnIndex.data(Qt::DisplayRole).toString();
+        // text = FileUtils::wrapTextForTooltip(text, helpEvent->globalPos(),opt.font);
+        NavigationSideBarItemDelegate *delegate = static_cast<NavigationSideBarItemDelegate *>(itemDelegate());
+        delegate->initStyleOption(&opt, firstColumnIndex);
+        opt.rect = visualRect(firstColumnIndex);
+        QRect rect = QApplication::style()->subElementRect(QStyle::SE_ItemViewItemText, &opt, nullptr);
+        const QWidget *widget = opt.widget;
+        const int textMargin = QApplication::style()->pixelMetric(QStyle::PM_FocusFrameHMargin, 0, widget) + 1;
+        QRect textRect = rect.adjusted(textMargin, 0, -textMargin, 0); // remove width padding
+
+        QTextLayout textLayout(text, opt.font);
+
+        QTextOption textOption;
+        const bool wrapText = opt.features & QStyleOptionViewItem::WrapText;
+        textOption.setWrapMode(wrapText ? QTextOption::WordWrap : QTextOption::ManualWrap);
+        textOption.setTextDirection(opt.direction);
+        textOption.setAlignment(QStyle::visualAlignment(opt.direction, opt.displayAlignment));
+
+        textLayout.setTextOption(textOption);
+        textLayout.beginLayout();
+
+        QTextLine line = textLayout.createLine();
+        if (!line.isValid())
+            return QTreeView::viewportEvent(e);;
+
+        line.setLineWidth(textRect.width());
+
+        const bool isShow = line.naturalTextWidth() > textRect.width();
+
+        textLayout.endLayout();
+        //qDebug() << "line.naturalTextWidth(): "  << line.naturalTextWidth() <<"textRect: " <<textRect <<"text: " << text;
+        if (!isShow) {
+            QToolTip::hideText();
+            e->ignore();
+            return true;
+        }else{
+            QToolTip::showText(helpEvent->globalPos(), text, this);
+            return true;
+        }
+    }
+    return QTreeView::viewportEvent(e);
+}
+
+void NavigationSideBar::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton || event->button() == Qt::RightButton) {
+        auto index = this->indexAt(event->pos());
+        if (index.isValid()) {
+            // 计算展开按钮位置
+            auto rect = visualRect(index);
+            int identation = indentation();
+            rect.setWidth(identation);
+            rect.translate(-identation, 0);
+            if (rect.contains(event->pos())) {
+                // 展开/收起
+                if (isExpanded(index)) {
+                    // collapse 同步；只靠 collapsed→notify，避免与信号重复发 NameChanged
+                    doCollapse(index);
+                } else {
+                    // 展开经 findChildren 异步，真正 expand() 后由 expanded 信号通知
+                    doExpand(index);
+                }
+                event->ignore();
+                return;
+            }
+        }
+    }
+
+    return QTreeView::mousePressEvent(event);
+}
+
+void NavigationSideBar::updateGeometries()
+{
+    setViewportMargins(8, 0, 4, 0);
+    QTreeView::updateGeometries();
+    if(m_notAllowHorizontalMove){
+        horizontalScrollBar()->setValue(0);/* hotfix bug#93557 */
+    }
+    m_notAllowHorizontalMove = false;
+}
+
+void NavigationSideBar::scrollTo(const QModelIndex &index, QAbstractItemView::ScrollHint hint)
+{
+    //skip unmount indicator index
+    if (index.isValid()) {
+        if (index.column() == 0) {
+            QTreeView::scrollTo(index, hint);
+        }
+    }
+}
+
+void NavigationSideBar::paintEvent(QPaintEvent *event)
+{
+//    QPalette pal = qApp->palette();
+//    pal.setColor(QPalette::Base, QColor(Qt::transparent));
+//    setPalette(pal);
+//    viewport()->setPalette(pal);
+    QTreeView::paintEvent(event);
+}
+
+void NavigationSideBar::resizeEvent(QResizeEvent *e)
+{
+    QTreeView::resizeEvent(e);
+    if (header()->count() > 0) {
+        int width = verticalScrollBar()->isVisible()? verticalScrollBar()->width() : 10;
+        setColumnWidth(0, this->viewport()->width() - MINIMUM_COLUMN_SIZE - viewportMargins().left() - viewportMargins().right() - width);
+        setColumnWidth(1, MINIMUM_COLUMN_SIZE);
+    }
+}
+
+void NavigationSideBar::dropEvent(QDropEvent *e)
+{
+    //fix invalid index cause crash issue
+    QModelIndex targetIndex = indexAt(e->pos());
+    if (! targetIndex.isValid())
+        return;
+
+    QString destUri = m_proxy_model->itemFromIndex(targetIndex)->uri();
+    auto data = e->mimeData();
+    auto bookmark = Peony::BookMarkManager::getInstance();
+    if (bookmark->isLoaded()) {
+        for (auto url : data->urls()) {
+            if(url.toString().startsWith("filesafe:///")){
+                QMessageBox::warning(this, tr("warn"), tr("This operation is not supported."));
+                continue;
+            }
+            if (dropIndicatorPosition() == QAbstractItemView::AboveItem || dropIndicatorPosition() == QAbstractItemView::BelowItem || "favorite:///" == destUri) {
+                // add to bookmark
+                e->setAccepted(true);
+
+                //FIXME: replace BLOCKING api in ui thread.
+                auto info = Peony::FileInfo::fromUri(url.toDisplayString());
+                if (info->displayName().isNull()) {
+                    Peony::FileInfoJob j(info);
+                    j.querySync();
+                }
+                if (info->isDir()) {
+                    bookmark->addBookMark(url.url());
+                }
+            }
+        }
+    }
+
+    if (e->keyboardModifiers() & Qt::ControlModifier) {
+        QModelIndex sourceIndex = m_proxy_model->mapToSource(targetIndex);
+        m_model->dropMimeData(e->mimeData(), Qt::CopyAction, sourceIndex.row(), 0, sourceIndex);
+        e->accept();
+        return;
+    }
+
+    QTreeView::dropEvent(e);
+}
+
+QSize NavigationSideBar::sizeHint() const
+{
+    return QTreeView::sizeHint();
+}
+
+void NavigationSideBar::JumpDirectory(const QString &uri)
+{
+    if((uri=="" || uri.startsWith("computer://")) && m_currSelectedItem && m_currSelectedItem->getDevice().startsWith("/dev/sd"))
+    {/* 异常U盘 */
+        QMessageBox::information(this, tr("Tips"), tr("This is an abnormal Udisk, please fix it or format it"));
+        return;
+    }
+
+    auto info = FileInfo::fromUri(uri);
+
+    // try fix #174128, peony stucked when click sidebar network item sometimes.
+    if (!uri.startsWith("network:///")) {
+        if (info.get()->isEmptyInfo()) {
+            FileInfoJob j(info);
+            j.querySync();
+        }
+    }
+
+    auto targetUri = FileUtils::getTargetUri(uri);
+    if (targetUri == "" && uri== "burn://")
+    {
+        qDebug() << "empty drive"<<uri;
+        QMessageBox::information(this, tr("Tips"), tr("This is an empty drive, please insert a Disc."));
+        return;
+    }
+
+    if (!targetUri.isEmpty()) {
+        Q_EMIT this->updateWindowLocationRequest(targetUri);
+        return;
+    }
+
+    // try fixing #133429.
+    if (m_currSelectedItem->getDevice().startsWith("/dev/sr") && uri.startsWith("computer://")) {
+        return;
+    }
+
+    // QUrl url(uri);
+    // if (uri.startsWith("ftp://") && !url.query().isEmpty()) {
+    //     url.setQuery(QString());
+    //     if (FileUtils::isMountPoint(url.toDisplayString())) {
+    //         Q_EMIT this->updateWindowLocationRequest(url.toDisplayString());
+    //         return;
+    //     }
+    // }
+
+    //some side bar item doesn't have a uri.
+    //do not emit signal with a null uri to window.
+    if (!uri.isNull()) {
+        if (uri.startsWith("ftp://") && (uri.split("/").count() == 3)) {
+            // 尝试获取ftp挂载点的default location uri
+            g_autoptr (GFile) tmp_file = g_file_new_for_uri(uri.toLocal8Bit().constData());
+            g_autoptr (GMount) tmp_mount = g_file_find_enclosing_mount(tmp_file, nullptr, nullptr);
+            if (tmp_mount) {
+                g_autoptr (GFile) tmp_default_location = g_mount_get_default_location(tmp_mount);
+                g_autofree gchar* tmp_uri = g_file_get_uri(tmp_default_location);
+                Q_EMIT this->updateWindowLocationRequest(tmp_uri);
+                return;
+            }
+        }
+        Q_EMIT this->updateWindowLocationRequest(uri);
+    }
+}
+
+void NavigationSideBar::keyPressEvent(QKeyEvent *event)
+{
+    if(event->key() == Qt::Key_Left||event->key()==Qt::Key_Right)
+    {
+        auto index = currentIndex();
+        if (event->key() == Qt::Key_Left) {
+            doCollapse(index);
+        } else {
+            doExpand(index);
+        }
+        return;
+    }
+
+    QTreeView::keyPressEvent(event);
+
+    if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Space) {
+        if (!selectedIndexes().isEmpty()) {
+            auto index = selectedIndexes().first();
+            auto uri = index.data(Qt::UserRole).toString();
+            Q_EMIT this->updateWindowLocationRequest(uri, true);
+        }
+    }
+
+    if(event->key() == Qt::Key_Left||event->key()==Qt::Key_Right)
+    {/* 按下左右键不可使侧边栏内容左右平移显示 */
+        horizontalScrollBar()->setValue(0);/* hotfix bug#93557 */
+    }
+}
+
+void NavigationSideBar::focusInEvent(QFocusEvent *event)
+{
+    QTreeView::focusInEvent(event);
+    if (event->reason() == Qt::TabFocus) {
+        if (selectedIndexes().isEmpty()) {
+            selectionModel()->select(model()->index(0, 0), QItemSelectionModel::Select);
+            selectionModel()->select(model()->index(0, 1), QItemSelectionModel::Select);
+        } else {
+            scrollTo(selectedIndexes().first(), QTreeView::PositionAtCenter);
+            auto selections = selectedIndexes();
+            clearSelection();
+            QTimer::singleShot(100, this, [=](){
+                for (auto index : selections) {
+                    selectionModel()->select(index, QItemSelectionModel::Select);
+                }
+            });
+        }
+    }
+
+    // if (event->reason() == Qt::TabFocusReason || event->reason() == Qt::BacktabFocusReason) {
+    //     QModelIndex idx = currentIndex();
+    //     if (!idx.isValid() && model() && model()->rowCount() > 0)
+    //         idx = model()->index(0, 0);
+    //     if (idx.isValid())
+    //         setAccessibleName(tr("Directory Tree") + " " + idx.data(Qt::DisplayRole).toString());
+    //     else
+    //         setAccessibleName(tr("Directory Tree"));
+    // }
+
+    GlobalSettings::getInstance()->setValue("LAST_FOCUS_PEONY_WINID", dynamic_cast<MainWindow *>(this->topLevelWidget())->winId());
+}
+
+void NavigationSideBar::wheelEvent(QWheelEvent *event)
+{
+    QTreeView::wheelEvent(event);
+    if (event->orientation()==Qt::Horizontal) {
+        /* 触摸板左右滑动不可使侧边栏内容左右平移显示 */
+        horizontalScrollBar()->setValue(0);/* hotfix bug#93557 */
+    }
+}
+
+int NavigationSideBar::sizeHintForColumn(int column) const
+{
+    if (column == 1)
+        return MINIMUM_COLUMN_SIZE;
+
+    if (column == 0)
+        return viewport()->width() - MINIMUM_COLUMN_SIZE - viewportMargins().left() - viewportMargins().right() - verticalScrollBar()->width();
+
+    return QTreeView::sizeHintForColumn(column);
+}
+
+QStyleOptionViewItem NavigationSideBar::viewOptions() const
+{
+    auto opt = QTreeView::viewOptions();
+    auto hoverColor = opt.palette.color(QPalette::BrightText);
+    hoverColor.setAlphaF(0.05);
+    opt.palette.setBrush(QPalette::Disabled, QPalette::Midlight, hoverColor);
+    return opt;
+}
+
+void NavigationSideBar::dragEnterEvent(QDragEnterEvent *event)
+{
+    if (event->mimeData()->hasUrls()) {
+        if ((event->dropAction() == Qt::MoveAction) && FileUtils::containsStandardPath(event->mimeData()->urls())) {
+            event->ignore();
+            return;
+        }
+    }
+    QAbstractItemView::dragEnterEvent(event);
+}
+
+NavigationSideBarItemDelegate::NavigationSideBarItemDelegate(QObject *parent)
+{
+
+}
+
+QSize NavigationSideBarItemDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    // auto size = QStyledItemDelegate::sizeHint(option, index);
+    // //task#106007 【文件管理器】文件管理器应用做平板UI适配，修改侧边栏项的高度--48px
+    // //size.setHeight(36);
+    // return size;
+
+    QSize size = QStyledItemDelegate::sizeHint(option, index);
+    if (index.column() == 1) {
+        size.setWidth(size.width() - 8); // 增加宽度容纳额外的间距
+    }
+    return size;
+}
+
+void NavigationSideBarItemDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    //painter->save();
+//    if (index.column() == 1) {
+//        QPainterPath rightRoundedRegion;
+//        rightRoundedRegion.setFillRule(Qt::WindingFill);
+//        auto rect = option.rect;
+//        auto view = qobject_cast<const QAbstractItemView *>(option.widget);
+//        if (view) {
+//            rect.setRight(view->viewport()->rect().right());
+//        }
+//        rightRoundedRegion.addRoundedRect(rect, NAVIGATION_SIDEBAR_ITEM_BORDER_RADIUS, NAVIGATION_SIDEBAR_ITEM_BORDER_RADIUS);
+//        rightRoundedRegion.addRect(rect.adjusted(0, 0, -NAVIGATION_SIDEBAR_ITEM_BORDER_RADIUS, 0));
+//        //painter->setClipPath(rightRoundedRegion);
+//    }
+
+    // painter->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+    // QStyledItemDelegate::paint(painter, option, index);
+    // painter->restore();
+    QString uri = index.data(Qt::UserRole).toString();
+    if (uri!="idm:///") {
+        QStyledItemDelegate::paint(painter, option, index);
+        return;
+    }
+
+    QStyleOptionViewItem opt = option;
+    initStyleOption(&opt, index);
+
+    QIcon icon = opt.icon;
+    QString text = opt.text;
+
+    opt.icon = QIcon();
+    opt.text = QString();
+
+    painter->save();
+
+    const QWidget *widget = opt.widget;
+    const QStyle *style = widget ? widget->style() : QApplication::style();
+
+    // 先绘制背景（包括选中态）
+    style->drawControl(QStyle::CE_ItemViewItem, &opt, painter, widget);
+
+    // 计算图标区域
+    int iconSize = style->pixelMetric(QStyle::PM_SmallIconSize) -2;
+    QRect iconRect = style->subElementRect(QStyle::SE_ItemViewItemDecoration, &opt, widget);
+    iconRect.setWidth(iconSize);
+    iconRect.adjust(-4, 0, -8, 0); // 微调图标位置
+    painter->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform);
+    // 获取当前颜色（根据是否选中）
+    QColor iconColor = opt.state & QStyle::State_Selected ?
+                           opt.palette.color(QPalette::HighlightedText) :
+                           opt.palette.color(QPalette::Text);
+    // 手动绘制图标并着色
+    if (!icon.isNull()) {
+        QPixmap basePixmap = icon.pixmap(iconSize, iconSize);
+        QPixmap tintedPixmap(basePixmap.size());
+        tintedPixmap.fill(Qt::transparent);
+
+        QPainter p(&tintedPixmap);
+        p.setCompositionMode(QPainter::CompositionMode_Source);
+        p.drawPixmap(0, 0, basePixmap);
+        p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+        p.fillRect(tintedPixmap.rect(), iconColor);
+        p.end();
+
+        painter->drawPixmap(iconRect.topLeft(), tintedPixmap);
+    }
+
+    // 绘制文字
+    if (!text.isEmpty()) {
+        QRect textRect = opt.rect;
+        textRect.setLeft(iconRect.right());
+
+        QFontMetrics metrics(opt.font);
+        int textWidth = metrics.horizontalAdvance(text);
+        if (textWidth > textRect.width()) {
+            text = metrics.elidedText(text, Qt::ElideRight, textRect.width());
+        }
+
+        painter->setPen(iconColor);
+        painter->drawText(textRect, Qt::AlignVCenter | Qt::AlignLeft, text);
+    }
+
+    painter->restore();
+}
+
+NavigationSideBarContainer::NavigationSideBarContainer(QWidget *parent) : Peony::SideBar(parent)
+{
+    UI_TEST_INIT
+    setObjectName("peony_NavigationSideBarContainer");
+    setMinimumWidth(144);  /* 设计要求侧边栏最小宽度为144px */
+    //setAttribute(Qt::WA_TranslucentBackground);
+
+    setBackgroundRole(QPalette::Base);
+    setAutoFillBackground(true);
+
+    m_layout = new QVBoxLayout;
+    m_layout->setContentsMargins(0, 4, 0, 0);
+    m_layout->setSpacing(0);
+
+    QWidget *widget = new QWidget;
+    widget->setLayout(m_layout);
+    setWidget(widget);
+
+    auto sideBar = new NavigationSideBar(this);
+    addSideBar(sideBar);
+    connect(sideBar, &NavigationSideBar::updateWindowLocationRequest, this, &NavigationSideBarContainer::updateWindowLocationRequest);
+    connect(sideBar, &NavigationSideBar::createVirtualTabAndSearch, this, &NavigationSideBarContainer::createVirtualTabAndSearch);
+    // UI_TEST_SET_ALL 保留（objectName 供自动化测试定位）；朗读文本由下方 setAccessibleName 覆盖。
+    UI_TEST_SET_ALL(this, "peony_NavigationSideBar_container");
+    setAccessibleName(tr("Navigation Side Bar"));
+ }
+
+#include "file-label-model.h"
+void NavigationSideBarContainer::addSideBar(NavigationSideBar *sidebar)
+{
+    if (m_sidebar)
+        return;
+    UI_TEST_INIT
+    m_sidebar = sidebar;
+    m_layout->addWidget(sidebar);
+    //m_layout->addStretch();
+
+    m_labelDialog = new FileLabelBox(this);
+    m_labelDialog->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_labelDialog->hide();
+    m_layout->addWidget(m_labelDialog);
+
+    QWidget *buttonsContainer = new QWidget(this);
+    QVBoxLayout *buttonsLayout = new QVBoxLayout(buttonsContainer);
+    buttonsLayout->setContentsMargins(4, 4, 2, 4);
+    buttonsLayout->setSpacing(2);
+    // UI_TEST_SET_ALL 保留（objectName 供自动化测试定位）；朗读文本由下方 setAccessibleName 覆盖，
+    // 避免父地标被读成测试ID串。
+    UI_TEST_SET_ALL(buttonsContainer, "peony_NavigationSideBarLabelManager_container");
+    buttonsContainer->setAccessibleName(tr("Label Manager"));
+    connect(m_labelDialog->selectionModel(), &QItemSelectionModel::selectionChanged, [=]()
+    {
+        QModelIndex index = m_labelDialog->currentIndex();
+        QString name = index.data(Qt::DisplayRole).toString();
+        int id = index.data(Qt::UserRole).toInt();
+        if (id)
+        {
+            QString uri = "label:///" + QString::number(id);
+            Q_EMIT m_sidebar->updateWindowLocationRequest(uri);
+        }
+    });
+    //when clicked in blank, currentChanged may not triggered
+    connect(m_labelDialog, &FileLabelBox::leftClickOnBlank, [=]()
+    {
+        //setLabelNameFilter("");
+    });
+
+
+    LabelButton *labelButton = new LabelButton(this);
+    labelButton->setProperty("isWindowButton", 0x1);
+    //m_label_button->setCheckable(true);
+
+    labelButton->setFocusPolicy(Qt::FocusPolicy(labelButton->focusPolicy()));
+    labelButton->setLastIcon(":/icons/ukui-down-symbolic");
+    labelButton->setFirstIcon(":/icons/sign");
+    labelButton->setText(tr("Manager tags..."));
+    labelButton->setAccessibleName(tr("Manager tags..."));
+
+    LabelButton *control = new LabelButton(this);
+    control->setText(tr("More tags..."));
+    control->setAccessibleName(tr("More tags..."));
+    control->setProperty("isWindowButton", 0x1);
+    control->hide();
+
+    connect(control, &QPushButton::clicked, this, [=](bool checked){
+        Peony::TagManagement::getInstance()->show();
+    });
+
+    buttonsLayout->addWidget(control);
+    buttonsLayout->addWidget(labelButton);
+    connect(labelButton, &QPushButton::clicked, this, [=](){
+        bool checked = !labelButton->getShow();
+        if (checked) {
+            labelButton->setLastIcon(":/icons/ukui-up-symbolic");
+        } else {
+            labelButton->setLastIcon(":/icons/ukui-down-symbolic");
+        }
+        labelButton->setShow(checked);
+        m_labelDialog->setFloatWidgetVisible(checked);
+    });
+
+    connect(m_labelDialog, &FileLabelBox::fileLabelVisible, this, [=](bool checked){
+        control->setVisible(checked);
+        m_labelDialog->setVisible(checked);
+    });
+
+    m_layout->addWidget(buttonsContainer);
+    setLayout(m_layout);
+
+    setTabOrder(m_sidebar, labelButton);
+}
+
+QSize NavigationSideBarContainer::sizeHint() const
+{
+    auto size = QWidget::sizeHint();
+    auto width = Peony::GlobalSettings::getInstance()->getValue(DEFAULT_SIDEBAR_WIDTH).toInt();
+    qDebug() << "sizeHint set DEFAULT_SIDEBAR_WIDTH:"<<width;
+    //fix width value abnormal issue
+    if (width <= 0)
+        width = 210;
+    size.setWidth(width);
+    return size;
+}
+
+void NavigationSideBarContainer::paintEvent(QPaintEvent *event)
+{
+    QPainter p(this);
+    p.fillRect(this->rect(), qApp->palette().base().color());
+    Peony::SideBar::paintEvent(event);
+}
+
+NavigationSideBarStyle::NavigationSideBarStyle()
+{
+
+}
+
+void NavigationSideBarStyle::drawPrimitive(QStyle::PrimitiveElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget) const
+{
+    painter->save();
+    switch (element) {
+    case QStyle::PE_IndicatorItemViewItemDrop: {
+        /* hotfixbug#99344：拖拽文件到侧边栏，出现黑框 */
+        painter->setRenderHints(QPainter::Antialiasing | QPainter::SmoothPixmapTransform, true);/* 反锯齿 */
+        /* 按设计要求，边框颜色为调色板highlight值，圆角为6px */
+        QColor color = option->palette.color(QPalette::Highlight);
+        painter->setPen(color);
+        painter->drawRoundedRect(option->rect, 6, 6);
+        painter->restore();
+        return;
+    }
+//    case QStyle::PE_IndicatorBranch: {
+//        if (option->rect.x() == 0) {
+//            QPainterPath leftRoundedRegion;
+//            leftRoundedRegion.setFillRule(Qt::WindingFill);
+//            leftRoundedRegion.addRoundedRect(option->rect, NAVIGATION_SIDEBAR_ITEM_BORDER_RADIUS, NAVIGATION_SIDEBAR_ITEM_BORDER_RADIUS);
+//            leftRoundedRegion.addRect(option->rect.adjusted(NAVIGATION_SIDEBAR_ITEM_BORDER_RADIUS, 0, 0, 0));
+//            painter->setClipPath(leftRoundedRegion);
+//        }
+//        const QStyleOptionViewItem *tmp = qstyleoption_cast<const QStyleOptionViewItem *>(option);
+//        QStyleOptionViewItem opt = *tmp;
+//        if (!opt.state.testFlag(QStyle::State_Selected)) {
+//            if (opt.state & QStyle::State_Sunken) {
+//                opt.palette.setColor(QPalette::Highlight, opt.palette.button().color());
+//            }
+//            if (opt.state & QStyle::State_MouseOver) {
+//                opt.palette.setColor(QPalette::Highlight, opt.palette.mid().color());
+//            }
+//        }
+//        qApp->style()->drawPrimitive(element, &opt, painter, widget);
+//        painter->restore();
+//        return;
+//    }
+
+    case QStyle::PE_PanelItemViewRow: {
+        painter->restore();
+        return;
+        break;
+    }
+    case QStyle::PE_PanelItemViewItem: {
+        break;
+    }
+    default:
+        break;
+    }
+
+    qApp->style()->drawPrimitive(element, option, painter, widget);
+    painter->restore();
+}
+
+void NavigationSideBarStyle::drawControl(QStyle::ControlElement element, const QStyleOption *option, QPainter *painter, const QWidget *widget) const
+{
+    if (element == QStyle::CE_ItemViewItem) {
+        const QStyleOptionViewItem *tmp = qstyleoption_cast<const QStyleOptionViewItem *>(option);
+        QStyleOptionViewItem opt = *tmp;
+        if (!opt.state.testFlag(QStyle::State_Selected)) {
+            if (opt.state & QStyle::State_Sunken) {
+                opt.palette.setColor(QPalette::Highlight, opt.palette.button().color());
+            }
+            if (opt.state & QStyle::State_MouseOver) {
+                opt.palette.setColor(QPalette::Highlight, opt.palette.mid().color());
+            }
+        }
+        return qApp->style()->drawControl(element, &opt, painter, widget);
+    }
+}
+
+TitleLabel::TitleLabel(QWidget *parent):QWidget(parent)
+{
+    X11WindowManager::getInstance()->registerWidget(this);
+    m_pix_label = new QLabel(this);
+    //task#106007 【文件管理器】文件管理器应用做平板UI适配，修改应用图标可以跟随主题框架
+    m_pix_label->setPixmap(QIcon::fromTheme("system-file-manager").pixmap(24,24));
+
+    if (QGSettings::isSchemaInstalled("org.ukui.style")) {
+        m_gSettings = new QGSettings("org.ukui.style", QByteArray(), this);
+        connect(m_gSettings, &QGSettings::changed, this, [=](const QString &key) {
+            if("iconThemeName" == key){
+                m_pix_label->setPixmap(QIcon::fromTheme("system-file-manager").pixmap(24,24));
+            }
+        });
+    }
+
+    m_text_label = new QLabel(tr("Peony"),this);
+    QHBoxLayout *l = new QHBoxLayout(this);
+    l->setMargin(8); /* 按设计要求间距为8px */
+    l->addWidget(m_pix_label);
+    l->addSpacing(8);
+    l->addWidget(m_text_label);
+    l->addStretch();
+    this->setFixedHeight(sizeHint().height());
+}
+
+LabelButton::LabelButton(QWidget *parent) : QPushButton(parent)
+{
+    UI_TEST_INIT
+    this->setAttribute(Qt::WA_TranslucentBackground);
+    m_mainLayout = new QHBoxLayout(this);
+    m_firstSymbolic = new QLabel(this);
+    m_lastSymbolic = new QLabel(this);
+    m_text = new QLabel(this);
+    m_firstSymbolic->setProperty("useIconHighlightEffect", 0x2);
+    m_lastSymbolic->setProperty("useIconHighlightEffect", 0x2);
+    m_mainLayout->addWidget(m_firstSymbolic);
+    m_mainLayout->addWidget(m_text);
+    m_mainLayout->addStretch();
+    m_mainLayout->addWidget(m_lastSymbolic);
+    setLayout(m_mainLayout);
+    // UI_TEST_SET_ALL 保留（objectName + accessibleName 供自动化测试定位）。
+    // 按钮朗读文本由实例创建处显式 setAccessibleName 覆盖（如"标识模式"/"更多标识"）。
+    UI_TEST_SET_ALL(this, "peony_Button_LabelManager_item");
+    UI_TEST_SET_ALL(m_firstSymbolic, "peony_Button_firstSymbolic_icon");
+    UI_TEST_SET_ALL(m_text, "peony_Button_LabelManager_text");
+    UI_TEST_SET_ALL(m_lastSymbolic, "peony_Button_lastSymbolic_icon");
+}
+
+//void LabelButton::mousePressEvent(QMouseEvent *event)
+//{
+//    if (!m_isPress) {
+//        m_isPress = true;
+//    }
+//    Q_UNUSED(event);
+//}
+
+//void LabelButton::mouseReleaseEvent(QMouseEvent *event)
+//{
+//    if (m_isPress) {
+//        m_show = !m_show;
+//        Q_EMIT clicked(m_show);
+//    }
+
+//    m_isPress = false;
+
+//    Q_UNUSED(event);
+//}
+
+
+void LabelButton::setLastIcon(const QString &symbolic)
+{
+     m_lastSymbolic->setPixmap(QIcon(symbolic).pixmap(64,64));
+}
+
+void LabelButton::setFirstIcon(const QString &symbolic)
+{
+     m_firstSymbolic->setPixmap(QIcon(symbolic).pixmap(64,64));
+}
+
+void LabelButton::setText(QString text)
+{
+     m_text->setText(text);
+}
+
+void LabelButton::setShow(bool isShow)
+{
+    m_show = isShow;
+}
+
+bool LabelButton::getShow()
+{
+    return m_show;
+}
+

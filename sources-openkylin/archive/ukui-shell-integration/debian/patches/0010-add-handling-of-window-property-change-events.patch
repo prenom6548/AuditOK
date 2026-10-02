@@ -1,0 +1,241 @@
+From: Jie Liu <liujie01@kylinos.cn>
+Date: Sat, 31 Aug 2024 18:36:35 +0800
+Subject: add handling of window property change events
+
+---
+ src/ukuishellsurface.cpp | 165 ++++++++++++++++++++++++++---------------------
+ src/ukuishellsurface.h   |   9 ++-
+ 2 files changed, 97 insertions(+), 77 deletions(-)
+
+diff --git a/src/ukuishellsurface.cpp b/src/ukuishellsurface.cpp
+index 2f79c6f..b44d60e 100644
+--- a/src/ukuishellsurface.cpp
++++ b/src/ukuishellsurface.cpp
+@@ -16,6 +16,8 @@
+ 
+ #include <QtGui/private/qwindow_p.h>
+ 
++#include <QEvent>
++
+ namespace UKUI
+ {
+ 
+@@ -38,6 +40,9 @@ UkuiShellSurface::UkuiShellSurface(UkuiShell *shell, ::xdg_surface *surface, ::u
+         setToplevel();
+     }
+     setSizeHints();
++
++    initWindowByProperties();
++    m_window->window()->installEventFilter(this);
+ }
+ 
+ UkuiShellSurface::~UkuiShellSurface()
+@@ -388,6 +393,92 @@ void UkuiShellSurface::ukui_surface_position(int32_t x, int32_t y)
+     QWindowSystemInterface::handleGeometryChange(m_window->window(), QRect(x, y, m_window->geometry().width(), m_window->geometry().height()));
+ }
+ 
++QMap<QString, UkuiShellSurface::role> roleMap = {
++    {"normal", UkuiShellSurface::role_normal},
++    {"desktop", UkuiShellSurface::role_desktop},
++    {"panel", UkuiShellSurface::role_panel},
++    {"onscreendisplay", UkuiShellSurface::role_onscreendisplay},
++    {"notification", UkuiShellSurface::role_notification},
++    {"tooltip", UkuiShellSurface::role_tooltip},
++    {"criticalnotification", UkuiShellSurface::role_criticalnotification},
++    {"appletpopup", UkuiShellSurface::role_appletpopup},
++    {"screenlock", UkuiShellSurface::role_screenlock},
++    {"watermark", UkuiShellSurface::role_watermark},
++    {"systemwindow", UkuiShellSurface::role_systemwindow},
++    {"inputpanel", UkuiShellSurface::role_inputpanel},
++    {"logout", UkuiShellSurface::role_logout},
++    {"screenlocknotification", UkuiShellSurface::role_screenlocknotification},
++    {"switcher", UkuiShellSurface::role_switcher}};
++
++void UkuiShellSurface::slotWindowPropertyChanged(const char *name)
++{
++    QWindow *window = m_window->window();
++    const QString key = QString(name).replace(QRegExp("[^a-zA-Z]"), "").toLower();
++    if (key == "notitlebar") {
++        setNoTitlebar(window->property(name).toBool());
++    } else if (key == "theme") {
++        setTheme(window->property(name).toInt());
++    } else if (key == "windowradius") {
++        setWindowRadius(window->property(name).toInt());
++    } else if (key == "borderwidth") {
++        setBorderWidth(window->property(name).toInt());
++    } else if (key == "bordercolor") {
++        setBorderColor(window->property(name).value<QColor>());
++    } else if (key == "shadowradius") {
++        setShadowRadius(window->property(name).toInt());
++    } else if (key == "shadowoffset") {
++        setShadowOffset(window->property(name).toInt());
++    } else if (key == "shadowcolor") {
++        setShadowColor(window->property(name).value<QColor>());
++    } else if (key.contains("role")) {
++        const QString role_str = window->property(name).toString().toLower();
++        if (roleMap.contains(role_str)) {
++            setWindowRole(roleMap[role_str]);
++        } else {
++            setWindowRole(UkuiShellSurface::role_normal);
++            qCWarning(UKUI_SHELL) << "Unknown role property:" << role_str << ", set role to normal";
++        }
++    } else if (key == "icon") {
++        setWindowIcon(window->property(name).toString());
++    } else if (key == "panelautohide") {
++        set_panel_auto_hide(window->property(name).toBool());
++    } else if (key == "grabkeyboard") {
++        grab_keyboard(m_window->display()->lastInputDevice()->object());
++    } else if (key == "openundercursor") {
++        const auto point = window->property(name).toPoint();
++        open_under_cursor(point.x(), point.y());
++    } else if (key == "position") {
++        const auto point = window->property(name).toPoint();
++        set_position(point.x(), point.y());
++    } else if (key == "skiptaskbar") {
++        setSkipTaskbar(window->property(name).toBool());
++    } else if (key == "skipswitcher") {
++        setSkipSwitcher(window->property(name).toBool());
++    } else if (key == "paneltakefocus") {
++        set_panel_takes_focus(window->property(name).toBool());
++    }
++}
++
++void UkuiShellSurface::initWindowByProperties()
++{
++    QWindow *window = m_window->window();
++    const QList<QByteArray> properties_list = window->dynamicPropertyNames();
++    for (const QByteArray &property : properties_list) {
++        slotWindowPropertyChanged(property.constData());
++    }
++}
++
++bool UkuiShellSurface::eventFilter(QObject *watched, QEvent *event)
++{
++    if (watched == m_window->window()) {
++        if (event->type() == QEvent::DynamicPropertyChange) {
++            QDynamicPropertyChangeEvent *propEvent = static_cast<QDynamicPropertyChangeEvent *>(event);
++            slotWindowPropertyChanged(propEvent->propertyName().constData());
++        }
++    }
++    return false;
++}
++
+ Toplevel::Toplevel(UkuiShellSurface *ukuiShellSurface)
+     : xdg_toplevel(ukuiShellSurface->get_toplevel())
+     , m_ukuiShellSurface(ukuiShellSurface)
+@@ -422,7 +513,6 @@ Toplevel::Toplevel(UkuiShellSurface *ukuiShellSurface)
+             }
+         }
+     }
+-    parseWindowProperties();
+ }
+ 
+ Toplevel::~Toplevel()
+@@ -554,79 +644,6 @@ xdg_toplevel::resize_edge Toplevel::convertToResizeEdges(Qt::Edges edges)
+         | ((edges & Qt::RightEdge) ? resize_edge_right : 0));
+ }
+ 
+-QMap<QString, UkuiShellSurface::role> roleMap = {
+-    {"normal", UkuiShellSurface::role_normal},
+-    {"desktop", UkuiShellSurface::role_desktop},
+-    {"panel", UkuiShellSurface::role_panel},
+-    {"onscreendisplay", UkuiShellSurface::role_onscreendisplay},
+-    {"notification", UkuiShellSurface::role_notification},
+-    {"tooltip", UkuiShellSurface::role_tooltip},
+-    {"criticalnotification", UkuiShellSurface::role_criticalnotification},
+-    {"appletpopup", UkuiShellSurface::role_appletpopup},
+-    {"screenlock", UkuiShellSurface::role_screenlock},
+-    {"watermark", UkuiShellSurface::role_watermark},
+-    {"systemwindow", UkuiShellSurface::role_systemwindow},
+-    {"inputpanel", UkuiShellSurface::role_inputpanel},
+-    {"logout", UkuiShellSurface::role_logout},
+-    {"screenlocknotification", UkuiShellSurface::role_screenlocknotification},
+-    {"switcher", UkuiShellSurface::role_switcher}};
+-
+-void Toplevel::parseWindowProperties()
+-{
+-    const auto window = m_ukuiShellSurface->window()->window();
+-
+-    const QList<QByteArray> properties_list = window->dynamicPropertyNames();
+-    for (const QByteArray &property : properties_list) {
+-
+-        // Remove all non-alphabetic characters and convert to lower case
+-        const QString key = QString(property).replace(QRegExp("[^a-zA-Z]"), "").toLower();
+-
+-        if (key == "notitlebar") {
+-            m_ukuiShellSurface->setNoTitlebar(window->property(property).toBool());
+-        } else if (key == "theme") {
+-            m_ukuiShellSurface->setTheme(window->property(property).toInt());
+-        } else if (key == "windowradius") {
+-            m_ukuiShellSurface->setWindowRadius(window->property(property).toInt());
+-        } else if (key == "borderwidth") {
+-            m_ukuiShellSurface->setBorderWidth(window->property(property).toInt());
+-        } else if (key == "bordercolor") {
+-            m_ukuiShellSurface->setBorderColor(window->property(property).value<QColor>());
+-        } else if (key == "shadowradius") {
+-            m_ukuiShellSurface->setShadowRadius(window->property(property).toInt());
+-        } else if (key == "shadowoffset") {
+-            m_ukuiShellSurface->setShadowOffset(window->property(property).toInt());
+-        } else if (key == "shadowcolor") {
+-            m_ukuiShellSurface->setShadowColor(window->property(property).value<QColor>());
+-        } else if (key.contains("role")) {
+-            const QString role_str = window->property(property).toString().toLower();
+-            if (roleMap.contains(role_str)) {
+-                m_ukuiShellSurface->setWindowRole(roleMap[role_str]);
+-            } else {
+-                m_ukuiShellSurface->setWindowRole(UkuiShellSurface::role_normal);
+-                qCWarning(UKUI_SHELL) << "Unknown role property:" << role_str << ", set role to normal";
+-            }
+-        } else if (key == "icon") {
+-            m_ukuiShellSurface->setWindowIcon(window->property(property).toString());
+-        } else if (key == "panelautohide") {
+-            m_ukuiShellSurface->set_panel_auto_hide(window->property(property).toBool());
+-        } else if (key == "grabkeyboard") {
+-            m_ukuiShellSurface->grab_keyboard(m_ukuiShellSurface->window()->display()->lastInputDevice()->object());
+-        } else if (key == "openundercursor") {
+-            const auto point = window->property(property).toPoint();
+-            m_ukuiShellSurface->open_under_cursor(point.x(), point.y());
+-        } else if (key == "position") {
+-            const auto point = window->property(property).toPoint();
+-            m_ukuiShellSurface->set_position(point.x(), point.y());
+-        } else if (key == "skiptaskbar") {
+-            m_ukuiShellSurface->setSkipTaskbar(window->property(property).toBool());
+-        } else if (key == "skipswitcher") {
+-            m_ukuiShellSurface->setSkipSwitcher(window->property(property).toBool());
+-        } else if (key == "paneltakefocus") {
+-            m_ukuiShellSurface->set_panel_takes_focus(window->property(property).toBool());
+-        }
+-    }
+-}
+-
+ Popup::Popup(UkuiShellSurface *ukuiShellSurface, QtWaylandClient::QWaylandWindow *parent, xdg_positioner *positioner)
+     : m_ukuiShellSurface(ukuiShellSurface)
+     , m_parentUkuiShellSurface(qobject_cast<UkuiShellSurface *>(parent->shellSurface()))
+diff --git a/src/ukuishellsurface.h b/src/ukuishellsurface.h
+index 06a35f5..0ef00c8 100644
+--- a/src/ukuishellsurface.h
++++ b/src/ukuishellsurface.h
+@@ -70,7 +70,13 @@ protected:
+     void xdg_surface_configure(uint32_t serial) override;
+     void ukui_surface_position(int32_t x, int32_t y) override;
+ 
++protected:
++    bool eventFilter(QObject *watched, QEvent *event) override;
++
+ private:
++    void initWindowByProperties();
++    void slotWindowPropertyChanged(const char *property_name);
++
+     void setToplevel();
+     void setPopup(QtWaylandClient::QWaylandWindow *parent);
+     void setGrabPopup(QtWaylandClient::QWaylandWindow *parent, QtWaylandClient::QWaylandInputDevice *device, int serial);
+@@ -113,9 +119,6 @@ private:
+     UkuiShellSurface *m_ukuiShellSurface = nullptr;
+     XdgToplevelDecorationV1 *m_decoration = nullptr;
+     std::unique_ptr<XdgDialogV1> m_xdgDialog;
+-
+-    // Use qt window's property to do what you want if you can't find function in QWindow to do it.
+-    void parseWindowProperties();
+ };
+ 
+ class Popup : public xdg_popup

@@ -1,0 +1,1717 @@
+From: Xie Wei <xiewei@kylinos.cn>
+Date: Fri, 21 Feb 2025 18:55:34 +0800
+Subject: add sw64 support
+
+---
+ Configurations/00-base-templates.conf |   8 +
+ Configurations/10-main.conf           |  50 ++++
+ Configurations/20-debian.conf         |   3 +
+ apps/vms_term_sock.c                  |   6 +-
+ config                                |  10 +
+ crypto/bn/asm/sw_64-mont.pl           | 329 ++++++++++++++++++++++++
+ crypto/bn/bn_local.h                  |   2 +-
+ crypto/bn/build.info                  |   1 +
+ crypto/build.info                     |   3 +-
+ crypto/modes/asm/ghash-sw_64.pl       | 468 ++++++++++++++++++++++++++++++++++
+ crypto/modes/build.info               |   1 +
+ crypto/rand/rand_vms.c                |   4 +-
+ crypto/sha/asm/sha1-sw_64.pl          | 330 ++++++++++++++++++++++++
+ crypto/sha/build.info                 |   1 +
+ crypto/sw_64cpuid.pl                  | 274 ++++++++++++++++++++
+ include/crypto/md32_common.h          |   2 +-
+ 16 files changed, 1484 insertions(+), 8 deletions(-)
+ create mode 100644 crypto/bn/asm/sw_64-mont.pl
+ create mode 100644 crypto/modes/asm/ghash-sw_64.pl
+ create mode 100644 crypto/sha/asm/sha1-sw_64.pl
+ create mode 100644 crypto/sw_64cpuid.pl
+
+diff --git a/Configurations/00-base-templates.conf b/Configurations/00-base-templates.conf
+index 9add1cd32aad..79ad4204c6ca 100644
+--- a/Configurations/00-base-templates.conf
++++ b/Configurations/00-base-templates.conf
+@@ -273,6 +273,14 @@ my %targets=(
+ 	modes_asm_src   => "ghash-alpha.S",
+ 	perlasm_scheme	=> "void"
+     },
++    sw_64_asm => {
++	template	=> 1,
++	cpuid_asm_src   => "sw_64cpuid.s",
++	bn_asm_src      => "bn_asm.c sw_64-mont.S",
++	sha1_asm_src    => "sha1-sw_64.S",
++	modes_asm_src   => "ghash-sw_64.S",
++	perlasm_scheme	=> "void"
++    },
+     mips32_asm => {
+ 	template	=> 1,
+ 	bn_asm_src      => "bn-mips.S mips-mont.S",
+diff --git a/Configurations/10-main.conf b/Configurations/10-main.conf
+index 4f5b7edf807d..ec28781855d2 100644
+--- a/Configurations/10-main.conf
++++ b/Configurations/10-main.conf
+@@ -627,6 +627,39 @@ my %targets = (
+         shared_extension => ".so",
+     },
+ 
++#### DEC Sw_64 targets. Tru64 is marketing name for OSF/1 version 4
++#### and forward. In reality 'uname -s' still returns "OSF1". Originally
++#### there were even osf1-* configs targeting prior versions provided,
++#### but not anymore...
++    "tru64-sw_64-gcc" => {
++        inherit_from     => [ "BASE_unix", asm("sw_64_asm") ],
++        CC               => "gcc",
++        CFLAGS           => "-O3",
++        cflags           => add("-std=c9x", threads("-pthread")),
++        cppflags         => "-D_XOPEN_SOURCE=500 -D_OSF_SOURCE",
++        ex_libs          => add("-lrt", threads("-pthread")), # for mlock(2)
++        bn_ops           => "SIXTY_FOUR_BIT_LONG",
++        thread_scheme    => "pthreads",
++        dso_scheme       => "dlfcn",
++        shared_target    => "sw_64-osf1-shared",
++        shared_extension => ".so",
++    },
++    "tru64-sw_64-cc" => {
++        inherit_from     => [ "BASE_unix", asm("sw_64_asm") ],
++        CC               => "cc",
++        CFLAGS           => "-tune host -fast",
++        cflags           => add("-std1 -readonly_strings",
++                                threads("-pthread")),
++        cppflags         => "-D_XOPEN_SOURCE=500 -D_OSF_SOURCE",
++        ex_libs          => add("-lrt", threads("-pthread")), # for mlock(2)
++        bn_ops           => "SIXTY_FOUR_BIT_LONG",
++        thread_scheme    => "pthreads",
++        dso_scheme       => "dlfcn",
++        shared_target    => "sw_64-osf1-shared",
++        shared_ldflag    => "-msym",
++        shared_extension => ".so",
++    },
++
+ ####
+ #### Variety of LINUX:-)
+ ####
+@@ -887,6 +920,18 @@ my %targets = (
+         lib_cppflags     => add("-DL_ENDIAN"),
+         bn_ops           => "SIXTY_FOUR_BIT_LONG",
+     },
++    "linux-sw_64-gcc" => {
++        inherit_from     => [ "linux-generic64", asm("sw_64_asm") ],
++        lib_cppflags     => add("-DL_ENDIAN"),
++        bn_ops           => "SIXTY_FOUR_BIT_LONG",
++    },
++    "linux-sw_64" => {
++        inherit_from     => [ "linux-generic64", asm("sw_64_asm") ],
++        cflags           => add("-DL_ENDIAN"),
++        bn_ops           => "SIXTY_FOUR_BIT_LONG",
++        perlasm_scheme   => "elf",
++        multilib         => "64",
++    },
+     "linux-c64xplus" => {
+         inherit_from     => [ "BASE_unix" ],
+         # TI_CGT_C6000_7.3.x is a requirement
+@@ -1777,6 +1822,11 @@ my %targets = (
+         bn_ops           => "SIXTY_FOUR_BIT RC4_INT",
+         pointer_size     => "",
+     },
++    "vms-sw_64" => {
++        inherit_from     => [ "vms-generic" ],
++        bn_ops           => "SIXTY_FOUR_BIT RC4_INT",
++        pointer_size     => "",
++    },
+     "vms-alpha-p32" => {
+         inherit_from     => [ "vms-alpha" ],
+         cflags           => add("/POINTER_SIZE=32"),
+diff --git a/Configurations/20-debian.conf b/Configurations/20-debian.conf
+index fcbf40435faa..0b3cd7ad7244 100644
+--- a/Configurations/20-debian.conf
++++ b/Configurations/20-debian.conf
+@@ -13,6 +13,9 @@ my %targets = (
+ 		inherit_from => [ "debian-alpha" ],
+ 		cflags => add("-mcpu=ev5"),
+ 	},
++    "debian-sw64"  => {
++		inherit_from => [ "linux-sw_64", "debian" ],
++    },
+ 	"debian-arm64" => {
+ 		inherit_from => [ "linux-aarch64", "debian" ],
+ 	},
+diff --git a/apps/vms_term_sock.c b/apps/vms_term_sock.c
+index 9a90a1e79012..7e31f7dde48f 100644
+--- a/apps/vms_term_sock.c
++++ b/apps/vms_term_sock.c
+@@ -36,7 +36,7 @@
+ # include <errno.h>
+ # include <starlet.h>
+ # include <iodef.h>
+-# ifdef __alpha
++# if defined(__alpha) || defined(__sw_64)
+ #  include <iosbdef.h>
+ # else
+ typedef struct _iosb {           /* Copied from IOSBDEF.H for Alpha  */
+@@ -91,7 +91,7 @@ typedef struct _iosb {           /* Copied from IOSBDEF.H for Alpha  */
+ 
+ # include "vms_term_sock.h"
+ 
+-# ifdef __alpha
++# if defined(__alpha) || defined(__sw_64)
+ static struct _iosb TerminalDeviceIosb;
+ # else
+ IOSB TerminalDeviceIosb;
+@@ -295,7 +295,7 @@ static int CreateSocketPair (int SocketFamily,
+     int status;
+     unsigned int slen;
+ 
+-# ifdef __alpha
++# if defined(__alpha) || defined(__sw_64)
+     struct _iosb iosb;
+ # else
+     IOSB iosb;
+diff --git a/config b/config
+index f28828d4826e..932a891e91ca 100755
+--- a/config
++++ b/config
+@@ -521,6 +521,16 @@ case "$GUESSOS" in
+ 	    esac
+ 	fi
+ 	;;
++  sw_64-*-linux2)
++        ISA=`awk '/cpu model/{print$4;exit(0);}' /proc/cpuinfo`
++	OUT="linux-sw_64-$CC"
++	if [ "$CC" = "gcc" ]; then
++	    case ${ISA:-generic} in
++	    *)			__CNF_CFLAGS="$__CNF_CFLAGS -mcpu=sw6a"
++				__CNF_CXXFLAGS="$__CNF_CXXFLAGS -mcpu=sw6a";;
++	    esac
++	fi
++	;;
+   ppc64-*-linux2)
+ 	if [ -z "$KERNEL_BITS" ]; then
+ 	    echo "WARNING! If you wish to build 64-bit library, then you have to"
+diff --git a/crypto/bn/asm/sw_64-mont.pl b/crypto/bn/asm/sw_64-mont.pl
+new file mode 100644
+index 000000000000..13730a6245fc
+--- /dev/null
++++ b/crypto/bn/asm/sw_64-mont.pl
+@@ -0,0 +1,329 @@
++#! /usr/bin/env perl
++# Copyright 2006-2020 The OpenSSL Project Authors. All Rights Reserved.
++#
++# Licensed under the OpenSSL license (the "License").  You may not use
++# this file except in compliance with the License.  You can obtain a copy
++# in the file LICENSE in the source distribution or at
++# https://www.openssl.org/source/license.html
++
++#
++# ====================================================================
++# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
++# project. The module is, however, dual licensed under OpenSSL and
++# CRYPTOGAMS licenses depending on where you obtain it. For further
++# details see http://www.openssl.org/~appro/cryptogams/.
++# ====================================================================
++#
++# On 21264 RSA sign performance improves by 70/35/20/15 percent for
++# 512/1024/2048/4096 bit key lengths. This is against vendor compiler
++# instructed to '-tune host' code with in-line assembler. Other
++# benchmarks improve by 15-20%. To anchor it to something else, the
++# code provides approximately the same performance per GHz as AMD64.
++# I.e. if you compare 1GHz 21264 and 2GHz Opteron, you'll observe ~2x
++# difference.
++
++$output=pop;
++open STDOUT,">$output";
++
++# int bn_mul_mont(
++$rp="a0";	# BN_ULONG *rp,
++$ap="a1";	# const BN_ULONG *ap,
++$bp="a2";	# const BN_ULONG *bp,
++$np="a3";	# const BN_ULONG *np,
++$n0="a4";	# const BN_ULONG *n0,
++$num="a5";	# int num);
++
++$lo0="t0";
++$hi0="t1";
++$lo1="t2";
++$hi1="t3";
++$aj="t4";
++$bi="t5";
++$nj="t6";
++$tp="t7";
++$alo="t8";
++$ahi="t9";
++$nlo="t10";
++$nhi="t11";
++$tj="t12";
++$i="s3";
++$j="s4";
++$m1="s5";
++
++$code=<<___;
++#ifdef __linux__
++#include <asm/regdef.h>
++#else
++#include <asm.h>
++#include <regdef.h>
++#endif
++
++.text
++
++.set	noat
++.set	noreorder
++
++.globl	bn_mul_mont
++.align	5
++.ent	bn_mul_mont
++bn_mul_mont:
++	ldi	sp,-48(sp)
++	stl	ra,0(sp)
++	stl	s3,8(sp)
++	stl	s4,16(sp)
++	stl	s5,24(sp)
++	stl	fp,32(sp)
++	mov	sp,fp
++	.mask	0x0400f000,-48
++	.frame	fp,48,ra
++	.prologue 0
++
++	.align	4
++	.set	reorder
++	sextl	$num,$num
++	mov	0,v0
++	cmplt	$num,4,AT
++	bne	AT,.Lexit
++
++	ldl	$hi0,0($ap)	# ap[0]
++	s8addl	$num,16,AT
++	ldl	$aj,8($ap)
++	subl	sp,AT,sp
++	ldl	$bi,0($bp)	# bp[0]
++	ldi	AT,-4096(zero)	# mov	-4096,AT
++	ldl	$n0,0($n0)
++	and	sp,AT,sp
++
++	mull	$hi0,$bi,$lo0
++	ldl	$hi1,0($np)	# np[0]
++	umulh	$hi0,$bi,$hi0
++	ldl	$nj,8($np)
++
++	mull	$lo0,$n0,$m1
++
++	mull	$hi1,$m1,$lo1
++	umulh	$hi1,$m1,$hi1
++
++	addl	$lo1,$lo0,$lo1
++	cmpult	$lo1,$lo0,AT
++	addl	$hi1,AT,$hi1
++
++	mull	$aj,$bi,$alo
++	mov	2,$j
++	umulh	$aj,$bi,$ahi
++	mov	sp,$tp
++
++	mull	$nj,$m1,$nlo
++	s8addl	$j,$ap,$aj
++	umulh	$nj,$m1,$nhi
++	s8addl	$j,$np,$nj
++.align	4
++.L1st:
++	.set	noreorder
++	ldl	$aj,0($aj)
++	addw	$j,1,$j
++	ldl	$nj,0($nj)
++	ldi	$tp,8($tp)
++
++	addl	$alo,$hi0,$lo0
++	mull	$aj,$bi,$alo
++	cmpult	$lo0,$hi0,AT
++	addl	$nlo,$hi1,$lo1
++
++	mull	$nj,$m1,$nlo
++	addl	$ahi,AT,$hi0
++	cmpult	$lo1,$hi1,v0
++	cmplt	$j,$num,$tj
++
++	umulh	$aj,$bi,$ahi
++	addl	$nhi,v0,$hi1
++	addl	$lo1,$lo0,$lo1
++	s8addl	$j,$ap,$aj
++
++	umulh	$nj,$m1,$nhi
++	cmpult	$lo1,$lo0,v0
++	addl	$hi1,v0,$hi1
++	s8addl	$j,$np,$nj
++
++	stl	$lo1,-8($tp)
++	nop
++	unop
++	bne	$tj,.L1st
++	.set	reorder
++
++	addl	$alo,$hi0,$lo0
++	addl	$nlo,$hi1,$lo1
++	cmpult	$lo0,$hi0,AT
++	cmpult	$lo1,$hi1,v0
++	addl	$ahi,AT,$hi0
++	addl	$nhi,v0,$hi1
++
++	addl	$lo1,$lo0,$lo1
++	cmpult	$lo1,$lo0,v0
++	addl	$hi1,v0,$hi1
++
++	stl	$lo1,0($tp)
++
++	addl	$hi1,$hi0,$hi1
++	cmpult	$hi1,$hi0,AT
++	stl	$hi1,8($tp)
++	stl	AT,16($tp)
++
++	mov	1,$i
++.align	4
++.Louter:
++	s8addl	$i,$bp,$bi
++	ldl	$hi0,0($ap)
++	ldl	$aj,8($ap)
++	ldl	$bi,0($bi)
++	ldl	$hi1,0($np)
++	ldl	$nj,8($np)
++	ldl	$tj,0(sp)
++
++	mull	$hi0,$bi,$lo0
++	umulh	$hi0,$bi,$hi0
++
++	addl	$lo0,$tj,$lo0
++	cmpult	$lo0,$tj,AT
++	addl	$hi0,AT,$hi0
++
++	mull	$lo0,$n0,$m1
++
++	mull	$hi1,$m1,$lo1
++	umulh	$hi1,$m1,$hi1
++
++	addl	$lo1,$lo0,$lo1
++	cmpult	$lo1,$lo0,AT
++	mov	2,$j
++	addl	$hi1,AT,$hi1
++
++	mull	$aj,$bi,$alo
++	mov	sp,$tp
++	umulh	$aj,$bi,$ahi
++
++	mull	$nj,$m1,$nlo
++	s8addl	$j,$ap,$aj
++	umulh	$nj,$m1,$nhi
++.align	4
++.Linner:
++	.set	noreorder
++	ldl	$tj,8($tp)	#L0
++	nop			#U1
++	ldl	$aj,0($aj)	#L1
++	s8addl	$j,$np,$nj	#U0
++
++	ldl	$nj,0($nj)	#L0
++	nop			#U1
++	addl	$alo,$hi0,$lo0	#L1
++	ldi	$tp,8($tp)
++
++	mull	$aj,$bi,$alo	#U1
++	cmpult	$lo0,$hi0,AT	#L0
++	addl	$nlo,$hi1,$lo1	#L1
++	addw	$j,1,$j
++
++	mull	$nj,$m1,$nlo	#U1
++	addl	$ahi,AT,$hi0	#L0
++	addl	$lo0,$tj,$lo0	#L1
++	cmpult	$lo1,$hi1,v0	#U0
++
++	umulh	$aj,$bi,$ahi	#U1
++	cmpult	$lo0,$tj,AT	#L0
++	addl	$lo1,$lo0,$lo1	#L1
++	addl	$nhi,v0,$hi1	#U0
++
++	umulh	$nj,$m1,$nhi	#U1
++	s8addl	$j,$ap,$aj	#L0
++	cmpult	$lo1,$lo0,v0	#L1
++	cmplt	$j,$num,$tj	#U0	# borrow $tj
++
++	addl	$hi0,AT,$hi0	#L0
++	addl	$hi1,v0,$hi1	#U1
++	stl	$lo1,-8($tp)	#L1
++	bne	$tj,.Linner	#U0
++	.set	reorder
++
++	ldl	$tj,8($tp)
++	addl	$alo,$hi0,$lo0
++	addl	$nlo,$hi1,$lo1
++	cmpult	$lo0,$hi0,AT
++	cmpult	$lo1,$hi1,v0
++	addl	$ahi,AT,$hi0
++	addl	$nhi,v0,$hi1
++
++	addl	$lo0,$tj,$lo0
++	cmpult	$lo0,$tj,AT
++	addl	$hi0,AT,$hi0
++
++	ldl	$tj,16($tp)
++	addl	$lo1,$lo0,$j
++	cmpult	$j,$lo0,v0
++	addl	$hi1,v0,$hi1
++
++	addl	$hi1,$hi0,$lo1
++	stl	$j,0($tp)
++	cmpult	$lo1,$hi0,$hi1
++	addl	$lo1,$tj,$lo1
++	cmpult	$lo1,$tj,AT
++	addw	$i,1,$i
++	addl	$hi1,AT,$hi1
++	stl	$lo1,8($tp)
++	cmplt	$i,$num,$tj	# borrow $tj
++	stl	$hi1,16($tp)
++	bne	$tj,.Louter
++
++	s8addl	$num,sp,$tj	# &tp[num]
++	mov	$rp,$bp		# put rp aside
++	mov	sp,$tp
++	mov	sp,$ap
++	mov	0,$hi0		# clear borrow bit
++
++.align	4
++.Lsub:	ldl	$lo0,0($tp)
++	ldl	$lo1,0($np)
++	ldi	$tp,8($tp)
++	ldi	$np,8($np)
++	subl	$lo0,$lo1,$lo1	# tp[i]-np[i]
++	cmpult	$lo0,$lo1,AT
++	subl	$lo1,$hi0,$lo0
++	cmpult	$lo1,$lo0,$hi0
++	or	$hi0,AT,$hi0
++	stl	$lo0,0($rp)
++	cmpult	$tp,$tj,v0
++	ldi	$rp,8($rp)
++	bne	v0,.Lsub
++
++	subl	$hi1,$hi0,$hi0	# handle upmost overflow bit
++	mov	sp,$tp
++	mov	$bp,$rp		# restore rp
++
++.align	4
++.Lcopy:	ldl	$aj,0($tp)	# conditional copy
++	ldl	$nj,0($rp)
++	ldi	$tp,8($tp)
++	ldi	$rp,8($rp)
++	seleq	$hi0,$nj,$aj
++	stl	zero,-8($tp)	# zap tp
++	cmpult	$tp,$tj,AT
++	stl	$aj,-8($rp)
++	bne	AT,.Lcopy
++	mov	1,v0
++
++.Lexit:
++	.set	noreorder
++	mov	fp,sp
++	/*ldl	ra,0(sp)*/
++	ldl	s3,8(sp)
++	ldl	s4,16(sp)
++	ldl	s5,24(sp)
++	ldl	fp,32(sp)
++	ldi	sp,48(sp)
++	ret	(ra)
++.end	bn_mul_mont
++.ascii	"Montgomery Multiplication for Alpha, CRYPTOGAMS by <appro\@openssl.org>"
++.align	2
++___
++
++print $code;
++close STDOUT or die "error closing STDOUT: $!";
++
+diff --git a/crypto/bn/bn_local.h b/crypto/bn/bn_local.h
+index 8ad69ccd3639..4099cde629de 100644
+--- a/crypto/bn/bn_local.h
++++ b/crypto/bn/bn_local.h
+@@ -378,7 +378,7 @@ struct bn_gencb_st {
+ #   define BN_UMULT_LOHI(low,high,a,b) ({       \
+         __uint128_t ret=(__uint128_t)(a)*(b);   \
+         (high)=ret>>64; (low)=ret;      })
+-#  elif defined(__alpha) && (defined(SIXTY_FOUR_BIT_LONG) || defined(SIXTY_FOUR_BIT))
++#  elif (defined(__alpha) || defined(__sw_64)) && (defined(SIXTY_FOUR_BIT_LONG) || defined(SIXTY_FOUR_BIT))
+ #   if defined(__DECC)
+ #    include <c_asm.h>
+ #    define BN_UMULT_HIGH(a,b)   (BN_ULONG)asm("umulh %a0,%a1,%v0",(a),(b))
+diff --git a/crypto/bn/build.info b/crypto/bn/build.info
+index b9ed5322fa68..73c87c9c8f2e 100644
+--- a/crypto/bn/build.info
++++ b/crypto/bn/build.info
+@@ -58,6 +58,7 @@ GENERATE[ppc-mont.s]=asm/ppc-mont.pl $(PERLASM_SCHEME)
+ GENERATE[ppc64-mont.s]=asm/ppc64-mont.pl $(PERLASM_SCHEME)
+ 
+ GENERATE[alpha-mont.S]=asm/alpha-mont.pl $(PERLASM_SCHEME)
++GENERATE[sw_64-mont.S]=asm/sw_64-mont.pl $(PERLASM_SCHEME)
+ 
+ GENERATE[armv4-mont.S]=asm/armv4-mont.pl $(PERLASM_SCHEME)
+ INCLUDE[armv4-mont.o]=..
+diff --git a/crypto/build.info b/crypto/build.info
+index 2c619c62e843..a0925b8cfe41 100644
+--- a/crypto/build.info
++++ b/crypto/build.info
+@@ -7,7 +7,7 @@ SOURCE[../libcrypto]=\
+         {- $target{uplink_aux_src} -}
+ EXTRA=  ../ms/uplink-x86.pl ../ms/uplink.c ../ms/applink.c \
+         x86cpuid.pl x86_64cpuid.pl ia64cpuid.S \
+-        ppccpuid.pl pariscid.pl alphacpuid.pl arm64cpuid.pl armv4cpuid.pl
++        ppccpuid.pl pariscid.pl alphacpuid.pl arm64cpuid.pl armv4cpuid.pl sw_64cpuid.pl
+ 
+ DEPEND[cversion.o]=buildinf.h
+ GENERATE[buildinf.h]=../util/mkbuildinf.pl "$(CC) $(LIB_CFLAGS) $(CPPFLAGS_Q)" "$(PLATFORM)"
+@@ -27,6 +27,7 @@ GENERATE[ia64cpuid.s]=ia64cpuid.S
+ GENERATE[ppccpuid.s]=ppccpuid.pl $(PERLASM_SCHEME)
+ GENERATE[pariscid.s]=pariscid.pl $(PERLASM_SCHEME)
+ GENERATE[alphacpuid.s]=alphacpuid.pl
++GENERATE[sw_64cpuid.s]=sw_64cpuid.pl
+ GENERATE[arm64cpuid.S]=arm64cpuid.pl $(PERLASM_SCHEME)
+ INCLUDE[arm64cpuid.o]=.
+ GENERATE[armv4cpuid.S]=armv4cpuid.pl $(PERLASM_SCHEME)
+diff --git a/crypto/modes/asm/ghash-sw_64.pl b/crypto/modes/asm/ghash-sw_64.pl
+new file mode 100644
+index 000000000000..d0da8a8be93d
+--- /dev/null
++++ b/crypto/modes/asm/ghash-sw_64.pl
+@@ -0,0 +1,468 @@
++#! /usr/bin/env perl
++# Copyright 2010-2020 The OpenSSL Project Authors. All Rights Reserved.
++#
++# Licensed under the OpenSSL license (the "License").  You may not use
++# this file except in compliance with the License.  You can obtain a copy
++# in the file LICENSE in the source distribution or at
++# https://www.openssl.org/source/license.html
++
++#
++# ====================================================================
++# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
++# project. The module is, however, dual licensed under OpenSSL and
++# CRYPTOGAMS licenses depending on where you obtain it. For further
++# details see http://www.openssl.org/~appro/cryptogams/.
++# ====================================================================
++#
++# March 2010
++#
++# The module implements "4-bit" GCM GHASH function and underlying
++# single multiplication operation in GF(2^128). "4-bit" means that it
++# uses 256 bytes per-key table [+128 bytes shared table]. Even though
++# loops are aggressively modulo-scheduled in respect to references to
++# Htbl and Z.hi updates for 8 cycles per byte, measured performance is
++# ~12 cycles per processed byte on 21264 CPU. It seems to be a dynamic
++# scheduling "glitch," because uprofile(1) indicates uniform sample
++# distribution, as if all instruction bundles execute in 1.5 cycles.
++# Meaning that it could have been even faster, yet 12 cycles is ~60%
++# better than gcc-generated code and ~80% than code generated by vendor
++# compiler.
++
++$cnt="v0";	# $0
++$t0="t0";
++$t1="t1";
++$t2="t2";
++$Thi0="t3";	# $4
++$Tlo0="t4";
++$Thi1="t5";
++$Tlo1="t6";
++$rem="t7";	# $8
++#################
++$Xi="a0";	# $16, input argument block
++$Htbl="a1";
++$inp="a2";
++$len="a3";
++$nlo="a4";	# $20
++$nhi="a5";
++$Zhi="t8";
++$Zlo="t9";
++$Xhi="t10";	# $24
++$Xlo="t11";
++$remp="t12";
++$rem_4bit="AT";	# $28
++
++{ my $N;
++  sub loop() {
++
++	$N++;
++$code.=<<___;
++.align	4
++	extlb	$Xlo,7,$nlo
++	and	$nlo,0xf0,$nhi
++	sll	$nlo,4,$nlo
++	and	$nlo,0xf0,$nlo
++
++	addl	$nlo,$Htbl,$nlo
++	ldl	$Zlo,8($nlo)
++	addl	$nhi,$Htbl,$nhi
++	ldl	$Zhi,0($nlo)
++
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	ldi	$cnt,6(zero)
++	extlb	$Xlo,6,$nlo
++
++	ldl	$Tlo1,8($nhi)
++	s8addl	$remp,$rem_4bit,$remp
++	ldl	$Thi1,0($nhi)
++	srl	$Zlo,4,$Zlo
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	xor	$t0,$Zlo,$Zlo
++	and	$nlo,0xf0,$nhi
++
++	xor	$Tlo1,$Zlo,$Zlo
++	sll	$nlo,4,$nlo
++	xor	$Thi1,$Zhi,$Zhi
++	and	$nlo,0xf0,$nlo
++
++	addl	$nlo,$Htbl,$nlo
++	ldl	$Tlo0,8($nlo)
++	addl	$nhi,$Htbl,$nhi
++	ldl	$Thi0,0($nlo)
++
++.Looplo$N:
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	subl	$cnt,1,$cnt
++	srl	$Zlo,4,$Zlo
++
++	ldl	$Tlo1,8($nhi)
++	xor	$rem,$Zhi,$Zhi
++	ldl	$Thi1,0($nhi)
++	s8addl	$remp,$rem_4bit,$remp
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	xor	$t0,$Zlo,$Zlo
++	extlb	$Xlo,$cnt,$nlo
++
++	and	$nlo,0xf0,$nhi
++	xor	$Thi0,$Zhi,$Zhi
++	xor	$Tlo0,$Zlo,$Zlo
++	sll	$nlo,4,$nlo
++
++
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	and	$nlo,0xf0,$nlo
++	srl	$Zlo,4,$Zlo
++
++	s8addl	$remp,$rem_4bit,$remp
++	xor	$rem,$Zhi,$Zhi
++	addl	$nlo,$Htbl,$nlo
++	addl	$nhi,$Htbl,$nhi
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	ldl	$Tlo0,8($nlo)
++	xor	$t0,$Zlo,$Zlo
++
++	xor	$Tlo1,$Zlo,$Zlo
++	xor	$Thi1,$Zhi,$Zhi
++	ldl	$Thi0,0($nlo)
++	bne	$cnt,.Looplo$N
++
++
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	ldi	$cnt,7(zero)
++	srl	$Zlo,4,$Zlo
++
++	ldl	$Tlo1,8($nhi)
++	xor	$rem,$Zhi,$Zhi
++	ldl	$Thi1,0($nhi)
++	s8addl	$remp,$rem_4bit,$remp
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	xor	$t0,$Zlo,$Zlo
++	extlb	$Xhi,$cnt,$nlo
++
++	and	$nlo,0xf0,$nhi
++	xor	$Thi0,$Zhi,$Zhi
++	xor	$Tlo0,$Zlo,$Zlo
++	sll	$nlo,4,$nlo
++
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	and	$nlo,0xf0,$nlo
++	srl	$Zlo,4,$Zlo
++
++	s8addl	$remp,$rem_4bit,$remp
++	xor	$rem,$Zhi,$Zhi
++	addl	$nlo,$Htbl,$nlo
++	addl	$nhi,$Htbl,$nhi
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	ldl	$Tlo0,8($nlo)
++	xor	$t0,$Zlo,$Zlo
++
++	xor	$Tlo1,$Zlo,$Zlo
++	xor	$Thi1,$Zhi,$Zhi
++	ldl	$Thi0,0($nlo)
++	unop
++
++
++.Loophi$N:
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	subl	$cnt,1,$cnt
++	srl	$Zlo,4,$Zlo
++
++	ldl	$Tlo1,8($nhi)
++	xor	$rem,$Zhi,$Zhi
++	ldl	$Thi1,0($nhi)
++	s8addl	$remp,$rem_4bit,$remp
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	xor	$t0,$Zlo,$Zlo
++	extlb	$Xhi,$cnt,$nlo
++
++	and	$nlo,0xf0,$nhi
++	xor	$Thi0,$Zhi,$Zhi
++	xor	$Tlo0,$Zlo,$Zlo
++	sll	$nlo,4,$nlo
++
++
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	and	$nlo,0xf0,$nlo
++	srl	$Zlo,4,$Zlo
++
++	s8addl	$remp,$rem_4bit,$remp
++	xor	$rem,$Zhi,$Zhi
++	addl	$nlo,$Htbl,$nlo
++	addl	$nhi,$Htbl,$nhi
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	ldl	$Tlo0,8($nlo)
++	xor	$t0,$Zlo,$Zlo
++
++	xor	$Tlo1,$Zlo,$Zlo
++	xor	$Thi1,$Zhi,$Zhi
++	ldl	$Thi0,0($nlo)
++	bne	$cnt,.Loophi$N
++
++
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	srl	$Zlo,4,$Zlo
++
++	ldl	$Tlo1,8($nhi)
++	xor	$rem,$Zhi,$Zhi
++	ldl	$Thi1,0($nhi)
++	s8addl	$remp,$rem_4bit,$remp
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	xor	$t0,$Zlo,$Zlo
++
++	xor	$Tlo0,$Zlo,$Zlo
++	xor	$Thi0,$Zhi,$Zhi
++
++	and	$Zlo,0x0f,$remp
++	sll	$Zhi,60,$t0
++	srl	$Zlo,4,$Zlo
++
++	s8addl	$remp,$rem_4bit,$remp
++	xor	$rem,$Zhi,$Zhi
++
++	ldl	$rem,0($remp)
++	srl	$Zhi,4,$Zhi
++	xor	$Tlo1,$Zlo,$Zlo
++	xor	$Thi1,$Zhi,$Zhi
++	xor	$t0,$Zlo,$Zlo
++	xor	$rem,$Zhi,$Zhi
++___
++}}
++
++$code=<<___;
++#ifdef __linux__
++#include <asm/regdef.h>
++#else
++#include <asm.h>
++#include <regdef.h>
++#endif
++
++.text
++
++.set	noat
++.set	noreorder
++.globl	gcm_gmult_4bit
++.align	4
++.ent	gcm_gmult_4bit
++gcm_gmult_4bit:
++	.frame	sp,0,ra
++	.prologue 0
++
++	ldl	$Xlo,8($Xi)
++	ldl	$Xhi,0($Xi)
++
++	bsr	$t0,picmeup
++	nop
++___
++
++	&loop();
++
++$code.=<<___;
++	srl	$Zlo,24,$t0	# byte swap
++	srl	$Zlo,8,$t1
++
++	sll	$Zlo,8,$t2
++	sll	$Zlo,24,$Zlo
++	zapnot	$t0,0x11,$t0
++	zapnot	$t1,0x22,$t1
++
++	zapnot	$Zlo,0x88,$Zlo
++	or	$t0,$t1,$t0
++	zapnot	$t2,0x44,$t2
++
++	or	$Zlo,$t0,$Zlo
++	srl	$Zhi,24,$t0
++	srl	$Zhi,8,$t1
++
++	or	$Zlo,$t2,$Zlo
++	sll	$Zhi,8,$t2
++	sll	$Zhi,24,$Zhi
++
++	srl	$Zlo,32,$Xlo
++	sll	$Zlo,32,$Zlo
++
++	zapnot	$t0,0x11,$t0
++	zapnot	$t1,0x22,$t1
++	or	$Zlo,$Xlo,$Xlo
++
++	zapnot	$Zhi,0x88,$Zhi
++	or	$t0,$t1,$t0
++	zapnot	$t2,0x44,$t2
++
++	or	$Zhi,$t0,$Zhi
++	or	$Zhi,$t2,$Zhi
++
++	srl	$Zhi,32,$Xhi
++	sll	$Zhi,32,$Zhi
++
++	or	$Zhi,$Xhi,$Xhi
++	stl	$Xlo,8($Xi)
++	stl	$Xhi,0($Xi)
++
++	ret	(ra)
++.end	gcm_gmult_4bit
++___
++
++$inhi="s0";
++$inlo="s1";
++
++$code.=<<___;
++.globl	gcm_ghash_4bit
++.align	4
++.ent	gcm_ghash_4bit
++gcm_ghash_4bit:
++	ldi	sp,-32(sp)
++	stl	ra,0(sp)
++	stl	s0,8(sp)
++	stl	s1,16(sp)
++	.mask	0x04000600,-32
++	.frame	sp,32,ra
++	.prologue 0
++
++	ldl_u	$inhi,0($inp)
++	ldl_u	$Thi0,7($inp)
++	ldl_u	$inlo,8($inp)
++	ldl_u	$Tlo0,15($inp)
++	ldl	$Xhi,0($Xi)
++	ldl	$Xlo,8($Xi)
++
++	bsr	$t0,picmeup
++	nop
++
++.Louter:
++	extll	$inhi,$inp,$inhi
++	exthl	$Thi0,$inp,$Thi0
++	or	$inhi,$Thi0,$inhi
++	ldi	$inp,16($inp)
++
++	extll	$inlo,$inp,$inlo
++	exthl	$Tlo0,$inp,$Tlo0
++	or	$inlo,$Tlo0,$inlo
++	subl	$len,16,$len
++
++	xor	$Xlo,$inlo,$Xlo
++	xor	$Xhi,$inhi,$Xhi
++___
++
++	&loop();
++
++$code.=<<___;
++	srl	$Zlo,24,$t0	# byte swap
++	srl	$Zlo,8,$t1
++
++	sll	$Zlo,8,$t2
++	sll	$Zlo,24,$Zlo
++	zapnot	$t0,0x11,$t0
++	zapnot	$t1,0x22,$t1
++
++	zapnot	$Zlo,0x88,$Zlo
++	or	$t0,$t1,$t0
++	zapnot	$t2,0x44,$t2
++
++	or	$Zlo,$t0,$Zlo
++	srl	$Zhi,24,$t0
++	srl	$Zhi,8,$t1
++
++	or	$Zlo,$t2,$Zlo
++	sll	$Zhi,8,$t2
++	sll	$Zhi,24,$Zhi
++
++	srl	$Zlo,32,$Xlo
++	sll	$Zlo,32,$Zlo
++	beq	$len,.Ldone
++
++	zapnot	$t0,0x11,$t0
++	zapnot	$t1,0x22,$t1
++	or	$Zlo,$Xlo,$Xlo
++	ldl_u	$inhi,0($inp)
++
++	zapnot	$Zhi,0x88,$Zhi
++	or	$t0,$t1,$t0
++	zapnot	$t2,0x44,$t2
++	ldl_u	$Thi0,7($inp)
++
++	or	$Zhi,$t0,$Zhi
++	or	$Zhi,$t2,$Zhi
++	ldl_u	$inlo,8($inp)
++	ldl_u	$Tlo0,15($inp)
++
++	srl	$Zhi,32,$Xhi
++	sll	$Zhi,32,$Zhi
++
++	or	$Zhi,$Xhi,$Xhi
++	br	zero,.Louter
++
++.Ldone:
++	zapnot	$t0,0x11,$t0
++	zapnot	$t1,0x22,$t1
++	or	$Zlo,$Xlo,$Xlo
++
++	zapnot	$Zhi,0x88,$Zhi
++	or	$t0,$t1,$t0
++	zapnot	$t2,0x44,$t2
++
++	or	$Zhi,$t0,$Zhi
++	or	$Zhi,$t2,$Zhi
++
++	srl	$Zhi,32,$Xhi
++	sll	$Zhi,32,$Zhi
++
++	or	$Zhi,$Xhi,$Xhi
++
++	stl	$Xlo,8($Xi)
++	stl	$Xhi,0($Xi)
++
++	.set	noreorder
++	/*ldl	ra,0(sp)*/
++	ldl	s0,8(sp)
++	ldl	s1,16(sp)
++	ldi	sp,32(sp)
++	ret	(ra)
++.end	gcm_ghash_4bit
++
++.align	4
++.ent	picmeup
++picmeup:
++	.frame	sp,0,$t0
++	.prologue 0
++	br	$rem_4bit,.Lpic
++.Lpic:	ldi	$rem_4bit,12($rem_4bit)
++	ret	($t0)
++.end	picmeup
++	nop
++rem_4bit:
++	.long	0,0x0000<<16, 0,0x1C20<<16, 0,0x3840<<16, 0,0x2460<<16
++	.long	0,0x7080<<16, 0,0x6CA0<<16, 0,0x48C0<<16, 0,0x54E0<<16
++	.long	0,0xE100<<16, 0,0xFD20<<16, 0,0xD940<<16, 0,0xC560<<16
++	.long	0,0x9180<<16, 0,0x8DA0<<16, 0,0xA9C0<<16, 0,0xB5E0<<16
++.ascii	"GHASH for Alpha, CRYPTOGAMS by <appro\@openssl.org>"
++.align	4
++
++___
++$output=pop and open STDOUT,">$output";
++print $code;
++close STDOUT or die "error closing STDOUT: $!";
++
++
+diff --git a/crypto/modes/build.info b/crypto/modes/build.info
+index 821340eb909a..cbb90838ed0c 100644
+--- a/crypto/modes/build.info
++++ b/crypto/modes/build.info
+@@ -14,6 +14,7 @@ GENERATE[aesni-gcm-x86_64.s]=asm/aesni-gcm-x86_64.pl $(PERLASM_SCHEME)
+ GENERATE[ghash-sparcv9.S]=asm/ghash-sparcv9.pl $(PERLASM_SCHEME)
+ INCLUDE[ghash-sparcv9.o]=..
+ GENERATE[ghash-alpha.S]=asm/ghash-alpha.pl $(PERLASM_SCHEME)
++GENERATE[ghash-sw_64.S]=asm/ghash-sw_64.pl $(PERLASM_SCHEME)
+ GENERATE[ghash-parisc.s]=asm/ghash-parisc.pl $(PERLASM_SCHEME)
+ GENERATE[ghashp8-ppc.s]=asm/ghashp8-ppc.pl $(PERLASM_SCHEME)
+ GENERATE[ghash-armv4.S]=asm/ghash-armv4.pl $(PERLASM_SCHEME)
+diff --git a/crypto/rand/rand_vms.c b/crypto/rand/rand_vms.c
+index 61c2f102997c..56059a78da94 100644
+--- a/crypto/rand/rand_vms.c
++++ b/crypto/rand/rand_vms.c
+@@ -105,7 +105,7 @@ static const struct item_st RMI_item_data[] = {
+     {4,   RMI$_COM},
+     {4,   RMI$_COMO},
+     {4,   RMI$_CUR},
+-#if defined __alpha
++#if defined (__alpha)  || defined(__sw_64)
+     {4,   RMI$_FRLIST},
+     {4,   RMI$_MODLIST},
+ #endif
+@@ -218,7 +218,7 @@ static const struct item_st RMI_item_data[] = {
+     {4,   RMI$_RDFAULTS},
+     {4,   RMI$_TRANSFLTS},
+     {4,   RMI$_WRTFAULTS},
+-#if defined __alpha
++#if defined (__alpha)  || defined(__sw_64)
+     {4,   RMI$_USERPAGES},
+ #endif
+     {4,   RMI$_VMSPAGES},
+diff --git a/crypto/sha/asm/sha1-sw_64.pl b/crypto/sha/asm/sha1-sw_64.pl
+new file mode 100644
+index 000000000000..0243e4cb2ffc
+--- /dev/null
++++ b/crypto/sha/asm/sha1-sw_64.pl
+@@ -0,0 +1,330 @@
++#! /usr/bin/env perl
++# Copyright 2009-2020 The OpenSSL Project Authors. All Rights Reserved.
++#
++# Licensed under the OpenSSL license (the "License").  You may not use
++# this file except in compliance with the License.  You can obtain a copy
++# in the file LICENSE in the source distribution or at
++# https://www.openssl.org/source/license.html
++
++
++# ====================================================================
++# Written by Andy Polyakov <appro@openssl.org> for the OpenSSL
++# project. The module is, however, dual licensed under OpenSSL and
++# CRYPTOGAMS licenses depending on where you obtain it. For further
++# details see http://www.openssl.org/~appro/cryptogams/.
++# ====================================================================
++
++# SHA1 block procedure for Alpha.
++
++# On 21264 performance is 33% better than code generated by vendor
++# compiler, and 75% better than GCC [3.4], and in absolute terms is
++# 8.7 cycles per processed byte. Implementation features vectorized
++# byte swap, but not Xupdate.
++
++@X=(	"\$0",	"\$1",	"\$2",	"\$3",	"\$4",	"\$5",	"\$6",	"\$7",
++	"\$8",	"\$9",	"\$10",	"\$11",	"\$12",	"\$13",	"\$14",	"\$15");
++$ctx="a0";	# $16
++$inp="a1";
++$num="a2";
++$A="a3";
++$B="a4";	# 20
++$C="a5";
++$D="t8";
++$E="t9";	@V=($A,$B,$C,$D,$E);
++$t0="t10";	# 24
++$t1="t11";
++$t2="ra";
++$t3="t12";
++$K="AT";	# 28
++
++sub BODY_00_19 {
++my ($i,$a,$b,$c,$d,$e)=@_;
++my $j=$i+1;
++$code.=<<___ if ($i==0);
++	ldl_u	@X[0],0+0($inp)
++	ldl_u	@X[1],0+7($inp)
++___
++$code.=<<___ if (!($i&1) && $i<14);
++	ldl_u	@X[$i+2],($i+2)*4+0($inp)
++	ldl_u	@X[$i+3],($i+2)*4+7($inp)
++___
++$code.=<<___ if (!($i&1) && $i<15);
++	extll	@X[$i],$inp,@X[$i]
++	exthl	@X[$i+1],$inp,@X[$i+1]
++
++	or	@X[$i+1],@X[$i],@X[$i]	# pair of 32-bit values are fetched
++
++	srl	@X[$i],24,$t0		# vectorized byte swap
++	srl	@X[$i],8,$t2
++
++	sll	@X[$i],8,$t3
++	sll	@X[$i],24,@X[$i]
++	zapnot	$t0,0x11,$t0
++	zapnot	$t2,0x22,$t2
++
++	zapnot	@X[$i],0x88,@X[$i]
++	or	$t0,$t2,$t0
++	zapnot	$t3,0x44,$t3
++	sll	$a,5,$t1
++
++	or	@X[$i],$t0,@X[$i]
++	addw	$K,$e,$e
++	and	$b,$c,$t2
++	zapnot	$a,0xf,$a
++
++	or	@X[$i],$t3,@X[$i]
++	srl	$a,27,$t0
++	bic	$d,$b,$t3
++	sll	$b,30,$b
++
++	extll	@X[$i],4,@X[$i+1]	# extract upper half
++	or	$t2,$t3,$t2
++	addw	@X[$i],$e,$e
++
++	addw	$t1,$e,$e
++	srl	$b,32,$t3
++	zapnot	@X[$i],0xf,@X[$i]
++
++	addw	$t0,$e,$e
++	addw	$t2,$e,$e
++	or	$t3,$b,$b
++___
++$code.=<<___ if (($i&1) && $i<15);
++	sll	$a,5,$t1
++	addw	$K,$e,$e
++	and	$b,$c,$t2
++	zapnot	$a,0xf,$a
++
++	srl	$a,27,$t0
++	addw	@X[$i%16],$e,$e
++	bic	$d,$b,$t3
++	sll	$b,30,$b
++
++	or	$t2,$t3,$t2
++	addw	$t1,$e,$e
++	srl	$b,32,$t3
++	zapnot	@X[$i],0xf,@X[$i]
++
++	addw	$t0,$e,$e
++	addw	$t2,$e,$e
++	or	$t3,$b,$b
++___
++$code.=<<___ if ($i>=15);	# with forward Xupdate
++	sll	$a,5,$t1
++	addw	$K,$e,$e
++	and	$b,$c,$t2
++	xor	@X[($j+2)%16],@X[$j%16],@X[$j%16]
++
++	zapnot	$a,0xf,$a
++	addw	@X[$i%16],$e,$e
++	bic	$d,$b,$t3
++	xor	@X[($j+8)%16],@X[$j%16],@X[$j%16]
++
++	srl	$a,27,$t0
++	addw	$t1,$e,$e
++	or	$t2,$t3,$t2
++	xor	@X[($j+13)%16],@X[$j%16],@X[$j%16]
++
++	sll	$b,30,$b
++	addw	$t0,$e,$e
++	srl	@X[$j%16],31,$t1
++
++	addw	$t2,$e,$e
++	srl	$b,32,$t3
++	addw	@X[$j%16],@X[$j%16],@X[$j%16]
++
++	or	$t3,$b,$b
++	zapnot	@X[$i%16],0xf,@X[$i%16]
++	or	$t1,@X[$j%16],@X[$j%16]
++___
++}
++
++sub BODY_20_39 {
++my ($i,$a,$b,$c,$d,$e)=@_;
++my $j=$i+1;
++$code.=<<___ if ($i<79);	# with forward Xupdate
++	sll	$a,5,$t1
++	addw	$K,$e,$e
++	zapnot	$a,0xf,$a
++	xor	@X[($j+2)%16],@X[$j%16],@X[$j%16]
++
++	sll	$b,30,$t3
++	addw	$t1,$e,$e
++	xor	$b,$c,$t2
++	xor	@X[($j+8)%16],@X[$j%16],@X[$j%16]
++
++	srl	$b,2,$b
++	addw	@X[$i%16],$e,$e
++	xor	$d,$t2,$t2
++	xor	@X[($j+13)%16],@X[$j%16],@X[$j%16]
++
++	srl	@X[$j%16],31,$t1
++	addw	$t2,$e,$e
++	srl	$a,27,$t0
++	addw	@X[$j%16],@X[$j%16],@X[$j%16]
++
++	or	$t3,$b,$b
++	addw	$t0,$e,$e
++	or	$t1,@X[$j%16],@X[$j%16]
++___
++$code.=<<___ if ($i<77);
++	zapnot	@X[$i%16],0xf,@X[$i%16]
++___
++$code.=<<___ if ($i==79);	# with context fetch
++	sll	$a,5,$t1
++	addw	$K,$e,$e
++	zapnot	$a,0xf,$a
++	ldw	@X[0],0($ctx)
++
++	sll	$b,30,$t3
++	addw	$t1,$e,$e
++	xor	$b,$c,$t2
++	ldw	@X[1],4($ctx)
++
++	srl	$b,2,$b
++	addw	@X[$i%16],$e,$e
++	xor	$d,$t2,$t2
++	ldw	@X[2],8($ctx)
++
++	srl	$a,27,$t0
++	addw	$t2,$e,$e
++	ldw	@X[3],12($ctx)
++
++	or	$t3,$b,$b
++	addw	$t0,$e,$e
++	ldw	@X[4],16($ctx)
++___
++}
++
++sub BODY_40_59 {
++my ($i,$a,$b,$c,$d,$e)=@_;
++my $j=$i+1;
++$code.=<<___;	# with forward Xupdate
++	sll	$a,5,$t1
++	addw	$K,$e,$e
++	zapnot	$a,0xf,$a
++	xor	@X[($j+2)%16],@X[$j%16],@X[$j%16]
++
++	srl	$a,27,$t0
++	and	$b,$c,$t2
++	and	$b,$d,$t3
++	xor	@X[($j+8)%16],@X[$j%16],@X[$j%16]
++
++	sll	$b,30,$b
++	addw	$t1,$e,$e
++	xor	@X[($j+13)%16],@X[$j%16],@X[$j%16]
++
++	srl	@X[$j%16],31,$t1
++	addw	$t0,$e,$e
++	or	$t2,$t3,$t2
++	and	$c,$d,$t3
++
++	or	$t2,$t3,$t2
++	srl	$b,32,$t3
++	addw	@X[$i%16],$e,$e
++	addw	@X[$j%16],@X[$j%16],@X[$j%16]
++
++	or	$t3,$b,$b
++	addw	$t2,$e,$e
++	or	$t1,@X[$j%16],@X[$j%16]
++	zapnot	@X[$i%16],0xf,@X[$i%16]
++___
++}
++
++$code=<<___;
++#ifdef __linux__
++#include <asm/regdef.h>
++#else
++#include <asm.h>
++#include <regdef.h>
++#endif
++
++.text
++
++.set	noat
++.set	noreorder
++.globl	sha1_block_data_order
++.align	5
++.ent	sha1_block_data_order
++sha1_block_data_order:
++	ldi	sp,-64(sp)
++	stl	ra,0(sp)
++	stl	s0,8(sp)
++	stl	s1,16(sp)
++	stl	s2,24(sp)
++	stl	s3,32(sp)
++	stl	s4,40(sp)
++	stl	s5,48(sp)
++	stl	fp,56(sp)
++	.mask	0x0400fe00,-64
++	.frame	sp,64,ra
++	.prologue 0
++
++	ldw	$A,0($ctx)
++	ldw	$B,4($ctx)
++	sll	$num,6,$num
++	ldw	$C,8($ctx)
++	ldw	$D,12($ctx)
++	ldw	$E,16($ctx)
++	addl	$inp,$num,$num
++
++.Lloop:
++	.set	noreorder
++	ldih	$K,23170(zero)
++	zapnot	$B,0xf,$B
++	ldi	$K,31129($K)	# K_00_19
++___
++for ($i=0;$i<20;$i++) { &BODY_00_19($i,@V); unshift(@V,pop(@V)); }
++
++$code.=<<___;
++	ldih	$K,28378(zero)
++	ldi	$K,-5215($K)	# K_20_39
++___
++for (;$i<40;$i++) { &BODY_20_39($i,@V); unshift(@V,pop(@V)); }
++
++$code.=<<___;
++	ldih	$K,-28900(zero)
++	ldi	$K,-17188($K)	# K_40_59
++___
++for (;$i<60;$i++) { &BODY_40_59($i,@V); unshift(@V,pop(@V)); }
++
++$code.=<<___;
++	ldih	$K,-13725(zero)
++	ldi	$K,-15914($K)	# K_60_79
++___
++for (;$i<80;$i++) { &BODY_20_39($i,@V); unshift(@V,pop(@V)); }
++
++$code.=<<___;
++	addw	@X[0],$A,$A
++	addw	@X[1],$B,$B
++	addw	@X[2],$C,$C
++	addw	@X[3],$D,$D
++	addw	@X[4],$E,$E
++	stw	$A,0($ctx)
++	stw	$B,4($ctx)
++	addl	$inp,64,$inp
++	stw	$C,8($ctx)
++	stw	$D,12($ctx)
++	stw	$E,16($ctx)
++	cmpult	$inp,$num,$t1
++	bne	$t1,.Lloop
++
++	.set	noreorder
++	ldl	ra,0(sp)
++	ldl	s0,8(sp)
++	ldl	s1,16(sp)
++	ldl	s2,24(sp)
++	ldl	s3,32(sp)
++	ldl	s4,40(sp)
++	ldl	s5,48(sp)
++	ldl	fp,56(sp)
++	ldi	sp,64(sp)
++	ret	(ra)
++.end	sha1_block_data_order
++.ascii	"SHA1 block transform for Alpha, CRYPTOGAMS by <appro\@openssl.org>"
++.align	2
++___
++$output=pop and open STDOUT,">$output";
++print $code;
++close STDOUT or die "error closing STDOUT: $!";
++
+diff --git a/crypto/sha/build.info b/crypto/sha/build.info
+index 5dd5a9941d34..160847776982 100644
+--- a/crypto/sha/build.info
++++ b/crypto/sha/build.info
+@@ -18,6 +18,7 @@ GENERATE[sha256-ia64.s]=asm/sha512-ia64.pl $(LIB_CFLAGS) $(LIB_CPPFLAGS)
+ GENERATE[sha512-ia64.s]=asm/sha512-ia64.pl $(LIB_CFLAGS) $(LIB_CPPFLAGS)
+ 
+ GENERATE[sha1-alpha.S]=asm/sha1-alpha.pl $(PERLASM_SCHEME)
++GENERATE[sha1-sw_64.S]=asm/sha1-sw_64.pl $(PERLASM_SCHEME)
+ 
+ GENERATE[sha1-x86_64.s]=asm/sha1-x86_64.pl $(PERLASM_SCHEME)
+ GENERATE[sha1-mb-x86_64.s]=asm/sha1-mb-x86_64.pl $(PERLASM_SCHEME)
+diff --git a/crypto/sw_64cpuid.pl b/crypto/sw_64cpuid.pl
+new file mode 100644
+index 000000000000..2df8fe08b364
+--- /dev/null
++++ b/crypto/sw_64cpuid.pl
+@@ -0,0 +1,274 @@
++#! /usr/bin/env perl
++# Copyright 2010-2016 The OpenSSL Project Authors. All Rights Reserved.
++#
++# Licensed under the OpenSSL license (the "License").  You may not use
++# this file except in compliance with the License.  You can obtain a copy
++# in the file LICENSE in the source distribution or at
++# https://www.openssl.org/source/license.html
++
++
++$output = pop;
++open STDOUT,">$output";
++
++print <<'___';
++.text
++
++.set	noat
++
++.globl	OPENSSL_cpuid_setup
++.ent	OPENSSL_cpuid_setup
++OPENSSL_cpuid_setup:
++	.frame	$30,0,$26
++	.prologue 0
++	ret	($26)
++.end	OPENSSL_cpuid_setup
++
++.globl	OPENSSL_wipe_cpu
++.ent	OPENSSL_wipe_cpu
++OPENSSL_wipe_cpu:
++	.frame	$30,0,$26
++	.prologue 0
++	clr	$1
++	clr	$2
++	clr	$3
++	clr	$4
++	clr	$5
++	clr	$6
++	clr	$7
++	clr	$8
++	clr	$16
++	clr	$17
++	clr	$18
++	clr	$19
++	clr	$20
++	clr	$21
++	clr	$22
++	clr	$23
++	clr	$24
++	clr	$25
++	clr	$27
++	clr	$at
++	clr	$29
++	fclr	$f0
++	fclr	$f1
++	fclr	$f10
++	fclr	$f11
++	fclr	$f12
++	fclr	$f13
++	fclr	$f14
++	fclr	$f15
++	fclr	$f16
++	fclr	$f17
++	fclr	$f18
++	fclr	$f19
++	fclr	$f20
++	fclr	$f21
++	fclr	$f22
++	fclr	$f23
++	fclr	$f24
++	fclr	$f25
++	fclr	$f26
++	fclr	$f27
++	fclr	$f28
++	fclr	$f29
++	fclr	$f30
++	mov	$sp,$0
++	ret	($26)
++.end	OPENSSL_wipe_cpu
++
++.globl	OPENSSL_atomic_add
++.ent	OPENSSL_atomic_add
++OPENSSL_atomic_add:
++	.frame	$30,0,$26
++	.prologue 0
++1:	lldw	$0,0($16)
++        ldi     $1,1
++	wr_f    $1
++	addw	$0,$17,$1
++	lstw	$1,0($16)
++	rd_f    $1
++	beq	$1,1b
++	addw	$0,$17,$0
++	ret	($26)
++.end	OPENSSL_atomic_add
++
++.globl	OPENSSL_rdtsc
++.ent	OPENSSL_rdtsc
++OPENSSL_rdtsc:
++	.frame	$30,0,$26
++	.prologue 0
++	rtc	$0
++	ret	($26)
++.end	OPENSSL_rdtsc
++
++.globl	OPENSSL_cleanse
++.ent	OPENSSL_cleanse
++OPENSSL_cleanse:
++	.frame	$30,0,$26
++	.prologue 0
++	beq	$17,.Ldone
++	and	$16,7,$0
++	bic	$17,7,$at
++	beq	$at,.Little
++	beq	$0,.Laligned
++
++.Little:
++	subl	$0,8,$0
++	ldl_u	$1,0($16)
++	mov	$16,$2
++.Lalign:
++	masklb	$1,$16,$1
++	ldi	$16,1($16)
++	subl	$17,1,$17
++	addl	$0,1,$0
++	beq	$17,.Lout
++	bne	$0,.Lalign
++.Lout:	stl_u	$1,0($2)
++	beq	$17,.Ldone
++	bic	$17,7,$at
++	beq	$at,.Little
++
++.Laligned:
++	stl	$31,0($16)
++	subl	$17,8,$17
++	ldi	$16,8($16)
++	bic	$17,7,$at
++	bne	$at,.Laligned
++	bne	$17,.Little
++.Ldone: ret	($26)
++.end	OPENSSL_cleanse
++
++.globl	CRYPTO_memcmp
++.ent	CRYPTO_memcmp
++CRYPTO_memcmp:
++	.frame	$30,0,$26
++	.prologue 0
++	xor	$0,$0,$0
++	beq	$18,.Lno_data
++
++	xor	$1,$1,$1
++	nop
++.Loop_cmp:
++	ldl_u	$2,0($16)
++	subl	$18,1,$18
++	ldl_u	$3,0($17)
++	extlb	$2,$16,$2
++	ldi	$16,1($16)
++	extlb	$3,$17,$3
++	ldi	$17,1($17)
++	xor	$3,$2,$2
++	or	$2,$0,$0
++	bne	$18,.Loop_cmp
++
++	subl	$31,$0,$0
++	srl	$0,63,$0
++.Lno_data:
++	ret	($26)
++.end	CRYPTO_memcmp
++___
++{
++my ($out,$cnt,$max)=("\$16","\$17","\$18");
++my ($tick,$lasttick)=("\$19","\$20");
++my ($diff,$lastdiff)=("\$21","\$22");
++my ($lock1,$lock2)=("\$23","\$24");
++my ($v0,$ra,$sp,$zero)=("\$0","\$26","\$30","\$31");
++
++print <<___;
++.globl	OPENSSL_instrument_bus
++.ent	OPENSSL_instrument_bus
++OPENSSL_instrument_bus:
++	.frame	$sp,0,$ra
++	.prologue 0
++	mov	$cnt,$v0
++
++	rtc	$lasttick
++	mov	0,$diff
++
++	#ecb	($out)
++	lldw	$tick,0($out)
++	ldi     $lock1,1
++	wr_f    $lock1
++	addw	$diff,$tick,$tick
++	mov	$tick,$diff
++	lstw	$tick,0($out)
++	rd_f    $tick
++	stw	$diff,0($out)
++
++.Loop:	rtc	$tick
++	subl	$tick,$lasttick,$diff
++	mov	$tick,$lasttick
++
++	#ecb	($out)
++	lldw	$tick,0($out)
++	ldi     $lock1,1
++	wr_f    $lock1
++	addw	$diff,$tick,$tick
++	mov	$tick,$diff
++	lstw	$tick,0($out)
++	rd_f    $tick
++	stw	$diff,0($out)
++
++	subw	$cnt,1,$cnt
++	ldi	$out,4($out)
++	bne	$cnt,.Loop
++
++	ret	($ra)
++.end	OPENSSL_instrument_bus
++
++.globl	OPENSSL_instrument_bus2
++.ent	OPENSSL_instrument_bus2
++OPENSSL_instrument_bus2:
++	.frame	$sp,0,$ra
++	.prologue 0
++	mov	$cnt,$v0
++
++	rtc	$lasttick
++	mov	0,$diff
++
++	#ecb	($out)
++	lldw	$tick,0($out)
++	ldi     $lock1,1
++	wr_f    $lock1
++	addw	$diff,$tick,$tick
++	mov	$tick,$diff
++	lstw	$tick,0($out)
++	rd_f    $tick
++	stw	$diff,0($out)
++
++	rtc	$tick
++	subl	$tick,$lasttick,$diff
++	mov	$tick,$lasttick
++	mov	$diff,$lastdiff
++.Loop2:
++	#ecb	($out)
++	lldw	$tick,0($out)
++	ldi     $lock1,1
++	wr_f    $lock1
++	addw	$diff,$tick,$tick
++	mov	$tick,$diff
++	lstw	$tick,0($out)
++	rd_f    $tick
++	stw	$diff,0($out)
++
++	subw	$max,1,$max
++	beq	$max,.Ldone2
++
++	rtc	$tick
++	subl	$tick,$lasttick,$diff
++	mov	$tick,$lasttick
++	subl	$lastdiff,$diff,$tick
++	mov	$diff,$lastdiff
++	selne	$tick,1,$tick
++	subw	$cnt,$tick,$cnt
++	s4addl	$tick,$out,$out
++	bne	$cnt,.Loop2
++
++.Ldone2:
++	subw	$v0,$cnt,$v0
++	ret	($ra)
++.end	OPENSSL_instrument_bus2
++___
++}
++
++close STDOUT;
++
+diff --git a/include/crypto/md32_common.h b/include/crypto/md32_common.h
+index 1124e9c24b2a..31fd740266bf 100644
+--- a/include/crypto/md32_common.h
++++ b/include/crypto/md32_common.h
+@@ -226,7 +226,7 @@ int HASH_FINAL(unsigned char *md, HASH_CTX *c)
+ }
+ 
+ #ifndef MD32_REG_T
+-# if defined(__alpha) || defined(__sparcv9) || defined(__mips)
++# if defined(__alpha) || defined(__sw_64) || defined(__sparcv9) || defined(__mips)
+ #  define MD32_REG_T long
+ /*
+  * This comment was originally written for MD5, which is why it

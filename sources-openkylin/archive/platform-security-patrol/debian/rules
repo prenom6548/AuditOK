@@ -1,0 +1,44 @@
+#!/usr/bin/make -f
+
+export DEB_BUILD_MAINT_OPTIONS = hardening=+all
+
+%:
+	dh $@
+
+override_dh_auto_configure:
+	mkdir -p obj-$(DEB_HOST_GNU_TYPE)
+	cd obj-$(DEB_HOST_GNU_TYPE) && cmake .. \
+		-DCMAKE_BUILD_TYPE=Release \
+		-DCMAKE_INSTALL_PREFIX=/usr \
+		-DCMAKE_INSTALL_LIBDIR=lib \
+		-DBUILD_TESTING=OFF
+
+override_dh_auto_build:
+	cd obj-$(DEB_HOST_GNU_TYPE) && make -j$(nproc)
+
+override_dh_auto_install:
+	cd obj-$(DEB_HOST_GNU_TYPE) && make install DESTDIR=$(CURDIR)/debian/platform-security-patrol
+
+	# 创建日志目录
+	mkdir -p $(CURDIR)/debian/platform-security-patrol/var/log/plat-sec-patrol
+	chmod 755 $(CURDIR)/debian/platform-security-patrol/var/log/plat-sec-patrol
+
+	# 安装 copyright 文件（Debian 规范要求位于 /usr/share/doc/PACKAGE/copyright）
+	ln -s LICENSE $(CURDIR)/debian/platform-security-patrol/usr/share/doc/plat-sec-patrol/copyright
+
+	# 验证插件已安装
+	@echo "=== 验证插件安装 ==="
+	@echo "环境感知插件:"
+	ls -la $(CURDIR)/debian/platform-security-patrol/usr/lib/plat-sec-patrol/plugins/environment/ || \
+		(echo "ERROR: 环境感知插件未安装" && exit 1)
+	@echo "能力库插件:"
+	ls -la $(CURDIR)/debian/platform-security-patrol/usr/lib/plat-sec-patrol/plugins/capability/ || \
+		(echo "ERROR: 能力库插件未安装" && exit 1)
+	@echo "=== 插件验证通过 ==="
+
+# 插件 .so 为 dlopen 加载的私有模块，不应注册为公共共享库
+override_dh_makeshlibs:
+	dh_makeshlibs -Xplat-sec-patrol/plugins
+
+override_dh_auto_clean:
+	rm -rf obj-$(DEB_HOST_GNU_TYPE)
