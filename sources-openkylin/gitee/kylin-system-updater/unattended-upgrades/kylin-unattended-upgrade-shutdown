@@ -1,0 +1,775 @@
+#!/usr/bin/python3
+# Copyright (c) 2009-2018 Canonical Ltd
+#
+# AUTHOR:
+# Michael Vogt <mvo@ubuntu.com>
+# Balint Reczey <rbalint@ubuntu.com>
+#
+# unattended-upgrade-shutdown - helper that checks if a
+# unattended-upgrade is in progress and waits until it exists
+#
+# This file is part of unattended-upgrades
+#
+# unattended-upgrades is free software; you can redistribute it and/or
+# modify it under the terms of the GNU General Public License as published
+# by the Free Software Foundation; either version 2 of the License, or (at
+# your option) any later version.
+#
+# unattended-upgrades is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+# General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with unattended-upgrades; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+#
+
+from cmath import atan
+from time import timezone
+import dbus
+import signal
+import datetime
+import logging
+import logging.config
+import os.path
+import os
+import sys
+import getpass
+import configparser
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+from optparse import OptionParser, Values
+from threading import Event 
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.jobstores.memory import MemoryJobStore
+from apscheduler.executors.pool import ThreadPoolExecutor,ProcessPoolExecutor
+from apt.progress.base import AcquireProgress
+import random
+import subprocess
+# from pytz import utc
+from gettext import gettext as _
+import gettext
+import apt
+import apt_pkg
+import json
+#deprecated
+UNATTENDED_UPGRADE_CONFIG_FILE_PATH="/var/lib/unattended-upgrades/unattended-upgrade.conf"
+UNATTENDED_UPGRADE_TIMESTAMP = "/var/lib/unattended-upgrades/unattended-upgrades-timestamp"
+
+
+UNATTENDED_UPGRADE_POLICY_FILE_PATH="/var/lib/unattended-upgrades/unattended-upgrades-policy.conf"
+LOG_PATH = "/var/log/kylin-unattended-upgrades/unattended-upgrades-shutdown.log"
+TIMESTAMP_PATH="/var/lib/kylin-software-properties/template/kylin-source-status"
+ACTION_INSTALL = 1
+ACTION_CHECK_RESOLVER = 3
+ACTION_DOWNLOADONLY = 4
+        
+def get_random_time(time_interval):
+    now = datetime.datetime.now()
+    try:
+        start_time = datetime.datetime.strptime(time_interval.split("-")[0],"%H:%M")
+        end_time = datetime.datetime.strptime(time_interval.split("-")[1],"%H:%M")
+        start=datetime.datetime(now.year,now.month,now.day,start_time.hour,start_time.minute,0,0)
+        end=datetime.datetime(now.year,now.month,now.day,end_time.hour,end_time.minute,0,0)
+        time_diff = int((end-start).total_seconds())
+        if time_diff<0:
+            time_diff=time_diff+86400
+        delta = random.randint(0,time_diff)
+        actual_time = start+datetime.timedelta(seconds=delta)
+        time_diff = int((actual_time - now).total_seconds())
+        if time_diff<0:
+            return actual_time+datetime.timedelta(seconds=86400)
+        return actual_time
+    except Exception as e:
+        logging.error(_("illegal time format:%s")%e)
+        return now+datetime.timedelta(seconds=random.randint(10,86400))
+
+def ReadValueFromFile(file,section,option):
+    config=configparser.ConfigParser(allow_no_value=True)
+    config.optionxform = str
+    try:
+        config.read(file)
+        value = config[section][option]
+    except Exception as e:
+        logging.error(_("read config file error:%s")%e)
+        return ''
+    return value
+
+def WriteValueToFile(file,section,option,value):
+    config=configparser.ConfigParser(allow_no_value=True)
+    config.optionxform = str
+    config.add_section(section)
+    config.set(section,option,value)
+    config.write(open(file,"w"))
+  
+def signal_term_handler(signal,frame):
+    # type: (int, object) -> None
+    logging.warning("SIGTERM received, will stop")
+    os._exit(1)
+
+def Predownload():
+    logging.info(_("predownload task start"))
+    if unattended_upgrades_shutdown.Download():
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        unattended_upgrades_shutdown.update_timestamp('predownload',now)
+        return 0
+    else:
+        return 1
+    
+def Download():
+    logging.info(_("download task start"))
+    if unattended_upgrades_shutdown.Download():
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        unattended_upgrades_shutdown.update_timestamp('download',now)
+        return 0
+    else:
+        return 1
+    
+def Install():
+    logging.info(_("install task start"))
+    if unattended_upgrades_shutdown.Install():
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        unattended_upgrades_shutdown.update_timestamp('install',now)
+        return 0 
+    else:
+        return 1
+    
+def Upgrade():
+    logging.info(_("upgrade task start"))
+    if unattended_upgrades_shutdown.Install():
+        return 0 
+    else:
+        return 1     
+
+class FetchProgress(AcquireProgress):
+    def __init__(self) -> None:
+        super().__init__()
+     
+    def fetch(self, item: apt_pkg.AcquireItemDesc) -> None:
+        logging.debug("%s [%d%%]"%(item.description,self.current_bytes*100/self.total_bytes))
+        return super().fetch(item)
+    
+    def fail(self, item: apt_pkg.AcquireItemDesc) -> None:
+        logging.error("package fetch failed:%s"%item.description)
+        return super().fail(item)
+    
+    def ims_hit(self, item: apt_pkg.AcquireItemDesc) -> None:
+        return super().ims_hit(item)
+    
+    def media_change(self, media: str, drive: str) -> bool:
+        return super().media_change(media, drive)
+    
+    def pulse(self, owner: apt_pkg.Acquire) -> bool:
+        return super().pulse(owner)
+    
+    def start(self) -> None:
+        logging.info("download start")
+        return super().start()
+   
+    def stop(self) -> None:
+        logging.info("download finished")
+        return super().stop()
+           
+class AutoUpgradePolicy():
+    def __init__(self) -> None:
+        self.autoupgradepolicy = {}
+        if os.path.exists(UNATTENDED_UPGRADE_POLICY_FILE_PATH):
+            config=configparser.ConfigParser(allow_no_value=True)
+            config.optionxform = str
+            config.read(UNATTENDED_UPGRADE_POLICY_FILE_PATH)
+            for option in config.options('autoUpgradePolicy'):
+                self.autoupgradepolicy.update({option:config['autoUpgradePolicy'][option]})
+        logging.info(_("auto upgrade policy:"))
+        for key in self.autoupgradepolicy.keys():
+            logging.debug("%s:%s"%(key,self.autoupgradepolicy[key]))
+        self.timestamp = {}
+        if os.path.exists(UNATTENDED_UPGRADE_TIMESTAMP):
+            logging.info(_("loading update time stamp"))
+            config=configparser.ConfigParser(allow_no_value=True)
+            config.optionxform = str
+            config.read(UNATTENDED_UPGRADE_TIMESTAMP)
+            if 'TimeStamp' in config.sections():                
+                for option in config.options('TimeStamp'):
+                    self.timestamp.update({option:config.get('TimeStamp',option)})
+            logging.info(_("last run time:"))
+            for key in self.timestamp:       
+                logging.info("%s:%s"%(key,self.timestamp[key]))
+                
+    def UpdatePolicy(self):
+        if os.path.exists(UNATTENDED_UPGRADE_POLICY_FILE_PATH):
+            config=configparser.ConfigParser(allow_no_value=True)
+            config.optionxform = str
+            config.read(UNATTENDED_UPGRADE_POLICY_FILE_PATH)
+            for option in config.options('autoUpgradePolicy'):
+                self.autoupgradepolicy.update({option:config['autoUpgradePolicy'][option]})
+        logging.info(_("auto upgrade policy:"))
+        for key in self.autoupgradepolicy.keys():
+            logging.debug("%s:%s"%(key,self.autoupgradepolicy[key]))    
+                    
+    def UpdateTimeStamp(self,task_id,last_run_time):
+        logging.debug(_("update timestamp:%s %s")%(task_id,last_run_time))
+        self.timestamp.update({task_id:last_run_time})
+        if os.path.exists(UNATTENDED_UPGRADE_TIMESTAMP):
+            config=configparser.ConfigParser(allow_no_value=True)
+            config.optionxform = str
+            config.read(UNATTENDED_UPGRADE_TIMESTAMP)
+            if 'TimeStamp' in config.sections():
+                config.set('TimeStamp',task_id,last_run_time)  
+                with open(UNATTENDED_UPGRADE_TIMESTAMP,'w') as f:
+                    config.write(f)
+                
+    def GetTimeStamp(self,task_id):
+        if task_id in self.timestamp.keys():
+            return self.timestamp[task_id]
+        else:
+            return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+    def SetOptionValue(self,option,value):
+        self.autoupgradepolicy.update({option:value})
+   
+    def GetOptionValue(self,option):
+        try:
+            return self.autoupgradepolicy[option]
+        except Exception:
+            return '' 
+                                                         
+class UnattendedUpgradesShutdown():
+    def __init__(self, options):
+        # type: (Values) -> None
+        self.options = options
+        self.init_events_flags()
+        self.init_policy_config()
+        self.init_scheduler()
+        self.init_dbus_connections() 
+    
+    def init_events_flags(self):
+        logging.info(_("init events and flags"))
+        self.update_detect_status = False
+        self.update_detect_event = Event()
+        self.update_list = []
+        self.resolve_depend_status = False
+        self.resolve_depend_status_event = Event()
+        self.remove_pkgs = []
+        self.install_finish_status = False
+        self.install_finish_status_event = Event()
+        self.install_finish_group = []
+        self.backup_start_result = False
+        self.backup_start_event = Event()
+        self.backup_finish_result = False
+        self.backup_finish_event = Event()
+    
+    def init_policy_config(self):
+        logging.info(_("init policy config"))
+        self.autoupgradepolicy = AutoUpgradePolicy()
+    
+    def init_scheduler(self):
+        jobstores = {'default': MemoryJobStore()}
+        executors = {'default':ThreadPoolExecutor(1),'processpool':ProcessPoolExecutor(1)}
+        job_defaults = {'misfire_grace_time':3600,'coalesce':True,'max_instances':1}
+        self.background_scheduler = BackgroundScheduler(jobstores=jobstores,executors=executors,job_defaults=job_defaults,timezone="Asia/Shanghai")
+        updatedays = 1
+        try:
+            updatedays = int(self.autoupgradepolicy.GetOptionValue('updateDays'))
+        except Exception as e:
+            logging.error(_("get update days error:%s")%e)
+        try:
+            if self.autoupgradepolicy.GetOptionValue('autoUpgradeState') == 'on':
+                if self.autoupgradepolicy.GetOptionValue('downloadMode') == 'timing':
+                    random_time = self.get_next_run_time('download')
+                    self.background_scheduler.add_job(Download,trigger='interval',days=updatedays,\
+                            start_date=random_time,id='download',replace_existing=True)                        
+                if self.autoupgradepolicy.GetOptionValue('installMode') == 'timing':
+                    random_time = self.get_next_run_time('install')
+                    self.background_scheduler.add_job(Install,trigger='interval',days=updatedays,\
+                        start_date=random_time,id='install',replace_existing=True)
+            if self.autoupgradepolicy.GetOptionValue('preDownload') == 'on':
+                random_time = self.get_next_run_time('predownload')
+                self.background_scheduler.add_job(Predownload,trigger='interval',days=updatedays,\
+                    start_date=random_time,id='predownload',replace_existing=True)                
+        except Exception as e:
+            logging.error(_("job initial error:%s")%e)
+        self.background_scheduler.start()    
+        with open(LOG_PATH,'a+') as f:
+            self.background_scheduler.print_jobs(out=f)
+        joblist = self.background_scheduler.get_jobs()
+        for job in joblist:    
+            logging.debug(_("initial job:%s,next run time:%s")%(job.id,job.next_run_time))   
+    
+    def load_systemupgrade_dbus_config(self):
+        logging.debug(_("init system upgrade dbus connections"))
+        self.update_proxy = self.system_bus.get_object('com.kylin.systemupgrade','/com/kylin/systemupgrade',follow_name_owner_changes=True)
+        self.update_interface = dbus.Interface(self.update_proxy,dbus_interface='com.kylin.systemupgrade.interface')
+        self.update_proxy.connect_to_signal('UpdateDetectFinished',self.update_detect_finished_handler)                                        
+        self.update_proxy.connect_to_signal('UpdateFixBrokenStatus',self.update_fix_broken_status)
+        self.update_proxy.connect_to_signal('UpdateDependResloveStatus',self.update_depend_resolve_status)                                           
+        self.update_proxy.connect_to_signal('UpdateDloadAndInstStaChanged',self.update_download_install_status)
+        self.update_proxy.connect_to_signal('UpdateInstallFinished',self.update_install_finished)   
+        self.update_proxy.connect_to_signal('ChangeUpgradePolicy',self.change_upgrade_policy)                                                
+    
+    def load_strategy_dbus_config(self):
+        logging.debug(_("init strategy dbus connections"))
+        self.upgrade_strategy_proxy = self.system_bus.get_object('com.kylin.UpgradeStrategies','/com/kylin/UpgradeStrategies',follow_name_owner_changes=True)
+        self.upgrade_strategy_interface = dbus.Interface(self.upgrade_strategy_proxy,dbus_interface='com.kylin.UpgradeStrategies.interface') 
+        self.upgrade_strategy_proxy.connect_to_signal("PropertyChanged",self.property_changed_handler)
+        self.upgrade_strategy_proxy.connect_to_signal("UpgradeAllNow",self.upgrade_all_now_handler) 
+        
+    def load_backup_dbus_config(self):
+        logging.debug(_("init backup dbus connections"))
+        self.backup_proxy = self.system_bus.get_object('com.kylin.backup','/',follow_name_owner_changes=True)
+        self.backup_interface = dbus.Interface(self.backup_proxy,dbus_interface='com.kylin.backup.manager')                                                                                                                                      
+        self.backup_proxy.connect_to_signal('sendStartBackupResult',self.backup_start_handler)                                       
+        self.backup_proxy.connect_to_signal('sendBackupResult',self.backup_result_handler)                                          
+        self.backup_proxy.connect_to_signal('sendRate',self.send_rate_handler) 
+    
+    def load_sys_dbus_config(self):
+        logging.debug(_("load sys dbus config"))
+        self.sys_proxy = self.system_bus.get_object('org.freedesktop.DBus','/org/freedesktop/DBus')
+        self.sys_proxy.connect_to_signal('NameOwnerChanged',self.name_owner_changed)
+         
+    def init_dbus_connections(self):
+        logging.debug(_("loading dbus configures..."))
+        DBusGMainLoop(set_as_default=True)
+        self.loop = GLib.MainLoop()
+        self.system_bus = dbus.SystemBus()
+        self.load_sys_dbus_config()
+        self.load_systemupgrade_dbus_config()
+        self.load_strategy_dbus_config()
+        self.load_backup_dbus_config()
+                                                 
+    def name_owner_changed(self,busname,oldname,newname):
+        if (busname == 'com.kylin.UpgradeStrategies'):
+            logging.debug("name owner changed:%s,%s,%s"%(busname,oldname,newname))
+        elif(busname == 'com.kylin.systemupgrade'):
+            logging.debug("name owner changed:%s,%s,%s"%(busname,oldname,newname))
+        elif(busname == 'com.kylin.backup'):
+            logging.debug("name owner changed:%s,%s,%s"%(busname,oldname,newname))
+        else:
+            pass
+    
+    def change_upgrade_policy(self):
+        logging.debug("change upgrade policy")
+        self.autoupgradepolicy.UpdatePolicy()
+        autoupgradestate = self.autoupgradepolicy.GetOptionValue('autoUpgradeState')
+        self.property_changed_handler('autoUpgradeState',autoupgradestate)
+            
+    def property_changed_handler(self,property, value): 
+        logging.info(_("property change:%s:%s")%(property,value))    
+        self.autoupgradepolicy.SetOptionValue(property,value)             
+        self.ExecutePolicy(property,value)
+        with open(LOG_PATH,'a+') as f:
+            self.background_scheduler.print_jobs(out=f)
+        joblist = self.background_scheduler.get_jobs()
+        for job in joblist:    
+            logging.debug(_("job:%s,next run time:%s")%(job.id,job.next_run_time))    
+    
+    def upgrade_all_now_handler(self):
+        logging.info(_("upgrade all now sinal received"))
+        delta = random.randint(0,int(self.autoupgradepolicy.GetOptionValue('randomRange')))
+        run_date = datetime.datetime.now() + datetime.timedelta(minutes=delta)
+        self.background_scheduler.add_job(Upgrade,'date', run_date = run_date,id="upgrade",\
+            max_instances=1,replace_existing=True)  
+        with open(LOG_PATH,'a+') as f:
+            self.background_scheduler.print_jobs(out=f) 
+        joblist = self.background_scheduler.get_jobs()
+        for job in joblist:    
+           logging.debug(_("job:%s,next run time:%s")%(job.id,job.next_run_time))    
+                                       
+    def update_detect_finished_handler(self,success,updatelist,error_status,error_cause):
+        logging.info(_("update detect finished:sucess:%s,updatelist:%s,error_status:%s,error_cause:%s")\
+            %(success,",".join(updatelist),error_status,error_cause))
+        self.update_detect_status = success
+        self.update_list = []
+        if success:
+            try:
+                for update_group in updatelist:
+                    json_file_path = ("/var/lib/kylin-system-updater/json/%s.json"%(update_group))
+                    if os.path.exists(json_file_path):
+                        with open(json_file_path,'r') as f:
+                            data = json.load(f)
+                            for key in data['upgrade_list'].keys():
+                                if key in ["total_download_size","total_install_size"]:
+                                    pass
+                                else:
+                                    self.update_list.append(key)
+                            for key in data['install_list'].keys():
+                                if key in ["total_download_size","total_install_size"]:
+                                    pass
+                                else:
+                                    self.update_list.append(key)
+            except Exception as e:
+                logging.error(e)  
+        self.update_detect_event.set()
+        
+    def update_fix_broken_status(self,resolver_status,remove_status,remove_pkgs,pkg_raw_description,delete_desc,error_string,error_desc):
+        logging.info(_("update fix broken status:resolver_status:%s,remove_status:%s,error_string:%s,error_desc:%s")%(resolver_status,remove_status,error_string,error_desc))
+        #logging.info(remove_pkgs,pkg_raw_description,delete_desc)
+        self.update_detect_status = False
+        self.update_list = []
+        self.update_detect_event.set()
+            
+    def update_depend_resolve_status(self,resolver_status,remove_status,remove_pkgs,pkg_raw_description,delete_description,error_string,error_desc):
+        logging.info(_("update depend resolve status:%s,remove status:%s,remove pkgs:%s,pkg raw description:%s,delete_descrition:%s,error string:%s,error desc:%s")\
+            %(resolver_status,remove_status,",".join(remove_pkgs),",".join(pkg_raw_description),",".join(delete_description),error_string,error_desc))
+        self.resolve_depend_status = resolver_status
+        self.remove_pkgs = remove_pkgs
+        self.resolve_depend_status_event.set()
+        
+    def update_download_install_status(self,group,progress,status,details):
+        logging.debug(_("%s update progress:%d,status:%s,details:%s")%(",".join(group),progress,status,details))
+        
+    def update_install_finished(self,success,group,error_string,error_desc):
+        logging.info(_("update install finisih success:%s,group:%s,error string:%s,error desc:%s")\
+            %(success,",".join(group),error_string,error_desc))
+        self.install_finish_status = success
+        self.install_finish_group=group
+        self.install_finish_status_event.set()        
+    
+    def backup_start_handler(self,result):
+        logging.debug(_("backup start result:%d")%result)
+        if result == 30:    
+            self.backup_start_result = True    
+        else:                    
+            self.backup_start_result = False
+            self.backup_finish_event.set()
+        self.backup_start_event.set()
+                    
+    def backup_result_handler(self,result):
+        logging.debug(_("backup result:%s")%result)
+        if result:                    
+            self.backup_finish_result = True 
+        else:
+            self.backup_finish_result = False 
+        self.backup_finish_event.set()   
+        
+    def send_rate_handler(self,sta,pro):
+        logging.debug(_("backup status:%d,progress:%d")%(sta,pro))
+    
+    def run(self):
+        if self.options.wait_for_signal:
+            logging.debug(_("Waiting for signal to start operation "))
+            self.loop.run()
+        elif options.download_only:
+            logging.debug(_("runing a download job"))
+            return self.Download()
+        elif options.install_only:
+            logging.debug(_("runing an install job"))
+            return self.Install()
+        elif options.upgrade:
+            logging.debug(_("runing an upgrade job"))
+            return self.Install()
+        else:
+            logging.info(_("illegal options"))
+        return True
+    
+    def print_jobs(self):
+        with open(LOG_PATH,'a+') as f:
+            self.background_scheduler.print_jobs(out=f)
+    
+    def list_jobs(self):
+        joblist = self.background_scheduler.get_jobs()
+        for job in joblist:    
+            logging.debug(_("job:%s,next run time:%s")%(job.id,job.next_run_time))
+            
+    def remove_job(self,job_id):
+        if self.background_scheduler.get_job(job_id):
+            self.background_scheduler.remove_job(job_id)   
+             
+    def update_timestamp(self,task_id,timestamp):
+        self.autoupgradepolicy.UpdateTimeStamp(task_id,timestamp)
+ 
+    def get_next_run_time(self,task_id):
+        now = datetime.datetime.now()
+        try:
+            option = 'downloadTime'
+            if task_id == 'download':
+                option = 'downloadTime'
+            elif task_id == 'install':
+                option = 'installTime'
+            elif task_id == 'predownload':
+                option = 'preDownloadTime'
+            else:
+                pass
+            last_run_date=datetime.datetime.strptime(self.autoupgradepolicy.GetTimeStamp(task_id),"%Y-%m-%d %H:%M:%S")
+            next_run_date=last_run_date+datetime.timedelta(days=float(self.autoupgradepolicy.GetOptionValue('updateDays')))
+            time_interval = self.autoupgradepolicy.GetOptionValue(option)
+            start_time = datetime.datetime.strptime(time_interval.split("-")[0],"%H:%M")
+            end_time = datetime.datetime.strptime(time_interval.split("-")[1],"%H:%M")
+            start=datetime.datetime(next_run_date.year,next_run_date.month,next_run_date.day,start_time.hour,start_time.minute,0,0)
+            end=datetime.datetime(next_run_date.year,next_run_date.month,next_run_date.day,end_time.hour,end_time.minute,0,0)
+            time_diff = int((end-start).total_seconds())
+            delta=0
+            if time_diff<0:
+                delta = random.randint(time_diff,0)       
+            else:
+                delta = random.randint(0,time_diff)     
+            nextdate = start+datetime.timedelta(seconds=delta)
+            if ((now-nextdate).total_seconds())>0:                     
+                return datetime.datetime(now.year,now.month,now.day,nextdate.hour,nextdate.minute,nextdate.second,0)
+            else:
+                return nextdate
+        except Exception as e:
+            logging.error(_("illegal time format:%s")%e)
+            return now+datetime.timedelta(seconds=random.randint(0,86400))
+        
+    def ExecutePolicy(self,property,value):
+        updatedays = 1
+        try:
+            updatedays = int(self.autoupgradepolicy.GetOptionValue('updateDays'))
+        except Exception as e:
+            logging.error(e)
+        try:      
+            if property == 'autoUpgradeState':
+                if value == 'on':
+                    if self.autoupgradepolicy.GetOptionValue('downloadMode') == 'timing':
+                        random_time = self.get_next_run_time("download")
+                        self.background_scheduler.add_job(Download,trigger='interval',days=updatedays,\
+                            start_date=random_time,id='download',replace_existing=True)
+                    if self.autoupgradepolicy.GetOptionValue('installMode') == 'timing':
+                        random_time = self.get_next_run_time("install")
+                        self.background_scheduler.add_job(Install,trigger='interval',days=updatedays,\
+                            start_date=random_time,id='install',replace_existing=True)
+                elif value == 'off':
+                    self.remove_job('download')
+                    self.remove_job('install')
+                else:
+                    pass                 
+            elif property == 'downloadMode':
+                if value == 'timing':
+                    if self.autoupgradepolicy.GetOptionValue('autoUpgradeState') == 'on':
+                        random_time = self.get_next_run_time("download")
+                        self.background_scheduler.add_job(Download,trigger='interval',days=updatedays,\
+                            start_date=random_time,id='download',replace_existing=True)
+                elif value == 'manual':
+                    self.remove_job('download')
+                else:
+                    pass    
+            elif property == 'downloadTime':  
+                if self.autoupgradepolicy.GetOptionValue('autoUpgradeState') == 'on' and \
+                    self.autoupgradepolicy.GetOptionValue('downloadMode') == 'timing': 
+                    random_time = self.get_next_run_time("download")
+                    self.background_scheduler.add_job(Download,trigger='interval',days=updatedays,\
+                        start_date=random_time,id='download',replace_existing=True)      
+            elif property == 'installMode':  
+                if value == 'timing':
+                    if self.autoupgradepolicy.GetOptionValue('autoUpgradeState') == 'on':
+                        random_time = self.get_next_run_time("install")
+                        self.background_scheduler.add_job(Install,trigger='interval',days=updatedays,\
+                            start_date=random_time,id='install',replace_existing=True)
+                elif value == 'manual':
+                    self.remove_job('install')
+                elif value == 'bshutdown':
+                    self.remove_job('install')
+                else:
+                    pass
+            elif property == 'installTime':  
+                if self.autoupgradepolicy.GetOptionValue('autoUpgradeState') == 'on' and \
+                    self.autoupgradepolicy.GetOptionValue('installMode') == 'timing':
+                    random_time = self.get_next_run_time("install")
+                    self.background_scheduler.add_job(Install,trigger='interval',days=updatedays,\
+                        start_date=random_time,id='install',replace_existing=True)
+            elif property == 'preDownload':  
+                if value == 'on':
+                    random_time = self.get_next_run_time("predownload")
+                    self.background_scheduler.add_job(Predownload,trigger='interval',days=updatedays,\
+                        start_date=random_time,id='predownload',replace_existing=True)           
+                elif value == 'off':
+                    self.remove_job('predownload')
+                else:
+                    pass 
+            elif property == 'preDownloadTime':  
+                if self.autoupgradepolicy.GetOptionValue('preDownload') == 'on':
+                    random_time = self.get_next_run_time("predownload")
+                    self.background_scheduler.add_job(Predownload,trigger='interval',days=updatedays,\
+                        start_date=random_time,id='predownload',replace_existing=True)        
+            elif property == 'updateDays':
+                if self.autoupgradepolicy.GetOptionValue('preDownload') == 'on':
+                    random_time = self.get_next_run_time("predownload")
+                    self.background_scheduler.add_job(Predownload,trigger='interval',days=updatedays,\
+                        start_date=random_time,id='predownload',replace_existing=True) 
+                if self.autoupgradepolicy.GetOptionValue('autoUpgradeState') == 'on':
+                    if self.autoupgradepolicy.GetOptionValue('downloadMode') == 'timing': 
+                        random_time = self.get_next_run_time("download")
+                        self.background_scheduler.add_job(Download,trigger='interval',days=updatedays,\
+                            start_date=random_time,id='download',replace_existing=True) 
+                    if self.autoupgradepolicy.GetOptionValue('installMode') == 'timing':
+                        random_time = self.get_next_run_time("install")
+                        self.background_scheduler.add_job(Install,trigger='interval',days=updatedays,\
+                            start_date=random_time,id='install',replace_existing=True)           
+            else:
+                logging.info(_("other options:%s:%s")%(property,value))
+        except Exception as e:
+            logging.error(_("policy execute error:%s")%e) 
+    
+    def Backup(self): 
+        logging.info(_("start backup"))
+        backup_partition_status = self.backup_interface.Mount_backup_partition()
+        logging.info(_("backup partition status:%d")%backup_partition_status)
+        if backup_partition_status not in [0,5]:
+            logging.error(_("backup partition error:%d")%backup_partition_status)
+            return False
+        status_code,result = self.backup_interface.getBackupState()
+        logging.debug(_("backup state code:%d,%s")%(status_code,result))
+        if result == 0 and status_code == 99:
+            pass
+        else:   
+            return False
+        backup_name = _("unattended upgrades")
+        create_note = ''
+        inc_note = ''
+        userName=getpass.getuser()
+        uid=os.getuid()
+        self.backup_finish_event.clear()
+        self.backup_start_result =True
+        self.backup_finish_result=True
+        self.backup_interface.autoBackUpForSystemUpdate_noreturn(backup_name,create_note,inc_note,userName,uid)
+        self.backup_finish_event.wait()
+        logging.debug(_("backup start result:%s,backup result:%s")%(self.backup_start_result,self.backup_finish_result))
+        if (self.backup_start_result and self.backup_finish_result):              
+            return True
+        else:
+            return False
+        
+    def Download(self):
+        logging.debug(_("start download"))
+        self.update_detect_event.clear()
+        self.UpdateDetect()
+        self.update_detect_event.wait()
+        logging.debug(_("update detect finish:%s,%s")%(self.update_detect_status,",".join(self.update_list)))
+        if self.update_detect_status and len(self.update_list)>0:
+            pass
+        # elif not self.update_detect_status and 'kylin-system-updater' in self.update_list:
+        #     logging.info(_("self update finished"))
+        else:
+            logging.info(_("no pkgs to download"))
+            return False
+        cache = apt.Cache()
+        for pkg in self.update_list:
+            try:
+                package = cache[pkg]
+                if not package.installed:
+                    package.mark_install()
+                else:
+                    package.mark_upgrade()
+            except Exception as e:
+                logging.error(e)
+                return False
+        list = apt_pkg.SourceList()
+        list.read_main_list()
+        recs = cache._records
+        pm = apt_pkg.PackageManager(cache._depcache)
+        fetcher = apt_pkg.Acquire(FetchProgress())
+        try:
+            pm.get_archives(fetcher, list, recs)
+        except Exception as e:
+            logging.error(e)
+        res = fetcher.run()
+        logging.debug("fetch.run() result: %s", res)
+        if res == 0:
+            return True
+        else:
+            return False
+        
+    def Install(self):
+        logging.debug(_("start install"))
+        self.update_detect_event.clear()
+        self.UpdateDetect()
+        self.update_detect_event.wait()
+        logging.debug(_("update detect finish:%s,%s")%(self.update_detect_status,",".join(self.update_list)))
+        if self.update_detect_status and len(self.update_list)>0:
+            pass
+        # elif not self.update_detect_status and 'kylin-system-updater' in self.update_list:
+        #     logging.info(_("self update finished"))
+        else:
+            return False
+        self.resolve_depend_status_event.clear()
+        self.DistUpgradeAll(False)
+        self.resolve_depend_status_event.wait()
+        logging.debug(_("resolve dependency status:%s,%s")%(self.resolve_depend_status,",".join(self.remove_pkgs)))
+        if self.resolve_depend_status and len(self.remove_pkgs)==0:
+            pass
+        else:
+            return False
+        needbackup = self.autoupgradepolicy.GetOptionValue('backupbeforeinstall')
+        logging.debug(_("checking if need backup:%s")%needbackup)
+        if needbackup == 'on':
+            if self.Backup():
+                logging.debug(_("backup success"))
+            else:
+                logging.debug(_("backup failed"))
+                return False    
+        self.install_finish_status_event.clear()
+        self.DistUpgradeAll(True)
+        self.install_finish_status_event.wait()        
+        logging.debug(_("install finish status:%s,%s")%(self.install_finish_status,",".join(self.install_finish_group)))
+        if self.install_finish_status and len(self.install_finish_group)>0:
+            self.reboot_if_required()
+        else:
+            return False
+        return True        
+      
+    def UpdateDetect(self):
+        return self.update_interface.UpdateDetect()
+    
+    def DistUpgradeAll(self,is_install):
+        return self.update_interface.DistUpgradeAll(is_install) 
+    
+    def mount_backup_partition(self):
+        return self.backup_interface.Mount_backup_partition()
+    
+    def get_backup_state(self):
+        return self.backup_interface.getBackupState()
+
+    def get_backup_comment_for_systemupdate(self):
+        return self.backup_interface.getBackupCommentForSystemUpdate()
+    
+    def auto_backup_for_system_update_noreturn(self,timeStamp,create_note,inc_note,userName,uid):
+        self.backup_interface.autoBackUpForSystemUpdate_noreturn(timeStamp,create_note,inc_note,userName,uid)
+        return        
+    
+    def reboot_if_required(self):
+        needreboot = self.autoupgradepolicy.GetOptionValue('automaticReboot')
+        when = self.autoupgradepolicy.GetOptionValue('automaticRebootTime')
+        logging.debug(_("check if need reboot:%s when:%s")%(needreboot,when))
+        if needreboot == "on":
+            try:
+                output = subprocess.check_output(["/sbin/shutdown","-r",when],shell=False)
+                logging.debug(output)
+            except Exception as e:
+                logging.error(_("Failed to issue shutdown: %s")%e)
+                return False
+  
+if __name__ == "__main__":
+    gettext.bindtextdomain("unattended-upgrades","/usr/share/locale")
+    gettext.textdomain("unattended-upgrades")
+    parser = OptionParser()
+    parser.add_option("", "--debug",
+                      action="store_true", dest="debug",
+                      default=False,help="print debug messages")   
+    parser.add_option("", "--download-only",
+                      action="store_true", dest="download_only",
+                      default=False,help="only download without install")
+    parser.add_option("", "--install-only",
+                      action="store_true", dest="install_only",
+                      default=False,help="only install without download")
+    parser.add_option("", "--upgrade",
+                      action="store_true", dest="upgrade",
+                      default=False,help="upgrade all packages") 
+    parser.add_option("", "--wait-for-signal",
+                      action="store_true", dest="wait_for_signal",
+                      default=False,
+                      help="wait for TERM signal before starting operation")
+    (options, args) = parser.parse_args()
+    logdir = "/var/log/kylin-unattended-upgrades/"
+    if not os.path.exists(logdir):
+        os.makedirs(logdir)
+    logfile = os.path.join(logdir, "unattended-upgrades-shutdown.log")
+    if options.debug:
+        logging.basicConfig(format='%(asctime)s-%(name)s-%(levelname)s-%(message)s',datefmt='%Y-%m-%d,%H:%M:%S',level=logging.DEBUG,stream=sys.stdout)
+    else:
+        logging.basicConfig(format='%(asctime)s-%(name)s-%(levelname)s-%(message)s',datefmt='%Y-%m-%d,%H:%M:%S',level=logging.DEBUG,filename=logfile) 
+    signal.signal(signal.SIGTERM, signal_term_handler)
+    signal.signal(signal.SIGHUP, signal.SIG_IGN)
+    logging.info(_("unattended upgrade start options:%s")%(" ".join(sys.argv)))
+    unattended_upgrades_shutdown = UnattendedUpgradesShutdown(options)
+    sys.exit(unattended_upgrades_shutdown.run())    

@@ -1,0 +1,660 @@
+# syntax=docker/dockerfile:1.7
+
+# Source-build recipe for the ROS 2 Jazzy simulation on openKylin 3.0.
+# Build: docker buildx build -f Dockerfile.jazzy-simulation-ok30 \
+#          -t openkylin/ros:jazzy-simulation --load .
+# The base and simulation are compiled here; no published ROS image is used.
+
+ARG OPENKYLIN_IMAGE=openkylin/openkylin:3.0
+
+FROM --platform=${TARGETPLATFORM} ${OPENKYLIN_IMAGE} AS base-builder
+
+ARG ROS_DISTRO=jazzy
+ARG ROS2_REPOS_REF=release-jazzy-20260618
+ARG ROS_VARIANTS_COMMIT=70f5a409ae7a9baa44950bf8468742256de67c43
+ARG FZF_VERSION=0.74.1
+ARG BULLET_VERSION=3.24
+ARG OROCOS_KDL_VERSION=1.5.1
+ARG PYKDL_PYBIND11_VERSION=2.13.6
+ARG LZ4_VERSION=1.9.4
+ARG URDFDOM_HEADERS_VERSION=2.1.2
+ARG BUILD_JOBS=2
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS} \
+    MAKEFLAGS="-j${BUILD_JOBS}" \
+    PATH=/opt/jazzy-tools/bin:${PATH}
+
+SHELL ["/bin/bash", "-e", "-o", "pipefail", "-c"]
+
+# Preserve every source shipped by 3.0, including anything3.0. These pins
+# follow the repository's existing 3.0 recipes for incomplete proposed metadata.
+RUN case "${TARGETARCH}" in amd64|arm64|riscv64) ;; *) exit 1 ;; esac \
+    && if [ "${TARGETARCH}" = amd64 ]; then \
+         printf '%s\n' 'Package: python3-pkg-resources' \
+           'Pin: version 68.1.2-ok2' 'Pin-Priority: 1001' \
+           > /etc/apt/preferences.d/openkylin-python.pref; \
+       else \
+         printf '%s\n' 'Package: libucx0' \
+           'Pin: version 1.16.0+ds-ok1' 'Pin-Priority: 1001' \
+           > /etc/apt/preferences.d/openkylin-ucx.pref; \
+       fi
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        libacl1-dev \
+        libcurl4-openssl-dev \
+        libeigen3-dev \
+        libgtest-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        libtinyxml2-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        libyaml-cpp-dev \
+        libyaml-dev \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        python3-cryptography \
+        python3-dev \
+        python3-netifaces \
+        python3-numpy \
+        python3-pip \
+        python3-psutil \
+        python3-venv \
+        python3-yaml \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# openKylin 3.0 does not package the complete ROS development toolchain.
+RUN python3 -m venv --system-site-packages /opt/jazzy-tools \
+    && /opt/jazzy-tools/bin/pip install --no-cache-dir --upgrade \
+        pip setuptools==80.9.0 wheel \
+    && /opt/jazzy-tools/bin/pip install --no-cache-dir \
+        catkin-pkg \
+        colcon-common-extensions \
+        empy==3.3.4 \
+        flake8 \
+        flake8-blind-except \
+        flake8-builtins \
+        flake8-class-newline \
+        flake8-comprehensions \
+        flake8-deprecated \
+        flake8-docstrings \
+        flake8-import-order \
+        flake8-quotes \
+        lark==1.1.9 \
+        lxml \
+        osrf-pycommon \
+        pybind11==2.13.6 \
+        pydocstyle \
+        pydot \
+        rosdep \
+        rosinstall-generator \
+        typing-extensions \
+        vcstool
+
+# Fast DDS uses standalone Asio, unavailable consistently in openKylin 3.0.
+RUN git clone --depth 1 --branch asio-1-30-2 \
+        https://github.com/chriskohlhoff/asio.git /tmp/asio \
+    && cp -a /tmp/asio/asio/include/. /usr/local/include/ \
+    && rm -rf /tmp/asio
+
+# tf2's Bullet conversions require the Noble-compatible Bullet 3.24 ABI.
+RUN git clone --depth 1 --branch "${BULLET_VERSION}" \
+        https://github.com/bulletphysics/bullet3.git /tmp/bullet3 \
+    && cmake -S /tmp/bullet3 -B /tmp/bullet3/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_SHARED_LIBS=ON \
+        -DBUILD_BULLET2_DEMOS=OFF \
+        -DBUILD_BULLET3=OFF \
+        -DBUILD_CPU_DEMOS=OFF \
+        -DBUILD_EXTRAS=OFF \
+        -DBUILD_OPENGL3_DEMOS=OFF \
+        -DBUILD_UNIT_TESTS=OFF \
+        -DINSTALL_LIBS=ON \
+        -DUSE_GRAPHICAL_BENCHMARK=OFF \
+    && cmake --build /tmp/bullet3/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/bullet3/build \
+    && rm -rf /tmp/bullet3
+
+# Build Orocos KDL and PyKDL for every target architecture.
+RUN git clone --depth 1 --branch "v${OROCOS_KDL_VERSION}" \
+        --recurse-submodules --shallow-submodules \
+        https://github.com/orocos/orocos_kinematics_dynamics.git /tmp/orocos-kdl \
+    && git -C /tmp/orocos-kdl/python_orocos_kdl/pybind11 fetch \
+        --depth 1 origin "v${PYKDL_PYBIND11_VERSION}" \
+    && git -C /tmp/orocos-kdl/python_orocos_kdl/pybind11 checkout FETCH_HEAD \
+    && cmake -S /tmp/orocos-kdl/orocos_kdl -B /tmp/orocos-kdl/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_MODELS=OFF \
+        -DENABLE_TESTS=OFF \
+    && cmake --build /tmp/orocos-kdl/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/orocos-kdl/build \
+    && ROS_PYTHON_VERSION=3 cmake \
+        -S /tmp/orocos-kdl/python_orocos_kdl \
+        -B /tmp/orocos-kdl/python-build \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+    && cmake --build /tmp/orocos-kdl/python-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/orocos-kdl/python-build \
+    && rm -rf /tmp/orocos-kdl
+
+# rosbag2 compression requires LZ4 development files on every architecture.
+RUN git clone --depth 1 --branch "v${LZ4_VERSION}" \
+        https://github.com/lz4/lz4.git /tmp/lz4 \
+    && cmake -S /tmp/lz4/build/cmake -B /tmp/lz4/cmake-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_SHARED_LIBS=ON \
+        -DLZ4_BUILD_CLI=OFF \
+        -DLZ4_BUILD_LEGACY_LZ4C=OFF \
+    && cmake --build /tmp/lz4/cmake-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/lz4/cmake-build \
+    && rm -rf /tmp/lz4
+
+# Ubuntu Noble resolves this dependency to ros-jazzy-urdfdom-headers, which
+# does not exist in openKylin. Install the compatible upstream headers.
+RUN git clone --depth 1 --branch "${URDFDOM_HEADERS_VERSION}" \
+        https://github.com/ros/urdfdom_headers.git /tmp/urdfdom-headers \
+    && cmake -S /tmp/urdfdom-headers -B /tmp/urdfdom-headers/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+    && cmake --build /tmp/urdfdom-headers/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/urdfdom-headers/build \
+    && rm -rf /tmp/urdfdom-headers
+
+# ros2cli uses fzf for interactive selection.
+RUN case "${TARGETARCH}" in \
+        amd64) FZF_SHA256="df53438be5f51e151bb4044d78fda72bdfe209e3ecd2baecae48e8dea370c81b" ;; \
+        arm64) FZF_SHA256="f22204dd1a091d43e102268d062fd53b47133c8d8581671ee5eb225b75e31183" ;; \
+        riscv64) FZF_SHA256="a647e12d907c650d963b5a4b5887bcba0307578a68deb37917142903a1c217d6" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+      esac \
+    && curl -fsSL \
+        "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-linux_${TARGETARCH}.tar.gz" \
+        -o /tmp/fzf.tar.gz \
+    && echo "${FZF_SHA256}  /tmp/fzf.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/fzf.tar.gz -C /usr/local/bin fzf \
+    && chmod 0755 /usr/local/bin/fzf \
+    && rm -f /tmp/fzf.tar.gz
+
+WORKDIR /jazzy_ws
+
+RUN curl -fsSL \
+        "https://raw.githubusercontent.com/ros2/ros2/${ROS2_REPOS_REF}/ros2.repos" \
+        -o /tmp/ros2.repos \
+    && mkdir -p src \
+    && vcs import --shallow src < /tmp/ros2.repos \
+    && mkdir -p src/ros2/variants \
+    && git -C src/ros2/variants init \
+    && git -C src/ros2/variants remote add origin https://github.com/ros2/variants.git \
+    && git -C src/ros2/variants fetch --depth 1 origin "${ROS_VARIANTS_COMMIT}" \
+    && git -C src/ros2/variants checkout --detach FETCH_HEAD \
+    && git -C src/ros2/variants update-ref refs/remotes/origin/pinned-variants HEAD \
+    && for package_path in \
+         src/ros2/rmw_connextdds \
+         src/ros2/rmw_cyclonedds \
+         src/ros2/rmw_zenoh \
+         src/ros2/mimick_vendor \
+         src/ros2/performance_test_fixture \
+         src/osrf/osrf_testing_tools_cpp \
+         src/ament/ament_lint/ament_uncrustify \
+         src/ament/uncrustify_vendor; \
+       do \
+         if [ -d "${package_path}" ]; then touch "${package_path}/COLCON_IGNORE"; fi; \
+       done \
+    && mkdir -p /opt/jazzy-build-info \
+    && cp /tmp/ros2.repos /opt/jazzy-build-info/ros2.repos \
+    && vcs export --exact src > /opt/jazzy-build-info/base-exact.repos \
+    && rm -f /tmp/ros2.repos
+
+ARG ROSDEP_SKIP_KEYS="ament_uncrustify asio benchmark bullet clang-format console_bridge cppcheck empy fmt fzf gmock libasio-dev libbenchmark-dev libbullet-dev libconsole-bridge-dev libfmt-dev libgmock-dev liblttng-ust-dev liblz4-dev liborocos-kdl liborocos-kdl-dev liborocos-kdl1.5 libspdlog-dev libxml2-utils lttng-tools lttng-ust pybind11 pybind11-dev pydocstyle rmw_connextdds rmw_cyclonedds_cpp rmw_zenoh_cpp spdlog uncrustify urdfdom_headers python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-colcon-common-extensions python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-docstrings python3-flake8-import-order python3-flake8-quotes python3-lark python3-lark-parser python3-lxml python3-mypy python3-osrf-pycommon python3-pycodestyle python3-pydot python3-pyflakes python3-pykdl python3-pytest python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-typing-extensions python3-vcstool"
+
+RUN export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && rosdep init \
+    && rosdep update --rosdistro "${ROS_DISTRO}" \
+    && colcon list --packages-up-to ros_base --paths-only \
+        | sort -u > /tmp/ros-base-paths.txt \
+    && apt-get update \
+    && xargs rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types build \
+        --dependency-types buildtool \
+        --dependency-types build_export \
+        --dependency-types buildtool_export \
+        --dependency-types exec \
+        --skip-keys "${ROSDEP_SKIP_KEYS}" \
+        -y < /tmp/ros-base-paths.txt \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN DISABLE_GROUPS_WORKAROUND=1 colcon build \
+        --merge-install \
+        --install-base /opt/ros/${ROS_DISTRO} \
+        --packages-up-to ros_base \
+        --executor sequential \
+        --event-handlers console_direct+ \
+        --cmake-args \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DTRACETOOLS_DISABLED=ON \
+          -Dpybind11_DIR=/opt/jazzy-tools/lib/python3.12/site-packages/pybind11/share/cmake/pybind11 \
+    && rm -rf src build log
+
+FROM base-builder AS simulation-builder
+
+ARG OCTOMAP_REF=v1.9.8
+ARG FCL_REF=0.7.0
+ARG ASSIMP_VERSION=6.0.4
+ARG FFMPEG_REF=n6.1.3
+ARG CFORTRAN_DEB_URL=https://deb.debian.org/debian/pool/main/c/cfortran/cfortran_20210827-1.1_all.deb
+ARG CFORTRAN_DEB_SHA256=49e910e074b9865ad045d517e3130ce2d76c569d0ef99e744586d17c3c79b381
+
+WORKDIR /simulation_ws
+
+# Jazzy's released simulation closure selects Harmonic (Sim 8, Physics 7,
+# GUI 8 / Qt 5). Do not set GZ_BUILD_FROM_SOURCE: the vendor packages must
+# build their own pinned upstream versions, rather than add external gz-* keys.
+# The release database is resolved at build time; save exact imported commits.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && ros2 pkg list | sort -u > /tmp/base-packages.txt \
+    && rosinstall_generator simulation --rosdistro "${ROS_DISTRO}" \
+        --deps --deps-only --format repos --upstream \
+        --exclude $(cat /tmp/base-packages.txt) \
+        > /opt/jazzy-build-info/simulation.repos \
+    && mkdir -p src \
+    && vcs import --shallow src < /opt/jazzy-build-info/simulation.repos \
+    && mkdir -p src/ros2/variants \
+    && git -C src/ros2/variants init \
+    && git -C src/ros2/variants remote add origin https://github.com/ros2/variants.git \
+    && git -C src/ros2/variants fetch --depth 1 origin "${ROS_VARIANTS_COMMIT}" \
+    && git -C src/ros2/variants checkout --detach FETCH_HEAD \
+    && git -C src/ros2/variants update-ref refs/remotes/origin/pinned-variants HEAD \
+    && vcs export --exact src > /opt/jazzy-build-info/simulation-exact.repos
+
+# Bullet headers and libraries are inherited from base-builder.
+# openKylin publishes libfcl-dev metadata, but its required liboctomap1.9
+# binary is currently absent. Build Octomap and FCL from pinned sources.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libboost-dev \
+        libccd-dev \
+        libeigen3-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 --branch "${OCTOMAP_REF}" \
+        https://github.com/OctoMap/octomap.git /tmp/octomap-src \
+    && cmake -S /tmp/octomap-src -B /tmp/octomap-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/simulation-deps \
+        -DCMAKE_CXX_FLAGS=-Wno-error=template-id-cdtor \
+        -DBUILD_TESTING=OFF \
+        -DBUILD_OCTOVIS_SUBPROJECT=OFF \
+        -DBUILD_DYNAMICETD3D_SUBPROJECT=OFF \
+    && cmake --build /tmp/octomap-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/octomap-build \
+    && git clone --depth 1 --branch "${FCL_REF}" \
+        https://github.com/flexible-collision-library/fcl.git /tmp/fcl-src \
+    && cmake -S /tmp/fcl-src -B /tmp/fcl-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/simulation-deps \
+        -DCMAKE_PREFIX_PATH=/opt/simulation-deps \
+        -DBUILD_TESTING=OFF \
+        -DFCL_BUILD_TESTS=OFF \
+        -DFCL_BUILD_EXAMPLES=OFF \
+        -DFCL_BUILD_DOCUMENTATION=OFF \
+    && cmake --build /tmp/fcl-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/fcl-build \
+    && rm -rf /tmp/octomap-src /tmp/octomap-build /tmp/fcl-src /tmp/fcl-build
+
+# Build Assimp on all targets to avoid the incomplete libdraco dependency
+# and keep the same source dependency layout across architectures.
+RUN mkdir -p /opt/assimp \
+    && git clone --depth 1 --branch "v${ASSIMP_VERSION}" \
+        https://github.com/assimp/assimp.git /tmp/assimp-src \
+    && cmake -S /tmp/assimp-src -B /tmp/assimp-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/assimp \
+        -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=ON \
+        -DASSIMP_BUILD_ASSIMP_TOOLS=OFF -DASSIMP_BUILD_SAMPLES=OFF \
+        -DASSIMP_BUILD_TESTS=OFF -DASSIMP_WARNINGS_AS_ERRORS=OFF \
+    && cmake --build /tmp/assimp-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/assimp-build \
+    && rm -rf /tmp/assimp-src /tmp/assimp-build
+
+# huanghe currently publishes libcfitsio-dev and libgdal-dev but omits their
+# architecture-independent cfortran dependency. Install the verified Debian
+# header package so gz-common keeps its required geospatial component.
+RUN curl -fsSL "${CFORTRAN_DEB_URL}" -o /tmp/cfortran.deb \
+    && echo "${CFORTRAN_DEB_SHA256}  /tmp/cfortran.deb" | sha256sum -c - \
+    && dpkg -i /tmp/cfortran.deb \
+    && rm -f /tmp/cfortran.deb
+
+# The openKylin riscv64 OGRE 1.9 packages are published without their zzip
+# runtime dependency. Supply that exact package from Debian and verify it.
+# Its only dependencies are libc6 >= 2.33 and zlib1g, both provided here.
+ARG RISCV64_ZZIP_DEB_URL=https://deb.debian.org/debian/pool/main/z/zziplib/libzzip-0-13t64_0.13.78+dfsg.1-0.1_riscv64.deb
+ARG RISCV64_ZZIP_DEB_SHA256=0849ee85d642fbea544e627fea7ba1729f3d6ad1d691235d25ef5d874c62f04e
+ARG RISCV64_LIBRUBY_DEB_URL=https://ports.ubuntu.com/ubuntu-ports/pool/main/r/ruby-defaults/libruby_3.2~ubuntu1_riscv64.deb
+ARG RISCV64_LIBRUBY_DEB_SHA256=03648454aabc083bb26f405733ca7b1b7adc1d2064987ff9020cf2b5f1b50bb9
+ARG RISCV64_RUBY_DEB_URL=https://ports.ubuntu.com/ubuntu-ports/pool/main/r/ruby-defaults/ruby_3.2~ubuntu1_riscv64.deb
+ARG RISCV64_RUBY_DEB_SHA256=e9ce70ffb4437373b806dc057d1b0ed013d88d81f5273d9b1e369cc9b6f5592e
+ARG RISCV64_RUBYGEMS_DEB_URL=https://ports.ubuntu.com/ubuntu-ports/pool/main/r/rubygems/ruby-rubygems_3.4.20-1_all.deb
+ARG RISCV64_RUBYGEMS_DEB_SHA256=9cb6041d902b74fd6e9373b24922e788bc2d1ed4360705ca6b53945d67b32087
+ARG RISCV64_ZZIP_DEV_DEB_URL=https://deb.debian.org/debian/pool/main/z/zziplib/libzzip-dev_0.13.78+dfsg.1-0.1_riscv64.deb
+ARG RISCV64_ZZIP_DEV_DEB_SHA256=acb259a79d01a43d58b9742caa5a118aae62dcfa5951d63b68e1343ff6a9810d
+
+RUN if [ "${TARGETARCH}" = "riscv64" ]; then \
+      set -eux; \
+      curl -fsSL "${RISCV64_ZZIP_DEB_URL}" -o /tmp/libzzip.deb; \
+      echo "${RISCV64_ZZIP_DEB_SHA256}  /tmp/libzzip.deb" | sha256sum -c -; \
+      dpkg -i /tmp/libzzip.deb; \
+      rm -f /tmp/libzzip.deb; \
+      curl -fsSL "${RISCV64_LIBRUBY_DEB_URL}" -o /tmp/libruby.deb; \
+      curl -fsSL "${RISCV64_RUBY_DEB_URL}" -o /tmp/ruby.deb; \
+      curl -fsSL "${RISCV64_RUBYGEMS_DEB_URL}" -o /tmp/ruby-rubygems.deb; \
+      curl -fsSL "${RISCV64_ZZIP_DEV_DEB_URL}" -o /tmp/libzzip-dev.deb; \
+      echo "${RISCV64_LIBRUBY_DEB_SHA256}  /tmp/libruby.deb" | sha256sum -c -; \
+      echo "${RISCV64_RUBY_DEB_SHA256}  /tmp/ruby.deb" | sha256sum -c -; \
+      echo "${RISCV64_RUBYGEMS_DEB_SHA256}  /tmp/ruby-rubygems.deb" | sha256sum -c -; \
+      echo "${RISCV64_ZZIP_DEV_DEB_SHA256}  /tmp/libzzip-dev.deb" | sha256sum -c -; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends \
+        /tmp/libruby.deb /tmp/ruby.deb /tmp/ruby-rubygems.deb \
+        /tmp/libzzip-dev.deb; \
+      rm -f /tmp/libruby.deb /tmp/ruby.deb /tmp/ruby-rubygems.deb \
+        /tmp/libzzip-dev.deb; \
+      ruby --version; \
+    fi
+
+# openKylin does not publish Poco for riscv64. Build the commonly shipped
+# libpoco-dev component set from the signed upstream release commit.
+ARG POCO_COMMIT=96d182a99303fb068575294b36f0cc20da2e7b25
+ARG POCO_BUILD_JOBS=2
+
+RUN mkdir -p /opt/poco \
+    && if [ "${TARGETARCH}" = "riscv64" ]; then \
+      set -eux; \
+      git clone --filter=blob:none https://github.com/pocoproject/poco.git /tmp/poco-src; \
+      git -C /tmp/poco-src checkout --detach "${POCO_COMMIT}"; \
+      test "$(git -C /tmp/poco-src rev-parse HEAD)" = "${POCO_COMMIT}"; \
+      cmake -S /tmp/poco-src -B /tmp/poco-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/poco \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_SHARED_LIBS=ON \
+        -DENABLE_TESTS=OFF -DENABLE_SAMPLES=OFF \
+        -DENABLE_DATA=OFF -DENABLE_MONGODB=OFF -DENABLE_REDIS=OFF \
+        -DENABLE_PROMETHEUS=OFF -DENABLE_APACHECONNECTOR=OFF \
+        -DENABLE_PAGECOMPILER=OFF -DENABLE_ACTIVERECORD=OFF \
+        -DENABLE_PDF=OFF -DENABLE_SEVENZIP=OFF \
+        -DPOCO_UNBUNDLED=OFF; \
+      cmake --build /tmp/poco-build --parallel "${POCO_BUILD_JOBS}"; \
+      cmake --install /tmp/poco-build; \
+      rm -rf /tmp/poco-src /tmp/poco-build; \
+    fi
+
+# Harmonic's AV component is built against FFmpeg 6, independently of the
+# newer system FFmpeg used by openKylin 3.0. Disable assembler optimizations
+# for portable native/QEMU builds, not the codecs or video API.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends zlib1g-dev \
+    && git clone --depth 1 --branch "${FFMPEG_REF}" \
+        https://github.com/FFmpeg/FFmpeg.git /tmp/ffmpeg-src \
+    && cd /tmp/ffmpeg-src \
+    && ./configure --prefix=/opt/ffmpeg --libdir=/opt/ffmpeg/lib \
+        --enable-shared --disable-static --enable-pic \
+        --disable-doc --disable-debug --disable-x86asm --disable-asm \
+        --disable-autodetect \
+    && make -j"${BUILD_JOBS}" \
+    && make install \
+    && cd /simulation_ws \
+    && rm -rf /tmp/ffmpeg-src /var/lib/apt/lists/*
+
+# rosdep maps dependency names using Noble, while apt still uses openKylin.
+# Inherit the base skip list; every additional non-test skip below is supplied
+# by the source builds above, or the explicit Qt 5 development packages
+# below (openKylin does not name Qt Core libqt5core5t64).
+# Qt 5/QML, OGRE, GUI, sensors and DART remain
+# required: a missing system package must fail the build, not disable features.
+ARG SIMULATION_SKIP_KEYS="assimp assimp-dev libassimp-dev fcl libfcl-dev octomap liboctomap-dev ffmpeg-dev libpostproc-dev lz4 libqt5-core libqt5-qml libqt5-quick libqt5-widgets"
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && rosdep update --rosdistro "${ROS_DISTRO}" \
+    && colcon list --packages-up-to simulation --paths-only \
+        | sort -u > /tmp/simulation-paths.txt \
+    && colcon list --packages-up-to simulation --names-only \
+        | sort -u > /opt/jazzy-build-info/simulation-packages.txt \
+    && test -s /tmp/simulation-paths.txt \
+    && skip_keys="${ROSDEP_SKIP_KEYS} ${SIMULATION_SKIP_KEYS}" \
+    && if [ "${TARGETARCH}" = riscv64 ]; then \
+         skip_keys="${skip_keys} libpoco-dev libzzip-dev ruby"; \
+       fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ruby libgl1-mesa-dri libegl1 mesa-utils xvfb xauth \
+        libfmt-dev libyaml-cpp-dev \
+        qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev libqt5svg5-dev \
+    && xargs rosdep install --from-paths --ignore-src \
+        --rosdistro "${ROS_DISTRO}" --os=ubuntu:noble \
+        --dependency-types build --dependency-types buildtool \
+        --dependency-types build_export --dependency-types buildtool_export \
+        --dependency-types exec --skip-keys "${skip_keys}" \
+        -y < /tmp/simulation-paths.txt \
+    && rm -rf /var/lib/apt/lists/*
+
+# Compile in cacheable groups. The runtime inherits only the dependency
+# stage and copies installed artifacts, so intermediate compiler outputs do
+# not inflate the final image.
+FROM simulation-builder AS simulation-compile
+
+RUN <<'BUILD_HELPER'
+set -e
+printf '%s\n' /usr/local/lib /usr/local/lib64 /opt/assimp/lib \
+  /opt/simulation-deps/lib /opt/simulation-deps/lib64 /opt/poco/lib \
+  /opt/ffmpeg/lib > /etc/ld.so.conf.d/jazzy-simulation.conf
+ldconfig
+cat > /usr/local/bin/build-jazzy-simulation-part <<'SCRIPT'
+#!/bin/bash
+set -eo pipefail
+source /opt/ros/jazzy/setup.bash
+if [ -f /opt/ros-simulation/jazzy/setup.bash ]; then
+  source /opt/ros-simulation/jazzy/setup.bash
+fi
+# Keep the ROS underlay before CMake's default /usr/local search. It supplies
+# Jazzy urdfdom_headers 1.1.2; the bootstrap 2.x headers omit model_state.
+export CMAKE_PREFIX_PATH="/opt/jazzy-tools/lib/python3.12/site-packages/pybind11:/opt/ffmpeg:/opt/poco:/opt/assimp:/opt/simulation-deps:${CMAKE_PREFIX_PATH:-}"
+export PKG_CONFIG_PATH="/opt/ffmpeg/lib/pkgconfig:/opt/assimp/lib/pkgconfig:/opt/simulation-deps/lib/pkgconfig:${PKG_CONFIG_PATH:-}"
+export LD_LIBRARY_PATH="/opt/ffmpeg/lib:/opt/assimp/lib:/opt/simulation-deps/lib:/opt/poco/lib:${LD_LIBRARY_PATH:-}"
+DISABLE_GROUPS_WORKAROUND=1 colcon build \
+  --merge-install --install-base /opt/ros-simulation/jazzy \
+  --packages-up-to "$@" --packages-skip-build-finished --executor sequential \
+  --event-handlers console_stderr+ \
+  --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DTRACETOOLS_DISABLED=ON \
+    -Dpybind11_DIR=/opt/jazzy-tools/lib/python3.12/site-packages/pybind11/share/cmake/pybind11
+SCRIPT
+chmod 0755 /usr/local/bin/build-jazzy-simulation-part
+BUILD_HELPER
+
+RUN build-jazzy-simulation-part gz_dartsim_vendor
+
+# Ogre 2.3.3's allocator default constructor is incorrectly explicit for
+# GCC 15 libstdc++ list-initialization. Preserve upstream Vulkan patches and
+# apply this one-line source fix through ament_vendor's supported PATCHES API.
+RUN python3 - <<'OGRE_PATCH'
+from pathlib import Path
+import xml.etree.ElementTree as ET
+roots = [p.parent for p in Path('src').rglob('package.xml')
+         if ET.parse(p).getroot().findtext('name') == 'gz_ogre_next_vendor']
+assert len(roots) == 1, roots
+root = roots[0]
+cmake = root / 'CMakeLists.txt'
+text = cmake.read_text()
+assert 'VCS_VERSION v2.3.3' in text, 'Recheck allocator patch against new OGRE release'
+assert text.count('  PATCHES\n') == 1
+patch = root / 'patches/openkylin-gcc15-allocator.patch'
+patch.write_text('''--- a/OgreMain/include/OgreMemorySTLAllocator.h
++++ b/OgreMain/include/OgreMemorySTLAllocator.h
+@@ -100,7 +100,7 @@
+         };
+ 
+         /// ctor
+-        inline explicit STLAllocator()
++        inline STLAllocator()
+         { }
+ 
+         /// dtor
+''')
+cmake.write_text(text.replace('  PATCHES\n', '  PATCHES\n    patches/openkylin-gcc15-allocator.patch\n'))
+info = Path('/opt/jazzy-build-info')
+(info / patch.name).write_text(patch.read_text())
+OGRE_PATCH
+
+RUN build-jazzy-simulation-part gz_ogre_next_vendor
+RUN build-jazzy-simulation-part gz_common_vendor
+
+# GCC 15 no longer supplies uint32_t through the transitive STL includes used
+# by NativeWindow.hh. Fix the public header as well as the library build.
+RUN python3 - <<'RENDERING_PATCH'
+from pathlib import Path
+import xml.etree.ElementTree as ET
+roots = [p.parent for p in Path('src').rglob('package.xml')
+         if ET.parse(p).getroot().findtext('name') == 'gz_rendering_vendor']
+assert len(roots) == 1, roots
+root = roots[0]
+cmake = root / 'CMakeLists.txt'
+text = cmake.read_text()
+assert 'set(LIB_VER_MAJOR 8)' in text
+assert text.count('  GLOBAL_HOOK\n') == 1 and '  PATCHES\n' not in text
+patch = root / 'patches/openkylin-gcc15-cstdint.patch'
+patch.parent.mkdir(exist_ok=True)
+patch.write_text('''--- a/include/gz/rendering/NativeWindow.hh
++++ b/include/gz/rendering/NativeWindow.hh
+@@ -17,6 +17,7 @@
+ #ifndef GZ_RENDERING_NATIVEWINDOW_HH_
+ #define GZ_RENDERING_NATIVEWINDOW_HH_
+ 
++#include <cstdint>
+ #include <map>
+ #include <string>
+ #include "gz/rendering/config.hh"
+''')
+cmake.write_text(text.replace('  GLOBAL_HOOK\n',
+    '  PATCHES patches/openkylin-gcc15-cstdint.patch\n  GLOBAL_HOOK\n'))
+(Path('/opt/jazzy-build-info') / patch.name).write_text(patch.read_text())
+# CMake 4's disconnected ExternalProject path can execute a newly added
+# patch twice. Accept only a patch that applies cleanly or reverses cleanly.
+helper = Path('/opt/jazzy-build-info/apply-vendor-patch.cmake')
+helper.write_text('''execute_process(
+  COMMAND git apply --check --whitespace=nowarn -p1 "${PATCH_FILE}"
+  WORKING_DIRECTORY "${PATCH_ROOT}" RESULT_VARIABLE can_apply
+  OUTPUT_QUIET ERROR_QUIET)
+if(can_apply EQUAL 0)
+  execute_process(
+    COMMAND git apply --whitespace=nowarn -p1 "${PATCH_FILE}"
+    WORKING_DIRECTORY "${PATCH_ROOT}" COMMAND_ERROR_IS_FATAL ANY)
+else()
+  execute_process(
+    COMMAND git apply --reverse --check --whitespace=nowarn -p1 "${PATCH_FILE}"
+    WORKING_DIRECTORY "${PATCH_ROOT}" RESULT_VARIABLE already_applied
+    OUTPUT_QUIET ERROR_QUIET)
+  if(NOT already_applied EQUAL 0)
+    message(FATAL_ERROR "Patch does not match source: ${PATCH_FILE}")
+  endif()
+  message(STATUS "Patch already applied: ${PATCH_FILE}")
+endif()
+''')
+macro = Path('/opt/ros/jazzy/share/ament_cmake_vendor_package/cmake/ament_vendor.cmake')
+old = 'COMMAND ${CMAKE_COMMAND} -E chdir <SOURCE_DIR> git apply --whitespace=nowarn -p1 ${PATCH}'
+content = macro.read_text()
+assert content.count(old) == 1
+macro.write_text(content.replace(old,
+    'COMMAND ${CMAKE_COMMAND} "-DPATCH_ROOT=<SOURCE_DIR>" "-DPATCH_FILE=${PATCH}" '
+    '-P /opt/jazzy-build-info/apply-vendor-patch.cmake'))
+RENDERING_PATCH
+
+RUN build-jazzy-simulation-part gz_rendering_vendor
+RUN build-jazzy-simulation-part gz_sim_vendor
+RUN build-jazzy-simulation-part simulation
+
+# Rebuild Controls against openKylin's patched Qt private ABI. The repository
+# Material plugin dereferences an incompatible QQuickWindowPrivate layout and
+# crashes when Gazebo creates its first window (including under Xvfb/Mesa).
+FROM simulation-builder AS qt-controls-builder
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends qtbase5-private-dev qtdeclarative5-private-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN curl -fL --retry 3 --connect-timeout 30 \
+        https://github.com/qt/qtquickcontrols2/archive/refs/tags/v5.15.10-lts-lgpl.tar.gz \
+        -o /tmp/qtquickcontrols2.tar.gz \
+    && echo '17c183e7ec7bb07fb469f2f647d87b5a911bc81ca573d88480a4102084b04c5a  /tmp/qtquickcontrols2.tar.gz' | sha256sum -c - \
+    && mkdir /tmp/qt-controls /qt-controls-root \
+    && tar -xf /tmp/qtquickcontrols2.tar.gz -C /tmp/qt-controls --strip-components=1 \
+    && cd /tmp/qt-controls \
+    && /usr/lib/qt5/bin/syncqt.pl -version 5.15.10 \
+    && qmake CONFIG+=release \
+    && make -j"${BUILD_JOBS}" \
+    && make install INSTALL_ROOT=/qt-controls-root \
+    && mkdir -p /qt-controls-root/opt/jazzy-build-info/qt-controls \
+    && cp LICENSE* /qt-controls-root/opt/jazzy-build-info/qt-controls/ \
+    && printf '%s\n' 'Qt Quick Controls 2 v5.15.10-lts-lgpl rebuilt against openKylin Qt private headers' \
+        > /qt-controls-root/opt/jazzy-build-info/qt-controls/source.txt
+
+# Keep the native SDK and Python venv, but not the Gazebo compiler worktrees.
+FROM simulation-builder AS runtime
+
+COPY --from=simulation-compile /opt/ros-simulation /opt/ros-simulation
+COPY --from=simulation-compile /opt/jazzy-build-info /opt/jazzy-build-info
+COPY --from=qt-controls-builder /qt-controls-root/ /
+COPY --from=simulation-compile /etc/ld.so.conf.d/jazzy-simulation.conf /etc/ld.so.conf.d/jazzy-simulation.conf
+RUN rm -rf /simulation_ws/src /simulation_ws/build /simulation_ws/log \
+    && ldconfig
+
+ENV ROS_VERSION=2 \
+    ROS_PYTHON_VERSION=3 \
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+    QT_X11_NO_MITSHM=1
+
+LABEL org.opencontainers.image.title="openkylin/ros:jazzy-simulation" \
+      org.opencontainers.image.description="ROS 2 Jazzy simulation with Gazebo Harmonic on openKylin 3.0"
+
+COPY ros_entrypoint.sh /ros_entrypoint.sh
+COPY jazzy_simulation_world.sdf /opt/jazzy-simulation/worlds/demo.sdf
+COPY validate_jazzy_simulation_image.sh validate_jazzy_simulation_clock.py /opt/jazzy-simulation/tests/
+COPY sitecustomize.py /opt/jazzy-tools/lib/python3.12/site-packages/sitecustomize.py
+
+RUN sed -i 's/\r$//' /ros_entrypoint.sh \
+        /opt/jazzy-simulation/tests/validate_jazzy_simulation_image.sh \
+    && chmod 0755 /ros_entrypoint.sh \
+        /opt/jazzy-simulation/tests/validate_jazzy_simulation_image.sh \
+    && dpkg-query -W -f='${binary:Package}\t${Version}\n' \
+        > /opt/jazzy-build-info/system-packages.tsv \
+    && /ros_entrypoint.sh \
+        bash /opt/jazzy-simulation/tests/validate_jazzy_simulation_image.sh --build
+
+WORKDIR /root/ros_ws
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

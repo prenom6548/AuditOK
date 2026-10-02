@@ -1,0 +1,269 @@
+# syntax=docker/dockerfile:1.7
+
+# Incremental source build of the complete ROS 2 Jazzy desktop variant for
+# openKylin 2.0. The verified Jazzy perception image supplies ros_base,
+# perception, OpenCV and PCL; desktop-only packages use a separate overlay.
+
+ARG ROS_PERCEPTION_IMAGE=openkylin/ros:jazzy-perception@sha256:c41c514eeb62a66cde5ef10baa73bcd3fd6ce663ab252f41a2b420047f974dbf
+
+FROM --platform=${TARGETPLATFORM} ${ROS_PERCEPTION_IMAGE} AS builder
+
+ARG ROS_DISTRO=jazzy
+ARG ROS_VARIANTS_COMMIT=70f5a409ae7a9baa44950bf8468742256de67c43
+ARG ASSIMP_VERSION=6.0.4
+ARG BUILD_JOBS=2
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PYTHONPATH=/opt/desktop-python:/opt/perception-python:/opt/opencv-python:/opt/jazzy-python \
+    PATH=/opt/desktop-tools/bin:${PATH}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        python3-dev \
+        python3-pip \
+        python3-venv \
+        python3-yaml \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv --system-site-packages /opt/desktop-tools \
+    && PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir --upgrade \
+        pip setuptools wheel \
+    && PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+        catkin-pkg \
+        colcon-common-extensions \
+        empy==3.3.4 \
+        lark==1.1.9 \
+        rosdep \
+        rosinstall-generator \
+        vcstool
+
+WORKDIR /desktop_ws
+
+# Generate the released desktop dependency closure, excluding everything
+# already installed by the Jazzy perception underlay.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && . /opt/ros-perception/${ROS_DISTRO}/setup.sh \
+    && ros2 pkg list | sort -u > /tmp/perception-packages.txt \
+    && /opt/desktop-tools/bin/rosinstall_generator desktop \
+        --rosdistro "${ROS_DISTRO}" \
+        --deps \
+        --deps-only \
+        --format repos \
+        --upstream \
+        --exclude $(cat /tmp/perception-packages.txt) \
+        > /tmp/desktop.repos \
+    && mkdir -p src \
+    && /opt/desktop-tools/bin/vcs import --shallow src < /tmp/desktop.repos \
+    && mkdir -p src/ros2/variants \
+    && git -C src/ros2/variants init \
+    && git -C src/ros2/variants remote add origin https://github.com/ros2/variants.git \
+    && git -C src/ros2/variants fetch --depth 1 origin "${ROS_VARIANTS_COMMIT}" \
+    && git -C src/ros2/variants checkout --detach FETCH_HEAD \
+    && rm -f /tmp/desktop.repos
+
+# Use PyQt5 as the provider for python_qt_binding. openKylin 2.0 does not
+# provide the PySide2 half of Ubuntu Noble's aggregate mapping.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        graphviz \
+        libgl1-mesa-dev \
+        libgraphviz-dev \
+        libqt5opengl5 \
+        libqt5opengl5-dev \
+        libqt5svg5-dev \
+        libqt5widgets5 \
+        libssl-dev \
+        libx11-dev \
+        libxrandr-dev \
+        libyaml-cpp-dev \
+        pyqt5-dev \
+        python3-pyqt5 \
+        python3-pyqt5.qtsvg \
+        python3-sip-dev \
+        qtbase5-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Build Assimp portably because the distro package closure is incomplete on
+# some non-amd64 architectures.
+RUN git clone --depth 1 --branch "v${ASSIMP_VERSION}" \
+        https://github.com/assimp/assimp.git /tmp/assimp-src \
+    && cmake -S /tmp/assimp-src -B /tmp/assimp-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/assimp \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_SHARED_LIBS=ON \
+        -DASSIMP_BUILD_ASSIMP_TOOLS=OFF \
+        -DASSIMP_BUILD_SAMPLES=OFF \
+        -DASSIMP_BUILD_TESTS=OFF \
+        -DASSIMP_WARNINGS_AS_ERRORS=OFF \
+    && cmake --build /tmp/assimp-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/assimp-build \
+    && rm -rf /tmp/assimp-src /tmp/assimp-build
+
+# rqt_graph needs PyGraphviz. The riscv64 Graphviz packages omit optional
+# plugin libraries, so compile a system-loader-compatible wrapper there.
+RUN mkdir -p /opt/desktop-python \
+    && PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+        --target /opt/desktop-python pydantic==1.10.24 \
+    && if [ "${TARGETARCH}" = "riscv64" ]; then \
+         graphviz_multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"; \
+         graphviz_libdir="/usr/lib/${graphviz_multiarch}/graphviz"; \
+         git clone --depth 1 --branch pygraphviz-2.0.1 \
+           https://github.com/pygraphviz/pygraphviz.git /tmp/pygraphviz; \
+         sed -i \
+           -e '/"gvplugin_neato_layout",/d' \
+           -e 's/libraries.append("gvplugin_gd")/pass/' \
+           -e '/libraries.append("gvplugin_pango")/d' \
+           /tmp/pygraphviz/setup.py; \
+         for wrapper_source in \
+           /tmp/pygraphviz/pygraphviz/graphviz.i \
+           /tmp/pygraphviz/pygraphviz/graphviz_wrap.c; do \
+           if [ -f "${wrapper_source}" ]; then \
+             sed -i \
+               '/^GVC_t \*gvContextWithBuiltins(void) {$/,/^}$/c\GVC_t *gvContextWithBuiltins(void) {\n    return gvContext();\n}' \
+               "${wrapper_source}"; \
+           fi; \
+         done; \
+         LDFLAGS="-L${graphviz_libdir} -Wl,-rpath,${graphviz_libdir}" \
+           PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+             --target /opt/desktop-python /tmp/pygraphviz; \
+         rm -rf /tmp/pygraphviz; \
+       else \
+         PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+           --target /opt/desktop-python pygraphviz==2.0.1; \
+       fi
+
+ARG ROSDEP_SKIP_KEYS="ament_uncrustify asio assimp assimp-dev benchmark bullet clang-format console_bridge cppcheck fmt fzf gmock libassimp-dev libbenchmark-dev libbullet-dev libconsole-bridge-dev libfmt-dev libgmock-dev liblttng-ust-dev liblz4-dev libopencv-contrib-dev libopencv-core libopencv-core-dev libopencv-dev libopencv-highgui libopencv-imgcodecs libopencv-imgcodecs-dev libopencv-imgproc libopencv-imgproc-dev libopencv-videoio liborocos-kdl liborocos-kdl-dev liborocos-kdl1.5 libpcl-all-dev libpcl-common libpcl-common1.14 libpcl-dev libpcl-io libpcl-io1.14 libpyside2-dev libqt5-concurrent libqt5-core libqt5-gui libqt5-network libqt5-opengl libqt5-opengl-dev libqt5-printsupport libqt5-sql libqt5-svg libqt5-test libqt5-widgets libqt5-xml libqt5core5t64 libqt5gui5t64 libqt5network5t64 libqt5opengl5t64 libqt5printsupport5t64 libqt5sql5t64 libqt5svg5-dev libqt5test5t64 libqt5widgets5t64 libqt5xml5t64 libqtconcurrent libqtcore libqtgui libqtopengl libqtsvg libqtwidgets libspdlog-dev libxml2-utils lttng-tools lttng-ust opencv4 pyside2-dev pybind11 pybind11-dev pydocstyle spdlog uncrustify python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-import-order python3-flake8-quotes python3-lark python3-lark-parser python3-lxml python3-matplotlib python3-mypy python3-opencv python3-osrf-pycommon python3-pycodestyle python3-pydantic python3-pydot python3-pyflakes python3-pygraphviz python3-pykdl python3-pyside2 python3-pytest python3-qt-bindings python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-typing-extensions python3-vcstool"
+
+ARG ROSDEP_SKIP_KEYS_EXTRA="python3-qt5-bindings tango-icon-theme"
+
+# Record only runtime packages added for this overlay, then install all build
+# dependencies. ROS_OS_OVERRIDE reuses the compatible Ubuntu Noble rosdep map.
+RUN export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && . /opt/ros-perception/${ROS_DISTRO}/setup.sh \
+    && if [ ! -e /etc/ros/rosdep/sources.list.d/20-default.list ]; then \
+         /opt/desktop-tools/bin/rosdep init; \
+       fi \
+    && /opt/desktop-tools/bin/rosdep update --rosdistro "${ROS_DISTRO}" \
+    && /opt/desktop-tools/bin/colcon list \
+        --packages-up-to desktop \
+        --paths-only \
+        | sort -u > /tmp/desktop-paths.txt \
+    && apt-mark showmanual | sort -u > /tmp/manual-before-exec.txt \
+    && apt-get update \
+    && xargs /opt/desktop-tools/bin/rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types exec \
+        --skip-keys "${ROSDEP_SKIP_KEYS} ${ROSDEP_SKIP_KEYS_EXTRA}" \
+        -y < /tmp/desktop-paths.txt \
+    && apt-mark showmanual | sort -u > /tmp/manual-after-exec.txt \
+    && comm -13 /tmp/manual-before-exec.txt /tmp/manual-after-exec.txt \
+        > /tmp/desktop-runtime-packages.txt
+
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && . /opt/ros-perception/${ROS_DISTRO}/setup.sh \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libgtest-dev \
+    && export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && xargs /opt/desktop-tools/bin/rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types build \
+        --dependency-types buildtool \
+        --dependency-types build_export \
+        --dependency-types buildtool_export \
+        --skip-keys "${ROSDEP_SKIP_KEYS} ${ROSDEP_SKIP_KEYS_EXTRA}" \
+        -y < /tmp/desktop-paths.txt \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && . /opt/ros-perception/${ROS_DISTRO}/setup.sh \
+    && export CMAKE_PREFIX_PATH="/opt/assimp:/opt/orocos-kdl:/opt/pcl:/opt/opencv:${CMAKE_PREFIX_PATH}" \
+    && export CPATH="/opt/orocos-kdl/include:${CPATH}" \
+    && export LD_LIBRARY_PATH="/opt/assimp/lib:${LD_LIBRARY_PATH}" \
+    && export LDFLAGS="-Wl,-rpath-link,/opt/assimp/lib ${LDFLAGS}" \
+    && DISABLE_GROUPS_WORKAROUND=1 /opt/desktop-tools/bin/colcon build \
+        --merge-install \
+        --install-base /opt/ros-desktop/${ROS_DISTRO} \
+        --packages-up-to desktop \
+        --parallel-workers "${BUILD_JOBS}" \
+        --event-handlers console_stderr+ \
+        --cmake-args \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DTRACETOOLS_DISABLED=ON \
+          -DOpenCV_DIR=/opt/opencv/lib/cmake/opencv4 \
+          -Dpybind11_DIR=/opt/jazzy-python/pybind11/share/cmake/pybind11 \
+    && rm -rf src build log
+
+
+FROM --platform=${TARGETPLATFORM} ${ROS_PERCEPTION_IMAGE} AS runtime
+
+ARG ROS_DISTRO=jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    ROS_VERSION=2 \
+    ROS_PYTHON_VERSION=3 \
+    PYTHONPATH=/opt/desktop-python:/opt/perception-python:/opt/opencv-python:/opt/jazzy-python \
+    QT_X11_NO_MITSHM=1 \
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+COPY --from=builder /tmp/desktop-runtime-packages.txt /tmp/desktop-runtime-packages.txt
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        graphviz \
+        libgl1 \
+        libgraphviz-dev \
+        libqt5opengl5 \
+        libqt5opengl5-dev \
+        libqt5svg5-dev \
+        libqt5widgets5 \
+        libyaml-cpp-dev \
+        pyqt5-dev \
+        python3-pyqt5 \
+        python3-pyqt5.qtsvg \
+        python3-sip-dev \
+        qtbase5-dev \
+    && xargs -r apt-get install -y --no-install-recommends \
+        < /tmp/desktop-runtime-packages.txt \
+    && rm -rf /var/lib/apt/lists/* /tmp/desktop-runtime-packages.txt
+
+COPY --from=builder /opt/ros-desktop/${ROS_DISTRO} /opt/ros-desktop/${ROS_DISTRO}
+COPY --from=builder /opt/desktop-python /opt/desktop-python
+COPY --from=builder /opt/assimp /opt/assimp
+COPY ros_entrypoint.sh /ros_entrypoint.sh
+
+RUN printf '%s\n' /opt/assimp/lib > /etc/ld.so.conf.d/assimp.conf \
+    && chmod 0755 /ros_entrypoint.sh \
+    && ldconfig
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

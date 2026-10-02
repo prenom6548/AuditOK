@@ -1,0 +1,1 @@
+message(STATUS "Building ukui-voice-wing fcitx4 module")

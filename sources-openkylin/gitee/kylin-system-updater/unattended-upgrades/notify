@@ -1,0 +1,72 @@
+#!/usr/bin/python3
+import os
+import sys
+import subprocess
+import dbus
+import re
+import atexit
+import logging
+import signal
+
+NOTIFICATION_PIPE = '/tmp/notification.pipe'
+PID_FILE = '/tmp/notify.pid'
+
+def signal_handler_term():
+    logging.warning("SIGTERM received, will stop")
+    sys.exit(1)
+
+def signal_handler_int():
+    logging.warning("SIGINT received, will stop")
+    sys.exit(1)
+    
+def translate(text):
+    env = os.environ['LANG']
+    if re.match('zh_CN',env):
+        if text == 'install start':
+            return '安装开始'
+        elif text == 'install finish':
+            return '安装结束'
+    else:
+        return text
+
+def notify(iface,msg):
+    msg = msg.rstrip()
+    title = ' '
+    content = ' '
+    if msg =='install start':
+        title = translate('install start')
+        content = translate('install start')    
+    elif msg == 'install finish':
+        title = translate('install finish')
+        content = translate('install start')
+    #print(title,content)
+    iface.Notify(' ',1,' ',title,content,[],{},3)
+
+def main():
+    bus = dbus.SessionBus()
+    proxy_object = bus.get_object('org.freedesktop.Notifications','/org/freedesktop/Notifications')
+    iface = dbus.Interface(proxy_object,dbus_interface='org.freedesktop.Notifications')
+    f=open(NOTIFICATION_PIPE,'r')
+    while True:
+        msg = f.read()
+        if len(msg)>0:
+            bus = dbus.SessionBus()
+            proxy_object = bus.get_object('org.freedesktop.Notifications','/org/freedesktop/Notifications')
+            iface = dbus.Interface(proxy_object,dbus_interface='org.freedesktop.Notifications')
+            notify(iface,msg)
+            f.flush()
+
+
+if __name__ == "__main__":
+    signal.signal(signal.SIGTERM, signal_handler_term)
+    signal.signal(signal.SIGINT,signal_handler_int)
+    if os.path.exists(PID_FILE):
+        logging.info("notify already exists, exiting...")
+        sys.exit(0)
+    else:
+        # clean up pid file on exit
+        with open(PID_FILE, "w+") as fp:
+            fp.write("%s" % os.getpid())
+        atexit.register(os.remove, PID_FILE)
+    
+    main()

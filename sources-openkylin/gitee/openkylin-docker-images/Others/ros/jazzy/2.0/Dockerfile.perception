@@ -1,0 +1,389 @@
+# syntax=docker/dockerfile:1.7
+
+# Incremental source build of ROS 2 Jazzy perception for openKylin 2.0.
+# The published Jazzy ros_base image is the underlay; perception-only packages
+# are installed into a separate overlay.
+
+ARG ROS_BASE_IMAGE=openkylin/ros:jazzy@sha256:9b79492768f4989a6619d20e49afe587d1439a1a69564f32ddd7a6070cb17ead
+
+FROM --platform=${TARGETPLATFORM} ${ROS_BASE_IMAGE} AS builder
+
+ARG ROS_DISTRO=jazzy
+ARG ROS_VARIANTS_COMMIT=70f5a409ae7a9baa44950bf8468742256de67c43
+ARG PCL_REF=pcl-1.14.0
+ARG FLANN_REF=1.9.2
+ARG OPENCV_REF=4.10.0
+ARG OROCOS_KDL_VERSION=1.5.1
+ARG BUILD_JOBS=16
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PYTHONPATH=/opt/jazzy-python \
+    PATH=/opt/perception-tools/bin:${PATH}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        python3-dev \
+        python3-pip \
+        python3-venv \
+        python3-yaml \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv --system-site-packages /opt/perception-tools \
+    && PYTHONPATH= /opt/perception-tools/bin/pip install --no-cache-dir --upgrade \
+        pip setuptools wheel \
+    && PYTHONPATH= /opt/perception-tools/bin/pip install --no-cache-dir \
+        catkin-pkg \
+        colcon-common-extensions \
+        empy==3.3.4 \
+        lark==1.1.9 \
+        rosdep \
+        rosinstall-generator \
+        vcstool
+
+WORKDIR /perception_ws
+
+# Resolve the perception dependency closure and exclude packages already in
+# the verified Jazzy ros_base underlay.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && ros2 pkg list | sort -u > /tmp/base-packages.txt \
+    && /opt/perception-tools/bin/rosinstall_generator perception \
+        --rosdistro "${ROS_DISTRO}" \
+        --deps \
+        --deps-only \
+        --format repos \
+        --upstream \
+        --exclude $(cat /tmp/base-packages.txt) \
+        > /tmp/perception.repos \
+    && mkdir -p src \
+    && /opt/perception-tools/bin/vcs import --shallow src < /tmp/perception.repos \
+    && mkdir -p src/ros2/variants \
+    && git -C src/ros2/variants init \
+    && git -C src/ros2/variants remote add origin https://github.com/ros2/variants.git \
+    && git -C src/ros2/variants fetch --depth 1 origin "${ROS_VARIANTS_COMMIT}" \
+    && git -C src/ros2/variants checkout --detach FETCH_HEAD \
+    && rm -f /tmp/perception.repos
+
+# openKylin 2.0 does not provide the complete PCL development stack required
+# by pcl_ros. Build a minimal, headless PCL set plus FLANN from fixed sources.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libboost-filesystem1.74-dev \
+        libboost-iostreams1.74-dev \
+        libboost-python1.74-dev \
+        libboost-serialization1.74-dev \
+        libboost-system1.74-dev \
+        libboost-thread1.74-dev \
+        libeigen3-dev \
+        liblz4-dev \
+        python3-numpy \
+        libyaml-cpp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# The openKylin 2.0 OpenCV aggregate package pulls unavailable FFmpeg/UCX
+# dependencies. Build the ROS perception API surface without those backends.
+RUN git clone --depth 1 --branch "${OPENCV_REF}" \
+        https://github.com/opencv/opencv.git /tmp/opencv-src \
+    && git clone --depth 1 --branch "${OPENCV_REF}" \
+        https://github.com/opencv/opencv_contrib.git /tmp/opencv-contrib-src \
+    && cmake -S /tmp/opencv-src -B /tmp/opencv-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/opencv \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_LIST=aruco,calib3d,core,features2d,flann,highgui,imgcodecs,imgproc,objdetect,python3,videoio \
+        -DBUILD_EXAMPLES=OFF \
+        -DBUILD_JAVA=OFF \
+        -DBUILD_opencv_apps=OFF \
+        -DBUILD_opencv_python2=OFF \
+        -DBUILD_opencv_python3=ON \
+        -DBUILD_PERF_TESTS=OFF \
+        -DBUILD_TESTS=OFF \
+        -DBUILD_WITH_DEBUG_INFO=OFF \
+        -DOPENCV_ENABLE_NONFREE=OFF \
+        -DOPENCV_EXTRA_MODULES_PATH=/tmp/opencv-contrib-src/modules \
+        -DOPENCV_GENERATE_PKGCONFIG=ON \
+        -DOPENCV_PYTHON3_INSTALL_PATH=/opt/opencv-python \
+        -DPYTHON3_EXECUTABLE=/usr/bin/python3 \
+        -DPYTHON3_INCLUDE_DIR=/usr/include/python3.12 \
+        -DPYTHON3_NUMPY_INCLUDE_DIRS=/usr/lib/python3/dist-packages/numpy/core/include \
+        -DWITH_1394=OFF \
+        -DWITH_CUDA=OFF \
+        -DWITH_FFMPEG=OFF \
+        -DWITH_GSTREAMER=OFF \
+        -DWITH_GTK=OFF \
+        -DWITH_IPP=OFF \
+        -DWITH_JASPER=OFF \
+        -DWITH_OPENCL=OFF \
+        -DWITH_OPENEXR=OFF \
+        -DWITH_OPENGL=OFF \
+        -DWITH_QT=OFF \
+        -DWITH_V4L=OFF \
+    && cmake --build /tmp/opencv-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/opencv-build \
+    && rm -rf /tmp/opencv-src /tmp/opencv-contrib-src /tmp/opencv-build
+
+RUN git clone --depth 1 --branch "${FLANN_REF}" \
+        https://github.com/flann-lib/flann.git /tmp/flann-src \
+    && cmake -S /tmp/flann-src -B /tmp/flann-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/flann \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_C_BINDINGS=OFF \
+        -DBUILD_CUDA_LIB=OFF \
+        -DBUILD_EXAMPLES=OFF \
+        -DBUILD_MATLAB_BINDINGS=OFF \
+        -DBUILD_PYTHON_BINDINGS=OFF \
+        -DBUILD_TESTS=OFF \
+    && cmake --build /tmp/flann-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/flann-build \
+    && rm -rf /tmp/flann-src /tmp/flann-build
+
+RUN --mount=type=cache,id=ros-jazzy-pcl-${TARGETARCH},target=/tmp/pcl-cache \
+    rm -f /tmp/pcl-cache/src/.git/index.lock \
+    && if ! git -C /tmp/pcl-cache/src rev-parse --verify "${PCL_REF}^{commit}" >/dev/null 2>&1; then \
+        rm -rf /tmp/pcl-cache/src; \
+        git clone --depth 1 --branch "${PCL_REF}" \
+            https://github.com/PointCloudLibrary/pcl.git /tmp/pcl-cache/src; \
+    fi \
+    && git -C /tmp/pcl-cache/src reset --hard "${PCL_REF}" \
+    && git -C /tmp/pcl-cache/src clean -fdx \
+    && rm -rf /tmp/pcl-cache/build \
+    && sed -i \
+        -e 's/this->offset\[i\] = node.offset\[i\]/this->off[i] = node.off[i]/' \
+        /tmp/pcl-cache/src/surface/include/pcl/surface/3rdparty/poisson4/octree_poisson.hpp \
+    && sed -i \
+        -e 's/Resize(this->m_N, this->m_M)/Resize(this->rows, this->_maxEntriesPerRow)/' \
+        -e 's/Min( this->Rows(), this->Columns() )/(this->rows < this->_maxEntriesPerRow ? this->rows : this->_maxEntriesPerRow)/' \
+        -e 's/M.Columns()/bb.Dimensions()/' \
+        /tmp/pcl-cache/src/surface/include/pcl/surface/3rdparty/poisson4/sparse_matrix.hpp \
+    && cmake -S /tmp/pcl-cache/src -B /tmp/pcl-cache/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/pcl \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DCMAKE_PREFIX_PATH=/opt/opencv:/opt/flann \
+        -DFLANN_DIR=/opt/flann/lib/cmake/flann \
+        -DPCL_ENABLE_AVX=OFF \
+        -DPCL_ENABLE_SSE=OFF \
+        -DPCL_ONLY_CORE_POINT_TYPES=ON \
+        -DBUILD_2d=ON \
+        -DBUILD_apps=OFF \
+        -DBUILD_common=ON \
+        -DBUILD_examples=OFF \
+        -DBUILD_features=ON \
+        -DBUILD_filters=ON \
+        -DBUILD_global_tests=OFF \
+        -DBUILD_io=ON \
+        -DBUILD_kdtree=ON \
+        -DBUILD_keypoints=OFF \
+        -DBUILD_ml=ON \
+        -DBUILD_octree=ON \
+        -DBUILD_recognition=OFF \
+        -DBUILD_registration=OFF \
+        -DBUILD_sample_consensus=ON \
+        -DBUILD_search=ON \
+        -DBUILD_segmentation=ON \
+        -DBUILD_stereo=OFF \
+        -DBUILD_surface=ON \
+        -DBUILD_tools=OFF \
+        -DBUILD_tracking=OFF \
+        -DBUILD_visualization=OFF \
+        -DWITH_CUDA=OFF \
+        -DWITH_LIBUSB=OFF \
+        -DWITH_OPENGL=OFF \
+        -DWITH_OPENNI=OFF \
+        -DWITH_OPENNI2=OFF \
+        -DWITH_PCAP=OFF \
+        -DWITH_QHULL=OFF \
+        -DWITH_VTK=OFF \
+    && cmake --build /tmp/pcl-cache/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/pcl-cache/build
+
+# camera_calibration needs matplotlib. Native wheels are not guaranteed for
+# riscv64, so keep an architecture-independent overlay and build if needed.
+RUN mkdir -p /opt/perception-python \
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get install -y --no-install-recommends \
+        python3-dateutil \
+        python3-numpy \
+        python3-pil \
+        python3-pyparsing \
+    && if [ "${TARGETARCH}" = "riscv64" ]; then \
+         apt-get install -y --no-install-recommends \
+           libfreetype-dev libpng-dev meson python3-mesonpy; \
+         PYTHONPATH= /opt/perception-tools/bin/pip install --no-cache-dir \
+           certifi cppy cycler meson-python packaging semver setuptools-scm; \
+         PYTHONPATH= /opt/perception-tools/bin/pip install --no-cache-dir \
+           --ignore-installed pybind11; \
+         PYTHONPATH= /opt/perception-tools/bin/pip install --no-cache-dir \
+           --no-deps --no-build-isolation --target /opt/perception-python \
+           kiwisolver==1.4.9 contourpy==1.3.3; \
+         PYTHONPATH= /opt/perception-tools/bin/pip install --no-cache-dir \
+           --no-deps --no-build-isolation --target /opt/perception-python \
+           fonttools; \
+         PYTHONPATH=/opt/perception-python /opt/perception-tools/bin/pip install --no-cache-dir \
+           --no-deps --no-build-isolation --target /opt/perception-python \
+           matplotlib==3.9.4; \
+       else \
+         SKIP_CYTHON=1 PYTHONPATH= /opt/perception-tools/bin/pip install --no-cache-dir --upgrade \
+           --no-deps --target /opt/perception-python \
+           contourpy==1.3.3 cycler fonttools kiwisolver==1.4.9 matplotlib==3.8.4 semver; \
+       fi \
+    && rm -rf /opt/perception-python/numpy /opt/perception-python/numpy-*.dist-info \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG ROSDEP_SKIP_KEYS="ament_uncrustify asio benchmark bullet clang-format console_bridge cppcheck fmt fzf gmock libbenchmark-dev libboost-python1.83.0 libbullet-dev libconsole-bridge-dev libfmt-dev libgmock-dev liblttng-ust-dev liblz4-dev libopencv-contrib-dev libopencv-core libopencv-core-dev libopencv-dev libopencv-highgui libopencv-imgcodecs libopencv-imgcodecs-dev libopencv-imgproc libopencv-imgproc-dev libopencv-videoio libopencv-core406t64 libopencv-imgcodecs406t64 libopencv-imgproc406t64 opencv4 liborocos-kdl liborocos-kdl-dev liborocos-kdl1.5 libpcl-all-dev libpcl-common libpcl-common1.14 libpcl-dev libpcl-features libpcl-features1.14 libpcl-filters libpcl-filters1.14 libpcl-io libpcl-io1.14 libpcl-segmentation libpcl-segmentation1.14 libpcl-surface libpcl-surface1.14 libspdlog-dev libxml2-utils lttng-tools lttng-ust pybind11 pybind11-dev pydocstyle spdlog uncrustify python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-colcon-common-extensions python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-import-order python3-flake8-quotes python3-lark python3-lark-parser python3-lxml python3-matplotlib python3-mypy python3-opencv python3-osrf-pycommon python3-pycodestyle python3-pyflakes python3-pytest python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-typing-extensions python3-vcstool"
+
+ARG ROSDEP_SKIP_KEYS_EXTRA="boost libboost-dev libboost-python libboost-python-dev python3-semver"
+
+# Record runtime packages added by rosdep for the minimal final stage.
+RUN export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && if [ ! -e /etc/ros/rosdep/sources.list.d/20-default.list ]; then \
+         /opt/perception-tools/bin/rosdep init; \
+       fi \
+    && /opt/perception-tools/bin/rosdep update --rosdistro "${ROS_DISTRO}" \
+    && /opt/perception-tools/bin/colcon list \
+        --packages-up-to perception \
+        | awk '{print $2}' \
+        | sort -u > /tmp/perception-paths.txt \
+    && apt-mark showmanual | sort -u > /tmp/manual-before-exec.txt \
+    && apt-get update \
+    && xargs /opt/perception-tools/bin/rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types exec \
+        --skip-keys "${ROSDEP_SKIP_KEYS} ${ROSDEP_SKIP_KEYS_EXTRA}" \
+        -y < /tmp/perception-paths.txt \
+    && apt-mark showmanual | sort -u > /tmp/manual-after-exec.txt \
+    && comm -13 /tmp/manual-before-exec.txt /tmp/manual-after-exec.txt \
+        > /tmp/perception-runtime-packages.txt
+
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libgtest-dev \
+        libssl-dev \
+        libtinyxml2-dev \
+    && export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && xargs /opt/perception-tools/bin/rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types build \
+        --dependency-types buildtool \
+        --dependency-types build_export \
+        --dependency-types buildtool_export \
+        --skip-keys "${ROSDEP_SKIP_KEYS} ${ROSDEP_SKIP_KEYS_EXTRA}" \
+        -y < /tmp/perception-paths.txt \
+    && rm -rf /var/lib/apt/lists/*
+
+# Use a private KDL prefix for packages that request a development layout.
+RUN git clone --depth 1 --branch "v${OROCOS_KDL_VERSION}" \
+        https://github.com/orocos/orocos_kinematics_dynamics.git /tmp/orocos-kdl \
+    && cmake -S /tmp/orocos-kdl/orocos_kdl -B /tmp/orocos-kdl/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/orocos-kdl \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_MODELS=OFF \
+        -DENABLE_TESTS=OFF \
+    && cmake --build /tmp/orocos-kdl/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/orocos-kdl/build \
+    && rm -rf /tmp/orocos-kdl
+
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && export CMAKE_PREFIX_PATH="/opt/orocos-kdl:/opt/pcl:/opt/opencv:/opt/flann:${CMAKE_PREFIX_PATH}" \
+    && export CPATH="/opt/orocos-kdl/include:${CPATH}" \
+    && DISABLE_GROUPS_WORKAROUND=1 /opt/perception-tools/bin/colcon build \
+        --merge-install \
+        --install-base /opt/ros-perception/${ROS_DISTRO} \
+        --packages-up-to perception \
+        --parallel-workers 1 \
+        --event-handlers console_direct+ \
+        --cmake-args \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DTRACETOOLS_DISABLED=ON \
+          -DOpenCV_DIR=/opt/opencv/lib/cmake/opencv4 \
+          -Dpybind11_DIR=/opt/jazzy-python/pybind11/share/cmake/pybind11 \
+    && rm -rf src build log
+
+
+FROM --platform=${TARGETPLATFORM} ${ROS_BASE_IMAGE} AS runtime
+
+ARG ROS_DISTRO=jazzy
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    ROS_VERSION=2 \
+    ROS_PYTHON_VERSION=3 \
+    PYTHONPATH=/opt/perception-python:/opt/opencv-python:/opt/jazzy-python \
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+COPY --from=builder /tmp/perception-runtime-packages.txt /tmp/perception-runtime-packages.txt
+
+RUN rm -rf /var/lib/apt/lists/* \
+    && apt-get -o Acquire::Retries=5 update \
+    && apt-get install -y --no-install-recommends \
+        libboost-filesystem1.74-dev \
+        libboost-iostreams1.74-dev \
+        libboost-python1.74-dev \
+        libboost-serialization1.74-dev \
+        libboost-system1.74-dev \
+        libboost-thread1.74-dev \
+        libeigen3-dev \
+        libtinyxml2-dev \
+        libyaml-cpp-dev \
+        python3-dateutil \
+        python3-pil \
+        python3-pkg-resources \
+        python3-pyparsing \
+        python3-setuptools \
+    && xargs -r apt-get install -y --no-install-recommends \
+        < /tmp/perception-runtime-packages.txt \
+    && rm -rf /var/lib/apt/lists/* \
+        /tmp/perception-runtime-packages.txt
+
+COPY --from=builder /opt/ros-perception/${ROS_DISTRO} /opt/ros-perception/${ROS_DISTRO}
+COPY --from=builder /opt/perception-python /opt/perception-python
+COPY --from=builder /opt/opencv /opt/opencv
+COPY --from=builder /opt/opencv-python /opt/opencv-python
+COPY --from=builder /opt/flann /opt/flann
+COPY --from=builder /opt/pcl /opt/pcl
+COPY --from=builder /opt/orocos-kdl /opt/orocos-kdl
+COPY ros_perception_entrypoint.sh /ros_perception_entrypoint.sh
+
+RUN mkdir -p /opt/perception-tools/bin \
+    && ln -s /usr/bin/python3 /opt/perception-tools/bin/python3 \
+    && printf '%s\n' /opt/flann/lib > /etc/ld.so.conf.d/flann.conf \
+    && printf '%s\n' /opt/pcl/lib > /etc/ld.so.conf.d/pcl.conf \
+    && printf '%s\n' /opt/opencv/lib > /etc/ld.so.conf.d/opencv.conf \
+    && printf '%s\n' /opt/orocos-kdl/lib > /etc/ld.so.conf.d/orocos-kdl.conf \
+    && chmod 0755 /ros_perception_entrypoint.sh \
+    && ldconfig
+
+ENTRYPOINT ["/ros_perception_entrypoint.sh"]
+CMD ["bash"]

@@ -1,0 +1,37 @@
+ARG BASE=openkylin/openkylin:2.0
+FROM ${BASE}
+
+ARG TARGETARCH
+ARG VERSION=4.1.1
+
+ARG SCALA_VERSION=2.13
+ARG KAFKA_URL=https://archive.apache.org/dist/kafka/${VERSION}/kafka_${SCALA_VERSION}-${VERSION}.tgz 
+
+RUN apt update && \
+    apt install -y wget hostname openjdk-17-jdk-headless && \
+    apt clean && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN mkdir opt/kafka; \
+    wget -O kafka.tgz "${KAFKA_URL}"; \
+    tar xfz kafka.tgz -C /opt/kafka --strip-components 1; \
+    mkdir -p /var/lib/kafka/data /etc/kafka/secrets; \
+    mkdir -p /etc/kafka/docker /usr/logs /mnt/shared/config; \
+    useradd -d /home/appuser -m -s /bin/bash appuser; \
+    chown appuser:appuser -R /usr/logs /opt/kafka /mnt/shared/config; \
+    chown appuser:root -R /var/lib/kafka /etc/kafka/secrets /etc/kafka; \
+    chmod -R ug+w /etc/kafka /var/lib/kafka /etc/kafka/secrets; \
+    cp /opt/kafka/config/log4j2.yaml /etc/kafka/docker/log4j2.yaml; \
+    cp /opt/kafka/config/tools-log4j2.yaml /etc/kafka/docker/tools-log4j2.yaml; \
+    rm kafka.tgz
+
+COPY --chown=appuser:appuser scripts /etc/kafka/docker
+COPY --chown=appuser:appuser launch /etc/kafka/docker/launch
+COPY --chown=appuser:appuser server.properties /etc/kafka/docker/server.properties
+RUN chmod 755 /etc/kafka/docker/run
+
+EXPOSE 9092
+USER appuser
+
+VOLUME ["/etc/kafka/secrets", "/var/lib/kafka/data", "/mnt/shared/config"]
+CMD ["/etc/kafka/docker/run"]

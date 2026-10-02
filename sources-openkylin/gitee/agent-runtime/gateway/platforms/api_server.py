@@ -1,0 +1,5917 @@
+"""
+OpenAI-compatible API server platform adapter.
+
+Exposes an HTTP server with endpoints:
+- POST /v1/chat/completions        — OpenAI Chat Completions format (stateless; opt-in session continuity via X-Hermes-Session-Id header; opt-in long-term memory scoping via X-Hermes-Session-Key header)
+- POST /v1/responses               — OpenAI Responses API format (stateful via previous_response_id; X-Hermes-Session-Key supported)
+- GET  /v1/responses/{response_id} — Retrieve a stored response
+- DELETE /v1/responses/{response_id} — Delete a stored response
+- POST /api/sessions/{session_id}/end — End a frontend session and extract its user profile
+- GET  /v1/models                  — lists hermes-agent as an available model
+- GET  /v1/capabilities            — machine-readable API capabilities for external UIs
+- POST /v1/runs                    — start a run, returns run_id immediately (202)
+- GET  /v1/runs/{run_id}           — retrieve current run status
+- GET  /v1/runs/{run_id}/events    — SSE stream of structured lifecycle events
+- POST /v1/runs/{run_id}/approval — resolve a pending run approval
+- POST /v1/runs/{run_id}/stop       — interrupt a running agent
+- GET  /health                     — health check
+- GET  /health/detailed            — rich status for cross-container dashboard probing
+
+Any OpenAI-compatible frontend (Open WebUI, LobeChat, LibreChat,
+AnythingLLM, NextChat, ChatBox, etc.) can connect to hermes-agent
+through this adapter by pointing at http://localhost:8642/v1.
+
+Requires:
+- aiohttp (already available in the gateway)
+"""
+
+import asyncio
+import hashlib
+import hmac
+import json
+import math
+import logging
+import os
+import socket as _socket
+import re
+import sqlite3
+import subprocess
+import threading
+import time
+import uuid
+import base64
+import shutil
+import zipfile
+from pathlib import Path
+from typing import Any, Callable, Dict, List, Optional
+
+try:
+    from aiohttp import web
+    AIOHTTP_AVAILABLE = True
+except ImportError:
+    AIOHTTP_AVAILABLE = False
+    web = None  # type: ignore[assignment]
+
+from gateway.config import Platform, PlatformConfig
+from gateway.platforms.base import (
+    BasePlatformAdapter,
+    SendResult,
+    is_network_accessible,
+)
+from agent.session_detail_logger import subscribe_session_details, write_session_detail
+from gateway.platforms.kylin_chat_approval import ChatApprovals, install_routes as install_chat_approval_routes
+# kylin-chat-approvals-v1
+
+logger = logging.getLogger(__name__)
+
+# Default settings
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 8642
+MAX_STORED_RESPONSES = 100
+MAX_REQUEST_BYTES = 10_000_000  # 10 MB — accommodates long agent conversations with tool calls
+CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS = 30.0
+MAX_NORMALIZED_TEXT_LENGTH = 65_536  # 64 KB cap for normalized content parts
+MAX_CONTENT_LIST_SIZE = 1_000  # Max items when content is an array
+
+
+def _desktop_notification_env() -> Dict[str, str]:
+    """Return an environment capable of reaching the user's desktop bus."""
+    env = os.environ.copy()
+    if os.name != "posix":
+        return env
+    runtime_dir = env.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}"
+    if os.path.isdir(runtime_dir):
+        env.setdefault("XDG_RUNTIME_DIR", runtime_dir)
+        bus_path = os.path.join(runtime_dir, "bus")
+        if os.path.exists(bus_path):
+            env.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path={bus_path}")
+
+    # A user systemd service may have been started before the graphical login,
+    # so its process environment can reach the session bus but still lack the
+    # variables required by Qt/GTK applications.  The user manager is updated
+    # by the desktop session and is therefore the authoritative late-bound
+    # source for these values.  Without this bridge the notification appears,
+    # but clicking it starts KylinAgent headlessly and Qt aborts while creating
+    # its platform integration.
+    if not env.get("DISPLAY") and not env.get("WAYLAND_DISPLAY"):
+        systemctl_bin = shutil.which("systemctl")
+        if systemctl_bin:
+            try:
+                result = subprocess.run(
+                    [systemctl_bin, "--user", "show-environment"],
+                    capture_output=True,
+                    text=True,
+                    env=env,
+                    timeout=2,
+                )
+                if result.returncode == 0:
+                    desktop_keys = {
+                        "DISPLAY",
+                        "WAYLAND_DISPLAY",
+                        "XAUTHORITY",
+                        "XDG_CURRENT_DESKTOP",
+                        "XDG_SESSION_TYPE",
+                        "QT_QPA_PLATFORM",
+                    }
+                    for line in result.stdout.splitlines():
+                        key, separator, value = line.partition("=")
+                        if separator and key in desktop_keys and value:
+                            env.setdefault(key, value)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+    # X11 commonly uses this default even when the session manager did not
+    # export XAUTHORITY explicitly.
+    if env.get("DISPLAY") and not env.get("XAUTHORITY"):
+        authority = Path(env.get("HOME", str(Path.home()))) / ".Xauthority"
+        if authority.is_file():
+            env["XAUTHORITY"] = str(authority)
+    return env
+
+
+_CRITICAL_NOTIFICATION_MARKERS = (
+    "紧急", "立即", "马上", "尽快", "严重", "危险", "告警", "警报",
+    "失败", "错误", "异常", "超时", "逾期", "截止", "打卡", "签到",
+    "开会", "会议", "汇报", "urgent", "critical", "alert", "failed",
+    "failure", "error", "deadline", "overdue", "timeout",
+)
+
+_NORMAL_NOTIFICATION_TIMEOUT_MS = 8_000
+
+
+def _infer_desktop_notification_urgency(content: str) -> tuple[str, int]:
+    """Infer freedesktop urgency from time-sensitive notification content."""
+    normalized = " ".join(str(content or "").split()).casefold()
+    if any(marker in normalized for marker in _CRITICAL_NOTIFICATION_MARKERS):
+        return "critical", 2
+    return "normal", 1
+
+
+def _notify_desktop_async(
+    content: str,
+    *,
+    event_callback: Optional[Callable[[str, Dict[str, Any]], None]] = None,
+) -> bool:
+    """Show an actionable Linux notification without blocking the gateway.
+
+    UKUI's notification server implements ``ActionInvoked`` but advertises an
+    empty capabilities list, which makes ``notify-send --action`` refuse to
+    send an action.  Call the same Freedesktop DBus API through ``gdbus`` so
+    clicking the notification can still open KylinAgent.  Critical notifications
+    remain visible until dismissed, while normal notifications expire after a
+    short delay.  Fall back to a non-actionable ``notify-send`` notification
+    when the DBus CLI is unavailable or the direct call fails.
+    """
+    gdbus_bin = shutil.which("gdbus")
+    notify_bin = shutil.which("notify-send")
+    agent_bin = shutil.which("kylin-agent")
+    if not gdbus_bin and not notify_bin:
+        logger.debug("Desktop notification skipped: gdbus/notify-send not found")
+        return False
+
+    def _emit(event: str, **details: Any) -> None:
+        if event_callback is None:
+            return
+        try:
+            event_callback(event, details)
+        except Exception as exc:
+            logger.debug("Desktop notification event callback failed: %s", exc)
+
+    # Notification daemons are not suitable for an entire model response.
+    body = " ".join(str(content or "").split())
+    if len(body) > 500:
+        body = body[:497] + "..."
+    env = _desktop_notification_env()
+    notification_body = body or "点击打开 KylinAgent 查看结果"
+    urgency_name, urgency_byte = _infer_desktop_notification_urgency(body)
+    notification_title = "紧急提醒" if urgency_name == "critical" else "定时任务提醒"
+    persistent = urgency_name == "critical"
+    expire_timeout_ms = 0 if persistent else _NORMAL_NOTIFICATION_TIMEOUT_MS
+    launch_lock = threading.Lock()
+    agent_launched = False
+
+    def _launch_agent(trigger: str, notification_id: Optional[int]) -> bool:
+        """Launch KylinAgent at most once for this delivered message."""
+        nonlocal agent_launched
+        if not agent_bin:
+            return False
+        with launch_lock:
+            if agent_launched:
+                return False
+            try:
+                process = subprocess.Popen(
+                    [agent_bin],
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    env=env,
+                    start_new_session=True,
+                )
+                try:
+                    return_code = process.wait(timeout=1)
+                except subprocess.TimeoutExpired:
+                    return_code = None
+                if return_code not in (None, 0):
+                    logger.warning(
+                        "KylinAgent exited immediately after notification activation "
+                        "(status %s)",
+                        return_code,
+                    )
+                    _emit(
+                        "launch_failed",
+                        notification_id=notification_id,
+                        executable=agent_bin,
+                        trigger=trigger,
+                        return_code=return_code,
+                    )
+                    return False
+            except OSError as exc:
+                logger.warning("Failed to launch KylinAgent: %s", exc)
+                return False
+            agent_launched = True
+        _emit(
+            "launched",
+            notification_id=notification_id,
+            executable=agent_bin,
+            trigger=trigger,
+        )
+        return True
+
+    if gdbus_bin:
+        monitor = None
+        try:
+            monitor = subprocess.Popen(
+                [
+                    gdbus_bin,
+                    "monitor",
+                    "--session",
+                    "--dest", "org.freedesktop.Notifications",
+                    "--object-path", "/org/freedesktop/Notifications",
+                ],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                text=True,
+                env=env,
+            )
+            result = subprocess.run(
+                [
+                    gdbus_bin,
+                    "call",
+                    "--session",
+                    "--dest", "org.freedesktop.Notifications",
+                    "--object-path", "/org/freedesktop/Notifications",
+                    "--method", "org.freedesktop.Notifications.Notify",
+                    "KylinAgent",
+                    "0",
+                    "kylin-agent",
+                    notification_title,
+                    notification_body,
+                    "['default', '打开 KylinAgent']",
+                    (
+                        "{'desktop-entry': <'kylin-agent'>, "
+                        f"'resident': <{'true' if persistent else 'false'}>, "
+                        f"'urgency': <byte {urgency_byte}>, "
+                        f"'x-ukui-popup-timeout': <{expire_timeout_ms if not persistent else -1}>, "
+                        f"'x-ukui-no-fold': <{'true' if persistent else 'false'}>}}"
+                    ),
+                    str(expire_timeout_ms),
+                ],
+                capture_output=True,
+                text=True,
+                env=env,
+                timeout=5,
+            )
+            match = re.search(r"uint32\s+(\d+)", result.stdout or "")
+            if result.returncode != 0 or not match:
+                raise RuntimeError((result.stderr or result.stdout or "gdbus Notify failed").strip())
+            notification_id = int(match.group(1))
+
+            def _wait_for_action() -> None:
+                try:
+                    action_pattern = re.compile(
+                        rf"ActionInvoked \(uint32 {notification_id}, '([^']*)'\)"
+                    )
+                    closed_pattern = re.compile(
+                        rf"NotificationClosed \(uint32 {notification_id}, uint32 (\d+)\)"
+                    )
+                    for line in monitor.stdout or ():
+                        action_match = action_pattern.search(line)
+                        if action_match:
+                            action_key = action_match.group(1)
+                            _emit("action", notification_id=notification_id, action=action_key)
+                            if action_key == "default":
+                                _launch_agent("action", notification_id)
+                            break
+                        closed_match = closed_pattern.search(line)
+                        if closed_match:
+                            close_reason = int(closed_match.group(1))
+                            _emit(
+                                "closed",
+                                notification_id=notification_id,
+                                reason=close_reason,
+                            )
+                            break
+                except Exception as exc:
+                    logger.debug("Desktop notification action failed: %s", exc)
+                finally:
+                    if monitor.poll() is None:
+                        monitor.terminate()
+
+            threading.Thread(
+                target=_wait_for_action,
+                name="kylin-desktop-notification",
+                daemon=True,
+            ).start()
+            _emit(
+                "shown",
+                notification_id=notification_id,
+                actionable=True,
+                urgency=urgency_name,
+            )
+            return True
+        except Exception as exc:
+            logger.debug("Actionable DBus notification failed: %s", exc)
+            if monitor is not None and monitor.poll() is None:
+                monitor.terminate()
+
+    if not notify_bin:
+        return False
+    try:
+        subprocess.Popen(
+            [
+                notify_bin,
+                "--app-name=KylinAgent",
+                "--icon=kylin-agent",
+                f"--urgency={urgency_name}",
+                f"--expire-time={expire_timeout_ms}",
+                notification_title,
+                notification_body,
+            ],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env=env,
+            start_new_session=True,
+        )
+        _emit(
+            "shown",
+            notification_id=None,
+            actionable=False,
+            urgency=urgency_name,
+        )
+        return True
+    except OSError as exc:
+        logger.warning("Failed to start desktop notification: %s", exc)
+        return False
+
+
+def _coerce_port(value: Any, default: int = DEFAULT_PORT) -> int:
+    """Parse a listen port without letting malformed env/config values crash startup."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+_TRUE_REQUEST_BOOL_STRINGS = frozenset({"1", "true", "yes", "on"})
+_FALSE_REQUEST_BOOL_STRINGS = frozenset({"0", "false", "no", "off"})
+
+
+def _coerce_request_bool(value: Any, default: bool = False) -> bool:
+    """Normalize boolean-like API payload values.
+
+    External clients should send real JSON booleans, but some OpenAI-compatible
+    frontends and middleware serialize flags like ``stream`` as strings.  Using
+    Python truthiness on those values misroutes requests because ``"false"`` is
+    still truthy.  Treat only explicit bool-ish scalars as booleans; everything
+    else falls back to the caller's default.
+    """
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in _TRUE_REQUEST_BOOL_STRINGS:
+            return True
+        if normalized in _FALSE_REQUEST_BOOL_STRINGS:
+            return False
+        return default
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return default
+
+
+def _coerce_request_priority(value: Any, default: int = 0) -> int:
+    """Normalize request priority to 0=low, 1=medium, 2=high.
+
+    Older clients sent a boolean priority flag; keep that compatible by mapping
+    False to low and True to high.
+    """
+    if isinstance(value, bool):
+        return 2 if value else 0
+    if value is None:
+        return default
+    if isinstance(value, (int, float)):
+        return max(0, min(2, int(value)))
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"", "none", "null"}:
+            return default
+        if normalized in {"0", "low", "false", "no", "off"}:
+            return 0
+        if normalized in {"1", "medium", "mid", "normal"}:
+            return 1
+        if normalized in {"2", "high", "true", "yes", "on", "priority", "fast"}:
+            return 2
+        try:
+            return max(0, min(2, int(normalized)))
+        except ValueError:
+            return default
+    return default
+
+
+def _normalize_chat_content(
+    content: Any, *, _max_depth: int = 10, _depth: int = 0,
+) -> str:
+    """Normalize OpenAI chat message content into a plain text string.
+
+    Some clients (Open WebUI, LobeChat, etc.) send content as an array of
+    typed parts instead of a plain string::
+
+        [{"type": "text", "text": "hello"}, {"type": "input_text", "text": "..."}]
+
+    This function flattens those into a single string so the agent pipeline
+    (which expects strings) doesn't choke.
+
+    Defensive limits prevent abuse: recursion depth, list size, and output
+    length are all bounded.
+    """
+    if _depth > _max_depth:
+        return ""
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content[:MAX_NORMALIZED_TEXT_LENGTH] if len(content) > MAX_NORMALIZED_TEXT_LENGTH else content
+
+    if isinstance(content, list):
+        parts: List[str] = []
+        items = content[:MAX_CONTENT_LIST_SIZE] if len(content) > MAX_CONTENT_LIST_SIZE else content
+        for item in items:
+            if isinstance(item, str):
+                if item:
+                    parts.append(item[:MAX_NORMALIZED_TEXT_LENGTH])
+            elif isinstance(item, dict):
+                item_type = str(item.get("type") or "").strip().lower()
+                if item_type in {"text", "input_text", "output_text"}:
+                    text = item.get("text", "")
+                    if text:
+                        try:
+                            parts.append(str(text)[:MAX_NORMALIZED_TEXT_LENGTH])
+                        except Exception:
+                            pass
+                # Silently skip image_url / other non-text parts
+            elif isinstance(item, list):
+                nested = _normalize_chat_content(item, _max_depth=_max_depth, _depth=_depth + 1)
+                if nested:
+                    parts.append(nested)
+            # Check accumulated size
+            if sum(len(p) for p in parts) >= MAX_NORMALIZED_TEXT_LENGTH:
+                break
+        result = "\n".join(parts)
+        return result[:MAX_NORMALIZED_TEXT_LENGTH] if len(result) > MAX_NORMALIZED_TEXT_LENGTH else result
+
+    # Fallback for unexpected types (int, float, bool, etc.)
+    try:
+        result = str(content)
+        return result[:MAX_NORMALIZED_TEXT_LENGTH] if len(result) > MAX_NORMALIZED_TEXT_LENGTH else result
+    except Exception:
+        return ""
+
+
+# Content part type aliases used by the OpenAI Chat Completions and Responses
+# APIs.  We accept both spellings on input and emit a single canonical internal
+# shape (``{"type": "text", ...}`` / ``{"type": "image_url", ...}``) that the
+# rest of the agent pipeline already understands.
+_TEXT_PART_TYPES = frozenset({"text", "input_text", "output_text"})
+_IMAGE_PART_TYPES = frozenset({"image_url", "input_image"})
+_FILE_PART_TYPES = frozenset({"file", "input_file"})
+
+
+def _normalize_multimodal_content(content: Any) -> Any:
+    """Validate and normalize multimodal content for the API server.
+
+    Returns a plain string when the content is text-only, or a list of
+    ``{"type": "text"|"image_url", ...}`` parts when images are present.
+    The output shape is the native OpenAI Chat Completions vision format,
+    which the agent pipeline accepts verbatim (OpenAI-wire providers) or
+    converts (``_preprocess_anthropic_content`` for Anthropic).
+
+    Raises ``ValueError`` with an OpenAI-style code on invalid input:
+      * ``unsupported_content_type`` — file/input_file/file_id parts, or
+        non-image ``data:`` URLs.
+      * ``invalid_image_url`` — missing URL or unsupported scheme.
+      * ``invalid_content_part`` — malformed text/image objects.
+
+    Callers translate the ValueError into a 400 response.
+    """
+    # Scalar passthrough mirrors ``_normalize_chat_content``.
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content[:MAX_NORMALIZED_TEXT_LENGTH] if len(content) > MAX_NORMALIZED_TEXT_LENGTH else content
+    if not isinstance(content, list):
+        # Mirror the legacy text-normalizer's fallback so callers that
+        # pre-existed image support still get a string back.
+        return _normalize_chat_content(content)
+
+    items = content[:MAX_CONTENT_LIST_SIZE] if len(content) > MAX_CONTENT_LIST_SIZE else content
+    normalized_parts: List[Dict[str, Any]] = []
+    text_accum_len = 0
+
+    for part in items:
+        if isinstance(part, str):
+            if part:
+                trimmed = part[:MAX_NORMALIZED_TEXT_LENGTH]
+                normalized_parts.append({"type": "text", "text": trimmed})
+                text_accum_len += len(trimmed)
+            continue
+
+        if not isinstance(part, dict):
+            # Ignore unknown scalars for forward compatibility with future
+            # Responses API additions (e.g. ``refusal``).  The same policy
+            # the text normalizer applies.
+            continue
+
+        raw_type = part.get("type")
+        part_type = str(raw_type or "").strip().lower()
+
+        if part_type in _TEXT_PART_TYPES:
+            text = part.get("text")
+            if text is None:
+                continue
+            if not isinstance(text, str):
+                text = str(text)
+            if text:
+                trimmed = text[:MAX_NORMALIZED_TEXT_LENGTH]
+                normalized_parts.append({"type": "text", "text": trimmed})
+                text_accum_len += len(trimmed)
+            continue
+
+        if part_type in _IMAGE_PART_TYPES:
+            detail = part.get("detail")
+            image_ref = part.get("image_url")
+            # OpenAI Responses sends ``input_image`` with a top-level
+            # ``image_url`` string; Chat Completions sends ``image_url`` as
+            # ``{"url": "...", "detail": "..."}``.  Support both.
+            if isinstance(image_ref, dict):
+                url_value = image_ref.get("url")
+                detail = image_ref.get("detail", detail)
+            else:
+                url_value = image_ref
+            if not isinstance(url_value, str) or not url_value.strip():
+                raise ValueError("invalid_image_url:Image parts must include a non-empty image URL.")
+            url_value = url_value.strip()
+            lowered = url_value.lower()
+            if lowered.startswith("data:"):
+                if not lowered.startswith("data:image/") or "," not in url_value:
+                    raise ValueError(
+                        "unsupported_content_type:Only image data URLs are supported. "
+                        "Non-image data payloads are not supported."
+                    )
+            elif not (lowered.startswith("http://") or lowered.startswith("https://")):
+                raise ValueError(
+                    "invalid_image_url:Image inputs must use http(s) URLs or data:image/... URLs."
+                )
+            image_part: Dict[str, Any] = {"type": "image_url", "image_url": {"url": url_value}}
+            if detail is not None:
+                if not isinstance(detail, str) or not detail.strip():
+                    raise ValueError("invalid_content_part:Image detail must be a non-empty string when provided.")
+                image_part["image_url"]["detail"] = detail.strip()
+            normalized_parts.append(image_part)
+            continue
+
+        if part_type in _FILE_PART_TYPES:
+            raise ValueError(
+                "unsupported_content_type:Inline image inputs are supported, "
+                "but uploaded files and document inputs are not supported on this endpoint."
+            )
+
+        # Unknown part type — reject explicitly so clients get a clear error
+        # instead of a silently dropped turn.
+        raise ValueError(
+            f"unsupported_content_type:Unsupported content part type {raw_type!r}. "
+            "Only text and image_url/input_image parts are supported."
+        )
+
+    if not normalized_parts:
+        return ""
+
+    # Text-only: collapse to a plain string so downstream logging/trajectory
+    # code sees the native shape and prompt caching on text-only turns is
+    # unaffected.
+    if all(p.get("type") == "text" for p in normalized_parts):
+        return "\n".join(p["text"] for p in normalized_parts if p.get("text"))
+
+    return normalized_parts
+
+
+def _content_has_visible_payload(content: Any) -> bool:
+    """True when content has any text or image attachment.  Used to reject empty turns."""
+    if isinstance(content, str):
+        return bool(content.strip())
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict):
+                ptype = str(part.get("type") or "").strip().lower()
+                if ptype in _TEXT_PART_TYPES and str(part.get("text") or "").strip():
+                    return True
+                if ptype in _IMAGE_PART_TYPES:
+                    return True
+    return False
+
+
+def _multimodal_validation_error(exc: ValueError, *, param: str) -> "web.Response":
+    """Translate a ``_normalize_multimodal_content`` ValueError into a 400 response."""
+    raw = str(exc)
+    code, _, message = raw.partition(":")
+    if not message:
+        code, message = "invalid_content_part", raw
+    return web.json_response(
+        _openai_error(message, code=code, param=param),
+        status=400,
+    )
+
+
+def check_api_server_requirements() -> bool:
+    """Check if API server dependencies are available."""
+    return AIOHTTP_AVAILABLE
+
+
+class ResponseStore:
+    """
+    SQLite-backed LRU store for Responses API state.
+
+    Each stored response includes the full internal conversation history
+    (with tool calls and results) so it can be reconstructed on subsequent
+    requests via previous_response_id.
+
+    Persists across gateway restarts.  Falls back to in-memory SQLite
+    if the on-disk path is unavailable.
+    """
+
+    def __init__(self, max_size: int = MAX_STORED_RESPONSES, db_path: str = None):
+        self._max_size = max_size
+        if db_path is None:
+            try:
+                from kylin_agent_runtime_cli.config import get_hermes_home
+                db_path = str(get_hermes_home() / "response_store.db")
+            except Exception:
+                db_path = ":memory:"
+        try:
+            self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        except Exception:
+            self._conn = sqlite3.connect(":memory:", check_same_thread=False)
+        # Use shared WAL-fallback helper so response_store.db degrades
+        # gracefully on NFS/SMB/FUSE-mounted HERMES_HOME (same filesystem
+        # issue addressed for state.db/kanban.db — see
+        # kylin_agent_runtime_state._WAL_INCOMPAT_MARKERS).
+        from kylin_agent_runtime_state import apply_wal_with_fallback
+        apply_wal_with_fallback(self._conn, db_label="response_store.db")
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS responses (
+                response_id TEXT PRIMARY KEY,
+                data TEXT NOT NULL,
+                accessed_at REAL NOT NULL
+            )"""
+        )
+        self._conn.execute(
+            """CREATE TABLE IF NOT EXISTS conversations (
+                name TEXT PRIMARY KEY,
+                response_id TEXT NOT NULL
+            )"""
+        )
+        self._conn.commit()
+
+    def get(self, response_id: str) -> Optional[Dict[str, Any]]:
+        """Retrieve a stored response by ID (updates access time for LRU)."""
+        row = self._conn.execute(
+            "SELECT data FROM responses WHERE response_id = ?", (response_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        self._conn.execute(
+            "UPDATE responses SET accessed_at = ? WHERE response_id = ?",
+            (time.time(), response_id),
+        )
+        self._conn.commit()
+        return json.loads(row[0])
+
+    def put(self, response_id: str, data: Dict[str, Any]) -> None:
+        """Store a response, evicting the oldest if at capacity."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO responses (response_id, data, accessed_at) VALUES (?, ?, ?)",
+            (response_id, json.dumps(data, default=str), time.time()),
+        )
+        # Evict oldest entries beyond max_size
+        count = self._conn.execute("SELECT COUNT(*) FROM responses").fetchone()[0]
+        if count > self._max_size:
+            # Collect IDs that will be evicted
+            evict_ids = [
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT response_id FROM responses ORDER BY accessed_at ASC LIMIT ?",
+                    (count - self._max_size,),
+                ).fetchall()
+            ]
+            if evict_ids:
+                placeholders = ",".join("?" for _ in evict_ids)
+                # Clear conversation mappings pointing to evicted responses
+                self._conn.execute(
+                    f"DELETE FROM conversations WHERE response_id IN ({placeholders})",
+                    evict_ids,
+                )
+                # Delete evicted responses
+                self._conn.execute(
+                    f"DELETE FROM responses WHERE response_id IN ({placeholders})",
+                    evict_ids,
+                )
+        self._conn.commit()
+
+    def delete(self, response_id: str) -> bool:
+        """Remove a response from the store. Returns True if found and deleted."""
+        # Clear conversation mappings pointing to this response
+        self._conn.execute(
+            "DELETE FROM conversations WHERE response_id = ?", (response_id,)
+        )
+        cursor = self._conn.execute(
+            "DELETE FROM responses WHERE response_id = ?", (response_id,)
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def get_conversation(self, name: str) -> Optional[str]:
+        """Get the latest response_id for a conversation name."""
+        row = self._conn.execute(
+            "SELECT response_id FROM conversations WHERE name = ?", (name,)
+        ).fetchone()
+        return row[0] if row else None
+
+    def set_conversation(self, name: str, response_id: str) -> None:
+        """Map a conversation name to its latest response_id."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO conversations (name, response_id) VALUES (?, ?)",
+            (name, response_id),
+        )
+        self._conn.commit()
+
+    def close(self) -> None:
+        """Close the database connection."""
+        try:
+            self._conn.close()
+        except Exception:
+            pass
+
+    def __len__(self) -> int:
+        row = self._conn.execute("SELECT COUNT(*) FROM responses").fetchone()
+        return row[0] if row else 0
+
+
+# ---------------------------------------------------------------------------
+# CORS middleware
+# ---------------------------------------------------------------------------
+
+_CORS_HEADERS = {
+    "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
+    "Access-Control-Allow-Headers": (
+        "Authorization, Content-Type, Idempotency-Key, "
+        "X-Hermes-Session-Id, X-Hermes-Session-Key, "
+        "X-Hermes-Priority, X-Hermes-Recover-Task"
+    ),
+}
+
+
+if AIOHTTP_AVAILABLE:
+    @web.middleware
+    async def cors_middleware(request, handler):
+        """Add CORS headers for explicitly allowed origins; handle OPTIONS preflight."""
+        adapter = request.app.get("api_server_adapter")
+        origin = request.headers.get("Origin", "")
+        cors_headers = None
+        if adapter is not None:
+            if not adapter._origin_allowed(origin):
+                return web.Response(status=403)
+            cors_headers = adapter._cors_headers_for_origin(origin)
+
+        if request.method == "OPTIONS":
+            if cors_headers is None:
+                return web.Response(status=403)
+            return web.Response(status=200, headers=cors_headers)
+
+        response = await handler(request)
+        if cors_headers is not None:
+            response.headers.update(cors_headers)
+        return response
+else:
+    cors_middleware = None  # type: ignore[assignment]
+
+
+def _openai_error(message: str, err_type: str = "invalid_request_error", param: str = None, code: str = None) -> Dict[str, Any]:
+    """OpenAI-style error envelope."""
+    return {
+        "error": {
+            "message": message,
+            "type": err_type,
+            "param": param,
+            "code": code,
+        }
+    }
+
+
+if AIOHTTP_AVAILABLE:
+    @web.middleware
+    async def body_limit_middleware(request, handler):
+        """Reject overly large request bodies early based on Content-Length."""
+        if request.method in {"POST", "PUT", "PATCH"}:
+            cl = request.headers.get("Content-Length")
+            if cl is not None:
+                try:
+                    if int(cl) > MAX_REQUEST_BYTES:
+                        return web.json_response(_openai_error("Request body too large.", code="body_too_large"), status=413)
+                except ValueError:
+                    return web.json_response(_openai_error("Invalid Content-Length header.", code="invalid_content_length"), status=400)
+        return await handler(request)
+else:
+    body_limit_middleware = None  # type: ignore[assignment]
+
+_SECURITY_HEADERS = {
+    "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+    "Permissions-Policy": "camera=(), microphone=(), geolocation=()",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "0",
+    "Referrer-Policy": "no-referrer",
+}
+
+
+if AIOHTTP_AVAILABLE:
+    @web.middleware
+    async def security_headers_middleware(request, handler):
+        """Add security headers to all responses (including errors)."""
+        response = await handler(request)
+        for k, v in _SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        return response
+else:
+    security_headers_middleware = None  # type: ignore[assignment]
+
+
+class _IdempotencyCache:
+    """In-memory idempotency cache with TTL and basic LRU semantics."""
+    def __init__(self, max_items: int = 1000, ttl_seconds: int = 300):
+        from collections import OrderedDict
+        self._store = OrderedDict()
+        self._inflight: Dict[tuple[str, str], "asyncio.Task[Any]"] = {}
+        self._ttl = ttl_seconds
+        self._max = max_items
+
+    def _purge(self):
+        now = time.time()
+        expired = [k for k, v in self._store.items() if now - v["ts"] > self._ttl]
+        for k in expired:
+            self._store.pop(k, None)
+        while len(self._store) > self._max:
+            self._store.popitem(last=False)
+
+    async def get_or_set(self, key: str, fingerprint: str, compute_coro):
+        self._purge()
+        item = self._store.get(key)
+        if item and item["fp"] == fingerprint:
+            return item["resp"]
+
+        inflight_key = (key, fingerprint)
+        task = self._inflight.get(inflight_key)
+        if task is None:
+            async def _compute_and_store():
+                resp = await compute_coro()
+                import time as _t
+                self._store[key] = {"resp": resp, "fp": fingerprint, "ts": _t.time()}
+                self._purge()
+                return resp
+
+            task = asyncio.create_task(_compute_and_store())
+            self._inflight[inflight_key] = task
+
+            def _clear_inflight(done_task: "asyncio.Task[Any]") -> None:
+                if self._inflight.get(inflight_key) is done_task:
+                    self._inflight.pop(inflight_key, None)
+
+            task.add_done_callback(_clear_inflight)
+
+        return await asyncio.shield(task)
+
+
+_idem_cache = _IdempotencyCache()
+
+
+def _make_request_fingerprint(body: Dict[str, Any], keys: List[str]) -> str:
+    from hashlib import sha256
+    subset = {k: body.get(k) for k in keys}
+    return sha256(repr(subset).encode("utf-8")).hexdigest()
+
+
+def _derive_chat_session_id(
+    system_prompt: Optional[str],
+    first_user_message: str,
+) -> str:
+    """Derive a stable session ID from the conversation's first user message.
+
+    OpenAI-compatible frontends (Open WebUI, LibreChat, etc.) send the full
+    conversation history with every request.  The system prompt and first user
+    message are constant across all turns of the same conversation, so hashing
+    them produces a deterministic session ID that lets the API server reuse
+    the same Hermes session (and therefore the same Docker container sandbox
+    directory) across turns.
+    """
+    seed = f"{system_prompt or ''}\n{first_user_message}"
+    digest = hashlib.sha256(seed.encode("utf-8")).hexdigest()[:16]
+    return f"api-{digest}"
+
+
+def _parse_project_execution_context(body: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Validate the optional desktop project context carried by each turn."""
+    context_keys = {
+        "project_id", "project_name", "project_instructions",
+        "working_directory", "project_roots",
+    }
+    if not any(key in body for key in context_keys):
+        return None
+
+    def _text(key: str, limit: int = 16_384) -> str:
+        value = body.get(key, "")
+        if value is None:
+            return ""
+        if not isinstance(value, str):
+            raise ValueError(f"{key} must be a string")
+        value = value.strip()
+        if len(value) > limit:
+            raise ValueError(f"{key} is too long")
+        return value
+
+    project_id = _text("project_id", 256)
+    project_name = _text("project_name", 1_024)
+    instructions = _text("project_instructions")
+    raw_working_directory = _text("working_directory", 4_096)
+    raw_roots = body.get("project_roots", [])
+    if not isinstance(raw_roots, list) or not all(isinstance(item, str) for item in raw_roots):
+        raise ValueError("project_roots must be an array of strings")
+
+    def _directory(raw: str, field: str) -> str:
+        path = Path(raw).expanduser()
+        if not path.is_absolute():
+            raise ValueError(f"{field} must contain absolute paths")
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise ValueError(f"{field} path does not exist: {raw}") from exc
+        if not resolved.is_dir():
+            raise ValueError(f"{field} path is not a directory: {raw}")
+        return str(resolved)
+
+    working_directory = _directory(raw_working_directory, "working_directory")
+    roots: List[str] = []
+    for raw_root in raw_roots:
+        root = _directory(raw_root.strip(), "project_roots")
+        if root not in roots:
+            roots.append(root)
+    if project_id and not roots:
+        raise ValueError("project sessions must provide at least one project root")
+    if project_id and working_directory not in roots:
+        raise ValueError("working_directory must be one of the project roots")
+
+    return {
+        "project_id": project_id,
+        "project_name": project_name,
+        "project_instructions": instructions,
+        "working_directory": working_directory,
+        "project_roots": roots,
+    }
+
+
+def _project_context_prompt(context: Dict[str, Any]) -> str:
+    project_id = context.get("project_id") or ""
+    working_directory = context["working_directory"]
+    if not project_id:
+        return (
+            "<current_project_context>\n"
+            "This conversation is not associated with a project.\n"
+            f"Working directory: {working_directory}\n"
+            "Do not infer a current project from the global user profile or memory.\n"
+            "</current_project_context>"
+        )
+    roots = "\n".join(f"- {root}" for root in context["project_roots"])
+    instructions = context.get("project_instructions") or "(none)"
+    return (
+        "<current_project_context>\n"
+        "The following desktop project context is authoritative for this conversation. "
+        "Never infer the current project from the global user profile or memory.\n"
+        f"Project ID: {project_id}\n"
+        f"Project name: {context.get('project_name') or '(unnamed)'}\n"
+        f"Working directory: {working_directory}\n"
+        f"All project roots:\n{roots}\n"
+        f"Project instructions:\n{instructions}\n"
+        "Resolve relative file and terminal operations from the working directory. "
+        "The other listed roots are also part of this project.\n"
+        "</current_project_context>"
+    )
+
+
+_CRON_AVAILABLE = False
+try:
+    from cron.jobs import (
+        list_jobs as _cron_list,
+        get_job as _cron_get,
+        create_job as _cron_create,
+        update_job as _cron_update,
+        remove_job as _cron_remove,
+        pause_job as _cron_pause,
+        resume_job as _cron_resume,
+        trigger_job as _cron_trigger,
+    )
+    _CRON_AVAILABLE = True
+except ImportError:
+    _cron_list = None
+    _cron_get = None
+    _cron_create = None
+    _cron_update = None
+    _cron_remove = None
+    _cron_pause = None
+    _cron_resume = None
+    _cron_trigger = None
+
+
+class APIServerAdapter(BasePlatformAdapter):
+    """
+    OpenAI-compatible HTTP API server adapter.
+
+    Runs an aiohttp web server that accepts OpenAI-format requests
+    and routes them through hermes-agent's AIAgent.
+    """
+
+    def __init__(self, config: PlatformConfig):
+        super().__init__(config, Platform.API_SERVER)
+        extra = config.extra or {}
+        self._host: str = extra.get("host", os.getenv("API_SERVER_HOST", DEFAULT_HOST))
+        raw_port = extra.get("port")
+        if raw_port is None:
+            raw_port = os.getenv("API_SERVER_PORT", str(DEFAULT_PORT))
+        self._port: int = _coerce_port(raw_port, DEFAULT_PORT)
+        self._api_key: str = extra.get("key", os.getenv("API_SERVER_KEY", ""))
+        self._cors_origins: tuple[str, ...] = self._parse_cors_origins(
+            extra.get("cors_origins", os.getenv("API_SERVER_CORS_ORIGINS", "")),
+        )
+        self._model_name: str = self._resolve_model_name(
+            extra.get("model_name", os.getenv("API_SERVER_MODEL_NAME", "")),
+        )
+        self._app: Optional["web.Application"] = None
+        self._runner: Optional["web.AppRunner"] = None
+        self._site: Optional["web.TCPSite"] = None
+        self._response_store = ResponseStore()
+        # Active run streams: run_id -> asyncio.Queue of SSE event dicts
+        self._run_streams: Dict[str, "asyncio.Queue[Optional[Dict]]"] = {}
+        # Creation timestamps for orphaned-run TTL sweep
+        self._run_streams_created: Dict[str, float] = {}
+        # Active run agent/task references for stop support
+        self._active_run_agents: Dict[str, Any] = {}
+        self._active_run_tasks: Dict[str, "asyncio.Task"] = {}
+        # Desktop chat sessions use Chat Completions rather than /v1/runs.
+        # Keep their live agent references so the Stop button can interrupt
+        # immediately instead of waiting for a broken SSE write to be noticed.
+        self._active_chat_agents: Dict[str, Any] = {}
+        # Pollable run status for dashboards and external control-plane UIs.
+        self._run_statuses: Dict[str, Dict[str, Any]] = {}
+        # Active approval session key for each run_id.  The approval core
+        # resolves requests by session key, while API clients address the
+        # in-flight run by run_id.
+        self._run_approval_sessions: Dict[str, str] = {}
+        self._session_db: Optional[Any] = None  # Lazy-init SessionDB for session continuity
+
+    @staticmethod
+    def _parse_cors_origins(value: Any) -> tuple[str, ...]:
+        """Normalize configured CORS origins into a stable tuple."""
+        if not value:
+            return ()
+
+        if isinstance(value, str):
+            items = value.split(",")
+        elif isinstance(value, (list, tuple, set)):
+            items = value
+        else:
+            items = [str(value)]
+
+        return tuple(str(item).strip() for item in items if str(item).strip())
+
+    @staticmethod
+    def _resolve_model_name(explicit: str) -> str:
+        """Derive the advertised model name for /v1/models.
+
+        Priority:
+        1. Explicit override (config extra or API_SERVER_MODEL_NAME env var)
+        2. Active profile name (so each profile advertises a distinct model)
+        3. Fallback: "hermes-agent"
+        """
+        if explicit and explicit.strip():
+            return explicit.strip()
+        try:
+            from kylin_agent_runtime_cli.profiles import get_active_profile_name
+            profile = get_active_profile_name()
+            if profile and profile not in {"default", "custom"}:
+                return profile
+        except Exception:
+            pass
+        return "hermes-agent"
+
+    def _cors_headers_for_origin(self, origin: str) -> Optional[Dict[str, str]]:
+        """Return CORS headers for an allowed browser origin."""
+        if not origin or not self._cors_origins:
+            return None
+
+        if "*" in self._cors_origins:
+            headers = dict(_CORS_HEADERS)
+            headers["Access-Control-Allow-Origin"] = "*"
+            headers["Access-Control-Max-Age"] = "600"
+            return headers
+
+        if origin not in self._cors_origins:
+            return None
+
+        headers = dict(_CORS_HEADERS)
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Vary"] = "Origin"
+        headers["Access-Control-Max-Age"] = "600"
+        return headers
+
+    def _origin_allowed(self, origin: str) -> bool:
+        """Allow non-browser clients and explicitly configured browser origins."""
+        if not origin:
+            return True
+
+        if not self._cors_origins:
+            return False
+
+        return "*" in self._cors_origins or origin in self._cors_origins
+
+    # ------------------------------------------------------------------
+    # Auth helper
+    # ------------------------------------------------------------------
+
+    def _check_auth(self, request: "web.Request") -> Optional["web.Response"]:
+        """
+        Validate Bearer token from Authorization header.
+
+        Returns None if auth is OK, or a 401 web.Response on failure.
+        If no API key is configured, all requests are allowed (only when API
+        server is local).
+        """
+        # return None
+        if not self._api_key:
+            return None  # No key configured — allow all (local-only use)
+
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:].strip()
+            if hmac.compare_digest(token, self._api_key):
+                return None  # Auth OK
+
+        return web.json_response(
+            {"error": {"message": "Invalid API key", "type": "invalid_request_error", "code": "invalid_api_key"}},
+            status=401,
+        )
+
+    # ------------------------------------------------------------------
+    # Session header helpers
+    # ------------------------------------------------------------------
+
+    # Soft length cap for session identifiers.  Headers are bounded in
+    # aggregate by aiohttp (``client_max_size`` / default 8 KiB per
+    # header), but we impose a tighter limit on the session headers so a
+    # caller can't burn memory by passing a multi-kilobyte "session key".
+    # 256 chars is well above any realistic stable channel identifier
+    # (e.g. ``agent:main:webui:dm:user-42``) while staying small enough
+    # that the sanitized form is safe to pass into Honcho / state.db.
+    _MAX_SESSION_HEADER_LEN = 256
+
+    def _parse_session_key_header(
+        self, request: "web.Request"
+    ) -> tuple[Optional[str], Optional["web.Response"]]:
+        """Extract and validate the ``X-Hermes-Session-Key`` header.
+
+        The session key is a stable per-channel identifier that scopes
+        long-term memory (e.g. Honcho sessions) across transcripts.  It
+        is independent of ``X-Hermes-Session-Id``: callers may send
+        either, both, or neither.
+
+        Returns ``(session_key, None)`` on success (with an empty/absent
+        header yielding ``None`` for the key), or ``(None, error_response)``
+        on validation failure.
+
+        Security: like session continuation, accepting a caller-supplied
+        memory scope requires API-key authentication so that an
+        unauthenticated client on a local-only server can't inject itself
+        into another user's long-term memory scope by guessing a key.
+        """
+        raw = request.headers.get("X-Hermes-Session-Key", "").strip()
+        if not raw:
+            return None, None
+
+        if not self._api_key:
+            logger.warning(
+                "X-Hermes-Session-Key rejected: no API key configured. "
+                "Set API_SERVER_KEY to enable long-term memory scoping."
+            )
+            return None, web.json_response(
+                _openai_error(
+                    "X-Hermes-Session-Key requires API key authentication. "
+                    "Configure API_SERVER_KEY to enable this feature."
+                ),
+                status=403,
+            )
+
+        # Reject control characters that could enable header injection on
+        # the echo path.
+        if re.search(r'[\r\n\x00]', raw):
+            return None, web.json_response(
+                {"error": {"message": "Invalid session key", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        if len(raw) > self._MAX_SESSION_HEADER_LEN:
+            return None, web.json_response(
+                {"error": {"message": "Session key too long", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        return raw, None
+
+    # ------------------------------------------------------------------
+    # Session DB helper
+    # ------------------------------------------------------------------
+
+    def _ensure_session_db(self):
+        """Lazily initialise and return the shared SessionDB instance.
+
+        Sessions are persisted to ``state.db`` so that ``kylin-agent-runtime sessions list``
+        shows API-server conversations alongside CLI and gateway ones.
+        """
+        if self._session_db is None:
+            try:
+                from kylin_agent_runtime_state import SessionDB
+                self._session_db = SessionDB()
+            except Exception as e:
+                logger.debug("SessionDB unavailable for API server: %s", e)
+        return self._session_db
+
+    # ------------------------------------------------------------------
+    # Agent creation helper
+    # ------------------------------------------------------------------
+
+    def _create_agent(
+        self,
+        ephemeral_system_prompt: Optional[str] = None,
+        session_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        stream_delta_callback=None,
+        tool_progress_callback=None,
+        tool_start_callback=None,
+        tool_complete_callback=None,
+        gateway_session_key: Optional[str] = None,
+    ) -> Any:
+        """
+        Create an AIAgent instance using the gateway's runtime config.
+
+        Uses _resolve_runtime_agent_kwargs() to pick up model, api_key,
+        base_url, etc. from config.yaml / env vars.  Toolsets are resolved
+        from config.yaml platform_toolsets.api_server (same as all other
+        gateway platforms), falling back to the hermes-api-server default.
+
+        ``gateway_session_key`` is a stable per-channel identifier supplied
+        by the client (via ``X-Hermes-Session-Key``).  Unlike ``session_id``
+        which scopes the short-term transcript and rotates on /new, this
+        key is meant to persist across transcripts so long-term memory
+        providers (e.g. Honcho) can scope their per-chat state correctly
+        — matching the semantics of the native gateway's ``session_key``.
+        """
+        from run_agent import AIAgent
+        from gateway.run import _resolve_runtime_agent_kwargs, _resolve_gateway_model, _load_gateway_config, GatewayRunner
+        from kylin_agent_runtime_cli.tools_config import _get_platform_tools
+
+        reasoning_config = GatewayRunner._load_reasoning_config()
+        requested_model = str(model_name or "").strip()
+        model = requested_model or _resolve_gateway_model()
+        from gateway.session_models import find_model_entry, public_selection, resolve_entry_runtime
+        db = self._ensure_session_db()
+        saved_selection = db.get_session_model_selection(session_id) if db and session_id else {}
+        entry = None
+        if saved_selection and (not requested_model or requested_model in
+                                {saved_selection["model"], "hermes-agent"}):
+            entry = find_model_entry(self._combined_model_entries(), saved_selection)
+        elif requested_model:
+            entries = self._combined_model_entries()
+            if any(requested_model in {str(e.get("model") or ""), str(e.get("id") or "")} for e in entries):
+                entry = find_model_entry(entries, {"model": requested_model})
+        if entry is not None:
+            model = str(entry["model"])
+            # Resolve a fresh provider runtime, including API mode and pool.
+            # Never overlay one provider's identity onto another's credentials.
+            runtime_kwargs = resolve_entry_runtime(entry)
+            if db and session_id:
+                db.create_session(session_id, "api_server", model=model)
+                saved_selection = db.set_session_model_selection(session_id, public_selection(entry))
+        else:
+            runtime_kwargs = _resolve_runtime_agent_kwargs()
+            runtime_kwargs.pop("model", None)
+
+        user_config = _load_gateway_config()
+        enabled_toolsets = sorted(_get_platform_tools(user_config, "api_server"))
+        agent_config = user_config.get("agent", {}) if isinstance(user_config, dict) else {}
+        verbose_logging = bool(agent_config.get("verbose_logging", False)) if isinstance(agent_config, dict) else False
+        checkpoints_config = (
+            user_config.get("checkpoints", {})
+            if isinstance(user_config, dict)
+            else {}
+        )
+        if not isinstance(checkpoints_config, dict):
+            checkpoints_config = {}
+
+        max_iterations = int(os.getenv("HERMES_MAX_ITERATIONS", "90"))
+
+        # Load fallback provider chain so the API server platform has the
+        # same fallback behaviour as Telegram/Discord/Slack (fixes #4954).
+        fallback_model = GatewayRunner._load_fallback_model()
+
+        agent = AIAgent(
+            model=model,
+            **runtime_kwargs,
+            max_iterations=max_iterations,
+            quiet_mode=True,
+            verbose_logging=verbose_logging,
+            ephemeral_system_prompt=ephemeral_system_prompt or None,
+            enabled_toolsets=enabled_toolsets,
+            session_id=session_id,
+            platform="api_server",
+            stream_delta_callback=stream_delta_callback,
+            tool_progress_callback=tool_progress_callback,
+            tool_start_callback=tool_start_callback,
+            tool_complete_callback=tool_complete_callback,
+            session_db=self._ensure_session_db(),
+            fallback_model=fallback_model,
+            reasoning_config=reasoning_config,
+            gateway_session_key=gateway_session_key,
+            # Desktop recovery needs a before-image for partially executed
+            # write/terminal/execute_code calls. Keep this protection on for
+            # API-server sessions even when the classic CLI rollback feature
+            # was not explicitly enabled.
+            checkpoints_enabled=True,
+            checkpoint_max_snapshots=int(
+                checkpoints_config.get("max_snapshots", 20)
+            ),
+            checkpoint_max_total_size_mb=int(
+                checkpoints_config.get("max_total_size_mb", 500)
+            ),
+            checkpoint_max_file_size_mb=int(
+                checkpoints_config.get("max_file_size_mb", 10)
+            ),
+        )
+        agent._session_model_selection = saved_selection
+        return agent
+
+    # ------------------------------------------------------------------
+    # HTTP Handlers
+    # ------------------------------------------------------------------
+
+    async def _handle_health(self, request: "web.Request") -> "web.Response":
+        """GET /health — simple health check."""
+        return web.json_response({"status": "ok", "platform": "hermes-agent"})
+
+    async def _handle_health_detailed(self, request: "web.Request") -> "web.Response":
+        """GET /health/detailed — rich status for cross-container dashboard probing.
+
+        Returns gateway state, connected platforms, PID, and uptime so the
+        dashboard can display full status without needing a shared PID file or
+        /proc access.  No authentication required.
+        """
+        from gateway.status import read_runtime_status
+
+        runtime = read_runtime_status() or {}
+        return web.json_response({
+            "status": "ok",
+            "platform": "hermes-agent",
+            "gateway_state": runtime.get("gateway_state"),
+            "platforms": runtime.get("platforms", {}),
+            "active_agents": runtime.get("active_agents", 0),
+            "exit_reason": runtime.get("exit_reason"),
+            "updated_at": runtime.get("updated_at"),
+            "pid": os.getpid(),
+        })
+
+    async def _handle_models(self, request: "web.Request") -> "web.Response":
+        """GET /v1/models — return hermes-agent as an available model."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        return web.json_response({
+            "object": "list",
+            "data": [
+                {
+                    "id": self._model_name,
+                    "object": "model",
+                    "created": int(time.time()),
+                    "owned_by": "hermes",
+                    "permission": [],
+                    "root": self._model_name,
+                    "parent": None,
+                }
+            ],
+        })
+
+    async def _handle_capabilities(self, request: "web.Request") -> "web.Response":
+        """GET /v1/capabilities — advertise the stable API surface.
+
+        External UIs and orchestrators use this endpoint to discover the API
+        server's plugin-safe contract without scraping docs or assuming that
+        every Hermes version exposes the same endpoints.
+        """
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        return web.json_response({
+            "object": "hermes.api_server.capabilities",
+            "platform": "hermes-agent",
+            "model": self._model_name,
+            "auth": {
+                "type": "bearer",
+                "required": bool(self._api_key),
+            },
+            "runtime": {
+                "mode": "server_agent",
+                "tool_execution": "server",
+                "split_runtime": False,
+                "description": (
+                    "The API server creates a server-side Hermes AIAgent; "
+                    "tools execute on the API-server host unless a future "
+                    "explicit split-runtime mode is enabled."
+                ),
+            },
+            "features": {
+                "chat_completions": True,
+                "chat_completions_streaming": True,
+                "responses_api": True,
+                "responses_streaming": True,
+                "run_submission": True,
+                "run_status": True,
+                "run_events_sse": True,
+                "run_stop": True,
+                "run_approval_response": True,
+                "tool_progress_events": True,
+                "approval_events": True,
+                "user_profile_on_session_end": True,
+                "session_continuity_header": "X-Hermes-Session-Id",
+                "session_key_header": "X-Hermes-Session-Key",
+                "cors": bool(self._cors_origins),
+            },
+            "endpoints": {
+                "health": {"method": "GET", "path": "/health"},
+                "health_detailed": {"method": "GET", "path": "/health/detailed"},
+                "models": {"method": "GET", "path": "/v1/models"},
+                "chat_completions": {"method": "POST", "path": "/v1/chat/completions"},
+                "responses": {"method": "POST", "path": "/v1/responses"},
+                "runs": {"method": "POST", "path": "/v1/runs"},
+                "run_status": {"method": "GET", "path": "/v1/runs/{run_id}"},
+                "run_events": {"method": "GET", "path": "/v1/runs/{run_id}/events"},
+                "run_approval": {"method": "POST", "path": "/v1/runs/{run_id}/approval"},
+                "run_stop": {"method": "POST", "path": "/v1/runs/{run_id}/stop"},
+                "sessions": {"method": "GET", "path": "/api/sessions"},
+                "session_messages": {"methods": ["GET", "POST"], "path": "/api/sessions/{session_id}/messages"},
+                "session_end": {"method": "POST", "path": "/api/sessions/{session_id}/end"},
+                "config_models": {"method": "GET", "path": "/api/config/models"},
+                "persona": {"method": "GET", "path": "/api/persona"},
+                "memory": {"method": "GET", "path": "/api/memory"},
+                "user_profile": {"methods": ["GET", "PUT"], "path": "/api/user-profile"},
+                "skills": {"method": "GET", "path": "/api/skills"},
+                "logs": {"method": "GET", "path": "/api/logs"},
+                "usage": {"method": "GET", "path": "/api/usage"},
+            },
+        })
+
+    # ------------------------------------------------------------------
+    # KylinAgent desktop management API
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _json_safe(value: Any) -> Any:
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        return value
+
+    @staticmethod
+    def _desktop_skill_dir_name(filename: str) -> str:
+        stem = Path(filename or "").stem
+        if not stem:
+            stem = f"skill-{int(time.time())}"
+        cleaned = re.sub(r"[^A-Za-z0-9_.-]+", "_", stem).strip("._-")
+        return cleaned or f"skill-{int(time.time())}"
+
+    @staticmethod
+    def _hermes_home() -> Path:
+        try:
+            from kylin_agent_runtime_constants import get_hermes_home
+            return get_hermes_home()
+        except Exception:
+            return Path(os.environ.get("HERMES_HOME", Path.home() / ".kylin-agent-runtime"))
+
+    @classmethod
+    def _safe_child_path(cls, *parts: str) -> Path:
+        root = cls._hermes_home().resolve()
+        path = root.joinpath(*parts).resolve()
+        if path != root and root not in path.parents:
+            raise ValueError("Path escapes HERMES_HOME")
+        return path
+
+    @staticmethod
+    def _read_text_file(path: Path) -> str:
+        try:
+            return path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return ""
+
+    @staticmethod
+    def _write_text_file(path: Path, content: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content or "", encoding="utf-8")
+
+    @staticmethod
+    def _session_to_api(row: Dict[str, Any]) -> Dict[str, Any]:
+        title = row.get("title") or row.get("preview") or "新会话"
+        try:
+            selection = json.loads(row.get("model_config") or "{}").get("session_model_selection", {})
+        except (ValueError, TypeError, AttributeError):
+            selection = {}
+        return {
+            "id": row.get("id", ""),
+            "title": title,
+            "source": row.get("source", ""),
+            "model": row.get("model") or "",
+            "model_selection": selection,
+            "started_at": row.get("started_at"),
+            "updated_at": row.get("last_active") or row.get("started_at"),
+            "ended_at": row.get("ended_at"),
+            "message_count": row.get("message_count", 0),
+            "preview": row.get("preview", ""),
+        }
+
+    async def _handle_list_sessions(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        limit = max(1, min(int(request.query.get("limit", "50")), 200))
+        offset = max(0, int(request.query.get("offset", "0")))
+        rows = [
+            row for row in db.list_sessions_rich(limit=200, offset=0, order_by_last_active=True)
+            if str(row.get("source") or "") == "desktop"
+        ][offset:offset + limit]
+        return web.json_response([self._session_to_api(row) for row in rows])
+
+    async def _handle_create_session(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        session_id = str(payload.get("id") or uuid.uuid4())
+        source = str(payload.get("source") or "desktop")
+        model = payload.get("model") or None
+        db.create_session(session_id, source, model=model)
+        title = str(payload.get("title") or "").strip()
+        if title and title != "新会话":
+            try:
+                db.set_session_title(session_id, title)
+            except ValueError:
+                pass
+        row = db.get_session(session_id) or {"id": session_id, "source": source, "model": model}
+        return web.json_response(self._session_to_api(row), status=201)
+
+    async def _handle_get_session(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        row = db.get_session(request.match_info["session_id"])
+        if not row:
+            return web.json_response(_openai_error("Session not found", code="session_not_found"), status=404)
+        return web.json_response(self._session_to_api(row))
+
+    async def _handle_get_session_recovery(self, request: "web.Request") -> "web.Response":
+        """Return the newest interrupted task checkpoint for a desktop session."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(
+                _openai_error("Session database unavailable", code="session_db_unavailable"),
+                status=503,
+            )
+        session_id = request.match_info["session_id"]
+        task = db.get_recoverable_task(session_id)
+        if not task:
+            return web.json_response({"recoverable": False, "session_id": session_id})
+
+        completed_steps = task.get("completed_steps") or []
+        from agent.task_recovery import summarize_subrun_for_recovery
+        subruns = [
+            summarize_subrun_for_recovery(item)
+            for item in db.list_task_subruns(str(task.get("id") or ""))
+        ]
+        checkpoints = db.list_task_checkpoints(
+            str(task.get("id") or ""),
+            limit=50,
+        )
+        execution_context = task.get("execution_context") or {}
+        if not isinstance(execution_context, dict):
+            execution_context = {}
+        public_execution_context = {
+            key: execution_context.get(key)
+            for key in (
+                "active_session_id",
+                "model",
+                "provider",
+                "working_directory",
+                "terminal_environment",
+                "message_count",
+                "completion_review",
+            )
+            if execution_context.get(key) is not None
+        }
+        todo_snapshot = task.get("todo_snapshot") or []
+        if isinstance(todo_snapshot, dict):
+            todo_snapshot = todo_snapshot.get("todos") or []
+        if not isinstance(todo_snapshot, list):
+            todo_snapshot = []
+        unfinished_subtasks = [
+            item for item in todo_snapshot
+            if isinstance(item, dict)
+            and str(item.get("status") or "") in {"pending", "in_progress"}
+        ]
+        completed_subtasks = [
+            item for item in todo_snapshot
+            if isinstance(item, dict)
+            and str(item.get("status") or "") == "completed"
+        ]
+        completed_tools = [
+            {
+                "tool": str(step.get("tool") or ""),
+                "summary": str(step.get("summary") or "")[:500],
+                "completed_at": step.get("completed_at"),
+            }
+            for step in completed_steps
+            if isinstance(step, dict)
+        ]
+        return web.json_response({
+            "recoverable": True,
+            "session_id": session_id,
+            "task_id": task.get("id"),
+            "status": task.get("status"),
+            "original_request": task.get("original_user_message") or "",
+            "model": task.get("model") or "",
+            "priority": task.get("priority") or 0,
+            "interrupted_at": task.get("updated_at"),
+            "interruption_reason": task.get("interruption_reason") or "",
+            "current_location": task.get("current_location") or "between model iterations",
+            "current_tool": task.get("current_tool") or "",
+            "current_tool_call_id": task.get("current_tool_call_id") or "",
+            "current_tool_args": task.get("current_tool_args") or "",
+            "current_recovery_policy": task.get("current_recovery_policy") or "",
+            "completed_step_count": len(completed_tools),
+            "completed_steps": completed_tools[-20:],
+            "unfinished_subtasks": unfinished_subtasks,
+            "completed_subtasks": completed_subtasks,
+            "subagent_runs": subruns,
+            "last_checkpoint": checkpoints[-1] if checkpoints else None,
+            "checkpoints": checkpoints,
+            "execution_context": public_execution_context,
+            "context_available": bool(public_execution_context),
+            "recovery_attempts": task.get("recovery_attempts") or 0,
+        })
+
+    async def _handle_interrupt_session_task(
+        self,
+        request: "web.Request",
+    ) -> "web.Response":
+        """Stop a desktop task, optionally retaining its recovery checkpoint."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        session_id = request.match_info["session_id"]
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        preserve_recovery = body.get("recoverable", True) is not False
+        requested_reason = str(body.get("reason") or "").strip()
+        interruption_reason = requested_reason or (
+            "user_stopped" if preserve_recovery else "queued_message_superseded"
+        )
+        agent = self._active_chat_agents.get(session_id)
+        if agent is not None:
+            try:
+                agent.interrupt(
+                    "Desktop stop button requested"
+                    if preserve_recovery
+                    else "Queued message superseded the active task"
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to interrupt active chat agent for %s",
+                    session_id,
+                    exc_info=True,
+                )
+
+        db = self._ensure_session_db()
+        task = db.get_running_task(session_id) if db is not None else None
+        if not preserve_recovery and task is None and db is not None:
+            # The SSE disconnect callback may have won the race and already
+            # changed the newest run from running to interrupted.
+            task = db.get_recoverable_task(session_id)
+        interrupted = False
+        if task and db is not None:
+            interrupted = db.finish_task_run(
+                str(task["id"]),
+                "interrupted" if preserve_recovery else "cancelled",
+                reason=interruption_reason,
+            )
+        recovery = db.get_recoverable_task(session_id) if db is not None else None
+        return web.json_response({
+            "session_id": session_id,
+            "interrupted": interrupted or agent is not None,
+            "recoverable": recovery is not None,
+            "task_id": recovery.get("id") if recovery else None,
+        })
+
+    async def _handle_update_session(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        session_id = request.match_info["session_id"]
+        try:
+            payload = await request.json()
+        except Exception:
+            payload = {}
+        if "model_selection" in payload:
+            if not db.get_session(session_id):
+                return web.json_response(_openai_error("Session not found", code="session_not_found"), status=404)
+            from gateway.session_models import find_model_entry, public_selection, resolve_entry_runtime
+            try:
+                entry = find_model_entry(self._combined_model_entries(), payload["model_selection"])
+                await asyncio.to_thread(resolve_entry_runtime, entry)
+            except ValueError as exc:
+                return web.json_response(_openai_error(str(exc), code="invalid_model_selection"), status=400)
+            except Exception:
+                return web.json_response(_openai_error("Cannot resolve selected model credentials", code="model_unavailable"), status=400)
+            selection = db.set_session_model_selection(session_id, public_selection(entry))
+            pending = session_id in self._active_chat_agents
+            write_session_detail(session_id, "model.switch.requested", {**selection, "pending": pending})
+            result = self._session_to_api(db.get_session(session_id))
+            result["model_switch_status"] = "pending" if pending else "saved"
+            return web.json_response(result)
+        if "title" in payload:
+            title = str(payload.get("title") or "").strip()
+            if not title or title == "新会话":
+                row = db.get_session(session_id)
+                if not row:
+                    return web.json_response(_openai_error("Session not found", code="session_not_found"), status=404)
+                return web.json_response(self._session_to_api(row))
+            try:
+                db.set_session_title(session_id, title)
+            except ValueError as exc:
+                return web.json_response(_openai_error(str(exc), code="invalid_title"), status=400)
+        row = db.get_session(session_id)
+        if not row:
+            return web.json_response(_openai_error("Session not found", code="session_not_found"), status=404)
+        return web.json_response(self._session_to_api(row))
+
+    async def _handle_delete_session_api(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        deleted = db.delete_session(request.match_info["session_id"], self._hermes_home() / "sessions")
+        return web.json_response({"deleted": bool(deleted)})
+
+    @staticmethod
+    def _extract_session_user_profile(agent: Any, messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Run profile extraction for a completed API session."""
+        try:
+            commit = getattr(agent, "commit_user_profile_session", None)
+            if not callable(commit):
+                return {
+                    "status": "unavailable",
+                    "error": "user-profile runtime is unavailable",
+                    "attempts": 0,
+                }
+            result = commit(messages)
+            if isinstance(result, dict):
+                return result
+            return {
+                "status": "disabled",
+                "reason": "user_profile_disabled",
+                "attempts": 0,
+            }
+        finally:
+            try:
+                shutdown_memory = getattr(agent, "shutdown_memory_provider", None)
+                if callable(shutdown_memory):
+                    shutdown_memory(messages)
+            except Exception:
+                logger.debug(
+                    "Failed to shut down API session memory provider", exc_info=True
+                )
+            try:
+                close = getattr(agent, "close", None)
+                if callable(close):
+                    close()
+            except Exception:
+                logger.debug("Failed to close API session profile agent", exc_info=True)
+
+    async def _handle_end_session(self, request: "web.Request") -> "web.Response":
+        """POST /api/sessions/{id}/end — extract a profile and end the session."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(
+                _openai_error(
+                    "Session database unavailable", code="session_db_unavailable"
+                ),
+                status=503,
+            )
+
+        session_id = request.match_info["session_id"]
+        row = db.get_session(session_id)
+        if not row or str(row.get("source") or "") not in {"desktop", "api_server"}:
+            return web.json_response(
+                _openai_error("Session not found", code="session_not_found"),
+                status=404,
+            )
+        if row.get("ended_at") is not None:
+            return web.json_response({
+                "id": session_id,
+                "ended": True,
+                "already_ended": True,
+                "ended_at": row.get("ended_at"),
+                "profile": {
+                    "status": "skipped",
+                    "reason": "already_ended",
+                    "attempts": 0,
+                },
+            })
+
+        # Claim the boundary before yielding to the executor. This makes a
+        # double-click idempotent and ensures an optional extractor failure
+        # cannot leave the conversation marked active.
+        db.end_session(session_id, "api_session_end")
+        ended_row = db.get_session(session_id) or row
+        messages = db.get_messages_as_conversation(session_id)
+        model_name = str(row.get("model") or "").strip() or None
+        try:
+            agent = self._create_agent(
+                session_id=session_id,
+                model_name=model_name,
+            )
+            loop = asyncio.get_running_loop()
+            profile_result = await loop.run_in_executor(
+                None, self._extract_session_user_profile, agent, messages
+            )
+        except Exception as exc:
+            logger.exception(
+                "[api_server] user-profile extraction failed for session %s",
+                session_id,
+            )
+            profile_result = {
+                "status": "failed",
+                "error": f"profile extractor initialization failed: {type(exc).__name__}",
+                "attempts": 0,
+            }
+
+        return web.json_response({
+            "id": session_id,
+            "ended": True,
+            "already_ended": False,
+            "ended_at": ended_row.get("ended_at"),
+            "profile": profile_result,
+        })
+
+    async def _handle_get_session_messages(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        messages = [
+            msg for msg in db.get_messages(request.match_info["session_id"])
+            if msg.get("role") in {"user", "assistant"} and msg.get("content") is not None
+            and not str(msg.get("content") or "").startswith("[[kylin-agent-task-recovery]]")
+        ]
+        return web.json_response([
+            {
+                "id": msg.get("id"),
+                "session_id": msg.get("session_id"),
+                "role": msg.get("role"),
+                "content": self._json_safe(msg.get("content") or ""),
+                "timestamp": msg.get("timestamp"),
+                "tool_name": msg.get("tool_name"),
+                "tool_calls": msg.get("tool_calls"),
+                "reasoning_content": msg.get("reasoning_content"),
+            }
+            for msg in messages
+        ])
+
+    async def _handle_get_session_details(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        session_id = request.match_info["session_id"]
+        try:
+            from agent.session_detail_logger import (
+                legacy_session_detail_log_path,
+                session_detail_log_path,
+            )
+            path = session_detail_log_path(session_id)
+            legacy_path = legacy_session_detail_log_path(session_id)
+            if not path.exists() and legacy_path.exists():
+                path = legacy_path
+        except Exception:
+            safe_id = re.sub(r"[^A-Za-z0-9_.{}-]+", "_", str(session_id or "unknown")).strip()[:180]
+            path = self._safe_child_path("sessions", f"{safe_id}-details.log")
+            legacy_path = self._safe_child_path("sessions", f"{safe_id}-detials.log")
+            if not path.exists() and legacy_path.exists():
+                path = legacy_path
+        return web.json_response({
+            "session_id": session_id,
+            "name": path.name,
+            "content": self._read_text_file(path),
+        })
+
+    async def _handle_add_session_message(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response(_openai_error("Invalid JSON body", code="invalid_json"), status=400)
+        role = str(payload.get("role") or "").strip()
+        if role not in {"system", "user", "assistant", "tool"}:
+            return web.json_response(_openai_error("Invalid role", code="invalid_role"), status=400)
+        session_id = request.match_info["session_id"]
+        db.ensure_session(session_id, "desktop")
+        timestamp = payload.get("timestamp")
+        try:
+            timestamp = float(timestamp) if timestamp is not None else None
+        except (TypeError, ValueError):
+            return web.json_response(
+                _openai_error("Invalid timestamp", code="invalid_timestamp"), status=400
+            )
+        if timestamp is not None and (not math.isfinite(timestamp) or timestamp <= 0):
+            return web.json_response(
+                _openai_error("Invalid timestamp", code="invalid_timestamp"), status=400
+            )
+        if timestamp is None:
+            message_id = db.append_message(
+                session_id, role, payload.get("content") or ""
+            )
+        else:
+            message_id = db.append_message(
+                session_id,
+                role,
+                payload.get("content") or "",
+                timestamp=timestamp,
+            )
+        return web.json_response({"id": message_id, "session_id": session_id, "role": role}, status=201)
+
+    @classmethod
+    def _models_file(cls) -> Path:
+        return cls._safe_child_path("models.json")
+
+    @classmethod
+    def _config_file(cls) -> Path:
+        return cls._safe_child_path("config.yaml")
+
+    @classmethod
+    def _read_models_file(cls) -> List[Dict[str, Any]]:
+        path = cls._models_file()
+        if not path.exists():
+            return []
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return data if isinstance(data, list) else []
+        except Exception:
+            return []
+
+    @staticmethod
+    def _provider_slug_for(provider: str, base_url: str) -> str:
+        provider_text = str(provider or "").strip().lower()
+        base_text = str(base_url or "").strip().lower()
+        if "ollama" in provider_text or "11434" in base_text:
+            return "ollama"
+        # kylin-local-model-provider-v1: desktop local rows use custom.
+        if provider_text.startswith("kylin-local-"):
+            return "custom"
+        if provider_text.startswith("custom"):
+            return "custom"
+        if ":" in provider_text:
+            return provider_text.split(":", 1)[0]
+        return provider_text or "custom"
+
+    @staticmethod
+    def _model_dedupe_key(entry: Dict[str, Any]) -> str:
+        base_url = str(entry.get("baseUrl") or entry.get("base_url") or "").strip().lower().rstrip("/")
+        provider = str(entry.get("provider") or "").strip().lower()
+        model = str(entry.get("model") or entry.get("id") or "").strip().lower()
+        if base_url and "/" in model:
+            model = model.rsplit("/", 1)[-1]
+        scope = base_url or provider
+        return f"{scope}\n{model}"
+
+    @staticmethod
+    def _model_preference_score(entry: Dict[str, Any]) -> int:
+        provider = str(entry.get("provider") or "").strip().lower()
+        name = str(entry.get("name") or "").strip().lower()
+        generic_provider = provider in {"", "custom", "local", "local / custom", "local/custom"}
+        score = 0 if generic_provider else 20
+        if name and name not in {"custom", "local", "local / custom", "local/custom", "model"}:
+            score += 2
+        if int(entry.get("contextLength") or entry.get("context_length") or 0):
+            score += 1
+        return score
+
+    @staticmethod
+    def _to_int(value: Any, default: int = 0) -> int:
+        try:
+            return int(value or default)
+        except Exception:
+            return default
+
+    @classmethod
+    def _model_entry(cls, *, provider: str, model: str, base_url: str = "", api_key: str = "",
+                     name: str = "", context_length: int = 0, row_id: str = "") -> Dict[str, Any]:
+        slug = cls._provider_slug_for(provider, base_url)
+        model_id = str(model or "").strip()
+        display_name = str(name or "").strip()
+        if not display_name:
+            display_name = model_id if slug == "ollama" else f"{provider or slug} - {model_id}"
+        return {
+            "id": row_id or f"{slug}/{model_id}",
+            "name": display_name,
+            "provider": slug,
+            "model": model_id,
+            "baseUrl": str(base_url or ""),
+            "apiKey": str(api_key or ""),
+            "contextLength": cls._to_int(context_length),
+        }
+
+    @classmethod
+    def _read_config_model_entries(cls) -> List[Dict[str, Any]]:
+        path = cls._config_file()
+        if not path.exists():
+            return []
+        try:
+            import yaml
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        except Exception as exc:
+            logger.warning("Failed to parse config models from %s: %s", path, exc)
+            return []
+        if not isinstance(raw, dict):
+            return []
+
+        entries: List[Dict[str, Any]] = []
+        model_cfg = raw.get("model")
+        if isinstance(model_cfg, dict):
+            default_model = str(model_cfg.get("default") or "").strip()
+            if default_model:
+                entries.append(cls._model_entry(
+                    provider=str(model_cfg.get("provider") or "custom"),
+                    model=default_model,
+                    base_url=str(model_cfg.get("base_url") or ""),
+                    api_key=str(model_cfg.get("api_key") or ""),
+                    context_length=cls._to_int(model_cfg.get("context_length")),
+                ))
+
+        providers = raw.get("custom_providers")
+        if isinstance(providers, list):
+            for provider_cfg in providers:
+                if not isinstance(provider_cfg, dict):
+                    continue
+                provider = str(provider_cfg.get("name") or provider_cfg.get("provider") or "custom")
+                base_url = str(provider_cfg.get("base_url") or provider_cfg.get("baseUrl") or "")
+                api_key = str(provider_cfg.get("api_key") or provider_cfg.get("apiKey") or "")
+                primary_model = str(provider_cfg.get("model") or "").strip()
+                models_obj = provider_cfg.get("models")
+                model_names: List[str] = []
+                context_by_model: Dict[str, int] = {}
+                if primary_model:
+                    model_names.append(primary_model)
+                if isinstance(models_obj, dict):
+                    for model_name, model_options in models_obj.items():
+                        model_text = str(model_name or "").strip()
+                        if not model_text:
+                            continue
+                        model_names.append(model_text)
+                        if isinstance(model_options, dict):
+                            context_by_model[model_text] = cls._to_int(model_options.get("context_length"))
+                elif isinstance(models_obj, list):
+                    for model_name in models_obj:
+                        model_text = str(model_name or "").strip()
+                        if model_text:
+                            model_names.append(model_text)
+                for model_name in dict.fromkeys(model_names):
+                    entries.append(cls._model_entry(
+                        provider=provider,
+                        model=model_name,
+                        base_url=base_url,
+                        api_key=api_key,
+                        context_length=context_by_model.get(model_name, 0),
+                    ))
+        return entries
+
+    @classmethod
+    def _combined_model_entries(cls) -> List[Dict[str, Any]]:
+        combined: List[Dict[str, Any]] = []
+        index_by_key: Dict[str, int] = {}
+        for item in cls._read_config_model_entries() + cls._read_models_file():
+            model_id = str(item.get("model") or item.get("id") or "").strip()
+            if not model_id:
+                continue
+            entry = cls._model_entry(
+                provider=str(item.get("provider") or "custom"),
+                model=model_id,
+                base_url=str(item.get("baseUrl") or item.get("base_url") or ""),
+                api_key=str(item.get("apiKey") or item.get("api_key") or ""),
+                name=str(item.get("name") or ""),
+                context_length=cls._to_int(item.get("contextLength") or item.get("context_length")),
+                row_id=str(item.get("id") or ""),
+            )
+            key = cls._model_dedupe_key(entry)
+            if key in index_by_key:
+                existing_index = index_by_key[key]
+                if cls._model_preference_score(entry) > cls._model_preference_score(combined[existing_index]):
+                    combined[existing_index] = entry
+                continue
+            index_by_key[key] = len(combined)
+            combined.append(entry)
+        return combined
+
+    @classmethod
+    def _write_models_file(cls, models: List[Dict[str, Any]]) -> None:
+        path = cls._models_file()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(models, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    @classmethod
+    def _sync_models_to_config(cls, models: List[Dict[str, Any]]) -> None:
+        path = cls._config_file()
+        try:
+            import yaml
+            raw = yaml.safe_load(path.read_text(encoding="utf-8")) if path.exists() else {}
+            cfg = raw if isinstance(raw, dict) else {}
+            if models:
+                first = models[0]
+                cfg.setdefault("model", {})
+                cfg["model"]["default"] = first.get("model") or first.get("id")
+                cfg["model"]["provider"] = first.get("provider") or "custom"
+                if first.get("baseUrl"):
+                    cfg["model"]["base_url"] = first.get("baseUrl")
+                if first.get("apiKey"):
+                    cfg["model"]["api_key"] = first.get("apiKey")
+                providers = []
+                for model in models:
+                    model_id = model.get("model") or model.get("id") or ""
+                    if not model_id:
+                        continue
+                    model_cfg: Dict[str, Any] = {}
+                    context_length = int(model.get("contextLength") or 0)
+                    if context_length > 0:
+                        model_cfg["context_length"] = context_length
+                    providers.append({
+                        "name": model.get("provider") or "custom",
+                        "base_url": model.get("baseUrl") or "",
+                        "api_key": model.get("apiKey") or "",
+                        "model": model_id,
+                        "models": {model_id: model_cfg},
+                    })
+                cfg["custom_providers"] = providers
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(yaml.safe_dump(cfg, allow_unicode=True, sort_keys=False), encoding="utf-8")
+        except Exception as exc:
+            logger.warning("Failed to sync models to config.yaml: %s", exc)
+
+    async def _handle_list_config_models(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        return web.json_response(self._combined_model_entries())
+
+    async def _handle_replace_config_models(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response(_openai_error("Invalid JSON body", code="invalid_json"), status=400)
+        models = payload.get("models") if isinstance(payload, dict) else payload
+        if not isinstance(models, list):
+            return web.json_response(_openai_error("models array is required", code="missing_models"), status=400)
+        cleaned = []
+        for item in models:
+            if not isinstance(item, dict):
+                continue
+            model_id = str(item.get("model") or item.get("id") or "").strip()
+            if not model_id:
+                continue
+            cleaned.append({
+                "id": str(item.get("id") or uuid.uuid4()),
+                "name": str(item.get("name") or model_id),
+                "provider": str(item.get("provider") or "custom"),
+                "model": model_id,
+                "baseUrl": str(item.get("baseUrl") or item.get("base_url") or ""),
+                "apiKey": str(item.get("apiKey") or item.get("api_key") or ""),
+                "contextLength": int(item.get("contextLength") or item.get("context_length") or 0),
+                "createdAt": int(item.get("createdAt") or time.time()),
+            })
+        self._write_models_file(cleaned)
+        self._sync_models_to_config(cleaned)
+        return web.json_response(cleaned)
+
+    async def _handle_create_config_model(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response(_openai_error("Invalid JSON body", code="invalid_json"), status=400)
+        model_id = str(payload.get("model") or payload.get("id") or "").strip()
+        if not model_id:
+            return web.json_response(_openai_error("model is required", code="missing_model"), status=400)
+        entry = {
+            "id": str(payload.get("id") or uuid.uuid4()),
+            "name": str(payload.get("name") or model_id),
+            "provider": str(payload.get("provider") or "custom"),
+            "model": model_id,
+            "baseUrl": str(payload.get("baseUrl") or payload.get("base_url") or ""),
+            "apiKey": str(payload.get("apiKey") or payload.get("api_key") or ""),
+            "contextLength": int(payload.get("contextLength") or payload.get("context_length") or 0),
+            "createdAt": int(time.time()),
+        }
+        models = self._read_models_file()
+        models.append(entry)
+        self._write_models_file(models)
+        self._sync_models_to_config(models)
+        return web.json_response(entry, status=201)
+
+    async def _handle_update_config_model(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response(_openai_error("Invalid JSON body", code="invalid_json"), status=400)
+        model_row_id = request.match_info["model_id"]
+        models = self._read_models_file()
+        for entry in models:
+            if str(entry.get("id")) == model_row_id:
+                for key in ("name", "provider", "model", "baseUrl", "apiKey", "contextLength"):
+                    if key in payload:
+                        entry[key] = payload[key]
+                self._write_models_file(models)
+                self._sync_models_to_config(models)
+                return web.json_response(entry)
+        return web.json_response(_openai_error("Model not found", code="model_not_found"), status=404)
+
+    async def _handle_delete_config_model(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        model_row_id = request.match_info["model_id"]
+        models = self._read_models_file()
+        next_models = [m for m in models if str(m.get("id")) != model_row_id]
+        self._write_models_file(next_models)
+        self._sync_models_to_config(next_models)
+        return web.json_response({"deleted": len(next_models) != len(models)})
+
+    async def _handle_persona_get(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        path = self._safe_child_path("SOUL.md")
+        return web.json_response({"content": self._read_text_file(path)})
+
+    async def _handle_persona_put(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        payload = await request.json()
+        self._write_text_file(self._safe_child_path("SOUL.md"), str(payload.get("content") or ""))
+        return web.json_response({"ok": True})
+
+    async def _handle_memory_get(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        return web.json_response({
+            "memory": self._read_text_file(self._safe_child_path("MEMORY.md")),
+            "user": self._read_text_file(self._safe_child_path("USER.md")),
+        })
+
+    async def _handle_memory_put(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        payload = await request.json()
+        if "memory" in payload:
+            self._write_text_file(self._safe_child_path("MEMORY.md"), str(payload.get("memory") or ""))
+        if "user" in payload:
+            self._write_text_file(self._safe_child_path("USER.md"), str(payload.get("user") or ""))
+        return web.json_response({"ok": True})
+
+    def _desktop_user_profile_service(self):
+        """Return the structured profile service and desktop user's stable ID."""
+        from agent.user_profile import EncryptedFileProfileStore, FileKeyProvider, ProfileService
+        from agent.user_profile.identity import pseudonymous_user_id
+
+        profile_root = self._hermes_home() / "user_profile"
+        key_provider = FileKeyProvider(profile_root / "profile.key")
+        try:
+            key_provider.get_key()
+        except FileNotFoundError:
+            try:
+                key_provider.create()
+            except FileExistsError:
+                key_provider.get_key()
+        service = ProfileService(
+            EncryptedFileProfileStore(profile_root / "profiles", key_provider)
+        )
+        user_id = pseudonymous_user_id(
+            platform="api_server", platform_user_id=None, key_provider=key_provider
+        )
+        return service, user_id
+
+    @staticmethod
+    def _user_profile_response(service, user_id: str) -> dict[str, Any]:
+        profile = service.get_or_create(user_id)
+        return {
+            "content": service.profile_prompt(user_id),
+            "entries": {
+                path: entry.value for path, entry in sorted(profile.entries.items())
+            },
+            "entry_count": len(profile.entries),
+            "updated_at": profile.updated_at.isoformat(),
+        }
+
+    async def _handle_user_profile_get(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        try:
+            service, user_id = self._desktop_user_profile_service()
+            return web.json_response(self._user_profile_response(service, user_id))
+        except Exception as exc:
+            logger.warning("Structured user profile unavailable: %s", exc)
+            return web.json_response(
+                _openai_error(
+                    "Structured user profile unavailable",
+                    code="user_profile_unavailable",
+                ),
+                status=503,
+            )
+
+    async def _handle_user_profile_put(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        try:
+            payload = await request.json()
+        except Exception:
+            return web.json_response(
+                _openai_error("Request body must be valid JSON", code="invalid_json"),
+                status=400,
+            )
+        entries = payload.get("entries") if isinstance(payload, dict) else None
+        if not isinstance(entries, dict):
+            return web.json_response(
+                _openai_error("entries must be a JSON object", code="invalid_user_profile"),
+                status=400,
+            )
+
+        try:
+            from agent.user_profile.models import ProfileUpdate
+            from agent.user_profile.policy import apply_updates
+
+            service, user_id = self._desktop_user_profile_service()
+            profile = service.get_or_create(user_id)
+            expected_updated_at = str(payload.get("expected_updated_at") or "")
+            if expected_updated_at and expected_updated_at != profile.updated_at.isoformat():
+                return web.json_response(
+                    _openai_error(
+                        "User profile changed since it was loaded; refresh and try again",
+                        code="user_profile_conflict",
+                    ),
+                    status=409,
+                )
+
+            updates = []
+            for path in profile.entries.keys() - entries.keys():
+                updates.append(
+                    ProfileUpdate(action="delete", path=path, explicit=True)
+                )
+            for path, value in entries.items():
+                current = profile.entries.get(path)
+                if current is not None and current.value == value:
+                    continue
+                updates.append(
+                    ProfileUpdate(
+                        path=path,
+                        value=value,
+                        confidence=1.0,
+                        explicit=True,
+                        evidence_quote="Edited in Kylin Agent settings",
+                    )
+                )
+            result = apply_updates(profile, updates)
+            if result.rejected or result.conflicts:
+                invalid_paths = sorted({*result.rejected, *result.conflicts})
+                return web.json_response(
+                    _openai_error(
+                        "User profile update rejected for: " + ", ".join(invalid_paths),
+                        code="invalid_user_profile",
+                    ),
+                    status=400,
+                )
+            if result.applied or result.deleted:
+                service.store.save(profile)
+            response = self._user_profile_response(service, user_id)
+            response["ok"] = True
+            response["applied"] = result.applied
+            response["deleted"] = result.deleted
+            response["rejected"] = result.rejected
+            return web.json_response(response)
+        except (TypeError, ValueError) as exc:
+            return web.json_response(
+                _openai_error(str(exc), code="invalid_user_profile"), status=400
+            )
+        except Exception as exc:
+            logger.warning("Structured user profile update failed: %s", exc)
+            return web.json_response(
+                _openai_error(
+                    "Structured user profile update failed",
+                    code="user_profile_unavailable",
+                ),
+                status=503,
+            )
+
+    async def _handle_usage(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        db = self._ensure_session_db()
+        if not db:
+            return web.json_response(_openai_error("Session database unavailable", code="session_db_unavailable"), status=503)
+        with db._lock:
+            row = db._conn.execute(
+                "SELECT COUNT(*) AS sessions, COALESCE(SUM(message_count), 0) AS messages, "
+                "COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens, "
+                "COALESCE(SUM(estimated_cost_usd), 0) AS estimated_cost_usd FROM sessions WHERE source = 'desktop'"
+            ).fetchone()
+        return web.json_response(dict(row))
+
+    async def _handle_logs_list(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        logs_dir = self._safe_child_path("logs")
+        files = []
+        if logs_dir.exists():
+            for path in sorted(logs_dir.glob("*.log"), key=lambda p: p.stat().st_mtime, reverse=True):
+                st = path.stat()
+                files.append({"name": path.name, "size": st.st_size, "modified_at": st.st_mtime})
+        return web.json_response(files)
+
+    async def _handle_log_get(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        name = request.match_info["name"]
+        if "/" in name or "\\" in name or not name.endswith(".log"):
+            return web.json_response(_openai_error("Invalid log name", code="invalid_log_name"), status=400)
+        path = self._safe_child_path("logs", name)
+        return web.json_response({"name": name, "content": self._read_text_file(path)})
+
+    @classmethod
+    def _skill_dirs(cls) -> List[Path]:
+        candidates = [cls._safe_child_path("skills"), cls._safe_child_path("import-skill")]
+        return [p for p in candidates if p.exists()]
+
+    @staticmethod
+    def _skill_info_from_dir(path: Path) -> Dict[str, Any]:
+        skill_md = path / "SKILL.md"
+        name = path.name
+        description = ""
+        content = ""
+        if skill_md.exists():
+            content = skill_md.read_text(encoding="utf-8", errors="replace")
+            match = re.search(r"(?m)^name:\s*(.+?)\s*$", content)
+            if match:
+                name = match.group(1).strip().strip("\"'")
+            else:
+                match = re.search(r"(?m)^#\s+(.+?)\s*$", content)
+                if match:
+                    name = match.group(1).strip()
+            desc_match = re.search(r"(?m)^description:\s*(.+?)\s*$", content)
+            if desc_match:
+                description = desc_match.group(1).strip().strip("\"'")
+            else:
+                for line in content.splitlines():
+                    stripped = line.strip()
+                    if stripped and not stripped.startswith("#") and stripped != "---" and ":" not in stripped:
+                        description = stripped[:140]
+                        break
+        return {"name": name, "description": description, "content": content}
+
+    @staticmethod
+    def _skill_name_from_dir(path: Path) -> str:
+        return APIServerAdapter._skill_info_from_dir(path)["name"]
+
+    @staticmethod
+    def _write_imported_skill_files(target: Path, files: List[Dict[str, Any]]) -> None:
+        target.mkdir(parents=True, exist_ok=True)
+        for item in files:
+            rel = str(item.get("path") or "").strip().replace("\\", "/")
+            if not rel or rel.startswith("/") or ".." in Path(rel).parts:
+                raise ValueError(f"Invalid file path: {rel}")
+            raw = base64.b64decode(str(item.get("content_base64") or ""), validate=True)
+            out_path = (target / rel).resolve()
+            if target.resolve() not in out_path.parents and out_path != target.resolve():
+                raise ValueError(f"Unsafe file path: {rel}")
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(raw)
+
+    @staticmethod
+    def _find_skill_root(path: Path) -> Path:
+        if (path / "SKILL.md").exists():
+            return path
+        dirs = [p for p in path.iterdir() if p.is_dir()]
+        if len(dirs) == 1 and (dirs[0] / "SKILL.md").exists():
+            return dirs[0]
+        matches = list(path.rglob("SKILL.md"))
+        if matches:
+            return matches[0].parent
+        return path
+
+    @staticmethod
+    def _skill_dir_name(name: str) -> str:
+        cleaned = re.sub(r"[^A-Za-z0-9_. -]+", "_", name).strip(" .")
+        return cleaned or f"skill-{uuid.uuid4().hex[:8]}"
+
+    async def _handle_skills_list(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        skills = []
+        for root in self._skill_dirs():
+            for path in sorted(p for p in root.iterdir() if p.is_dir()):
+                if not (path / "SKILL.md").exists():
+                    continue
+                info = self._skill_info_from_dir(path)
+                skills.append({
+                    "id": path.name,
+                    "name": info["name"],
+                    "category": root.name,
+                    "description": info["description"],
+                    "content": info["content"],
+                    "path": path.relative_to(self._hermes_home()).as_posix(),
+                    "imported": root.name == "import-skill",
+                })
+        return web.json_response(skills)
+
+    async def _handle_skill_delete(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        skill_id = request.match_info["skill_id"]
+        deleted = False
+        for root in self._skill_dirs():
+            path = (root / skill_id).resolve()
+            if path.exists() and root.resolve() in path.parents:
+                shutil.rmtree(path)
+                deleted = True
+        return web.json_response({"deleted": deleted})
+
+    async def _handle_skill_import(self, request: "web.Request") -> "web.Response":
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        try:
+            payload = await request.json()
+            filename = str(payload.get("filename") or "skill.zip")
+        except Exception:
+            return web.json_response(_openai_error("Invalid import payload", code="invalid_import_payload"), status=400)
+        import_root = self._safe_child_path("import-skill")
+        import_root.mkdir(parents=True, exist_ok=True)
+        tmp_dir = import_root / f".extract-{uuid.uuid4()}"
+        tmp_zip: Optional[Path] = None
+        tmp_dir.mkdir()
+        try:
+            files = payload.get("files")
+            if isinstance(files, list) and files:
+                self._write_imported_skill_files(tmp_dir, files)
+            else:
+                raw = base64.b64decode(str(payload.get("content_base64") or ""), validate=True)
+                tmp_zip = import_root / f".upload-{uuid.uuid4()}.zip"
+                try:
+                    tmp_zip.write_bytes(raw)
+                    with zipfile.ZipFile(tmp_zip) as zf:
+                        zf.extractall(tmp_dir)
+                finally:
+                    tmp_zip.unlink(missing_ok=True)
+            source = self._find_skill_root(tmp_dir)
+            if not (source / "SKILL.md").exists():
+                raise ValueError("SKILL.md not found")
+            target = (import_root / self._desktop_skill_dir_name(filename)).resolve()
+            if import_root.resolve() not in target.parents:
+                raise ValueError("Unsafe target")
+            if target.exists():
+                shutil.rmtree(target)
+            shutil.copytree(source, target)
+            return web.json_response({"id": target.name, "name": self._skill_name_from_dir(target)}, status=201)
+        except Exception as exc:
+            return web.json_response(_openai_error(str(exc), code="skill_import_failed"), status=400)
+        finally:
+            if tmp_zip is not None:
+                tmp_zip.unlink(missing_ok=True)
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+
+    async def _handle_chat_completions(self, request: "web.Request") -> "web.Response":
+        """POST /v1/chat/completions — OpenAI Chat Completions format."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        # Parse request body
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, Exception):
+            return web.json_response(_openai_error("Invalid JSON in request body"), status=400)
+
+        try:
+            project_context = _parse_project_execution_context(body)
+        except ValueError as exc:
+            return web.json_response(
+                _openai_error(str(exc), code="invalid_project_context"), status=400
+            )
+
+        messages = body.get("messages")
+        if not messages or not isinstance(messages, list):
+            return web.json_response(
+                {"error": {"message": "Missing or invalid 'messages' field", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        stream = _coerce_request_bool(body.get("stream"), default=False)
+        priority_header = request.headers.get("X-Hermes-Priority", "")
+        request_priority = _coerce_request_priority(
+            body.get("priority") if "priority" in body else priority_header,
+            default=0,
+        )
+
+        # Extract system message (becomes ephemeral system prompt layered ON TOP of core)
+        system_prompt = None
+        conversation_messages: List[Dict[str, str]] = []
+
+        for idx, msg in enumerate(messages):
+            role = msg.get("role", "")
+            raw_content = msg.get("content", "")
+            if role == "system":
+                # System messages don't support images (Anthropic rejects, OpenAI
+                # text-model systems don't render them).  Flatten to text.
+                content = _normalize_chat_content(raw_content)
+                if system_prompt is None:
+                    system_prompt = content
+                else:
+                    system_prompt = system_prompt + "\n" + content
+            elif role in {"user", "assistant"}:
+                try:
+                    content = _normalize_multimodal_content(raw_content)
+                except ValueError as exc:
+                    return _multimodal_validation_error(exc, param=f"messages[{idx}].content")
+                conversation_messages.append({"role": role, "content": content})
+
+        if project_context is not None:
+            project_prompt = _project_context_prompt(project_context)
+            system_prompt = (
+                f"{project_prompt}\n\n{system_prompt}" if system_prompt else project_prompt
+            )
+
+        # Extract the last user message as the primary input
+        user_message: Any = ""
+        history = []
+        if conversation_messages:
+            user_message = conversation_messages[-1].get("content", "")
+            history = conversation_messages[:-1]
+
+        if not _content_has_visible_payload(user_message):
+            return web.json_response(
+                {"error": {"message": "No user message found in messages", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        # Allow caller to scope long-term memory (e.g. Honcho) with a
+        # stable per-channel identifier via X-Hermes-Session-Key.  This
+        # is independent of X-Hermes-Session-Id: the key persists across
+        # transcripts while the id rotates when the caller starts a new
+        # transcript (i.e. /new semantics).  See _parse_session_key_header.
+        gateway_session_key, key_err = self._parse_session_key_header(request)
+        if key_err is not None:
+            return key_err
+
+        # Allow caller to continue an existing session by passing X-Hermes-Session-Id.
+        # When provided, history is loaded from state.db instead of from the request body.
+        # This also keeps per-session detail logs aligned with desktop session IDs.
+        provided_session_id = request.headers.get("X-Hermes-Session-Id", "").strip()
+        deduped_current_user_from_history = False
+        if provided_session_id:
+            # Sanitize: reject control characters that could enable header injection.
+            if re.search(r'[\r\n\x00]', provided_session_id):
+                return web.json_response(
+                    {"error": {"message": "Invalid session ID", "type": "invalid_request_error"}},
+                    status=400,
+                )
+            session_id = provided_session_id
+            try:
+                db = self._ensure_session_db()
+                if db is not None:
+                    history = db.get_messages_as_conversation(session_id)
+            except Exception as e:
+                logger.warning("Failed to load session history for %s: %s", session_id, e)
+                history = []
+            if history:
+                last_history_msg = history[-1]
+                if (
+                    isinstance(last_history_msg, dict)
+                    and last_history_msg.get("role") == "user"
+                    and last_history_msg.get("content") == user_message
+                ):
+                    history = history[:-1]
+                    deduped_current_user_from_history = True
+        else:
+            # Derive a stable session ID from the conversation fingerprint so
+            # that consecutive messages from the same Open WebUI (or similar)
+            # conversation map to the same Hermes session.  The first user
+            # message + system prompt are constant across all turns.
+            first_user = ""
+            for cm in conversation_messages:
+                if cm.get("role") == "user":
+                    first_user = cm.get("content", "")
+                    break
+            session_id = _derive_chat_session_id(system_prompt, first_user)
+            # history already set from request body above
+
+        completion_id = f"chatcmpl-{uuid.uuid4().hex[:29]}"
+        model_name = body.get("model", self._model_name)
+        db = self._ensure_session_db()
+        if "model_selection" in body:
+            from gateway.session_models import find_model_entry, public_selection
+            try:
+                entry = find_model_entry(self._combined_model_entries(), body["model_selection"])
+            except ValueError as exc:
+                return web.json_response(_openai_error(str(exc), code="invalid_model_selection"), status=400)
+            model_name = entry["model"]
+            if db is not None:
+                db.create_session(session_id, "api_server", model=model_name)
+                db.set_session_model_selection(session_id, public_selection(entry))
+        elif "model" not in body and db is not None:
+            saved_selection = db.get_session_model_selection(session_id)
+            if saved_selection:
+                model_name = saved_selection["model"]
+        created = int(time.time())
+        task_run_id: Optional[str] = None
+        persisted_user_message: Optional[str] = None
+        recovery_state: Optional[Dict[str, Any]] = None
+        recovery_run_id = request.headers.get("X-Hermes-Recover-Task", "").strip()
+        if provided_session_id:
+            db = self._ensure_session_db()
+            if db is not None:
+                if recovery_run_id:
+                    recovery = db.get_task_run(recovery_run_id)
+                    if (
+                        not recovery
+                        or recovery.get("session_id") != session_id
+                        or recovery.get("status") != "interrupted"
+                    ):
+                        return web.json_response(
+                            _openai_error(
+                                "Recoverable task not found for this session",
+                                code="task_not_recoverable",
+                            ),
+                            status=409,
+                        )
+                    if not db.resume_task_run(recovery_run_id):
+                        return web.json_response(
+                            _openai_error(
+                                "Task recovery was already claimed",
+                                code="task_recovery_conflict",
+                            ),
+                            status=409,
+                        )
+                    task_run_id = recovery_run_id
+                    completed_steps = recovery.get("completed_steps") or []
+                    todo_snapshot = recovery.get("todo_snapshot") or []
+                    from agent.task_recovery import (
+                        prepare_recovery_history,
+                        recovery_instruction,
+                        summarize_subrun_for_recovery,
+                    )
+                    execution_context = recovery.get("execution_context") or {}
+                    if not isinstance(execution_context, dict):
+                        execution_context = {}
+                    active_session_id = str(
+                        execution_context.get("active_session_id") or session_id
+                    )
+                    try:
+                        history = db.get_messages_as_conversation(
+                            active_session_id,
+                            include_ancestors=True,
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to reload complete recovery history for %s",
+                            active_session_id,
+                            exc_info=True,
+                        )
+                    history, synthesized_tool_results = prepare_recovery_history(
+                        history
+                    )
+                    stored_model = str(recovery.get("model") or "").strip()
+                    if stored_model and not body.get("model_selection") and not body.get("model"):
+                        model_name = stored_model
+                    request_priority = _coerce_request_priority(
+                        recovery.get("priority"),
+                        default=request_priority,
+                    )
+                    if system_prompt is None:
+                        stored_ephemeral_prompt = execution_context.get(
+                            "ephemeral_system_prompt"
+                        )
+                        if isinstance(stored_ephemeral_prompt, str):
+                            system_prompt = stored_ephemeral_prompt or None
+                    if not gateway_session_key:
+                        stored_session_key = execution_context.get(
+                            "gateway_session_key"
+                        )
+                        if isinstance(stored_session_key, str):
+                            gateway_session_key = stored_session_key or None
+                    active_session_row = db.get_session(active_session_id) or {}
+                    prompt_execution_context = {
+                        key: execution_context.get(key)
+                        for key in (
+                            "active_session_id",
+                            "model",
+                            "provider",
+                            "working_directory",
+                            "terminal_environment",
+                            "message_count",
+                        )
+                        if execution_context.get(key) is not None
+                    }
+                    recovery_state = {
+                        "task_run_id": recovery_run_id,
+                        "active_session_id": active_session_id,
+                        "execution_context": execution_context,
+                        "todo_snapshot": todo_snapshot,
+                        "synthesized_tool_results": synthesized_tool_results,
+                        "cached_system_prompt": active_session_row.get(
+                            "system_prompt"
+                        ),
+                        "history_message_count": len(history),
+                    }
+                    recovery_subruns = [
+                        summarize_subrun_for_recovery(item)
+                        for item in db.list_task_subruns(recovery_run_id)
+                    ]
+                    recovery_checkpoints = db.list_task_checkpoints(
+                        recovery_run_id,
+                        limit=30,
+                    )
+                    current_policy = (
+                        recovery.get("current_recovery_policy")
+                        or "verify_effects"
+                    )
+                    completed_labels = [
+                        str(step.get("summary") or step.get("tool") or "").strip()
+                        for step in completed_steps[-20:]
+                        if isinstance(step, dict)
+                    ]
+                    completed_labels = [label for label in completed_labels if label]
+                    user_message = (
+                        "Continue the interrupted task from its durable checkpoint. "
+                        "Do not restart the task and do not repeat completed tool calls. "
+                        "Use the existing conversation's tool results as authoritative. "
+                        "Identify pending/in-progress TODO items, retry only the tool call "
+                        "that was in progress if its result is absent, and continue until "
+                        "all required subtasks are complete.\n"
+                        f"Original request: {recovery.get('original_user_message') or ''}\n"
+                        f"Interrupted location: {recovery.get('current_location') or 'between model iterations'}\n"
+                        f"Interrupted tool: {recovery.get('current_tool') or 'none'}\n"
+                        f"Interrupted tool arguments: {recovery.get('current_tool_args') or 'none'}\n"
+                        f"Recovery policy: {current_policy}. "
+                        f"{recovery_instruction(current_policy, recovery.get('current_tool') or 'unknown')}\n"
+                        f"Execution context: "
+                        f"{json.dumps(prompt_execution_context, ensure_ascii=False)}\n"
+                        f"Recovered conversation messages: {len(history)}\n"
+                        f"Synthesized interrupted tool results: "
+                        f"{json.dumps(synthesized_tool_results, ensure_ascii=False)}\n"
+                        f"Last TODO snapshot: {json.dumps(todo_snapshot, ensure_ascii=False)}\n"
+                        f"Durable subagent runs: {json.dumps(recovery_subruns, ensure_ascii=False)}\n"
+                        f"Durable semantic checkpoints (oldest to newest): "
+                        f"{json.dumps(recovery_checkpoints, ensure_ascii=False)}\n"
+                        f"Recorded completed steps: {json.dumps(completed_labels, ensure_ascii=False)}"
+                    )
+                    persisted_user_message = "[[kylin-agent-task-recovery]]继续上次中断的任务"
+                else:
+                    task_run_id = f"task-{uuid.uuid4().hex}"
+                    try:
+                        db.start_task_run(
+                            task_run_id,
+                            session_id,
+                            _normalize_chat_content(user_message),
+                            model=str(model_name or ""),
+                            priority=request_priority,
+                            execution_context={
+                                "active_session_id": session_id,
+                                "model": str(model_name or ""),
+                                "priority": request_priority,
+                                "ephemeral_system_prompt": system_prompt or "",
+                                "gateway_session_key": gateway_session_key or "",
+                                "working_directory": (
+                                    project_context["working_directory"]
+                                    if project_context is not None
+                                    else os.getenv("TERMINAL_CWD", os.getcwd())
+                                ),
+                                "project_id": (
+                                    project_context.get("project_id", "")
+                                    if project_context is not None else ""
+                                ),
+                                "project_roots": (
+                                    project_context.get("project_roots", [])
+                                    if project_context is not None else []
+                                ),
+                                "terminal_environment": os.getenv(
+                                    "TERMINAL_ENV",
+                                    "local",
+                                ),
+                                "history_message_count": len(history),
+                            },
+                        )
+                    except Exception:
+                        logger.warning(
+                            "Failed to create durable task run for session %s",
+                            session_id,
+                            exc_info=True,
+                        )
+                        task_run_id = None
+        print(
+            "[hermes-api] chat.completions received "
+            f"session_id={session_id} model={model_name} stream={stream} "
+            f"priority={request_priority} body_priority={body.get('priority')!r} "
+            f"x_hermes_priority={priority_header!r}"
+        )
+        write_session_detail(session_id, "gateway.chat_completions.received", {
+            "completion_id": completion_id,
+            "stream": stream,
+            "priority": request_priority,
+            "body_priority": body.get("priority"),
+            "requested_model": model_name,
+            "configured_gateway_model": self._model_name,
+            "provided_session_id": bool(provided_session_id),
+            "gateway_session_key": gateway_session_key,
+            "system_prompt": system_prompt,
+            "request_messages": messages,
+            "conversation_messages": conversation_messages,
+            "loaded_history": history,
+            "deduped_current_user_from_history": deduped_current_user_from_history,
+            "user_message": user_message,
+            "project_context": project_context,
+            "headers": {
+                "content_type": request.headers.get("Content-Type"),
+                "user_agent": request.headers.get("User-Agent"),
+                "x_hermes_session_id": request.headers.get("X-Hermes-Session-Id"),
+                "x_hermes_session_key": request.headers.get("X-Hermes-Session-Key"),
+                "x_hermes_priority": priority_header,
+            },
+        })
+
+        def _persist_task_tool_start(tool_call_id, function_name, function_args):
+            if not task_run_id:
+                return
+            try:
+                from agent.task_recovery import recovery_policy_for_tool
+                db = self._ensure_session_db()
+                if db is None:
+                    return
+                db.update_task_checkpoint(
+                    task_run_id,
+                    current_location=f"executing tool {function_name}",
+                    current_tool=function_name,
+                    current_tool_call_id=tool_call_id,
+                    current_tool_args=function_args,
+                    current_recovery_policy=recovery_policy_for_tool(
+                        function_name, function_args
+                    ),
+                )
+                db.add_task_checkpoint(
+                    task_run_id,
+                    kind="tool",
+                    location=f"before:{function_name}",
+                    status="started",
+                    payload={
+                        "tool_call_id": tool_call_id,
+                        "arguments": function_args,
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to persist task tool-start checkpoint",
+                    exc_info=True,
+                )
+
+        def _persist_task_tool_complete(
+            tool_call_id,
+            function_name,
+            function_args,
+            function_result,
+        ):
+            if not task_run_id:
+                return
+            try:
+                db = self._ensure_session_db()
+                if db is None:
+                    return
+                result_text = _normalize_chat_content(function_result)
+                todo_snapshot = None
+                if function_name == "todo":
+                    try:
+                        todo_payload = json.loads(result_text)
+                        if isinstance(todo_payload, dict):
+                            todo_snapshot = todo_payload.get("todos")
+                    except (TypeError, json.JSONDecodeError):
+                        pass
+                db.update_task_checkpoint(
+                    task_run_id,
+                    current_location=f"completed tool {function_name}",
+                    current_tool=None,
+                    current_tool_call_id=None,
+                    todo_snapshot=todo_snapshot,
+                    completed_step={
+                        "tool": function_name,
+                        "tool_call_id": tool_call_id,
+                        "summary": result_text[:500],
+                        "completed_at": time.time(),
+                    },
+                )
+                db.add_task_checkpoint(
+                    task_run_id,
+                    kind="tool",
+                    location=f"after:{function_name}",
+                    payload={
+                        "tool_call_id": tool_call_id,
+                        "result_summary": result_text[:1000],
+                    },
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to persist task tool-complete checkpoint",
+                    exc_info=True,
+                )
+
+        if stream:
+            import queue as _q
+            _stream_q: _q.Queue = _q.Queue()
+
+            # Detail writes are the canonical execution trace for both trunk
+            # and delegated agents. Subscribe for this request and forward every
+            # branch-scoped event without a tool/skill name allowlist. Trunk tool
+            # lifecycle already has richer callbacks and would be duplicated.
+            def _on_session_detail(detail_event):
+                detail_data = detail_event.get("data") or {}
+                if not isinstance(detail_data, dict):
+                    return
+                if not str(detail_event.get("event", "")).startswith(("approval.", "task.review.", "model.switch.")) and detail_data.get("scope") != "branch" and not detail_data.get("subagent_id"):
+                    return
+                _stream_q.put(("__detail_event__", detail_event))
+
+            _unsubscribe_details = subscribe_session_details(session_id, _on_session_detail)
+
+            def _on_delta(delta):
+                # Filter out None — the agent fires stream_delta_callback(None)
+                # to signal the CLI display to close its response box before
+                # tool execution, but the SSE writer uses None as end-of-stream
+                # sentinel.  Forwarding it would prematurely close the HTTP
+                # response, causing Open WebUI (and similar frontends) to miss
+                # the final answer after tool calls.  The SSE loop detects
+                # completion via agent_task.done() instead.
+                if delta is not None:
+                    _stream_q.put(delta)
+
+            # Track which tool_call_ids we've emitted a "running" lifecycle
+            # event for, so a "completed" event without a matching "running"
+            # (e.g. internal/filtered tools) is silently dropped instead of
+            # producing an orphaned event clients can't correlate.
+            _started_tool_call_ids: set[str] = set()
+
+            def _on_tool_start(tool_call_id, function_name, function_args):
+                """Emit ``hermes.tool.progress`` with ``status: running``.
+
+                Replaces the old ``tool_progress_callback("tool.started",
+                ...)`` emit so SSE consumers receive a single event per
+                tool start, carrying both the legacy ``tool``/``emoji``/
+                ``label`` payload (for #6972 frontends) and the new
+                ``toolCallId``/``status`` correlation fields (#16588).
+
+                Skips tools whose names start with ``_`` so internal
+                events (``_thinking``, …) stay off the wire — matching
+                the prior ``_on_tool_progress`` filter exactly.
+                """
+                if not tool_call_id or function_name.startswith("_"):
+                    return
+                _started_tool_call_ids.add(tool_call_id)
+                from agent.display import build_tool_preview, get_tool_emoji
+                label = build_tool_preview(function_name, function_args) or function_name
+                write_session_detail(session_id, "gateway.tool.started", {
+                    "tool_call_id": tool_call_id,
+                    "name": function_name,
+                    "arguments": function_args,
+                    "label": label,
+                })
+                _persist_task_tool_start(
+                    tool_call_id,
+                    function_name,
+                    function_args,
+                )
+                progress_payload = {
+                    "tool": function_name,
+                    "emoji": get_tool_emoji(function_name),
+                    "label": label,
+                    "toolCallId": tool_call_id,
+                    "status": "running",
+                }
+                if function_name == "todo":
+                    progress_payload["arguments"] = function_args
+                _stream_q.put(("__tool_progress__", progress_payload))
+
+            def _on_tool_complete(tool_call_id, function_name, function_args, function_result):
+                """Emit the matching ``status: completed`` event.
+
+                Dropped if the start was filtered (internal tool, missing
+                id, or never seen) so clients never get an orphaned
+                ``completed`` they can't correlate to a prior ``running``.
+                """
+                if not tool_call_id or tool_call_id not in _started_tool_call_ids:
+                    return
+                _started_tool_call_ids.discard(tool_call_id)
+                write_session_detail(session_id, "gateway.tool.completed", {
+                    "tool_call_id": tool_call_id,
+                    "name": function_name,
+                    "arguments": function_args,
+                    "result": function_result,
+                })
+                _persist_task_tool_complete(
+                    tool_call_id,
+                    function_name,
+                    function_args,
+                    function_result,
+                )
+                progress_payload = {
+                    "tool": function_name,
+                    "toolCallId": tool_call_id,
+                    "status": "completed",
+                }
+                if function_name == "todo":
+                    progress_payload["arguments"] = function_args
+                    progress_payload["result"] = function_result
+                _stream_q.put(("__tool_progress__", progress_payload))
+
+            # Start agent in background.  agent_ref is a mutable container
+            # so the SSE writer can interrupt the agent on client disconnect.
+            #
+            # ``tool_progress_callback`` is intentionally not wired here:
+            # it would duplicate every emit because ``run_agent`` fires it
+            # side-by-side with ``tool_start_callback``/``tool_complete_callback``.
+            # The structured callbacks are strictly richer (they carry the
+            # tool_call id), so they own the chat-completions SSE channel.
+            agent_ref = [None]
+            agent_task = asyncio.ensure_future(self._run_agent(
+                user_message=user_message,
+                conversation_history=history,
+                ephemeral_system_prompt=system_prompt,
+                session_id=session_id,
+                model_name=model_name,
+                stream_delta_callback=_on_delta,
+                tool_start_callback=_on_tool_start,
+                tool_complete_callback=_on_tool_complete,
+                agent_ref=agent_ref,
+                gateway_session_key=gateway_session_key,
+                priority=request_priority,
+                persist_user_message=persisted_user_message,
+                task_run_id=task_run_id,
+                recovery_state=recovery_state,
+                project_context=project_context,
+                approval_enabled=request.headers.get("X-Kylin-Approvals") == "1",
+                approval_mode=request.headers.get("X-Kylin-Approval-Mode", "assist"),
+            ))
+            # Ensure SSE drain loops can terminate without relying on polling
+            # agent_task.done(), which can race with queue timeout checks.
+            def _finish_stream_task(_fut):
+                _unsubscribe_details()
+                try:
+                    result, usage = _fut.result()
+                    if task_run_id:
+                        db = self._ensure_session_db()
+                        if db is not None:
+                            from agent.completion_review import persist_review_outcome
+                            persist_review_outcome(db, task_run_id, result)
+                    write_session_detail(session_id, "gateway.agent.completed", {
+                        "result": result,
+                        "usage": usage,
+                    })
+                except BaseException as exc:
+                    if task_run_id:
+                        try:
+                            db = self._ensure_session_db()
+                            if db is not None:
+                                db.finish_task_run(
+                                    task_run_id,
+                                    "interrupted",
+                                    reason="agent_task_cancelled" if _fut.cancelled() else repr(exc),
+                                )
+                        except Exception:
+                            logger.warning("Failed to mark task interrupted", exc_info=True)
+                    write_session_detail(session_id, "gateway.agent.error", {
+                        "error": repr(exc),
+                    })
+                _stream_q.put(None)
+
+            agent_task.add_done_callback(_finish_stream_task)
+
+            return await self._write_sse_chat_completion(
+                request, completion_id, model_name, created, _stream_q,
+                agent_task, agent_ref, session_id=session_id,
+                gateway_session_key=gateway_session_key, task_run_id=task_run_id,
+            )
+
+        # Non-streaming: run the agent (with optional Idempotency-Key)
+        async def _compute_completion():
+            return await self._run_agent(
+                user_message=user_message,
+                conversation_history=history,
+                ephemeral_system_prompt=system_prompt,
+                session_id=session_id,
+                model_name=model_name,
+                tool_start_callback=_persist_task_tool_start,
+                tool_complete_callback=_persist_task_tool_complete,
+                gateway_session_key=gateway_session_key,
+                priority=request_priority,
+                persist_user_message=persisted_user_message,
+                task_run_id=task_run_id,
+                recovery_state=recovery_state,
+                project_context=project_context,
+            )
+
+        idempotency_key = request.headers.get("Idempotency-Key")
+        if idempotency_key:
+            fp = _make_request_fingerprint(body, keys=["model", "messages", "tools", "tool_choice", "stream"])
+            try:
+                result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_completion)
+            except Exception as e:
+                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
+                write_session_detail(session_id, "gateway.agent.error", {"error": repr(e)})
+                if task_run_id:
+                    db = self._ensure_session_db()
+                    if db is not None:
+                        db.finish_task_run(task_run_id, "interrupted", reason=repr(e))
+                return web.json_response(
+                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
+                    status=500,
+                )
+        else:
+            try:
+                result, usage = await _compute_completion()
+            except Exception as e:
+                logger.error("Error running agent for chat completions: %s", e, exc_info=True)
+                write_session_detail(session_id, "gateway.agent.error", {"error": repr(e)})
+                if task_run_id:
+                    db = self._ensure_session_db()
+                    if db is not None:
+                        db.finish_task_run(task_run_id, "interrupted", reason=repr(e))
+                return web.json_response(
+                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
+                    status=500,
+                )
+
+        final_response = result.get("final_response") or ""
+        write_session_detail(session_id, "gateway.agent.completed", {
+            "result": result,
+            "usage": usage,
+        })
+        if task_run_id:
+            db = self._ensure_session_db()
+            if db is not None:
+                from agent.completion_review import persist_review_outcome
+                persist_review_outcome(db, task_run_id, result)
+        is_partial = bool(result.get("partial"))
+        is_failed = bool(result.get("failed"))
+        completed = bool(result.get("completed", True))
+        err_msg = result.get("error")
+
+        # Decide finish_reason. OpenAI uses "length" for truncation, "stop"
+        # for normal completion, and downstream SDKs accept "error" / custom
+        # codes. See issue #22496.
+        if is_partial and err_msg and "truncat" in err_msg.lower():
+            finish_reason = "length"
+        elif is_failed or (not completed and err_msg):
+            finish_reason = "error"
+        else:
+            finish_reason = "stop"
+
+        response_headers = {
+            "X-Hermes-Session-Id": result.get("session_id", session_id),
+        }
+        if gateway_session_key:
+            response_headers["X-Hermes-Session-Key"] = gateway_session_key
+
+        # Hard-fail path: no usable assistant text AND a real failure → 5xx
+        # with OpenAI-style error envelope so SDK clients raise instead of
+        # silently rendering the internal failure string as message.content.
+        if not final_response and (is_failed or is_partial):
+            err_body = _openai_error(
+                err_msg or "Agent run did not produce a response.",
+                err_type="server_error",
+                code="agent_incomplete",
+            )
+            err_body["error"]["hermes"] = {
+                "completed": completed,
+                "partial": is_partial,
+                "failed": is_failed,
+            }
+            response_headers["X-Hermes-Completed"] = "false"
+            response_headers["X-Hermes-Partial"] = "true" if is_partial else "false"
+            return web.json_response(err_body, status=502, headers=response_headers)
+
+        # Soft-partial path: we have *some* text but the run did not complete
+        # (e.g. truncation with partial buffered output). Still 200 but signal
+        # truncation via finish_reason="length" + Hermes-specific extras.
+        response_data = {
+            "id": completion_id,
+            "object": "chat.completion",
+            "created": created,
+            "model": model_name,
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": final_response,
+                    },
+                    "finish_reason": finish_reason,
+                }
+            ],
+            "usage": {
+                "prompt_tokens": usage.get("input_tokens", 0),
+                "completion_tokens": usage.get("output_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+        }
+        if is_partial or is_failed or not completed:
+            response_data["hermes"] = {
+                "completed": completed,
+                "partial": is_partial,
+                "failed": is_failed,
+                "error": err_msg,
+                "error_code": "output_truncated" if finish_reason == "length" else "agent_error",
+            }
+            response_headers["X-Hermes-Completed"] = "false"
+            response_headers["X-Hermes-Partial"] = "true" if is_partial else "false"
+            if err_msg:
+                response_headers["X-Hermes-Error"] = err_msg[:200]
+
+        if result.get("completion_review"):
+            response_data.setdefault("hermes", {}).update({
+                "completed": completed,
+                "completion_review": result["completion_review"],
+                "task_outcome": result.get("task_outcome"),
+            })
+            if not err_msg:
+                response_data["hermes"].pop("error_code", None)
+
+        return web.json_response(response_data, headers=response_headers)
+
+    async def _write_sse_chat_completion(
+        self, request: "web.Request", completion_id: str, model: str,
+        created: int, stream_q, agent_task, agent_ref=None, session_id: str = None,
+        gateway_session_key: str = None, task_run_id: str = None,
+    ) -> "web.StreamResponse":
+        """Write real streaming SSE from agent's stream_delta_callback queue.
+
+        If the client disconnects mid-stream (network drop, browser tab close),
+        the agent is interrupted via ``agent.interrupt()`` so it stops making
+        LLM API calls, and the asyncio task wrapper is cancelled.
+        """
+        import queue as _q
+
+        sse_headers = {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+        # CORS middleware can't inject headers into StreamResponse after
+        # prepare() flushes them, so resolve CORS headers up front.
+        origin = request.headers.get("Origin", "")
+        cors = self._cors_headers_for_origin(origin) if origin else None
+        if cors:
+            sse_headers.update(cors)
+        if session_id:
+            sse_headers["X-Hermes-Session-Id"] = session_id
+        if gateway_session_key:
+            sse_headers["X-Hermes-Session-Key"] = gateway_session_key
+        response = web.StreamResponse(status=200, headers=sse_headers)
+        await response.prepare(request)
+
+        try:
+            last_activity = time.monotonic()
+
+            # Role chunk
+            role_chunk = {
+                "id": completion_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
+                "choices": [{"index": 0, "delta": {"role": "assistant"}, "finish_reason": None}],
+            }
+            await response.write(f"data: {json.dumps(role_chunk)}\n\n".encode())
+            last_activity = time.monotonic()
+
+            # Helper — route a queue item to the correct SSE event.
+            async def _emit(item):
+                """Write a single queue item to the SSE stream.
+
+                Plain strings are sent as normal ``delta.content`` chunks.
+                Tagged tuples ``("__tool_progress__", payload)`` are sent
+                as a custom ``event: hermes.tool.progress`` SSE event so
+                frontends can display them without storing the markers in
+                conversation history.  See #6972 for the original event,
+                #16588 for the ``toolCallId``/``status`` lifecycle fields.
+                """
+                if isinstance(item, tuple) and len(item) == 2 and item[0] == "__tool_progress__":
+                    event_data = json.dumps(item[1])
+                    await response.write(
+                        f"event: hermes.tool.progress\ndata: {event_data}\n\n".encode()
+                    )
+                elif isinstance(item, tuple) and len(item) == 2 and item[0] == "__detail_event__":
+                    detail_event = item[1] if isinstance(item[1], dict) else {}
+                    event_type = str(detail_event.get("event") or "subagent.event")
+                    event_type = event_type.replace("\r", "").replace("\n", "")
+                    event_data = detail_event.get("data") or {}
+                    if not isinstance(event_data, dict):
+                        event_data = {"value": event_data}
+                    else:
+                        event_data = dict(event_data)
+                    if detail_event.get("ts"):
+                        event_data.setdefault("runtime_ts", detail_event["ts"])
+                    if detail_event.get("text"):
+                        event_data.setdefault("text", detail_event["text"])
+                    await response.write(
+                        f"event: {event_type}\ndata: {json.dumps(event_data)}\n\n".encode()
+                    )
+                else:
+                    content_chunk = {
+                        "id": completion_id, "object": "chat.completion.chunk",
+                        "created": created, "model": model,
+                        "choices": [{"index": 0, "delta": {"content": item}, "finish_reason": None}],
+                    }
+                    await response.write(f"data: {json.dumps(content_chunk)}\n\n".encode())
+                return time.monotonic()
+
+            # Stream content chunks as they arrive from the agent
+            loop = asyncio.get_running_loop()
+            while True:
+                try:
+                    delta = await loop.run_in_executor(None, lambda: stream_q.get(timeout=0.5))
+                except _q.Empty:
+                    if agent_task.done():
+                        # Drain any remaining items
+                        while True:
+                            try:
+                                delta = stream_q.get_nowait()
+                                if delta is None:
+                                    break
+                                last_activity = await _emit(delta)
+                            except _q.Empty:
+                                break
+                        break
+                    if time.monotonic() - last_activity >= CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS:
+                        await response.write(b": keepalive\n\n")
+                        last_activity = time.monotonic()
+                    continue
+
+                if delta is None:  # End of stream sentinel
+                    break
+
+                last_activity = await _emit(delta)
+
+            # Get usage from completed agent
+            usage = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+            result = {}
+            agent_error = None
+            try:
+                result, agent_usage = await agent_task
+                usage = agent_usage or usage
+            except Exception as exc:
+                logger.warning("Agent task %s failed, usage data lost: %s", completion_id, exc)
+                agent_error = str(exc) or type(exc).__name__
+
+            failed = (bool(result.get("failed")) or bool(result.get("partial"))
+                      or (not result.get("completed", True) and bool(result.get("error"))))
+            if failed:
+                agent_error = agent_error or result.get("error") or "Agent run did not complete."
+
+            # Finish chunk
+            finish_chunk = {
+                "id": completion_id, "object": "chat.completion.chunk",
+                "created": created, "model": model,
+                "choices": [{"index": 0, "delta": {},
+                             "finish_reason": "error" if agent_error else "stop"}],
+                "usage": {
+                    "prompt_tokens": usage.get("input_tokens", 0),
+                    "completion_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                },
+            }
+            if agent_error:
+                finish_chunk["error"] = {
+                    "message": str(agent_error),
+                    "type": "server_error",
+                    "code": "agent_incomplete",
+                }
+            if result.get("completion_review"):
+                finish_chunk["hermes"] = {
+                    "completed": bool(result.get("completed")),
+                    "completion_review": result["completion_review"],
+                    "task_outcome": result.get("task_outcome"),
+                }
+            await response.write(f"data: {json.dumps(finish_chunk)}\n\n".encode())
+            await response.write(b"data: [DONE]\n\n")
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+            # Client disconnected mid-stream.  Interrupt the agent so it
+            # stops making LLM API calls at the next loop iteration, then
+            # cancel the asyncio task wrapper.
+            agent = agent_ref[0] if agent_ref else None
+            if agent is not None:
+                try:
+                    agent.interrupt("SSE client disconnected")
+                except Exception:
+                    pass
+            if not agent_task.done():
+                agent_task.cancel()
+                try:
+                    await agent_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            if task_run_id:
+                try:
+                    db = self._ensure_session_db()
+                    if db is not None:
+                        db.finish_task_run(
+                            task_run_id,
+                            "interrupted",
+                            reason="SSE client disconnected",
+                        )
+                except Exception:
+                    logger.warning("Failed to persist disconnected task state", exc_info=True)
+            logger.info("SSE client disconnected; interrupted agent task %s", completion_id)
+        except Exception as _exc:
+            # Agent crashed mid-stream.  Try to emit an error chunk
+            # so the client gets a proper response instead of a
+            # TransferEncodingError from incomplete chunked encoding.
+            import traceback as _tb
+            logger.error("Agent crashed mid-stream for %s: %s", completion_id, _tb.format_exc()[:300])
+            try:
+                error_chunk = {
+                    "id": completion_id, "object": "chat.completion.chunk",
+                    "created": created, "model": model,
+                    "choices": [{"index": 0, "delta": {}, "finish_reason": "error"}],
+                    "error": {"message": str(_exc) or type(_exc).__name__,
+                              "type": "server_error", "code": "agent_incomplete"},
+                }
+                await response.write(f"data: {json.dumps(error_chunk)}\n\n".encode())
+                await response.write(b"data: [DONE]\n\n")
+            except Exception:
+                pass
+
+        return response
+
+    async def _write_sse_responses(
+        self,
+        request: "web.Request",
+        response_id: str,
+        model: str,
+        created_at: int,
+        stream_q,
+        agent_task,
+        agent_ref,
+        conversation_history: List[Dict[str, str]],
+        user_message: str,
+        instructions: Optional[str],
+        conversation: Optional[str],
+        store: bool,
+        session_id: str,
+        gateway_session_key: Optional[str] = None,
+    ) -> "web.StreamResponse":
+        """Write an SSE stream for POST /v1/responses (OpenAI Responses API).
+
+        Emits spec-compliant event types as the agent runs:
+
+        - ``response.created`` — initial envelope (status=in_progress)
+        - ``response.output_text.delta`` / ``response.output_text.done`` —
+          streamed assistant text
+        - ``response.output_item.added`` / ``response.output_item.done``
+          with ``item.type == "function_call"`` — when the agent invokes a
+          tool (both events fire; the ``done`` event carries the finalized
+          ``arguments`` string)
+        - ``response.output_item.added`` with
+          ``item.type == "function_call_output"`` — tool result with
+          ``{call_id, output, status}``
+        - ``response.completed`` — terminal event carrying the full
+          response object with all output items + usage (same payload
+          shape as the non-streaming path for parity)
+        - ``response.failed`` — terminal event on agent error
+
+        If the client disconnects mid-stream, ``agent.interrupt()`` is
+        called so the agent stops issuing upstream LLM calls, then the
+        asyncio task is cancelled.  When ``store=True`` an initial
+        ``in_progress`` snapshot is persisted immediately after
+        ``response.created`` and disconnects update it to an
+        ``incomplete`` snapshot so GET /v1/responses/{id} and
+        ``previous_response_id`` chaining still have something to
+        recover from.
+        """
+        import queue as _q
+
+        sse_headers = {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+        }
+        origin = request.headers.get("Origin", "")
+        cors = self._cors_headers_for_origin(origin) if origin else None
+        if cors:
+            sse_headers.update(cors)
+        if session_id:
+            sse_headers["X-Hermes-Session-Id"] = session_id
+        if gateway_session_key:
+            sse_headers["X-Hermes-Session-Key"] = gateway_session_key
+        response = web.StreamResponse(status=200, headers=sse_headers)
+        await response.prepare(request)
+
+        # State accumulated during the stream
+        final_text_parts: List[str] = []
+        # Track open function_call items by name so we can emit a matching
+        # ``done`` event when the tool completes.  Order preserved.
+        pending_tool_calls: List[Dict[str, Any]] = []
+        # Output items we've emitted so far (used to build the terminal
+        # response.completed payload).  Kept in the order they appeared.
+        emitted_items: List[Dict[str, Any]] = []
+        # Monotonic counter for output_index (spec requires it).
+        output_index = 0
+        # Monotonic counter for call_id generation if the agent doesn't
+        # provide one (it doesn't, from tool_progress_callback).
+        call_counter = 0
+        # Canonical Responses SSE events include a monotonically increasing
+        # sequence_number. Add it server-side for every emitted event so
+        # clients that validate the OpenAI event schema can parse our stream.
+        sequence_number = 0
+        # Track the assistant message item id + content index for text
+        # delta events — the spec ties deltas to a specific item.
+        message_item_id = f"msg_{uuid.uuid4().hex[:24]}"
+        message_output_index: Optional[int] = None
+        message_opened = False
+
+        async def _write_event(event_type: str, data: Dict[str, Any]) -> None:
+            nonlocal sequence_number
+            if "sequence_number" not in data:
+                data["sequence_number"] = sequence_number
+            sequence_number += 1
+            payload = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+            await response.write(payload.encode())
+
+        def _envelope(status: str) -> Dict[str, Any]:
+            env: Dict[str, Any] = {
+                "id": response_id,
+                "object": "response",
+                "status": status,
+                "created_at": created_at,
+                "model": model,
+            }
+            return env
+
+        final_response_text = ""
+        agent_error: Optional[str] = None
+        usage: Dict[str, int] = {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}
+        terminal_snapshot_persisted = False
+
+        def _persist_response_snapshot(
+            response_env: Dict[str, Any],
+            *,
+            conversation_history_snapshot: Optional[List[Dict[str, Any]]] = None,
+        ) -> None:
+            if not store:
+                return
+            if conversation_history_snapshot is None:
+                conversation_history_snapshot = list(conversation_history)
+                conversation_history_snapshot.append({"role": "user", "content": user_message})
+            self._response_store.put(response_id, {
+                "response": response_env,
+                "conversation_history": conversation_history_snapshot,
+                "instructions": instructions,
+                "session_id": session_id,
+            })
+            if conversation:
+                self._response_store.set_conversation(conversation, response_id)
+
+        def _persist_incomplete_if_needed() -> None:
+            """Persist an ``incomplete`` snapshot if no terminal one was written.
+
+            Called from both the client-disconnect (``ConnectionResetError``)
+            and server-cancellation (``asyncio.CancelledError``) paths so
+            GET /v1/responses/{id} and ``previous_response_id`` chaining keep
+            working after abrupt stream termination.
+            """
+            if not store or terminal_snapshot_persisted:
+                return
+            incomplete_text = "".join(final_text_parts) or final_response_text
+            incomplete_items: List[Dict[str, Any]] = list(emitted_items)
+            if incomplete_text:
+                incomplete_items.append({
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type": "output_text", "text": incomplete_text}],
+                })
+            incomplete_env = _envelope("incomplete")
+            incomplete_env["output"] = incomplete_items
+            incomplete_env["usage"] = {
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            }
+            incomplete_history = list(conversation_history)
+            incomplete_history.append({"role": "user", "content": user_message})
+            if incomplete_text:
+                incomplete_history.append({"role": "assistant", "content": incomplete_text})
+            _persist_response_snapshot(
+                incomplete_env,
+                conversation_history_snapshot=incomplete_history,
+            )
+
+        try:
+            # response.created — initial envelope, status=in_progress
+            created_env = _envelope("in_progress")
+            created_env["output"] = []
+            await _write_event("response.created", {
+                "type": "response.created",
+                "response": created_env,
+            })
+            _persist_response_snapshot(created_env)
+            last_activity = time.monotonic()
+
+            async def _open_message_item() -> None:
+                """Emit response.output_item.added for the assistant message
+                the first time any text delta arrives."""
+                nonlocal message_opened, message_output_index, output_index
+                if message_opened:
+                    return
+                message_opened = True
+                message_output_index = output_index
+                output_index += 1
+                item = {
+                    "id": message_item_id,
+                    "type": "message",
+                    "status": "in_progress",
+                    "role": "assistant",
+                    "content": [],
+                }
+                await _write_event("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "output_index": message_output_index,
+                    "item": item,
+                })
+
+            async def _emit_text_delta(delta_text: str) -> None:
+                await _open_message_item()
+                final_text_parts.append(delta_text)
+                await _write_event("response.output_text.delta", {
+                    "type": "response.output_text.delta",
+                    "item_id": message_item_id,
+                    "output_index": message_output_index,
+                    "content_index": 0,
+                    "delta": delta_text,
+                    "logprobs": [],
+                })
+
+            async def _emit_tool_started(payload: Dict[str, Any]) -> str:
+                """Emit response.output_item.added for a function_call.
+
+                Returns the call_id so the matching completion event can
+                reference it.  Prefer the real ``tool_call_id`` from the
+                agent when available; fall back to a generated call id for
+                safety in tests or older code paths.
+                """
+                nonlocal output_index, call_counter
+                call_counter += 1
+                call_id = payload.get("tool_call_id") or f"call_{response_id[5:]}_{call_counter}"
+                args = payload.get("arguments", {})
+                if isinstance(args, dict):
+                    arguments_str = json.dumps(args)
+                else:
+                    arguments_str = str(args)
+                item = {
+                    "id": f"fc_{uuid.uuid4().hex[:24]}",
+                    "type": "function_call",
+                    "status": "in_progress",
+                    "name": payload.get("name", ""),
+                    "call_id": call_id,
+                    "arguments": arguments_str,
+                }
+                idx = output_index
+                output_index += 1
+                pending_tool_calls.append({
+                    "call_id": call_id,
+                    "name": payload.get("name", ""),
+                    "arguments": arguments_str,
+                    "item_id": item["id"],
+                    "output_index": idx,
+                })
+                emitted_items.append({
+                    "type": "function_call",
+                    "name": payload.get("name", ""),
+                    "arguments": arguments_str,
+                    "call_id": call_id,
+                })
+                await _write_event("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "output_index": idx,
+                    "item": item,
+                })
+                return call_id
+
+            async def _emit_tool_completed(payload: Dict[str, Any]) -> None:
+                """Emit response.output_item.done (function_call) followed
+                by response.output_item.added (function_call_output)."""
+                nonlocal output_index
+                call_id = payload.get("tool_call_id")
+                result = payload.get("result", "")
+                pending = None
+                if call_id:
+                    for i, p in enumerate(pending_tool_calls):
+                        if p["call_id"] == call_id:
+                            pending = pending_tool_calls.pop(i)
+                            break
+                if pending is None:
+                    # Completion without a matching start — skip to avoid
+                    # emitting orphaned done events.
+                    return
+
+                # function_call done
+                done_item = {
+                    "id": pending["item_id"],
+                    "type": "function_call",
+                    "status": "completed",
+                    "name": pending["name"],
+                    "call_id": pending["call_id"],
+                    "arguments": pending["arguments"],
+                }
+                await _write_event("response.output_item.done", {
+                    "type": "response.output_item.done",
+                    "output_index": pending["output_index"],
+                    "item": done_item,
+                })
+
+                # function_call_output added (result)
+                result_str = result if isinstance(result, str) else json.dumps(result)
+                output_parts = [{"type": "input_text", "text": result_str}]
+                output_item = {
+                    "id": f"fco_{uuid.uuid4().hex[:24]}",
+                    "type": "function_call_output",
+                    "call_id": pending["call_id"],
+                    "output": output_parts,
+                    "status": "completed",
+                }
+                idx = output_index
+                output_index += 1
+                emitted_items.append({
+                    "type": "function_call_output",
+                    "call_id": pending["call_id"],
+                    "output": output_parts,
+                })
+                await _write_event("response.output_item.added", {
+                    "type": "response.output_item.added",
+                    "output_index": idx,
+                    "item": output_item,
+                })
+                await _write_event("response.output_item.done", {
+                    "type": "response.output_item.done",
+                    "output_index": idx,
+                    "item": output_item,
+                })
+
+            # Main drain loop — thread-safe queue fed by agent callbacks.
+            async def _dispatch(it) -> None:
+                """Route a queue item to the correct SSE emitter.
+
+                Plain strings are text deltas — they are batched (50ms)
+                to reduce Open WebUI re-render storms.  Tagged tuples
+                with ``__tool_started__`` / ``__tool_completed__``
+                prefixes are tool lifecycle events and flush the buffer
+                before emitting.
+                """
+                nonlocal _batch_timer
+                if isinstance(it, tuple) and len(it) == 2 and isinstance(it[0], str):
+                    tag, payload = it
+                    # Flush batched text before tool events
+                    if _batch_buf:
+                        await _flush_batch()
+                    if tag == "__tool_started__":
+                        await _emit_tool_started(payload)
+                    elif tag == "__tool_completed__":
+                        await _emit_tool_completed(payload)
+                elif isinstance(it, str):
+                    # Batch text deltas — append to buffer, flush on timer
+                    _batch_buf.append(it)
+                    if _batch_timer is None:
+                        _batch_timer = asyncio.create_task(_batch_flush_after(0.05))
+                # Other types are silently dropped.
+
+            # ── Batching state ──
+            _batch_buf: List[str] = []
+            _batch_timer: Optional[asyncio.Task] = None
+            _batch_lock = asyncio.Lock()
+
+            async def _batch_flush_after(delay: float) -> None:
+                """Wait delay seconds, then flush accumulated text deltas."""
+                try:
+                    await asyncio.sleep(delay)
+                except asyncio.CancelledError:
+                    return
+                # Clear timer reference BEFORE flush so new deltas
+                # can start a fresh timer while we emit
+                nonlocal _batch_buf, _batch_timer
+                _batch_timer = None
+                await _flush_batch()
+
+            async def _flush_batch() -> None:
+                """Emit a single SSE delta for all accumulated text."""
+                nonlocal _batch_buf
+                async with _batch_lock:
+                    if _batch_buf:
+                        combined = "".join(_batch_buf)
+                        _batch_buf = []
+                        await _emit_text_delta(combined)
+
+            loop = asyncio.get_running_loop()
+            while True:
+                try:
+                    item = await loop.run_in_executor(None, lambda: stream_q.get(timeout=0.5))
+                except _q.Empty:
+                    if agent_task.done():
+                        # Drain remaining
+                        while True:
+                            try:
+                                item = stream_q.get_nowait()
+                                if item is None:
+                                    break
+                                await _dispatch(item)
+                                last_activity = time.monotonic()
+                            except _q.Empty:
+                                break
+                        break
+                    if time.monotonic() - last_activity >= CHAT_COMPLETIONS_SSE_KEEPALIVE_SECONDS:
+                        await response.write(b": keepalive\n\n")
+                        last_activity = time.monotonic()
+                    continue
+
+                if item is None:  # EOS sentinel
+                    # Cancel pending timer and flush remaining batched text
+                    if _batch_timer and not _batch_timer.done():
+                        _batch_timer.cancel()
+                        _batch_timer = None
+                    if _batch_buf:
+                        await _flush_batch()
+                    break
+
+                await _dispatch(item)
+                last_activity = time.monotonic()
+
+            # Flush any final batched text before processing result
+            if _batch_buf:
+                await _flush_batch()
+
+            # Pick up agent result + usage from the completed task
+            try:
+                result, agent_usage = await agent_task
+                usage = agent_usage or usage
+                # If the agent produced a final_response but no text
+                # deltas were streamed (e.g. some providers only emit
+                # the full response at the end), emit a single fallback
+                # delta so Responses clients still receive a live text part.
+                agent_final = result.get("final_response", "") if isinstance(result, dict) else ""
+                if agent_final and not final_text_parts:
+                    await _emit_text_delta(agent_final)
+                if agent_final and not final_response_text:
+                    final_response_text = agent_final
+                if isinstance(result, dict) and result.get("error") and not final_response_text:
+                    agent_error = result["error"]
+            except Exception as e:  # noqa: BLE001
+                logger.error("Error running agent for streaming responses: %s", e, exc_info=True)
+                agent_error = str(e)
+
+            # Close the message item if it was opened
+            final_response_text = "".join(final_text_parts) or final_response_text
+            if message_opened:
+                await _write_event("response.output_text.done", {
+                    "type": "response.output_text.done",
+                    "item_id": message_item_id,
+                    "output_index": message_output_index,
+                    "content_index": 0,
+                    "text": final_response_text,
+                    "logprobs": [],
+                })
+                msg_done_item = {
+                    "id": message_item_id,
+                    "type": "message",
+                    "status": "completed",
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": final_response_text}
+                    ],
+                }
+                await _write_event("response.output_item.done", {
+                    "type": "response.output_item.done",
+                    "output_index": message_output_index,
+                    "item": msg_done_item,
+                })
+
+            # Always append a final message item in the completed
+            # response envelope so clients that only parse the terminal
+            # payload still see the assistant text.  This mirrors the
+            # shape produced by _extract_output_items in the batch path.
+            final_items: List[Dict[str, Any]] = list(emitted_items)
+
+            # Trim large content from tool call arguments to keep the
+            # response.completed event under ~100KB.  Clients already
+            # received full details via incremental events.
+            for _item in final_items:
+                if _item.get("type") == "function_call":
+                    try:
+                        _args = json.loads(_item.get("arguments", "{}")) if isinstance(_item.get("arguments"), str) else _item.get("arguments", {})
+                        if isinstance(_args, dict):
+                            for _k in ("content", "query", "pattern", "old_string", "new_string"):
+                                if isinstance(_args.get(_k), str) and len(_args[_k]) > 500:
+                                    _args[_k] = "[" + str(len(_args[_k])) + " chars — truncated for response.completed]"
+                            _item["arguments"] = json.dumps(_args)
+                    except Exception:
+                        pass
+                elif _item.get("type") == "function_call_output":
+                    _output = _item.get("output", [])
+                    if isinstance(_output, list) and _output:
+                        _first = _output[0]
+                        if isinstance(_first, dict) and _first.get("type") == "input_text":
+                            _text = _first.get("text", "")
+                            if len(_text) > 1000:
+                                _first["text"] = _text[:500] + "...[" + str(len(_text) - 500) + " more chars]"
+                                _item["output"] = [_first]
+
+            final_items.append({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {"type": "output_text", "text": final_response_text or (agent_error or "")}
+                ],
+            })
+
+            if agent_error:
+                failed_env = _envelope("failed")
+                failed_env["output"] = final_items
+                failed_env["error"] = {"message": agent_error, "type": "server_error"}
+                failed_env["usage"] = {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+                _failed_history = list(conversation_history)
+                _failed_history.append({"role": "user", "content": user_message})
+                if final_response_text or agent_error:
+                    _failed_history.append({
+                        "role": "assistant",
+                        "content": final_response_text or agent_error,
+                    })
+                _persist_response_snapshot(
+                    failed_env,
+                    conversation_history_snapshot=_failed_history,
+                )
+                terminal_snapshot_persisted = True
+                await _write_event("response.failed", {
+                    "type": "response.failed",
+                    "response": failed_env,
+                })
+            else:
+                review_paused = isinstance(result, dict) and bool(result.get("completion_review")) and not result.get("completed")
+                completed_env = _envelope("incomplete" if review_paused else "completed")
+                if isinstance(result, dict) and result.get("completion_review"):
+                    completed_env["hermes"] = {
+                        "completed": bool(result.get("completed")),
+                        "task_outcome": result.get("task_outcome"),
+                        "completion_review": result["completion_review"],
+                    }
+                completed_env["output"] = final_items
+                completed_env["usage"] = {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+                full_history = self._build_response_conversation_history(
+                    conversation_history,
+                    user_message,
+                    result,
+                    final_response_text,
+                )
+                _persist_response_snapshot(
+                    completed_env,
+                    conversation_history_snapshot=full_history,
+                )
+                terminal_snapshot_persisted = True
+                terminal_event = "response.incomplete" if review_paused else "response.completed"
+                await _write_event(terminal_event, {
+                    "type": terminal_event,
+                    "response": completed_env,
+                })
+
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError, OSError):
+            _persist_incomplete_if_needed()
+            # Client disconnected — interrupt the agent so it stops
+            # making upstream LLM calls, then cancel the task.
+            agent = agent_ref[0] if agent_ref else None
+            if agent is not None:
+                try:
+                    agent.interrupt("SSE client disconnected")
+                except Exception:
+                    pass
+            if not agent_task.done():
+                agent_task.cancel()
+                try:
+                    await agent_task
+                except (asyncio.CancelledError, Exception):
+                    pass
+            logger.info("SSE client disconnected; interrupted agent task %s", response_id)
+        except asyncio.CancelledError:
+            # Server-side cancellation (e.g. shutdown, request timeout) —
+            # persist an incomplete snapshot so GET /v1/responses/{id} and
+            # previous_response_id chaining still work, then re-raise so the
+            # runtime's cancellation semantics are respected.
+            _persist_incomplete_if_needed()
+            agent = agent_ref[0] if agent_ref else None
+            if agent is not None:
+                try:
+                    agent.interrupt("SSE task cancelled")
+                except Exception:
+                    pass
+            if not agent_task.done():
+                agent_task.cancel()
+            logger.info("SSE task cancelled; persisted incomplete snapshot for %s", response_id)
+            raise
+        except Exception as _exc:
+            # Agent crashed with an unhandled error (e.g. model API error like
+            # BadRequestError, AuthenticationError).  Emit a response.failed
+            # event and properly terminate the SSE stream so the client doesn't
+            # get a TransferEncodingError from incomplete chunked encoding.
+            import traceback as _tb
+            _persist_incomplete_if_needed()
+            agent_error = _tb.format_exc()
+            try:
+                failed_env = _envelope("failed")
+                failed_env["output"] = list(emitted_items)
+                failed_env["error"] = {"message": str(_exc)[:500], "type": "server_error"}
+                failed_env["usage"] = {
+                    "input_tokens": usage.get("input_tokens", 0),
+                    "output_tokens": usage.get("output_tokens", 0),
+                    "total_tokens": usage.get("total_tokens", 0),
+                }
+                await _write_event("response.failed", {
+                    "type": "response.failed",
+                    "response": failed_env,
+                })
+            except Exception:
+                pass
+            logger.error("Agent crashed mid-stream for %s: %s", response_id, str(agent_error)[:300])
+
+        return response
+
+    async def _handle_responses(self, request: "web.Request") -> "web.Response":
+        """POST /v1/responses — OpenAI Responses API format."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        # Long-term memory scope header (see chat_completions for details).
+        gateway_session_key, key_err = self._parse_session_key_header(request)
+        if key_err is not None:
+            return key_err
+
+        # Parse request body
+        try:
+            body = await request.json()
+        except (json.JSONDecodeError, Exception):
+            return web.json_response(
+                {"error": {"message": "Invalid JSON in request body", "type": "invalid_request_error"}},
+                status=400,
+            )
+
+        raw_input = body.get("input")
+        if raw_input is None:
+            return web.json_response(_openai_error("Missing 'input' field"), status=400)
+
+        instructions = body.get("instructions")
+        previous_response_id = body.get("previous_response_id")
+        conversation = body.get("conversation")
+        store = _coerce_request_bool(body.get("store"), default=True)
+
+        # conversation and previous_response_id are mutually exclusive
+        if conversation and previous_response_id:
+            return web.json_response(_openai_error("Cannot use both 'conversation' and 'previous_response_id'"), status=400)
+
+        # Resolve conversation name to latest response_id
+        if conversation:
+            previous_response_id = self._response_store.get_conversation(conversation)
+            # No error if conversation doesn't exist yet — it's a new conversation
+
+        # Normalize input to message list
+        input_messages: List[Dict[str, Any]] = []
+        if isinstance(raw_input, str):
+            input_messages = [{"role": "user", "content": raw_input}]
+        elif isinstance(raw_input, list):
+            for idx, item in enumerate(raw_input):
+                if isinstance(item, str):
+                    input_messages.append({"role": "user", "content": item})
+                elif isinstance(item, dict):
+                    role = item.get("role", "user")
+                    try:
+                        content = _normalize_multimodal_content(item.get("content", ""))
+                    except ValueError as exc:
+                        return _multimodal_validation_error(exc, param=f"input[{idx}].content")
+                    input_messages.append({"role": role, "content": content})
+        else:
+            return web.json_response(_openai_error("'input' must be a string or array"), status=400)
+
+        # Accept explicit conversation_history from the request body.
+        # This lets stateless clients supply their own history instead of
+        # relying on server-side response chaining via previous_response_id.
+        # Precedence: explicit conversation_history > previous_response_id.
+        conversation_history: List[Dict[str, Any]] = []
+        raw_history = body.get("conversation_history")
+        if raw_history:
+            if not isinstance(raw_history, list):
+                return web.json_response(
+                    _openai_error("'conversation_history' must be an array of message objects"),
+                    status=400,
+                )
+            for i, entry in enumerate(raw_history):
+                if not isinstance(entry, dict) or "role" not in entry or "content" not in entry:
+                    return web.json_response(
+                        _openai_error(f"conversation_history[{i}] must have 'role' and 'content' fields"),
+                        status=400,
+                    )
+                try:
+                    entry_content = _normalize_multimodal_content(entry["content"])
+                except ValueError as exc:
+                    return _multimodal_validation_error(exc, param=f"conversation_history[{i}].content")
+                conversation_history.append({"role": str(entry["role"]), "content": entry_content})
+            if previous_response_id:
+                logger.debug("Both conversation_history and previous_response_id provided; using conversation_history")
+
+        stored_session_id = None
+        if not conversation_history and previous_response_id:
+            stored = self._response_store.get(previous_response_id)
+            if stored is None:
+                return web.json_response(_openai_error(f"Previous response not found: {previous_response_id}"), status=404)
+            conversation_history = list(stored.get("conversation_history", []))
+            stored_session_id = stored.get("session_id")
+            # If no instructions provided, carry forward from previous
+            if instructions is None:
+                instructions = stored.get("instructions")
+
+        # Append new input messages to history (all but the last become history)
+        for msg in input_messages[:-1]:
+            conversation_history.append(msg)
+
+        # Last input message is the user_message
+        user_message: Any = input_messages[-1].get("content", "") if input_messages else ""
+        if not _content_has_visible_payload(user_message):
+            return web.json_response(_openai_error("No user message found in input"), status=400)
+
+        model_name = body.get("model", self._model_name)
+
+        # Truncation support
+        if body.get("truncation") == "auto" and len(conversation_history) > 100:
+            conversation_history = conversation_history[-100:]
+
+        # Reuse session from previous_response_id chain so the dashboard
+        # groups the entire conversation under one session entry.
+        session_id = stored_session_id or str(uuid.uuid4())
+
+        stream = _coerce_request_bool(body.get("stream"), default=False)
+        if stream:
+            # Streaming branch — emit OpenAI Responses SSE events as the
+            # agent runs so frontends can render text deltas and tool
+            # calls in real time.  See _write_sse_responses for details.
+            import queue as _q
+            _stream_q: _q.Queue = _q.Queue()
+
+            def _on_delta(delta):
+                # None from the agent is a CLI box-close signal, not EOS.
+                # Forwarding would kill the SSE stream prematurely; the
+                # SSE writer detects completion via agent_task.done().
+                if delta is not None:
+                    _stream_q.put(delta)
+
+            def _on_tool_progress(event_type, name, preview, args, **kwargs):
+                """Queue non-start tool progress events if needed in future.
+
+                The structured Responses stream uses ``tool_start_callback``
+                and ``tool_complete_callback`` for exact call-id correlation,
+                so progress events are currently ignored here.
+                """
+                return
+
+            def _on_tool_start(tool_call_id, function_name, function_args):
+                """Queue a started tool for live function_call streaming."""
+                _stream_q.put(("__tool_started__", {
+                    "tool_call_id": tool_call_id,
+                    "name": function_name,
+                    "arguments": function_args or {},
+                }))
+
+            def _on_tool_complete(tool_call_id, function_name, function_args, function_result):
+                """Queue a completed tool result for live function_call_output streaming."""
+                _stream_q.put(("__tool_completed__", {
+                    "tool_call_id": tool_call_id,
+                    "name": function_name,
+                    "arguments": function_args or {},
+                    "result": function_result,
+                }))
+
+            agent_ref = [None]
+            agent_task = asyncio.ensure_future(self._run_agent(
+                user_message=user_message,
+                conversation_history=conversation_history,
+                ephemeral_system_prompt=instructions,
+                session_id=session_id,
+                model_name=model_name,
+                stream_delta_callback=_on_delta,
+                tool_progress_callback=_on_tool_progress,
+                tool_start_callback=_on_tool_start,
+                tool_complete_callback=_on_tool_complete,
+                agent_ref=agent_ref,
+                gateway_session_key=gateway_session_key,
+            ))
+            # Ensure SSE drain loops can terminate without relying on polling
+            # agent_task.done(), which can race with queue timeout checks.
+            agent_task.add_done_callback(lambda _fut: _stream_q.put(None))
+
+            response_id = f"resp_{uuid.uuid4().hex[:28]}"
+            created_at = int(time.time())
+
+            return await self._write_sse_responses(
+                request=request,
+                response_id=response_id,
+                model=model_name,
+                created_at=created_at,
+                stream_q=_stream_q,
+                agent_task=agent_task,
+                agent_ref=agent_ref,
+                conversation_history=conversation_history,
+                user_message=user_message,
+                instructions=instructions,
+                conversation=conversation,
+                store=store,
+                session_id=session_id,
+                gateway_session_key=gateway_session_key,
+            )
+
+        async def _compute_response():
+            return await self._run_agent(
+                user_message=user_message,
+                conversation_history=conversation_history,
+                ephemeral_system_prompt=instructions,
+                session_id=session_id,
+                model_name=model_name,
+                gateway_session_key=gateway_session_key,
+            )
+
+        idempotency_key = request.headers.get("Idempotency-Key")
+        if idempotency_key:
+            fp = _make_request_fingerprint(
+                body,
+                keys=["input", "instructions", "previous_response_id", "conversation", "model", "tools"],
+            )
+            try:
+                result, usage = await _idem_cache.get_or_set(idempotency_key, fp, _compute_response)
+            except Exception as e:
+                logger.error("Error running agent for responses: %s", e, exc_info=True)
+                return web.json_response(
+                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
+                    status=500,
+                )
+        else:
+            try:
+                result, usage = await _compute_response()
+            except Exception as e:
+                logger.error("Error running agent for responses: %s", e, exc_info=True)
+                return web.json_response(
+                    _openai_error(f"Internal server error: {e}", err_type="server_error"),
+                    status=500,
+                )
+
+        final_response = result.get("final_response", "")
+        if not final_response:
+            final_response = result.get("error", "(No response generated)")
+
+        response_id = f"resp_{uuid.uuid4().hex[:28]}"
+        created_at = int(time.time())
+
+        # Build the full conversation history for storage
+        # (includes tool calls from the agent run)
+        full_history = self._build_response_conversation_history(
+            conversation_history,
+            user_message,
+            result,
+            final_response,
+        )
+
+        # Build output items from the current turn only.  AIAgent returns a
+        # full transcript in result["messages"], while older/mocked paths may
+        # return only the current turn suffix.
+        output_start_index = self._response_messages_turn_start_index(
+            conversation_history,
+            user_message,
+            result,
+        )
+        output_items = self._extract_output_items(result, start_index=output_start_index)
+
+        response_data = {
+            "id": response_id,
+            "object": "response",
+            "status": "completed",
+            "created_at": created_at,
+            "model": body.get("model", self._model_name),
+            "output": output_items,
+            "usage": {
+                "input_tokens": usage.get("input_tokens", 0),
+                "output_tokens": usage.get("output_tokens", 0),
+                "total_tokens": usage.get("total_tokens", 0),
+            },
+        }
+
+        if result.get("completion_review"):
+            if not result.get("completed"):
+                response_data["status"] = "incomplete"
+            response_data["hermes"] = {
+                "completed": bool(result.get("completed")),
+                "task_outcome": result.get("task_outcome"),
+                "completion_review": result["completion_review"],
+            }
+
+        # Store the complete response object for future chaining / GET retrieval
+        if store:
+            self._response_store.put(response_id, {
+                "response": response_data,
+                "conversation_history": full_history,
+                "instructions": instructions,
+                "session_id": session_id,
+            })
+            # Update conversation mapping so the next request with the same
+            # conversation name automatically chains to this response
+            if conversation:
+                self._response_store.set_conversation(conversation, response_id)
+
+        response_headers = {"X-Hermes-Session-Id": session_id}
+        if gateway_session_key:
+            response_headers["X-Hermes-Session-Key"] = gateway_session_key
+        return web.json_response(response_data, headers=response_headers)
+
+    # ------------------------------------------------------------------
+    # GET / DELETE response endpoints
+    # ------------------------------------------------------------------
+
+    async def _handle_get_response(self, request: "web.Request") -> "web.Response":
+        """GET /v1/responses/{response_id} — retrieve a stored response."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        response_id = request.match_info["response_id"]
+        stored = self._response_store.get(response_id)
+        if stored is None:
+            return web.json_response(_openai_error(f"Response not found: {response_id}"), status=404)
+
+        return web.json_response(stored["response"])
+
+    async def _handle_delete_response(self, request: "web.Request") -> "web.Response":
+        """DELETE /v1/responses/{response_id} — delete a stored response."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        response_id = request.match_info["response_id"]
+        deleted = self._response_store.delete(response_id)
+        if not deleted:
+            return web.json_response(_openai_error(f"Response not found: {response_id}"), status=404)
+
+        return web.json_response({
+            "id": response_id,
+            "object": "response",
+            "deleted": True,
+        })
+
+    # ------------------------------------------------------------------
+    # Cron jobs API
+    # ------------------------------------------------------------------
+
+    _JOB_ID_RE = __import__("re").compile(r"[a-f0-9]{12}")
+    # Allowed fields for update — prevents clients injecting arbitrary keys
+    _UPDATE_ALLOWED_FIELDS = {"name", "schedule", "prompt", "deliver", "skills", "skill", "repeat", "enabled", "workdir"}
+    _MAX_NAME_LENGTH = 200
+    _MAX_PROMPT_LENGTH = 5000
+
+    @staticmethod
+    def _check_jobs_available() -> Optional["web.Response"]:
+        """Return error response if cron module isn't available."""
+        if not _CRON_AVAILABLE:
+            return web.json_response(
+                {"error": "Cron module not available"}, status=501,
+            )
+        return None
+
+    def _check_job_id(self, request: "web.Request") -> tuple:
+        """Validate and extract job_id. Returns (job_id, error_response)."""
+        job_id = request.match_info["job_id"]
+        if not self._JOB_ID_RE.fullmatch(job_id):
+            return job_id, web.json_response(
+                {"error": "Invalid job ID format"}, status=400,
+            )
+        return job_id, None
+
+    async def _handle_list_jobs(self, request: "web.Request") -> "web.Response":
+        """GET /api/jobs — list all cron jobs."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        try:
+            include_disabled = request.query.get("include_disabled", "").lower() in {"true", "1"}
+            jobs = _cron_list(include_disabled=include_disabled)
+            return web.json_response({"jobs": jobs})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_create_job(self, request: "web.Request") -> "web.Response":
+        """POST /api/jobs — create a new cron job."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        try:
+            body = await request.json()
+            name = (body.get("name") or "").strip()
+            schedule = (body.get("schedule") or "").strip()
+            prompt = body.get("prompt", "")
+            desktop_session_id = request.headers.get("X-Hermes-Session-Id", "").strip()
+            if desktop_session_id and re.search(r'[\r\n\x00]', desktop_session_id):
+                return web.json_response({"error": "Invalid session ID"}, status=400)
+            origin = None
+            if desktop_session_id:
+                origin = {
+                    "platform": "api_server",
+                    "chat_id": desktop_session_id,
+                    "chat_name": "Desktop",
+                }
+            deliver = body.get("deliver")
+            if deliver is None:
+                deliver = "origin" if origin else "local"
+            skills = body.get("skills")
+            repeat = body.get("repeat")
+            workdir = body.get("workdir")
+
+            if not name:
+                return web.json_response({"error": "Name is required"}, status=400)
+            if len(name) > self._MAX_NAME_LENGTH:
+                return web.json_response(
+                    {"error": f"Name must be ≤ {self._MAX_NAME_LENGTH} characters"}, status=400,
+                )
+            if not schedule:
+                return web.json_response({"error": "Schedule is required"}, status=400)
+            if len(prompt) > self._MAX_PROMPT_LENGTH:
+                return web.json_response(
+                    {"error": f"Prompt must be ≤ {self._MAX_PROMPT_LENGTH} characters"}, status=400,
+                )
+            if repeat is not None and (not isinstance(repeat, int) or repeat < 1):
+                return web.json_response({"error": "Repeat must be a positive integer"}, status=400)
+
+            kwargs = {
+                "prompt": prompt,
+                "schedule": schedule,
+                "name": name,
+                "deliver": deliver,
+                "origin": origin,
+                "workdir": workdir,
+            }
+            if skills:
+                kwargs["skills"] = skills
+            if repeat is not None:
+                kwargs["repeat"] = repeat
+
+            job = _cron_create(**kwargs)
+            return web.json_response({"job": job})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_get_job(self, request: "web.Request") -> "web.Response":
+        """GET /api/jobs/{job_id} — get a single cron job."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        job_id, id_err = self._check_job_id(request)
+        if id_err:
+            return id_err
+        try:
+            job = _cron_get(job_id)
+            if not job:
+                return web.json_response({"error": "Job not found"}, status=404)
+            return web.json_response({"job": job})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_update_job(self, request: "web.Request") -> "web.Response":
+        """PATCH /api/jobs/{job_id} — update a cron job."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        job_id, id_err = self._check_job_id(request)
+        if id_err:
+            return id_err
+        try:
+            body = await request.json()
+            # Whitelist allowed fields to prevent arbitrary key injection
+            sanitized = {k: v for k, v in body.items() if k in self._UPDATE_ALLOWED_FIELDS}
+            if not sanitized:
+                return web.json_response({"error": "No valid fields to update"}, status=400)
+            # Validate lengths if present
+            if "name" in sanitized and len(sanitized["name"]) > self._MAX_NAME_LENGTH:
+                return web.json_response(
+                    {"error": f"Name must be ≤ {self._MAX_NAME_LENGTH} characters"}, status=400,
+                )
+            if "prompt" in sanitized and len(sanitized["prompt"]) > self._MAX_PROMPT_LENGTH:
+                return web.json_response(
+                    {"error": f"Prompt must be ≤ {self._MAX_PROMPT_LENGTH} characters"}, status=400,
+                )
+            job = _cron_update(job_id, sanitized)
+            if not job:
+                return web.json_response({"error": "Job not found"}, status=404)
+            return web.json_response({"job": job})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_delete_job(self, request: "web.Request") -> "web.Response":
+        """DELETE /api/jobs/{job_id} — delete a cron job."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        job_id, id_err = self._check_job_id(request)
+        if id_err:
+            return id_err
+        try:
+            success = _cron_remove(job_id)
+            if not success:
+                return web.json_response({"error": "Job not found"}, status=404)
+            return web.json_response({"ok": True})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_pause_job(self, request: "web.Request") -> "web.Response":
+        """POST /api/jobs/{job_id}/pause — pause a cron job."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        job_id, id_err = self._check_job_id(request)
+        if id_err:
+            return id_err
+        try:
+            job = _cron_pause(job_id)
+            if not job:
+                return web.json_response({"error": "Job not found"}, status=404)
+            return web.json_response({"job": job})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_resume_job(self, request: "web.Request") -> "web.Response":
+        """POST /api/jobs/{job_id}/resume — resume a paused cron job."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        job_id, id_err = self._check_job_id(request)
+        if id_err:
+            return id_err
+        try:
+            job = _cron_resume(job_id)
+            if not job:
+                return web.json_response({"error": "Job not found"}, status=404)
+            return web.json_response({"job": job})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    async def _handle_run_job(self, request: "web.Request") -> "web.Response":
+        """POST /api/jobs/{job_id}/run — trigger immediate execution."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+        cron_err = self._check_jobs_available()
+        if cron_err:
+            return cron_err
+        job_id, id_err = self._check_job_id(request)
+        if id_err:
+            return id_err
+        try:
+            job = _cron_trigger(job_id)
+            if not job:
+                return web.json_response({"error": "Job not found"}, status=404)
+            return web.json_response({"job": job})
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+    # ------------------------------------------------------------------
+    # Output extraction helper
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _build_response_conversation_history(
+        conversation_history: List[Dict[str, Any]],
+        user_message: Any,
+        result: Dict[str, Any],
+        final_response: Any,
+    ) -> List[Dict[str, Any]]:
+        """Build the stored Responses transcript without duplicating history."""
+        prior = list(conversation_history)
+        current_user = {"role": "user", "content": user_message}
+        agent_messages = result.get("messages") if isinstance(result, dict) else None
+
+        if isinstance(agent_messages, list) and agent_messages:
+            turn_start = APIServerAdapter._response_messages_turn_start_index(
+                conversation_history,
+                user_message,
+                result,
+            )
+            if turn_start:
+                return list(agent_messages)
+
+            full_history = prior
+            full_history.append(current_user)
+            full_history.extend(agent_messages)
+            return full_history
+
+        full_history = prior
+        full_history.append(current_user)
+        full_history.append({"role": "assistant", "content": final_response})
+        return full_history
+
+    @staticmethod
+    def _response_messages_turn_start_index(
+        conversation_history: List[Dict[str, Any]],
+        user_message: Any,
+        result: Dict[str, Any],
+    ) -> int:
+        """Detect transcript-shaped result["messages"] and return turn start."""
+        agent_messages = result.get("messages") if isinstance(result, dict) else None
+        if not isinstance(agent_messages, list) or not agent_messages:
+            return 0
+
+        prior = list(conversation_history)
+        current_user = {"role": "user", "content": user_message}
+        expected_prefix = prior + [current_user]
+        if agent_messages[:len(expected_prefix)] == expected_prefix:
+            return len(expected_prefix)
+        if prior and agent_messages[:len(prior)] == prior:
+            return len(prior)
+        return 0
+
+    @staticmethod
+    def _extract_output_items(result: Dict[str, Any], start_index: int = 0) -> List[Dict[str, Any]]:
+        """
+        Build the output item array from the agent's messages.
+
+        Walks *result["messages"]* starting at *start_index* and emits:
+        - ``function_call`` items for each tool_call on assistant messages
+        - ``function_call_output`` items for each tool-role message
+        - a final ``message`` item with the assistant's text reply
+        """
+        items: List[Dict[str, Any]] = []
+        messages = result.get("messages", [])
+        if start_index > 0:
+            messages = messages[start_index:]
+
+        for msg in messages:
+            role = msg.get("role")
+            if role == "assistant" and msg.get("tool_calls"):
+                for tc in msg["tool_calls"]:
+                    func = tc.get("function", {})
+                    items.append({
+                        "type": "function_call",
+                        "name": func.get("name", ""),
+                        "arguments": func.get("arguments", ""),
+                        "call_id": tc.get("id", ""),
+                    })
+            elif role == "tool":
+                items.append({
+                    "type": "function_call_output",
+                    "call_id": msg.get("tool_call_id", ""),
+                    "output": msg.get("content", ""),
+                })
+
+        # Final assistant message
+        final = result.get("final_response", "")
+        if not final:
+            final = result.get("error", "(No response generated)")
+
+        items.append({
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "output_text",
+                    "text": final,
+                }
+            ],
+        })
+        return items
+
+    # ------------------------------------------------------------------
+    # Agent execution
+    # ------------------------------------------------------------------
+
+    async def _run_agent(
+        self,
+        user_message: str,
+        conversation_history: List[Dict[str, str]],
+        ephemeral_system_prompt: Optional[str] = None,
+        session_id: Optional[str] = None,
+        model_name: Optional[str] = None,
+        stream_delta_callback=None,
+        tool_progress_callback=None,
+        tool_start_callback=None,
+        tool_complete_callback=None,
+        agent_ref: Optional[list] = None,
+        gateway_session_key: Optional[str] = None,
+        priority: int = 0,
+        persist_user_message: Optional[str] = None,
+        task_run_id: Optional[str] = None,
+        recovery_state: Optional[Dict[str, Any]] = None,
+        project_context: Optional[Dict[str, Any]] = None,
+        approval_enabled: bool = False,
+        approval_mode: str = "assist",
+    ) -> tuple:
+        """
+        Create an agent and run a conversation in a thread executor.
+
+        Returns ``(result_dict, usage_dict)`` where *usage_dict* contains
+        ``input_tokens``, ``output_tokens`` and ``total_tokens``.
+
+        If *agent_ref* is a one-element list, the AIAgent instance is stored
+        at ``agent_ref[0]`` before ``run_conversation`` begins.  This allows
+        callers (e.g. the SSE writer) to call ``agent.interrupt()`` from
+        another thread to stop in-progress LLM calls.
+        """
+        loop = asyncio.get_running_loop()
+        request_priority = _coerce_request_priority(priority, default=0)
+
+        def _run():
+            from gateway.session_context import clear_session_vars, set_session_vars
+            working_directory = (
+                project_context.get("working_directory", "")
+                if project_context is not None else ""
+            )
+            project_id = (
+                project_context.get("project_id", "")
+                if project_context is not None else ""
+            )
+            session_tokens = set_session_vars(
+                platform="api_server",
+                chat_id=session_id or "",
+                chat_name="Desktop",
+                session_key=gateway_session_key or "",
+                session_id=session_id or "",
+                terminal_cwd=working_directory,
+                project_id=project_id,
+            )
+            write_session_detail(session_id, "agent.create.begin", {
+                "conversation_history": conversation_history,
+                "ephemeral_system_prompt": ephemeral_system_prompt,
+                "user_message": user_message,
+                "requested_model": model_name,
+                "gateway_session_key": gateway_session_key,
+                "priority": request_priority,
+                "project_context": project_context,
+            })
+            agent = self._create_agent(
+                ephemeral_system_prompt=ephemeral_system_prompt,
+                session_id=session_id,
+                model_name=model_name,
+                stream_delta_callback=stream_delta_callback,
+                tool_progress_callback=tool_progress_callback,
+                tool_start_callback=tool_start_callback,
+                tool_complete_callback=tool_complete_callback,
+                gateway_session_key=gateway_session_key,
+            )
+            agent._durable_task_run_id = task_run_id
+            agent._durable_is_recovery = persist_user_message is not None
+            db = self._ensure_session_db()
+            if db is not None and session_id:
+                from gateway.session_models import SessionModelController
+                agent._model_selection_checkpoint = SessionModelController(
+                    db, session_id, self._combined_model_entries,
+                    getattr(agent, "_session_model_selection", None),
+                )
+            if recovery_state:
+                cached_prompt = recovery_state.get("cached_system_prompt")
+                if isinstance(cached_prompt, str) and cached_prompt:
+                    agent._cached_system_prompt = cached_prompt
+                todo_state = recovery_state.get("todo_snapshot")
+                if isinstance(todo_state, dict):
+                    todo_state = todo_state.get("todos")
+                if isinstance(todo_state, list) and todo_state:
+                    try:
+                        agent._todo_store.write(todo_state, merge=False)
+                    except Exception:
+                        logger.warning(
+                            "Failed to restore TODO state for recovered task",
+                            exc_info=True,
+                        )
+                agent._recovery_state = recovery_state
+            if request_priority > 0:
+                overrides = dict(getattr(agent, "request_overrides", {}) or {})
+                extra_body = dict(overrides.get("extra_body") or {})
+                extra_body["priority"] = request_priority
+                overrides["extra_body"] = extra_body
+                agent.request_overrides = overrides
+            print(
+                "[hermes-api] agent created "
+                f"session_id={getattr(agent, 'session_id', session_id)} "
+                f"model={getattr(agent, 'model', None)} priority={request_priority} "
+                f"request_overrides={getattr(agent, 'request_overrides', None)}"
+            )
+            if agent_ref is not None:
+                agent_ref[0] = agent
+            if session_id:
+                self._active_chat_agents[session_id] = agent
+            effective_task_id = session_id or str(uuid.uuid4())
+            write_session_detail(getattr(agent, "session_id", session_id), "agent.created", {
+                "effective_task_id": effective_task_id,
+                "model": getattr(agent, "model", None),
+                "provider": getattr(agent, "provider", None),
+                "base_url": getattr(agent, "base_url", None),
+                "api_mode": getattr(agent, "api_mode", None),
+                "max_iterations": getattr(agent, "max_iterations", None),
+                "enabled_tool_names": sorted(getattr(agent, "valid_tool_names", []) or []),
+                "tool_count": len(getattr(agent, "tools", []) or []),
+                "verbose_logging": getattr(agent, "verbose_logging", None),
+                "priority": request_priority,
+                "request_overrides": getattr(agent, "request_overrides", None),
+            })
+            chat_approvals = ChatApprovals(self, agent, effective_task_id,
+                                           gateway_session_key, approval_mode) if approval_enabled else None
+            if chat_approvals:
+                chat_approvals.start()
+            try:
+                from agent.task_recovery import (
+                    record_task_checkpoint,
+                    task_checkpoint_context,
+                )
+                with task_checkpoint_context(
+                    getattr(agent, "_session_db", None),
+                    task_run_id,
+                    task_id=effective_task_id,
+                ):
+                    record_task_checkpoint(
+                        "agent",
+                        "conversation_started",
+                        payload={"recovery": persist_user_message is not None},
+                    )
+                    conversation_kwargs = {
+                        "user_message": user_message,
+                        "conversation_history": conversation_history,
+                        "task_id": effective_task_id,
+                    }
+                    if persist_user_message is not None:
+                        conversation_kwargs["persist_user_message"] = persist_user_message
+                    result = agent.run_conversation(**conversation_kwargs)
+                    record_task_checkpoint(
+                        "agent",
+                        "conversation_finished",
+                        payload={
+                            "completed": result.get("completed", True),
+                            "partial": result.get("partial", False),
+                        },
+                    )
+            finally:
+                if chat_approvals:
+                    chat_approvals.cleanup()
+                clear_session_vars(session_tokens)
+                if (
+                    session_id
+                    and self._active_chat_agents.get(session_id) is agent
+                ):
+                    self._active_chat_agents.pop(session_id, None)
+            usage = {
+                "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+                "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
+                "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+            }
+            # Include the effective session ID in the result so callers
+            # (e.g. X-Hermes-Session-Id header) can track compression-
+            # triggered session rotations. (#16938)
+            _eff_sid = getattr(agent, "session_id", session_id)
+            if isinstance(_eff_sid, str) and _eff_sid:
+                result["session_id"] = _eff_sid
+            write_session_detail(_eff_sid or session_id, "agent.run_conversation.returned", {
+                "result": result,
+                "usage": usage,
+            })
+            return result, usage
+
+        return await loop.run_in_executor(None, _run)
+
+    # ------------------------------------------------------------------
+    # /v1/runs — structured event streaming
+    # ------------------------------------------------------------------
+
+    _MAX_CONCURRENT_RUNS = 10  # Prevent unbounded resource allocation
+    _RUN_STREAM_TTL = 300  # seconds before orphaned runs are swept
+    _RUN_STATUS_TTL = 3600  # seconds to retain terminal run status for polling
+
+    def _set_run_status(self, run_id: str, status: str, **fields: Any) -> Dict[str, Any]:
+        """Update pollable run status without exposing private agent objects."""
+        now = time.time()
+        current = self._run_statuses.get(run_id, {})
+        current.update({
+            "object": "hermes.run",
+            "run_id": run_id,
+            "status": status,
+            "updated_at": now,
+        })
+        current.setdefault("created_at", fields.pop("created_at", now))
+        current.update(fields)
+        self._run_statuses[run_id] = current
+        return current
+
+    def _make_run_event_callback(self, run_id: str, loop: "asyncio.AbstractEventLoop"):
+        """Return a tool_progress_callback that pushes structured events to the run's SSE queue."""
+        def _push(event: Dict[str, Any]) -> None:
+            self._set_run_status(
+                run_id,
+                self._run_statuses.get(run_id, {}).get("status", "running"),
+                last_event=event.get("event"),
+            )
+            q = self._run_streams.get(run_id)
+            if q is None:
+                return
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, event)
+            except Exception:
+                pass
+
+        def _callback(event_type: str, tool_name: str = None, preview: str = None, args=None, **kwargs):
+            ts = time.time()
+            if event_type == "tool.started":
+                _push({
+                    "event": "tool.started",
+                    "run_id": run_id,
+                    "timestamp": ts,
+                    "tool": tool_name,
+                    "preview": preview,
+                })
+            elif event_type == "tool.completed":
+                _push({
+                    "event": "tool.completed",
+                    "run_id": run_id,
+                    "timestamp": ts,
+                    "tool": tool_name,
+                    "duration": round(kwargs.get("duration", 0), 3),
+                    "error": kwargs.get("is_error", False),
+                })
+            elif event_type == "reasoning.available":
+                _push({
+                    "event": "reasoning.available",
+                    "run_id": run_id,
+                    "timestamp": ts,
+                    "text": preview or "",
+                })
+            # _thinking and subagent_progress are intentionally not forwarded
+
+        return _callback
+
+    async def _handle_runs(self, request: "web.Request") -> "web.Response":
+        """POST /v1/runs — start an agent run, return run_id immediately."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        # Long-term memory scope header (see chat_completions for details).
+        gateway_session_key, key_err = self._parse_session_key_header(request)
+        if key_err is not None:
+            return key_err
+
+        # Enforce concurrency limit
+        if len(self._run_streams) >= self._MAX_CONCURRENT_RUNS:
+            return web.json_response(
+                _openai_error(f"Too many concurrent runs (max {self._MAX_CONCURRENT_RUNS})", code="rate_limit_exceeded"),
+                status=429,
+            )
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response(_openai_error("Invalid JSON"), status=400)
+
+        raw_input = body.get("input")
+        if not raw_input:
+            return web.json_response(_openai_error("Missing 'input' field"), status=400)
+
+        user_message = raw_input if isinstance(raw_input, str) else (raw_input[-1].get("content", "") if isinstance(raw_input, list) else "")
+        if not user_message:
+            return web.json_response(_openai_error("No user message found in input"), status=400)
+
+        instructions = body.get("instructions")
+        previous_response_id = body.get("previous_response_id")
+
+        # Accept explicit conversation_history from the request body.
+        # Precedence: explicit conversation_history > previous_response_id.
+        conversation_history: List[Dict[str, str]] = []
+        raw_history = body.get("conversation_history")
+        if raw_history:
+            if not isinstance(raw_history, list):
+                return web.json_response(
+                    _openai_error("'conversation_history' must be an array of message objects"),
+                    status=400,
+                )
+            for i, entry in enumerate(raw_history):
+                if not isinstance(entry, dict) or "role" not in entry or "content" not in entry:
+                    return web.json_response(
+                        _openai_error(f"conversation_history[{i}] must have 'role' and 'content' fields"),
+                        status=400,
+                    )
+                conversation_history.append({"role": str(entry["role"]), "content": str(entry["content"])})
+            if previous_response_id:
+                logger.debug("Both conversation_history and previous_response_id provided; using conversation_history")
+
+        stored_session_id = None
+        if not conversation_history and previous_response_id:
+            stored = self._response_store.get(previous_response_id)
+            if stored:
+                conversation_history = list(stored.get("conversation_history", []))
+                stored_session_id = stored.get("session_id")
+                if instructions is None:
+                    instructions = stored.get("instructions")
+
+        # When input is a multi-message array, extract all but the last
+        # message as conversation history (the last becomes user_message).
+        # Only fires when no explicit history was provided.
+        if not conversation_history and isinstance(raw_input, list) and len(raw_input) > 1:
+            for msg in raw_input[:-1]:
+                if isinstance(msg, dict) and msg.get("role") and msg.get("content"):
+                    content = msg["content"]
+                    if isinstance(content, list):
+                        # Flatten multi-part content blocks to text
+                        content = " ".join(
+                            part.get("text", "") for part in content
+                            if isinstance(part, dict) and part.get("type") == "text"
+                        )
+                    conversation_history.append({"role": msg["role"], "content": str(content)})
+
+        run_id = f"run_{uuid.uuid4().hex}"
+        session_id = body.get("session_id") or stored_session_id or run_id
+        approval_session_key = gateway_session_key or session_id or run_id
+        ephemeral_system_prompt = instructions
+        loop = asyncio.get_running_loop()
+        q: "asyncio.Queue[Optional[Dict]]" = asyncio.Queue()
+        created_at = time.time()
+        self._run_streams[run_id] = q
+        self._run_streams_created[run_id] = created_at
+        self._run_approval_sessions[run_id] = approval_session_key
+
+        event_cb = self._make_run_event_callback(run_id, loop)
+
+        # Also wire stream_delta_callback so message.delta events flow through.
+        def _text_cb(delta: Optional[str]) -> None:
+            if delta is None:
+                return
+            try:
+                loop.call_soon_threadsafe(q.put_nowait, {
+                    "event": "message.delta",
+                    "run_id": run_id,
+                    "timestamp": time.time(),
+                    "delta": delta,
+                })
+            except Exception:
+                pass
+
+        self._set_run_status(
+            run_id,
+            "queued",
+            created_at=created_at,
+            session_id=session_id,
+            model=body.get("model", self._model_name),
+        )
+
+        async def _run_and_close():
+            try:
+                self._set_run_status(run_id, "running")
+                agent = self._create_agent(
+                    ephemeral_system_prompt=ephemeral_system_prompt,
+                    session_id=session_id,
+                    model_name=body.get("model", self._model_name),
+                    stream_delta_callback=_text_cb,
+                    tool_progress_callback=event_cb,
+                    gateway_session_key=gateway_session_key,
+                )
+                self._active_run_agents[run_id] = agent
+
+                def _approval_notify(approval_data: Dict[str, Any]) -> None:
+                    event = dict(approval_data or {})
+                    event.update({
+                        "event": "approval.request",
+                        "run_id": run_id,
+                        "timestamp": time.time(),
+                        "choices": ["once", "session", "always", "deny"],
+                    })
+                    self._set_run_status(
+                        run_id,
+                        "waiting_for_approval",
+                        last_event="approval.request",
+                    )
+                    try:
+                        loop.call_soon_threadsafe(q.put_nowait, event)
+                    except Exception:
+                        pass
+
+                def _run_sync():
+                    from gateway.session_context import clear_session_vars, set_session_vars
+                    from tools.approval import (
+                        register_gateway_notify,
+                        reset_current_session_key,
+                        set_current_session_key,
+                        unregister_gateway_notify,
+                    )
+
+                    effective_task_id = session_id or run_id
+                    approval_token = None
+                    session_tokens = []
+                    try:
+                        # Bind approval/session identity for this API run via
+                        # contextvars so concurrent runs do not share process
+                        # environment state.
+                        approval_token = set_current_session_key(approval_session_key)
+                        session_tokens = set_session_vars(
+                            platform="api_server",
+                            chat_id=session_id,
+                            chat_name="Desktop",
+                            session_key=approval_session_key,
+                            session_id=session_id,
+                        )
+                        register_gateway_notify(approval_session_key, _approval_notify)
+                        r = agent.run_conversation(
+                            user_message=user_message,
+                            conversation_history=conversation_history,
+                            task_id=effective_task_id,
+                        )
+                    finally:
+                        try:
+                            unregister_gateway_notify(approval_session_key)
+                        finally:
+                            if approval_token is not None:
+                                try:
+                                    reset_current_session_key(approval_token)
+                                except Exception:
+                                    pass
+                            if session_tokens:
+                                try:
+                                    clear_session_vars(session_tokens)
+                                except Exception:
+                                    pass
+                    u = {
+                        "input_tokens": getattr(agent, "session_prompt_tokens", 0) or 0,
+                        "output_tokens": getattr(agent, "session_completion_tokens", 0) or 0,
+                        "total_tokens": getattr(agent, "session_total_tokens", 0) or 0,
+                    }
+                    return r, u
+
+                result, usage = await asyncio.get_running_loop().run_in_executor(None, _run_sync)
+                # Check for structured failure (non-retryable client errors like
+                # 401/400 return failed=True instead of raising, so the except
+                # block below never fires — issue #15561).
+                if isinstance(result, dict) and result.get("failed"):
+                    error_msg = result.get("error") or "agent run failed"
+                    q.put_nowait({
+                        "event": "run.failed",
+                        "run_id": run_id,
+                        "timestamp": time.time(),
+                        "error": error_msg,
+                    })
+                    self._set_run_status(
+                        run_id,
+                        "failed",
+                        error=error_msg,
+                        last_event="run.failed",
+                    )
+                else:
+                    final_response = result.get("final_response", "") if isinstance(result, dict) else ""
+                    review = result.get("completion_review") if isinstance(result, dict) else None
+                    review_paused = bool(review) and not result.get("completed")
+                    final_status = "paused" if review_paused else "completed"
+                    terminal_event = "run.paused" if review_paused else "run.completed"
+                    review_fields = {"completion_review": review, "task_outcome": result.get("task_outcome")} if review else {}
+                    q.put_nowait({
+                        "event": terminal_event,
+                        "run_id": run_id,
+                        "timestamp": time.time(),
+                        "output": final_response,
+                        "usage": usage,
+                        **review_fields,
+                    })
+                    self._set_run_status(
+                        run_id,
+                        final_status,
+                        output=final_response,
+                        usage=usage,
+                        last_event=terminal_event,
+                        **review_fields,
+                    )
+            except asyncio.CancelledError:
+                self._set_run_status(
+                    run_id,
+                    "cancelled",
+                    last_event="run.cancelled",
+                )
+                try:
+                    q.put_nowait({
+                        "event": "run.cancelled",
+                        "run_id": run_id,
+                        "timestamp": time.time(),
+                    })
+                except Exception:
+                    pass
+                raise
+            except Exception as exc:
+                logger.exception("[api_server] run %s failed", run_id)
+                self._set_run_status(
+                    run_id,
+                    "failed",
+                    error=str(exc),
+                    last_event="run.failed",
+                )
+                try:
+                    q.put_nowait({
+                        "event": "run.failed",
+                        "run_id": run_id,
+                        "timestamp": time.time(),
+                        "error": str(exc),
+                    })
+                except Exception:
+                    pass
+            finally:
+                # If the asyncio wrapper is cancelled (for example via
+                # /stop), the executor thread can still be blocked waiting
+                # on an approval Event.  Unregistering here releases those
+                # waits immediately; the in-thread unregister is harmlessly
+                # idempotent on normal completion.
+                try:
+                    from tools.approval import unregister_gateway_notify
+
+                    unregister_gateway_notify(approval_session_key)
+                except Exception:
+                    pass
+                # Sentinel: signal SSE stream to close
+                try:
+                    q.put_nowait(None)
+                except Exception:
+                    pass
+                self._active_run_agents.pop(run_id, None)
+                self._active_run_tasks.pop(run_id, None)
+                self._run_approval_sessions.pop(run_id, None)
+
+        task = asyncio.create_task(_run_and_close())
+        self._active_run_tasks[run_id] = task
+        try:
+            self._background_tasks.add(task)
+        except TypeError:
+            pass
+        if hasattr(task, "add_done_callback"):
+            task.add_done_callback(self._background_tasks.discard)
+
+        response_headers = (
+            {"X-Hermes-Session-Key": gateway_session_key} if gateway_session_key else {}
+        )
+        return web.json_response(
+            {"run_id": run_id, "status": "started"},
+            status=202,
+            headers=response_headers,
+        )
+
+    async def _handle_get_run(self, request: "web.Request") -> "web.Response":
+        """GET /v1/runs/{run_id} — return pollable run status for external UIs."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        run_id = request.match_info["run_id"]
+        status = self._run_statuses.get(run_id)
+        if status is None:
+            return web.json_response(
+                _openai_error(f"Run not found: {run_id}", code="run_not_found"),
+                status=404,
+            )
+        return web.json_response(status)
+
+    async def _handle_run_events(self, request: "web.Request") -> "web.StreamResponse":
+        """GET /v1/runs/{run_id}/events — SSE stream of structured agent lifecycle events."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        run_id = request.match_info["run_id"]
+
+        # Allow subscribing slightly before the run is registered (race condition window)
+        for _ in range(20):
+            if run_id in self._run_streams:
+                break
+            await asyncio.sleep(0.05)
+        else:
+            return web.json_response(_openai_error(f"Run not found: {run_id}", code="run_not_found"), status=404)
+
+        q = self._run_streams[run_id]
+
+        response = web.StreamResponse(
+            status=200,
+            headers={
+                "Content-Type": "text/event-stream",
+                "Cache-Control": "no-cache",
+                "X-Accel-Buffering": "no",
+            },
+        )
+        await response.prepare(request)
+
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(q.get(), timeout=30.0)
+                except asyncio.TimeoutError:
+                    await response.write(b": keepalive\n\n")
+                    continue
+                if event is None:
+                    # Run finished — send final SSE comment and close
+                    await response.write(b": stream closed\n\n")
+                    break
+                payload = f"data: {json.dumps(event)}\n\n"
+                await response.write(payload.encode())
+        except Exception as exc:
+            logger.debug("[api_server] SSE stream error for run %s: %s", run_id, exc)
+        finally:
+            self._run_streams.pop(run_id, None)
+            self._run_streams_created.pop(run_id, None)
+
+        return response
+
+
+    async def _handle_run_approval(self, request: "web.Request") -> "web.Response":
+        """POST /v1/runs/{run_id}/approval — resolve a pending run approval."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        run_id = request.match_info["run_id"]
+        status = self._run_statuses.get(run_id)
+        if status is None:
+            return web.json_response(
+                _openai_error(f"Run not found: {run_id}", code="run_not_found"),
+                status=404,
+            )
+
+        try:
+            body = await request.json()
+        except Exception:
+            return web.json_response(_openai_error("Invalid JSON"), status=400)
+
+        raw_choice = str(body.get("choice", "")).strip().lower()
+        aliases = {"approve": "once", "approved": "once", "allow": "once"}
+        choice = aliases.get(raw_choice, raw_choice)
+        allowed = {"once", "session", "always", "deny"}
+        if choice not in allowed:
+            return web.json_response(
+                _openai_error(
+                    "Invalid approval choice; expected one of: once, session, always, deny",
+                    code="invalid_approval_choice",
+                ),
+                status=400,
+            )
+
+        approval_session_key = self._run_approval_sessions.get(run_id)
+        if not approval_session_key:
+            return web.json_response(
+                _openai_error(
+                    f"Run has no active approval session: {run_id}",
+                    code="approval_not_active",
+                ),
+                status=409,
+            )
+
+        resolve_all = (
+            _coerce_request_bool(body.get("all"), default=False)
+            or _coerce_request_bool(body.get("resolve_all"), default=False)
+        )
+        try:
+            from tools.approval import resolve_gateway_approval
+
+            resolved = resolve_gateway_approval(
+                approval_session_key,
+                choice,
+                resolve_all=resolve_all,
+            )
+        except Exception as exc:
+            logger.exception("[api_server] approval resolution failed for run %s", run_id)
+            return web.json_response(_openai_error(str(exc)), status=500)
+
+        if resolved <= 0:
+            return web.json_response(
+                _openai_error(
+                    f"Run has no pending approval: {run_id}",
+                    code="approval_not_pending",
+                ),
+                status=409,
+            )
+
+        self._set_run_status(run_id, "running", last_event="approval.responded")
+        q = self._run_streams.get(run_id)
+        if q is not None:
+            try:
+                q.put_nowait({
+                    "event": "approval.responded",
+                    "run_id": run_id,
+                    "timestamp": time.time(),
+                    "choice": choice,
+                    "resolved": resolved,
+                })
+            except Exception:
+                pass
+
+        return web.json_response({
+            "object": "hermes.run.approval_response",
+            "run_id": run_id,
+            "choice": choice,
+            "resolved": resolved,
+        })
+
+    async def _handle_stop_run(self, request: "web.Request") -> "web.Response":
+        """POST /v1/runs/{run_id}/stop — interrupt a running agent."""
+        auth_err = self._check_auth(request)
+        if auth_err:
+            return auth_err
+
+        run_id = request.match_info["run_id"]
+        agent = self._active_run_agents.get(run_id)
+        task = self._active_run_tasks.get(run_id)
+
+        if agent is None and task is None:
+            return web.json_response(_openai_error(f"Run not found: {run_id}", code="run_not_found"), status=404)
+
+        self._set_run_status(run_id, "stopping", last_event="run.stopping")
+
+        if agent is not None:
+            try:
+                agent.interrupt("Stop requested via API")
+            except Exception:
+                pass
+
+        if task is not None and not task.done():
+            task.cancel()
+            # Bounded wait: run_conversation() executes in the default
+            # executor thread which task.cancel() cannot preempt — we rely on
+            # agent.interrupt() above to break the loop. Cap the wait so a
+            # slow/unresponsive interrupt can't hang this handler.
+            try:
+                await asyncio.wait_for(asyncio.shield(task), timeout=5.0)
+            except asyncio.TimeoutError:
+                logger.warning(
+                    "[api_server] stop for run %s timed out after 5s; "
+                    "agent may still be finishing the current step",
+                    run_id,
+                )
+            except (asyncio.CancelledError, Exception):
+                pass
+
+        return web.json_response({"run_id": run_id, "status": "stopping"})
+
+    async def _sweep_orphaned_runs(self) -> None:
+        """Periodically clean up run streams that were never consumed."""
+        while True:
+            await asyncio.sleep(60)
+            now = time.time()
+            stale = [
+                run_id
+                for run_id, created_at in list(self._run_streams_created.items())
+                if now - created_at > self._RUN_STREAM_TTL
+            ]
+            for run_id in stale:
+                logger.debug("[api_server] sweeping orphaned run %s", run_id)
+                try:
+                    from tools.approval import unregister_gateway_notify
+
+                    approval_session_key = self._run_approval_sessions.get(run_id)
+                    if approval_session_key:
+                        unregister_gateway_notify(approval_session_key)
+                except Exception:
+                    pass
+                self._run_streams.pop(run_id, None)
+                self._run_streams_created.pop(run_id, None)
+                self._active_run_agents.pop(run_id, None)
+                self._active_run_tasks.pop(run_id, None)
+                self._run_approval_sessions.pop(run_id, None)
+
+            stale_statuses = [
+                run_id
+                for run_id, status in list(self._run_statuses.items())
+                if status.get("status") in {"completed", "failed", "cancelled", "paused"}
+                and now - float(status.get("updated_at", 0) or 0) > self._RUN_STATUS_TTL
+            ]
+            for run_id in stale_statuses:
+                self._run_statuses.pop(run_id, None)
+
+    # ------------------------------------------------------------------
+    # BasePlatformAdapter interface
+    # ------------------------------------------------------------------
+
+    async def connect(self) -> bool:
+        """Start the aiohttp web server."""
+        if not AIOHTTP_AVAILABLE:
+            logger.warning("[%s] aiohttp not installed", self.name)
+            return False
+
+        try:
+            mws = [mw for mw in (cors_middleware, body_limit_middleware, security_headers_middleware) if mw is not None]
+            self._app = web.Application(middlewares=mws, client_max_size=MAX_REQUEST_BYTES)
+            self._app["api_server_adapter"] = self
+            self._app.router.add_get("/health", self._handle_health)
+            self._app.router.add_get("/health/detailed", self._handle_health_detailed)
+            self._app.router.add_get("/v1/health", self._handle_health)
+            self._app.router.add_get("/v1/models", self._handle_models)
+            self._app.router.add_get("/v1/capabilities", self._handle_capabilities)
+            self._app.router.add_post("/v1/chat/completions", self._handle_chat_completions)
+            self._app.router.add_post("/v1/responses", self._handle_responses)
+            self._app.router.add_get("/v1/responses/{response_id}", self._handle_get_response)
+            self._app.router.add_delete("/v1/responses/{response_id}", self._handle_delete_response)
+            # Desktop management API used by KylinAgent and other remote UIs.
+            self._app.router.add_get("/api/status", self._handle_health)
+            self._app.router.add_get("/api/sessions", self._handle_list_sessions)
+            self._app.router.add_post("/api/sessions", self._handle_create_session)
+            self._app.router.add_get("/api/sessions/{session_id:[^/]+}/messages", self._handle_get_session_messages)
+            self._app.router.add_post("/api/sessions/{session_id:[^/]+}/messages", self._handle_add_session_message)
+            self._app.router.add_get("/api/sessions/{session_id:[^/]+}/recovery", self._handle_get_session_recovery)
+            self._app.router.add_post("/api/sessions/{session_id:[^/]+}/interrupt", self._handle_interrupt_session_task)
+            self._app.router.add_get("/api/sessions/{session_id:[^/]+}/details", self._handle_get_session_details)
+            self._app.router.add_post("/api/sessions/{session_id:[^/]+}/end", self._handle_end_session)
+            self._app.router.add_get("/api/sessions/{session_id:[^/]+}", self._handle_get_session)
+            self._app.router.add_patch("/api/sessions/{session_id:[^/]+}", self._handle_update_session)
+            self._app.router.add_delete("/api/sessions/{session_id:[^/]+}", self._handle_delete_session_api)
+            self._app.router.add_get("/api/config/models", self._handle_list_config_models)
+            self._app.router.add_put("/api/config/models", self._handle_replace_config_models)
+            self._app.router.add_post("/api/config/models", self._handle_create_config_model)
+            self._app.router.add_patch("/api/config/models/{model_id}", self._handle_update_config_model)
+            self._app.router.add_delete("/api/config/models/{model_id}", self._handle_delete_config_model)
+            self._app.router.add_get("/api/persona", self._handle_persona_get)
+            self._app.router.add_put("/api/persona", self._handle_persona_put)
+            self._app.router.add_get("/api/memory", self._handle_memory_get)
+            self._app.router.add_put("/api/memory", self._handle_memory_put)
+            self._app.router.add_get("/api/user-profile", self._handle_user_profile_get)
+            self._app.router.add_put("/api/user-profile", self._handle_user_profile_put)
+            self._app.router.add_get("/api/usage", self._handle_usage)
+            self._app.router.add_get("/api/logs", self._handle_logs_list)
+            self._app.router.add_get("/api/logs/{name}", self._handle_log_get)
+            self._app.router.add_get("/api/skills", self._handle_skills_list)
+            self._app.router.add_post("/api/skills/import", self._handle_skill_import)
+            self._app.router.add_delete("/api/skills/{skill_id}", self._handle_skill_delete)
+            # Cron jobs management API
+            self._app.router.add_get("/api/jobs", self._handle_list_jobs)
+            self._app.router.add_post("/api/jobs", self._handle_create_job)
+            self._app.router.add_get("/api/jobs/{job_id}", self._handle_get_job)
+            self._app.router.add_patch("/api/jobs/{job_id}", self._handle_update_job)
+            self._app.router.add_delete("/api/jobs/{job_id}", self._handle_delete_job)
+            self._app.router.add_post("/api/jobs/{job_id}/pause", self._handle_pause_job)
+            self._app.router.add_post("/api/jobs/{job_id}/resume", self._handle_resume_job)
+            self._app.router.add_post("/api/jobs/{job_id}/run", self._handle_run_job)
+            # Structured event streaming
+            install_chat_approval_routes(self)
+            self._app.router.add_post("/v1/runs", self._handle_runs)
+            self._app.router.add_get("/v1/runs/{run_id}", self._handle_get_run)
+            self._app.router.add_get("/v1/runs/{run_id}/events", self._handle_run_events)
+            self._app.router.add_post("/v1/runs/{run_id}/approval", self._handle_run_approval)
+            self._app.router.add_post("/v1/runs/{run_id}/stop", self._handle_stop_run)
+            # Start background sweep to clean up orphaned (unconsumed) run streams
+            sweep_task = asyncio.create_task(self._sweep_orphaned_runs())
+            try:
+                self._background_tasks.add(sweep_task)
+            except TypeError:
+                pass
+            if hasattr(sweep_task, "add_done_callback"):
+                sweep_task.add_done_callback(self._background_tasks.discard)
+
+            # Refuse to start network-accessible without authentication
+            if is_network_accessible(self._host) and not self._api_key:
+                logger.error(
+                    "[%s] Refusing to start: binding to %s requires API_SERVER_KEY. "
+                    "Set API_SERVER_KEY or use the default 127.0.0.1.",
+                    self.name, self._host,
+                )
+                return False
+
+            # Refuse to start network-accessible with a placeholder key.
+            # Ported from openclaw/openclaw#64586.
+            if is_network_accessible(self._host) and self._api_key:
+                try:
+                    from kylin_agent_runtime_cli.auth import has_usable_secret
+                    if not has_usable_secret(self._api_key, min_length=8):
+                        logger.error(
+                            "[%s] Refusing to start: API_SERVER_KEY is set to a "
+                            "placeholder value. Generate a real secret "
+                            "(e.g. `openssl rand -hex 32`) and set API_SERVER_KEY "
+                            "before exposing the API server on %s.",
+                            self.name, self._host,
+                        )
+                        return False
+                except ImportError:
+                    pass
+
+            # Port conflict detection — fail fast if port is already in use
+            try:
+                with _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM) as _s:
+                    _s.settimeout(1)
+                    _s.connect(('127.0.0.1', self._port))
+                logger.error('[%s] Port %d already in use. Set a different port in config.yaml: platforms.api_server.port', self.name, self._port)
+                return False
+            except (ConnectionRefusedError, OSError):
+                pass  # port is free
+
+            self._runner = web.AppRunner(self._app)
+            await self._runner.setup()
+            self._site = web.TCPSite(self._runner, self._host, self._port)
+            await self._site.start()
+
+            # Only the process that successfully owns the listening socket may
+            # claim orphaned rows. A second instance that loses the port race
+            # must not mark the first instance's active task as interrupted.
+            recovery_db = self._ensure_session_db()
+            if recovery_db is not None:
+                orphaned = recovery_db.mark_running_tasks_interrupted("runtime_restarted")
+                if orphaned:
+                    logger.info("Marked %d orphaned task run(s) recoverable", orphaned)
+
+            self._mark_connected()
+            if not self._api_key:
+                logger.warning(
+                    "[%s] ⚠️  No API key configured (API_SERVER_KEY / platforms.api_server.key). "
+                    "All requests will be accepted without authentication. "
+                    "Set an API key for production deployments to prevent "
+                    "unauthorized access to sessions, responses, and cron jobs.",
+                    self.name,
+                )
+            logger.info(
+                "[%s] API server listening on http://%s:%d (model: %s)",
+                self.name, self._host, self._port, self._model_name,
+            )
+            return True
+
+        except Exception as e:
+            logger.error("[%s] Failed to start API server: %s", self.name, e)
+            return False
+
+    async def disconnect(self) -> None:
+        """Stop the aiohttp web server."""
+        self._mark_disconnected()
+        if self._site:
+            await self._site.stop()
+            self._site = None
+        if self._runner:
+            await self._runner.cleanup()
+            self._runner = None
+        self._app = None
+        logger.info("[%s] API server stopped", self.name)
+
+    async def send(
+        self,
+        chat_id: str,
+        content: str,
+        reply_to: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> SendResult:
+        """Persist an out-of-band delivery in a desktop API session.
+
+        API clients do not keep an HTTP request open for cron delivery.  The
+        session ID is therefore used as the delivery address: append the
+        assistant message to SessionDB and let the desktop client discover it
+        through its existing session-message polling endpoint.
+        """
+        session_id = str(chat_id or "").strip()
+        if not session_id:
+            return SendResult(success=False, error="Missing API session ID")
+        try:
+            db = self._ensure_session_db()
+            if db is None:
+                return SendResult(success=False, error="Session database unavailable")
+            db.ensure_session(session_id, "desktop")
+            message_id = db.append_message(session_id, "assistant", content)
+            _notify_desktop_async(content)
+            return SendResult(success=True, message_id=str(message_id))
+        except Exception as exc:
+            logger.exception("Failed to persist API delivery for session %s", session_id)
+            return SendResult(success=False, error=str(exc))
+
+    async def get_chat_info(self, chat_id: str) -> Dict[str, Any]:
+        """Return basic info about the API server."""
+        return {
+            "name": "API Server",
+            "type": "api",
+            "host": self._host,
+            "port": self._port,
+        }

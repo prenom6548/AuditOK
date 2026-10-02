@@ -1,0 +1,84 @@
+# SPDX-License-Identifier: Apache-2.0
+
+ARG BASE_IMAGE=openkylin/python:3.11.13-ok20
+ARG VERSION=v0.15.2
+
+FROM ${BASE_IMAGE} AS builder
+
+ARG VERSION
+
+# Install Poetry
+ARG POETRY_HOME=/opt/poetry
+ARG POETRY_VERSION=1.8.3
+
+# Required for building packages for arm64 arch
+RUN apt update -y && \
+    apt install -y \
+        make gcc g++ cmake git curl \
+        libffi-dev pkg-config libssl-dev && \
+    apt clean all && \
+    rm -rf /var/lib/apt/lists/* && \
+    curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y 
+
+RUN . "$HOME/.cargo/env" && \
+    pip install poetry==${POETRY_VERSION}
+
+ARG KSERVE_REPO=https://github.com/kserve/kserve.git
+RUN git clone -b $VERSION $KSERVE_REPO kserve_repo && \
+    cp -r kserve_repo/python/kserve kserve && \
+    cp -r kserve_repo/python/pyproject.toml pyproject.toml && \
+    cp -r kserve_repo/python/third_party/pip-licenses.py pip-licenses.py && \
+    cp -r kserve_repo/python/storage-initializer storage-initializer && \
+    rm -fr kserve_repo
+
+RUN if [ "${TARGETARCH}" = "riscv64" ]; then \
+        . "$HOME/.cargo/env" && \
+        pip install --upgrade pip setuptools wheel maturin virtualenv&& \
+        pip install "cryptography==43.0.3" "watchfiles==1.0.5" && \
+        RUN . "$HOME/.cargo/env" && \
+        git clone -b v1.0.5 https://github.com/huggingface/xet-core.git /tmp/xet-core && \
+        cd /tmp/xet-core/hf_xet && \
+        sed -i '/python-source/d' pyproject.toml && \
+        pip install . --no-build-isolation && \
+        rm -rf /tmp/xet-core ; \
+    fi
+
+RUN . "$HOME/.cargo/env" && cd kserve && \
+    poetry config virtualenvs.create false && \
+    poetry run pip install --no-cache "storage"
+
+ARG DEBIAN_FRONTEND=noninteractive
+
+RUN apt update -y && \
+    apt install -y \
+        gcc \
+        libkrb5-dev && \
+    apt clean all && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN pip install --no-cache-dir krbcontext==0.10 hdfs~=2.6.0 requests-kerberos==0.14.0
+
+# TODO: Remove this when upgrading to python 3.11+
+RUN pip install --no-cache-dir tomli
+RUN mkdir -p third_party/library && python3 pip-licenses.py
+
+FROM ${BASE_IMAGE} AS prod
+
+RUN apt update -y && \
+    apt clean all && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN useradd kserve -m -u 1000 -d /home/kserve
+
+COPY --from=builder --chown=kserve:kserve third_party third_party
+COPY --from=builder kserve kserve
+COPY --from=builder storage-initializer /storage-initializer
+
+RUN chmod +x /storage-initializer/scripts/initializer-entrypoint
+RUN mkdir /work
+WORKDIR /work
+
+# Set a writable /mnt folder to avoid permission issue on Huggingface download. See https://huggingface.co/docs/hub/spaces-sdks-docker#permissions
+RUN chown -R kserve:kserve /mnt
+USER 1000
+ENTRYPOINT ["/storage-initializer/scripts/initializer-entrypoint"]

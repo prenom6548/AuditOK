@@ -1,0 +1,665 @@
+# syntax=docker/dockerfile:1.7
+# Standalone Jazzy desktop_full source build on openKylin 3.0.
+# Build: docker buildx build -f Dockerfile.jazzy-desktop-full-ok30 \
+#          -t openkylin/ros:jazzy-desktop-full --load .
+# No previously published ROS image is required. Keep the development
+# dependencies in the final image so installed headers/CMake exports work.
+ARG OPENKYLIN_IMAGE=openkylin/openkylin:3.0
+ARG PCL_PROVIDER=source
+ARG ASSIMP_PROVIDER=source
+ARG PROJECT_DESKTOP_IMAGE=openkylin/ros:lyrical-desktop@sha256:deda9354839a531ab1f5af4e7f2c0d1e595a2e37908874723404d521b215fd8f
+ARG PROJECT_PERCEPTION_IMAGE=openkylin/ros:lyrical-perception@sha256:44bfc96889155eaa8abc208482d558cbc23df7ab5e564e1c408762dbdbdc23d7
+FROM ${PROJECT_PERCEPTION_IMAGE} AS project-pcl-prefix
+FROM ${PROJECT_DESKTOP_IMAGE} AS project-assimp-prefix
+FROM --platform=${BUILDPLATFORM} tonistiigi/binfmt@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0 AS cmake-emulator
+FROM ${OPENKYLIN_IMAGE} AS dependencies-common
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
+ARG TARGETARCH
+ARG BUILD_JOBS=2
+ARG FZF_VERSION=0.74.1
+ARG BULLET_VERSION=3.24
+ARG OROCOS_KDL_VERSION=1.5.1
+ARG PYKDL_PYBIND11_VERSION=2.13.6
+ARG FLANN_REF=1.9.2
+ARG PCL_REF=pcl-1.14.0
+ARG ASSIMP_VERSION=6.0.4
+ARG OCTOMAP_REF=v1.9.8
+ARG FCL_REF=0.7.0
+ARG CFORTRAN_DEB_URL=https://deb.debian.org/debian/pool/main/c/cfortran/cfortran_20210827-1.1_all.deb
+ARG CFORTRAN_DEB_SHA256=49e910e074b9865ad045d517e3130ce2d76c569d0ef99e744586d17c3c79b381
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 LC_ALL=C.UTF-8 \
+    ROS_DISTRO=jazzy ROS_VERSION=2 ROS_PYTHON_VERSION=3 \
+    ROS_OS_OVERRIDE=ubuntu:noble DISABLE_GROUPS_WORKAROUND=1 \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    CMAKE_BUILD_PARALLEL_LEVEL=${BUILD_JOBS} MAKEFLAGS=-j${BUILD_JOBS} \
+    PATH=/opt/ros-tools/bin:${PATH} \
+    CMAKE_PREFIX_PATH=/opt/assimp:/opt/simulation-deps:/opt/pcl:/opt/flann:/usr/local \
+    QT_X11_NO_MITSHM=1 QT_API=pyqt5 \
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+# Build the full desktop_full closure on all three requested architectures.
+RUN case "${TARGETARCH}" in amd64|arm64|riscv64) ;; \
+      *) echo "Supported targets: linux/amd64, linux/arm64, linux/riscv64" >&2; exit 1 ;; esac \
+    && case "${BUILD_JOBS}" in ''|*[!0-9]*|0) exit 1 ;; esac
+
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      printf '%s\n' \
+        'Package: python3-pkg-resources' \
+        'Pin: version 68.1.2-ok2' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/openkylin-python.pref; \
+    else \
+      printf '%s\n' 'Package: libucx0' 'Pin: version 1.16.0+ds-ok1' \
+        'Pin-Priority: 1001' > /etc/apt/preferences.d/openkylin-ucx.pref; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        libacl1-dev \
+        libcurl4-openssl-dev \
+        libeigen3-dev \
+        libgtest-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        libtinyxml2-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        libyaml-cpp-dev \
+        libyaml-dev \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        python3-cryptography \
+        python3-dev \
+        python3-netifaces \
+        python3-numpy \
+        python3-pip \
+        python3-psutil \
+        python3-venv \
+        python3-yaml \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# Reuse the project's pinned emulator for RISC-V CMake without changing host binfmt.
+COPY --from=cmake-emulator /usr/bin/qemu-riscv64 /usr/local/libexec/qemu-riscv64-cmake
+COPY cmake_jazzy_riscv_qemu.sh /tmp/cmake_jazzy_riscv_qemu.sh
+ARG BUILDARCH
+RUN if [ "${TARGETARCH}" = riscv64 ] && [ "${BUILDARCH}" != riscv64 ]; then \
+      mv /usr/bin/cmake /usr/bin/cmake.real \
+      && install -m 0755 /tmp/cmake_jazzy_riscv_qemu.sh /usr/bin/cmake \
+      && cmake --version; \
+    fi
+
+# openKylin 3.0 does not package the complete ROS development toolchain.
+# Keep pip packages isolated while exposing native openKylin Python bindings.
+RUN python3 -m venv --system-site-packages /opt/ros-tools \
+    && /opt/ros-tools/bin/pip install --no-cache-dir --upgrade pip setuptools==75.8.0 wheel \
+    && /opt/ros-tools/bin/pip install --no-cache-dir \
+        catkin-pkg \
+        colcon-common-extensions \
+        empy==3.3.4 \
+        lark==1.1.9 \
+        rosdep \
+        vcstool \
+        rosinstall-generator \
+        argcomplete osrf-pycommon rospkg lxml pydot \
+        pybind11==2.13.6 pydantic==1.10.24 \
+        flake8 flake8-blind-except flake8-builtins flake8-class-newline \
+        flake8-comprehensions flake8-deprecated flake8-docstrings \
+        flake8-import-order flake8-quotes pydocstyle pytest typing-extensions
+
+# Standalone Asio is header-only. openKylin 3.0 does not publish libasio-dev
+# consistently across all targets, so install the upstream headers explicitly.
+RUN git clone --depth 1 --branch asio-1-30-2 \
+        https://github.com/chriskohlhoff/asio.git /tmp/asio \
+    && cp -a /tmp/asio/asio/include/. /usr/local/include/ \
+    && rm -rf /tmp/asio
+
+# ros_base adds tf2's Bullet conversions. openKylin 3.0 does not publish the
+# Ubuntu-compatible libbullet-dev package, so build the Noble-equivalent 3.24
+# release once and retain its headers and libraries for development.
+RUN git clone --depth 1 --branch "${BULLET_VERSION}" \
+        https://github.com/bulletphysics/bullet3.git /tmp/bullet3 \
+    && cmake -S /tmp/bullet3 -B /tmp/bullet3/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_SHARED_LIBS=ON \
+        -DBUILD_BULLET2_DEMOS=OFF \
+        -DBUILD_BULLET3=OFF \
+        -DBUILD_CPU_DEMOS=OFF \
+        -DBUILD_EXTRAS=OFF \
+        -DBUILD_OPENGL3_DEMOS=OFF \
+        -DBUILD_UNIT_TESTS=OFF \
+        -DINSTALL_LIBS=ON \
+        -DUSE_GRAPHICAL_BENCHMARK=OFF \
+    && cmake --build /tmp/bullet3/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/bullet3/build \
+    && rm -rf /tmp/bullet3
+
+# tf2 also depends on Orocos KDL, whose Ubuntu development package is absent
+# from openKylin. Build the same stable ABI from its upstream release tag.
+RUN git clone --depth 1 --branch "v${OROCOS_KDL_VERSION}" \
+        --recurse-submodules --shallow-submodules \
+        https://github.com/orocos/orocos_kinematics_dynamics.git /tmp/orocos-kdl \
+    && git -C /tmp/orocos-kdl/python_orocos_kdl/pybind11 fetch \
+        --depth 1 origin "v${PYKDL_PYBIND11_VERSION}" \
+    && git -C /tmp/orocos-kdl/python_orocos_kdl/pybind11 checkout \
+        FETCH_HEAD \
+    && cmake -S /tmp/orocos-kdl/orocos_kdl -B /tmp/orocos-kdl/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_MODELS=OFF \
+        -DENABLE_TESTS=OFF \
+    && cmake --build /tmp/orocos-kdl/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/orocos-kdl/build \
+    && ROS_PYTHON_VERSION=3 cmake \
+        -S /tmp/orocos-kdl/python_orocos_kdl \
+        -B /tmp/orocos-kdl/python-build \
+        -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DPYTHON_EXECUTABLE=/usr/bin/python3 \
+    && cmake --build /tmp/orocos-kdl/python-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/orocos-kdl/python-build \
+    && rm -rf /tmp/orocos-kdl
+
+# rosbag2 compression needs LZ4. openKylin publishes the runtime library but
+# not a consistent development package on every target, so build the Noble
+# version as a shared library and copy it into the runtime stage.
+RUN git clone --depth 1 --branch v1.9.4 \
+        https://github.com/lz4/lz4.git /tmp/lz4 \
+    && cmake -S /tmp/lz4/build/cmake -B /tmp/lz4/cmake-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_SHARED_LIBS=ON \
+        -DLZ4_BUILD_CLI=OFF \
+        -DLZ4_BUILD_LEGACY_LZ4C=OFF \
+    && cmake --build /tmp/lz4/cmake-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/lz4/cmake-build \
+    && rm -rf /tmp/lz4
+
+# openKylin currently has no PCL binary packages. Build the PCL components
+# required by pcl_ros while keeping visualization and hardware backends off.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libboost-filesystem-dev \
+        libboost-iostreams-dev \
+        libboost-serialization-dev \
+        libboost-system-dev \
+        libboost-thread-dev \
+        libeigen3-dev \
+        libopencv-dev \
+        libyaml-cpp-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# openKylin's CMake installs LZ4 into lib64, outside pkg-config's defaults.
+ENV PKG_CONFIG_PATH=/usr/local/lib64/pkgconfig:/usr/local/lib/pkgconfig:/opt/flann/lib/pkgconfig:/opt/pcl/lib/pkgconfig
+RUN pkg-config --modversion liblz4
+
+FROM dependencies-common AS pcl-source
+RUN git clone --depth 1 --branch "${FLANN_REF}" \
+        https://github.com/flann-lib/flann.git /tmp/flann-src \
+    && cmake -S /tmp/flann-src -B /tmp/flann-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/flann \
+        -DBUILD_C_BINDINGS=OFF \
+        -DBUILD_CUDA_LIB=OFF \
+        -DBUILD_EXAMPLES=OFF \
+        -DBUILD_MATLAB_BINDINGS=OFF \
+        -DBUILD_PYTHON_BINDINGS=OFF \
+        -DBUILD_TESTS=OFF \
+    && cmake --build /tmp/flann-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/flann-build \
+    && rm -rf /tmp/flann-src /tmp/flann-build
+
+RUN git clone --depth 1 --branch "${PCL_REF}" \
+        https://github.com/PointCloudLibrary/pcl.git /tmp/pcl-cache/src \
+    && sed -i \
+        -e 's/this->offset\[i\] = node.offset\[i\]/this->off[i] = node.off[i]/' \
+        /tmp/pcl-cache/src/surface/include/pcl/surface/3rdparty/poisson4/octree_poisson.hpp \
+    && sed -i \
+        -e 's/Resize(this->m_N, this->m_M)/Resize(this->rows, this->_maxEntriesPerRow)/' \
+        -e 's/Min( this->Rows(), this->Columns() )/(this->rows < this->_maxEntriesPerRow ? this->rows : this->_maxEntriesPerRow)/' \
+        -e 's/M.Columns()/bb.Dimensions()/' \
+        /tmp/pcl-cache/src/surface/include/pcl/surface/3rdparty/poisson4/sparse_matrix.hpp \
+    && cmake -S /tmp/pcl-cache/src -B /tmp/pcl-cache/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/pcl \
+        -DCMAKE_PREFIX_PATH=/opt/flann \
+        -DFLANN_DIR=/opt/flann/lib/cmake/flann \
+        -DPCL_ENABLE_AVX=OFF \
+        -DPCL_ENABLE_SSE=OFF \
+        -DPCL_ONLY_CORE_POINT_TYPES=ON \
+        -DBUILD_2d=ON \
+        -DBUILD_apps=OFF \
+        -DBUILD_common=ON \
+        -DBUILD_examples=OFF \
+        -DBUILD_features=ON \
+        -DBUILD_filters=ON \
+        -DBUILD_global_tests=OFF \
+        -DBUILD_io=ON \
+        -DBUILD_kdtree=ON \
+        -DBUILD_ml=ON \
+        -DBUILD_octree=ON \
+        -DBUILD_keypoints=OFF \
+        -DBUILD_recognition=OFF \
+        -DBUILD_registration=OFF \
+        -DBUILD_sample_consensus=ON \
+        -DBUILD_search=ON \
+        -DBUILD_segmentation=ON \
+        -DBUILD_stereo=OFF \
+        -DBUILD_surface=ON \
+        -DBUILD_tools=OFF \
+        -DBUILD_tracking=OFF \
+        -DBUILD_visualization=OFF \
+        -DWITH_CUDA=OFF \
+        -DWITH_LIBUSB=OFF \
+        -DWITH_OPENGL=OFF \
+        -DWITH_OPENNI=OFF \
+        -DWITH_OPENNI2=OFF \
+        -DWITH_PCAP=OFF \
+        -DWITH_QHULL=OFF \
+        -DWITH_VTK=OFF \
+    && cmake --build /tmp/pcl-cache/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/pcl-cache/build \
+    && rm -rf /tmp/pcl-cache
+
+# Optional reuse of identical PCL/FLANN versions from the project's three-arch
+# openKylin 3.0 perception image. No Lyrical ROS files are copied.
+FROM dependencies-common AS pcl-project
+COPY --from=project-pcl-prefix /opt/flann/ /opt/flann/
+COPY --from=project-pcl-prefix /opt/pcl/ /opt/pcl/
+RUN test -f /opt/flann/lib/libflann_cpp.so.1.9.2 \
+    && test -f /opt/pcl/lib/libpcl_common.so.1.14.0 \
+    && find /opt/pcl -name PCLConfig.cmake -print -quit | grep -q .
+
+# Default 'source' remains independent of previously published ROS images.
+FROM pcl-${PCL_PROVIDER} AS assimp-source
+RUN git clone --depth 1 --branch "v${ASSIMP_VERSION}" \
+        https://github.com/assimp/assimp.git /tmp/assimp-src \
+    && cmake -S /tmp/assimp-src -B /tmp/assimp-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/assimp \
+        -DBUILD_SHARED_LIBS=ON \
+        -DASSIMP_BUILD_ASSIMP_TOOLS=OFF \
+        -DASSIMP_BUILD_SAMPLES=OFF \
+        -DASSIMP_BUILD_TESTS=OFF \
+        -DASSIMP_WARNINGS_AS_ERRORS=OFF \
+    && cmake --build /tmp/assimp-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/assimp-build \
+    && rm -rf /tmp/assimp-src /tmp/assimp-build
+
+FROM pcl-${PCL_PROVIDER} AS assimp-project
+COPY --from=project-assimp-prefix /opt/assimp/ /opt/assimp/
+RUN find /opt/assimp -name libassimp.so.6.0.4 -print -quit | grep -q .
+
+FROM assimp-${ASSIMP_PROVIDER} AS dependencies
+# Preserve FCL and DART physics support using the project's OctoMap/FCL build.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libboost-dev libccd-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && git clone --depth 1 --branch "${OCTOMAP_REF}" \
+        https://github.com/OctoMap/octomap.git /tmp/octomap-src \
+    && cmake -S /tmp/octomap-src -B /tmp/octomap-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/simulation-deps \
+        -DCMAKE_CXX_FLAGS=-Wno-error=template-id-cdtor \
+        -DBUILD_TESTING=OFF \
+        -DBUILD_OCTOVIS_SUBPROJECT=OFF \
+        -DBUILD_DYNAMICETD3D_SUBPROJECT=OFF \
+    && cmake --build /tmp/octomap-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/octomap-build \
+    && git clone --depth 1 --branch "${FCL_REF}" \
+        https://github.com/flexible-collision-library/fcl.git /tmp/fcl-src \
+    && cmake -S /tmp/fcl-src -B /tmp/fcl-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/simulation-deps \
+        -DCMAKE_PREFIX_PATH=/opt/simulation-deps \
+        -DBUILD_TESTING=OFF \
+        -DFCL_BUILD_TESTS=OFF \
+        -DFCL_BUILD_EXAMPLES=OFF \
+        -DFCL_BUILD_DOCUMENTATION=OFF \
+    && cmake --build /tmp/fcl-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/fcl-build \
+    && rm -rf /tmp/octomap-src /tmp/octomap-build /tmp/fcl-src /tmp/fcl-build
+
+# huanghe currently publishes libcfitsio-dev and libgdal-dev but omits their
+# architecture-independent cfortran dependency. Install the verified Debian
+# header package so gz-common keeps its required geospatial component.
+RUN curl -fsSL "${CFORTRAN_DEB_URL}" -o /tmp/cfortran.deb \
+    && echo "${CFORTRAN_DEB_SHA256}  /tmp/cfortran.deb" | sha256sum -c - \
+    && dpkg -i /tmp/cfortran.deb \
+    && rm -f /tmp/cfortran.deb
+
+# ros2cli uses fzf for interactive selection. Install the matching official
+# binary for every target architecture and verify it before extraction.
+RUN case "${TARGETARCH}" in \
+        amd64) FZF_SHA256="df53438be5f51e151bb4044d78fda72bdfe209e3ecd2baecae48e8dea370c81b" ;; \
+        arm64) FZF_SHA256="f22204dd1a091d43e102268d062fd53b47133c8d8581671ee5eb225b75e31183" ;; \
+        riscv64) FZF_SHA256="a647e12d907c650d963b5a4b5887bcba0307578a68deb37917142903a1c217d6" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+      esac \
+    && curl -fsSL \
+        "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-linux_${TARGETARCH}.tar.gz" \
+        -o /tmp/fzf.tar.gz \
+    && echo "${FZF_SHA256}  /tmp/fzf.tar.gz" \
+        | sha256sum -c - \
+    && tar -xzf /tmp/fzf.tar.gz -C /usr/local/bin fzf \
+    && chmod 0755 /usr/local/bin/fzf \
+    && rm -f /tmp/fzf.tar.gz
+
+# Native openKylin OpenCV/Qt; PyQt5 supplies python_qt_binding.
+# Jazzy uses Gazebo Harmonic (Qt5), not Lyrical's Jetty/Qt6 modules.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        graphviz libgraphviz-dev libgl1-mesa-dev libqt5opengl5-dev \
+        libqt5svg5-dev qtbase5-dev qtdeclarative5-dev qtquickcontrols2-5-dev \
+        pyqt5-dev python3-pyqt5 python3-pyqt5.qtsvg python3-pyqtbuild \
+        python3-sip-dev python3-sipbuild python3-opencv \
+        qml-module-qt-labs-folderlistmodel qml-module-qt-labs-settings \
+        qml-module-qtgraphicaleffects qml-module-qtquick-controls \
+        qml-module-qtquick-controls2 qml-module-qtquick-dialogs \
+        qml-module-qtquick-layouts qml-module-qtquick2 \
+        libavcodec-dev libavdevice-dev libavfilter-dev libavformat-dev \
+        libavutil-dev libswresample-dev libswscale-dev libdw-dev \
+        libxml2-utils libgmock-dev libbenchmark-dev \
+        mesa-utils libgl1-mesa-dri xvfb xauth \
+    && rm -rf /var/lib/apt/lists/*
+
+# Graphviz 14+ uses size_t in gvRenderData; PyGraphviz 1.x has the old ABI.
+# Use native FreeType: Matplotlib's bundled FreeType 2.6.1 predates RISC-V.
+# Cache independent wheels so later dependency failures do not rebuild NumPy.
+RUN if [ "${TARGETARCH}" = riscv64 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends libfreetype-dev \
+      && pkg-config --exists freetype2 \
+      && test -f /usr/lib/riscv64-linux-gnu/graphviz/libgvplugin_core.so; \
+    fi
+RUN --mount=type=cache,id=jazzy-full-pip-${TARGETARCH},target=/root/.cache/pip \
+    pip install numpy==1.26.4
+RUN --mount=type=cache,id=jazzy-full-pip-${TARGETARCH},target=/root/.cache/pip \
+    printf '[libs]\nsystem_freetype = True\n' > /tmp/jazzy-mplsetup.cfg \
+    && MPLSETUPCFG=/tmp/jazzy-mplsetup.cfg pip install matplotlib==3.8.4 \
+    && rm -f /tmp/jazzy-mplsetup.cfg
+# openKylin's RISC-V Graphviz lacks neato_layout; build all required plugins.
+RUN if [ "${TARGETARCH}" = riscv64 ]; then \
+      apt-get update && apt-get install -y --no-install-recommends \
+        bison flex libltdl-dev libgd-dev libpango1.0-dev libgts-dev \
+      && curl -fsSL https://gitlab.com/graphviz/graphviz/-/archive/14.1.2/graphviz-14.1.2.tar.gz -o /tmp/graphviz.tar.gz \
+      && echo '44fb98203b4545421a2c2cbeb917a8443388838e22460e164526dda3aa28d892  /tmp/graphviz.tar.gz' | sha256sum -c - \
+      && mkdir /tmp/jazzy-graphviz-src \
+      && tar -xf /tmp/graphviz.tar.gz -C /tmp/jazzy-graphviz-src --strip-components=1 \
+      && cmake -S /tmp/jazzy-graphviz-src -B /tmp/jazzy-graphviz-build -G Ninja \
+         -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/opt/jazzy-graphviz \
+         -DCMAKE_INSTALL_LIBDIR=lib -DBUILD_SHARED_LIBS=ON -DBUILD_TESTING=OFF -DENABLE_LTDL=ON \
+      && cmake --build /tmp/jazzy-graphviz-build --parallel "${BUILD_JOBS}" \
+      && cmake --install /tmp/jazzy-graphviz-build \
+      && printf '%s\n' /opt/jazzy-graphviz/lib > /etc/ld.so.conf.d/jazzy-graphviz.conf \
+      && ldconfig && /opt/jazzy-graphviz/bin/dot -c \
+      && test -f /opt/jazzy-graphviz/lib/graphviz/libgvplugin_neato_layout.so \
+      && rm -rf /tmp/graphviz.tar.gz /tmp/jazzy-graphviz-src /tmp/jazzy-graphviz-build; \
+    fi
+ENV PATH=/opt/jazzy-graphviz/bin:${PATH}
+ENV PKG_CONFIG_PATH=/opt/jazzy-graphviz/lib/pkgconfig:${PKG_CONFIG_PATH}
+RUN --mount=type=cache,id=jazzy-full-pip-${TARGETARCH},target=/root/.cache/pip \
+    pip install numpy==1.26.4 contourpy==1.3.3 \
+    && CFLAGS="${CFLAGS:-} -I/opt/jazzy-graphviz/include" \
+    LDFLAGS="${LDFLAGS:-} -L/opt/jazzy-graphviz/lib -L/opt/jazzy-graphviz/lib/graphviz -Wl,-rpath,/opt/jazzy-graphviz/lib -Wl,-rpath,/opt/jazzy-graphviz/lib/graphviz -L/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/graphviz -Wl,-rpath,/usr/lib/$(dpkg-architecture -qDEB_HOST_MULTIARCH)/graphviz" \
+      pip install pygraphviz==2.0.1 \
+    && python3 -c 'import cv2, numpy, matplotlib, pygraphviz; from PyQt5 import QtCore' \
+    && printf '%s\n' /usr/local/lib /usr/local/lib64 /opt/flann/lib /opt/pcl/lib \
+        /opt/assimp/lib /opt/assimp/lib64 /opt/simulation-deps/lib \
+        /opt/simulation-deps/lib64 > /etc/ld.so.conf.d/jazzy-desktop-full.conf \
+    && ldconfig
+
+FROM dependencies AS builder
+ARG ROS_VARIANTS_COMMIT=70f5a409ae7a9baa44950bf8468742256de67c43
+WORKDIR /jazzy_full_ws
+# Use the exact ROS source commits from the validated amd64 image for all targets.
+# The pinned variants repository is added separately below.
+COPY jazzy-desktop-full.sources.repos /opt/ros-build-manifests/desktop-full.repos
+RUN mkdir -p src /opt/ros-build-manifests \
+    && test -s /opt/ros-build-manifests/desktop-full.repos \
+    && for attempt in 1 2 3; do \
+         vcs import --shallow --workers 4 src < /opt/ros-build-manifests/desktop-full.repos && break; \
+         test "${attempt}" -lt 3 || exit 1; sleep 5; \
+       done
+
+RUN mkdir -p src/ros2/variants \
+    && git -C src/ros2/variants init \
+    && git -C src/ros2/variants remote add origin https://github.com/ros2/variants.git \
+    && git -C src/ros2/variants fetch --depth 1 origin "${ROS_VARIANTS_COMMIT}:refs/remotes/origin/jazzy-pinned" \
+    && git -C src/ros2/variants checkout --detach refs/remotes/origin/jazzy-pinned \
+    && find src -type d -name .git -exec sh -c 'git -C "$1/.." update-ref refs/remotes/origin/jazzy-locked HEAD' sh {} \; \
+    && vcs export --exact src > /opt/ros-build-manifests/desktop-full.exact.repos \
+    && for optional_rti in src/rmw_connextdds src/rti_connext_dds_cmake_module; do \
+         if [ -d "${optional_rti}" ]; then touch "${optional_rti}/COLCON_IGNORE"; fi; \
+       done \
+    && colcon list --packages-up-to desktop_full --names-only \
+        | sort -u > /opt/ros-build-manifests/packages.txt \
+    && grep -qx desktop_full /opt/ros-build-manifests/packages.txt \
+    && colcon list --packages-up-to desktop_full --paths-only > /tmp/full-paths.txt
+
+# Exceptions have explicit providers above (Asio/Bullet/KDL/LZ4/FCL/OctoMap,
+# PCL/FLANN/Assimp, native OpenCV/Qt5, pip) or ROS source vendor packages
+# (console_bridge/fmt/spdlog). Tracing and lint tests are disabled.
+# ffmpeg-dev's obsolete libpostproc-dev is replaced by explicit FFmpeg modules.
+ARG ROSDEP_SKIP_KEYS="rmw_connextdds rti_connext_dds_cmake_module fastcdr urdfdom_headers ament_uncrustify asio assimp assimp-dev bullet clang-format console_bridge cppcheck fcl ffmpeg-dev fmt fzf libassimp-dev libbullet-dev libconsole-bridge-dev libfcl-dev libfmt-dev liblttng-ust-dev liblz4-dev liboctomap-dev libopencv-contrib-dev libopencv-core libopencv-core-dev libopencv-core406t64 libopencv-dev libopencv-highgui libopencv-imgcodecs libopencv-imgcodecs-dev libopencv-imgcodecs406t64 libopencv-imgproc libopencv-imgproc-dev libopencv-imgproc406t64 libopencv-videoio liborocos-kdl liborocos-kdl-dev liborocos-kdl1.5 libpcl-all-dev libpcl-common libpcl-common1.14 libpcl-dev libpcl-features libpcl-features1.14 libpcl-filters libpcl-filters1.14 libpcl-io libpcl-io1.14 libpcl-segmentation libpcl-segmentation1.14 libpcl-surface libpcl-surface1.14 libpostproc-dev libpyside2-dev libqt5-concurrent libqt5-core libqt5-gui libqt5-network libqt5-opengl libqt5-opengl-dev libqt5-printsupport libqt5-sql libqt5-svg libqt5-test libqt5-widgets libqt5-xml libqt5core5t64 libqt5gui5t64 libqt5network5t64 libqt5opengl5t64 libqt5printsupport5t64 libqt5sql5t64 libqt5test5t64 libqt5widgets5t64 libqt5xml5t64 libqtconcurrent libqtcore libqtgui libqtopengl libqtsvg libqtwidgets libspdlog-dev lttng-tools lttng-ust octomap opencv4 pybind11 pybind11-dev pydocstyle pyside2-dev python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-colcon-common-extensions python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-import-order python3-flake8-quotes python3-lark python3-lark-parser python3-lxml python3-matplotlib python3-mypy python3-osrf-pycommon python3-pycodestyle python3-pydantic python3-pydot python3-pyflakes python3-pygraphviz python3-pykdl python3-pyqt5 python3-pyside2 python3-pytest python3-qt-bindings python3-qt5-bindings python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-sip python3-typing-extensions python3-vcstool spdlog uncrustify"
+
+# GDAL needs the JPEG8 development provider. The JPEG62 development package
+# pulled by OpenCV owns the same headers. Its missing Conflicts metadata makes
+# APT unpack JPEG8 before removing JPEG62. Remove the old headers first, then
+# immediately restore the virtual dependency and require a consistent APT state.
+RUN apt-get update \
+    && dpkg --remove --force-depends libjpeg-dev libjpeg62-turbo-dev \
+    && apt-get install -y --no-install-recommends libjpeg-turbo8-dev \
+    && apt-get check \
+    && dpkg-query -s libopencv-dev >/dev/null
+
+# The openKylin riscv64 OGRE 1.9 packages are published without their zzip
+# runtime dependency. Supply that exact package from Debian and verify it.
+# Its only dependencies are libc6 >= 2.33 and zlib1g, both provided here.
+ARG RISCV64_ZZIP_DEB_URL=https://deb.debian.org/debian/pool/main/z/zziplib/libzzip-0-13t64_0.13.78+dfsg.1-0.1_riscv64.deb
+ARG RISCV64_ZZIP_DEB_SHA256=0849ee85d642fbea544e627fea7ba1729f3d6ad1d691235d25ef5d874c62f04e
+ARG RISCV64_LIBRUBY_DEB_URL=https://ports.ubuntu.com/ubuntu-ports/pool/main/r/ruby-defaults/libruby_3.2~ubuntu1_riscv64.deb
+ARG RISCV64_LIBRUBY_DEB_SHA256=03648454aabc083bb26f405733ca7b1b7adc1d2064987ff9020cf2b5f1b50bb9
+ARG RISCV64_RUBY_DEB_URL=https://ports.ubuntu.com/ubuntu-ports/pool/main/r/ruby-defaults/ruby_3.2~ubuntu1_riscv64.deb
+ARG RISCV64_RUBY_DEB_SHA256=e9ce70ffb4437373b806dc057d1b0ed013d88d81f5273d9b1e369cc9b6f5592e
+ARG RISCV64_RUBYGEMS_DEB_URL=https://ports.ubuntu.com/ubuntu-ports/pool/main/r/rubygems/ruby-rubygems_3.4.20-1_all.deb
+ARG RISCV64_RUBYGEMS_DEB_SHA256=9cb6041d902b74fd6e9373b24922e788bc2d1ed4360705ca6b53945d67b32087
+ARG RISCV64_GLSLC_DEB_URL=https://deb.debian.org/debian/pool/main/s/shaderc/glslc_2025.2-1_riscv64.deb
+ARG RISCV64_GLSLC_DEB_SHA256=71a7e292d0f0c296190369ff2f123590f95f0609cb337c8e3a0b6d98952a06f7
+ARG RISCV64_LIBSHADERC_DEB_URL=https://deb.debian.org/debian/pool/main/s/shaderc/libshaderc1_2025.2-1_riscv64.deb
+ARG RISCV64_LIBSHADERC_DEB_SHA256=b355628e960924542174d57a5eb4413b65b5ac192aacc27ab69d4d31ca461dfc
+ARG RISCV64_LIBSHADERC_DEV_DEB_URL=https://deb.debian.org/debian/pool/main/s/shaderc/libshaderc-dev_2025.2-1_riscv64.deb
+ARG RISCV64_LIBSHADERC_DEV_DEB_SHA256=65e4f3ee22f956138bc34658f640f345acc92a2799de3f9388dcb8dbe48215d6
+ARG RISCV64_ZZIP_DEV_DEB_URL=https://deb.debian.org/debian/pool/main/z/zziplib/libzzip-dev_0.13.78+dfsg.1-0.1_riscv64.deb
+ARG RISCV64_ZZIP_DEV_DEB_SHA256=acb259a79d01a43d58b9742caa5a118aae62dcfa5951d63b68e1343ff6a9810d
+
+RUN if [ "${TARGETARCH}" = "riscv64" ]; then \
+      set -eux; \
+      curl -fsSL "${RISCV64_ZZIP_DEB_URL}" -o /tmp/libzzip.deb; \
+      echo "${RISCV64_ZZIP_DEB_SHA256}  /tmp/libzzip.deb" | sha256sum -c -; \
+      dpkg -i /tmp/libzzip.deb; \
+      rm -f /tmp/libzzip.deb; \
+      curl -fsSL "${RISCV64_LIBRUBY_DEB_URL}" -o /tmp/libruby.deb; \
+      curl -fsSL "${RISCV64_RUBY_DEB_URL}" -o /tmp/ruby.deb; \
+      curl -fsSL "${RISCV64_RUBYGEMS_DEB_URL}" -o /tmp/ruby-rubygems.deb; \
+      curl -fsSL "${RISCV64_GLSLC_DEB_URL}" -o /tmp/glslc.deb; \
+      curl -fsSL "${RISCV64_LIBSHADERC_DEB_URL}" -o /tmp/libshaderc1.deb; \
+      curl -fsSL "${RISCV64_LIBSHADERC_DEV_DEB_URL}" -o /tmp/libshaderc-dev.deb; \
+      curl -fsSL "${RISCV64_ZZIP_DEV_DEB_URL}" -o /tmp/libzzip-dev.deb; \
+      echo "${RISCV64_LIBRUBY_DEB_SHA256}  /tmp/libruby.deb" | sha256sum -c -; \
+      echo "${RISCV64_RUBY_DEB_SHA256}  /tmp/ruby.deb" | sha256sum -c -; \
+      echo "${RISCV64_RUBYGEMS_DEB_SHA256}  /tmp/ruby-rubygems.deb" | sha256sum -c -; \
+      echo "${RISCV64_GLSLC_DEB_SHA256}  /tmp/glslc.deb" | sha256sum -c -; \
+      echo "${RISCV64_LIBSHADERC_DEB_SHA256}  /tmp/libshaderc1.deb" | sha256sum -c -; \
+      echo "${RISCV64_LIBSHADERC_DEV_DEB_SHA256}  /tmp/libshaderc-dev.deb" | sha256sum -c -; \
+      echo "${RISCV64_ZZIP_DEV_DEB_SHA256}  /tmp/libzzip-dev.deb" | sha256sum -c -; \
+      apt-get update; \
+      apt-get install -y --no-install-recommends \
+        /tmp/libruby.deb /tmp/ruby.deb /tmp/ruby-rubygems.deb \
+        /tmp/glslc.deb /tmp/libshaderc1.deb /tmp/libshaderc-dev.deb \
+        /tmp/libzzip-dev.deb; \
+      rm -f /tmp/libruby.deb /tmp/ruby.deb /tmp/ruby-rubygems.deb \
+        /tmp/glslc.deb /tmp/libshaderc1.deb /tmp/libshaderc-dev.deb \
+        /tmp/libzzip-dev.deb; \
+      ruby --version; \
+      glslc --version; \
+    fi
+
+
+# openKylin does not publish Poco for riscv64. Build the commonly shipped
+# libpoco-dev component set from the pinned upstream release commit.
+ARG POCO_COMMIT=96d182a99303fb068575294b36f0cc20da2e7b25
+ARG POCO_BUILD_JOBS=8
+
+RUN mkdir -p /opt/poco \
+    && if [ "${TARGETARCH}" = "riscv64" ]; then \
+      set -eux; \
+      git clone --filter=blob:none https://github.com/pocoproject/poco.git /tmp/poco-src; \
+      git -C /tmp/poco-src checkout --detach "${POCO_COMMIT}"; \
+      test "$(git -C /tmp/poco-src rev-parse HEAD)" = "${POCO_COMMIT}"; \
+      cmake -S /tmp/poco-src -B /tmp/poco-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+        -DCMAKE_INSTALL_PREFIX=/opt/poco \
+        -DCMAKE_INSTALL_LIBDIR=lib \
+        -DBUILD_SHARED_LIBS=ON \
+        -DENABLE_TESTS=OFF -DENABLE_SAMPLES=OFF \
+        -DENABLE_DATA=OFF -DENABLE_MONGODB=OFF -DENABLE_REDIS=OFF \
+        -DENABLE_PROMETHEUS=OFF -DENABLE_APACHECONNECTOR=OFF \
+        -DENABLE_PAGECOMPILER=OFF -DENABLE_ACTIVERECORD=OFF \
+        -DENABLE_PDF=OFF -DENABLE_SEVENZIP=OFF \
+        -DPOCO_UNBUNDLED=OFF; \
+      cmake --build /tmp/poco-build --parallel "${POCO_BUILD_JOBS}"; \
+      cmake --install /tmp/poco-build; \
+      rm -rf /tmp/poco-src /tmp/poco-build; \
+    fi
+
+ENV CMAKE_PREFIX_PATH=/opt/poco:${CMAKE_PREFIX_PATH}
+RUN printf '%s\n' /opt/poco/lib > /etc/ld.so.conf.d/jazzy-poco.conf && ldconfig
+
+RUN if [ "${TARGETARCH}" = riscv64 ]; then ROSDEP_SKIP_KEYS="${ROSDEP_SKIP_KEYS} libpoco-dev poco"; fi \
+    && rosdep init \
+    && rosdep update --rosdistro jazzy \
+    && apt-get update \
+    && xargs -r rosdep install --from-paths --ignore-src --rosdistro jazzy \
+        --os=ubuntu:noble --dependency-types build --dependency-types buildtool \
+        --dependency-types build_export --dependency-types buildtool_export \
+        --dependency-types exec --skip-keys "${ROSDEP_SKIP_KEYS}" -y < /tmp/full-paths.txt \
+    && rm -rf /var/lib/apt/lists/*
+
+# rosinstall_generator can include variants through dependencies as well.
+# Keep the explicitly pinned copy and refresh the exact source inventory.
+RUN rm -rf /jazzy_full_ws/src/variants \
+    && vcs export --exact src > /opt/ros-build-manifests/desktop-full.exact.repos
+
+# Both package-level and nested CMake parallelism are bounded. Do not use
+# packages-skip to turn failed desktop_full components into a partial image.
+RUN git clone --depth 1 --branch 9.1.0 https://github.com/fmtlib/fmt.git /tmp/jazzy-fmt \
+    && cmake -S /tmp/jazzy-fmt -B /tmp/jazzy-fmt/build \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr/local \
+        -DBUILD_SHARED_LIBS=ON -DFMT_TEST=OFF -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    && cmake --build /tmp/jazzy-fmt/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/jazzy-fmt/build \
+    && rm -rf /tmp/jazzy-fmt \
+    && ldconfig
+
+RUN printf '%s\n' \
+      '--- a/OgreMain/include/OgreMemorySTLAllocator.h' \
+      '+++ b/OgreMain/include/OgreMemorySTLAllocator.h' \
+      '@@ -100,7 +100,7 @@' \
+      '         };' \
+      ' ' \
+      '         /// ctor' \
+      '-        inline explicit STLAllocator()' \
+      '+        inline STLAllocator()' \
+      '         { }' \
+      ' ' \
+      '         /// dtor' \
+        > src/gz_ogre_next_vendor/patches/0002-gcc15-default-allocator.patch \
+    && sed -i '/patches\/0001-Fix-incomplete-vulkan-linkage.patch/a\    patches/0002-gcc15-default-allocator.patch' \
+        src/gz_ogre_next_vendor/CMakeLists.txt
+
+# RISC-V uses the scalar OGRE backend, just like the non-SSE ARM build.
+RUN python3 -c 'from pathlib import Path; p=Path("src/gz_ogre_next_vendor/CMakeLists.txt"); s=p.read_text(); old="arm.*|ARM.*)"; assert old in s; p.write_text(s.replace(old,"arm.*|ARM.*|riscv64.*|RISCV64.*)"))'
+
+COPY patch_jazzy_ogre_next_riscv64.patch src/gz_ogre_next_vendor/patches/0003-riscv64-architecture.patch
+RUN sed -i '/patches\/0002-gcc15-default-allocator.patch/a\    patches/0003-riscv64-architecture.patch' src/gz_ogre_next_vendor/CMakeLists.txt
+
+# Cache the expensive, independent vendor builds before desktop integration.
+RUN colcon build --merge-install --install-base /opt/ros/jazzy \
+        --packages-up-to gz_dartsim_vendor gz_ogre_next_vendor rviz_ogre_vendor fastrtps gz_msgs_vendor \
+        --parallel-workers "${BUILD_JOBS}" --event-handlers console_cohesion+ \
+        --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DTRACETOOLS_DISABLED=ON \
+          -DPython3_EXECUTABLE=/opt/ros-tools/bin/python3 \
+          -DPYTHON_EXECUTABLE=/opt/ros-tools/bin/python3 \
+          -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)"
+
+# GCC 15 no longer supplies cstdint through unrelated STL headers.
+RUN printf '%s\n' \
+      '--- a/include/gz/rendering/NativeWindow.hh' \
+      '+++ b/include/gz/rendering/NativeWindow.hh' \
+      '@@ -21,6 +21,7 @@' \
+      ' #include <string>' \
+      ' #include "gz/rendering/config.hh"' \
+      ' #include "gz/rendering/Export.hh"' \
+      ' #include "gz/rendering/RenderTypes.hh"' \
+      '+#include <cstdint>' \
+      ' ' \
+      ' namespace gz' \
+        > src/gz_rendering_vendor/patches/9999-gcc15-cstdint.patch
+
+# Mimick is referenced only by test_depend; upstream has no RISC-V backend.
+# Validate that invariant before excluding it from this BUILD_TESTING=OFF image.
+RUN if [ "${TARGETARCH}" = riscv64 ]; then \
+      python3 -c 'from pathlib import Path; import xml.etree.ElementTree as E; refs=[(str(p),e.tag) for p in Path("src").rglob("package.xml") for e in E.parse(p).getroot() if (e.text or "").strip()=="mimick_vendor" and e.tag!="name"]; assert refs and all(tag=="test_depend" for _,tag in refs), refs; Path("src/mimick_vendor/COLCON_IGNORE").touch(); print("Excluded test-only mimick_vendor:", refs)' \
+      && colcon list --packages-up-to desktop_full --names-only | sort -u > /opt/ros-build-manifests/packages.txt \
+      && grep -qx desktop_full /opt/ros-build-manifests/packages.txt; \
+    fi
+
+RUN colcon build --merge-install --install-base /opt/ros/jazzy \
+        --packages-up-to desktop_full --packages-skip-build-finished \
+        --parallel-workers "${BUILD_JOBS}" \
+        --event-handlers console_direct+ --cmake-args \
+          -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DTRACETOOLS_DISABLED=ON \
+          -DPython3_EXECUTABLE=/opt/ros-tools/bin/python3 \
+          -DPYTHON_EXECUTABLE=/opt/ros-tools/bin/python3 \
+          -Dpybind11_DIR="$(python3 -m pybind11 --cmakedir)" \
+    && rm -rf src build log
+
+# Use the exact dependency filesystem from the build, preserving runtime
+# libraries, Qt plugins, Python shebangs and development headers. No APT purge.
+FROM builder AS desktop-full
+# Ship native target-architecture CMake; the explicit emulator is build-only.
+RUN if [ -f /usr/bin/cmake.real ]; then mv -f /usr/bin/cmake.real /usr/bin/cmake; fi \
+    && rm -f /usr/local/libexec/qemu-riscv64-cmake /tmp/cmake_jazzy_riscv_qemu.sh
+COPY ros_entrypoint.sh /ros_entrypoint.sh
+COPY validate_jazzy_desktop_full_image.py /usr/local/libexec/validate_jazzy_desktop_full_image.py
+ARG BUILDARCH
+ARG TARGETARCH
+RUN --mount=type=bind,from=cmake-emulator,source=/usr/bin,target=/tmp/jazzy-validation-emulators \
+    if [ "${BUILDARCH}" != "${TARGETARCH}" ]; then \
+      case "${TARGETARCH}" in arm64) qemu_arch=aarch64 ;; riscv64) qemu_arch=riscv64 ;; amd64) qemu_arch=x86_64 ;; esac; \
+      export JAZZY_VALIDATION_QEMU="/tmp/jazzy-validation-emulators/qemu-${qemu_arch}"; \
+    fi \
+    && chmod 0755 /ros_entrypoint.sh \
+    && printf '%s\n' /opt/ros/jazzy/opt/rviz_ogre_vendor/lib/OGRE \
+        > /etc/ld.so.conf.d/jazzy-ogre-plugins.conf \
+    && ldconfig \
+    && /ros_entrypoint.sh bash -c 'if [ -n "${JAZZY_VALIDATION_QEMU:-}" ]; then exec "$JAZZY_VALIDATION_QEMU" "$(command -v python3)" python3 /usr/local/libexec/validate_jazzy_desktop_full_image.py; else exec python3 /usr/local/libexec/validate_jazzy_desktop_full_image.py; fi' \
+    && dpkg-query -W > /opt/ros-build-manifests/dpkg-packages.txt \
+    && pip freeze > /opt/ros-build-manifests/python-packages.txt
+WORKDIR /root
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

@@ -1,0 +1,449 @@
+# syntax=docker/dockerfile:1.7
+
+# Incremental source-build recipe for the ROS 2 desktop variant on openKylin
+# 3.0. The published ros_base image is the underlay; only packages added by
+# the desktop variant are compiled into a separate overlay.
+
+ARG ROS_BASE_IMAGE=openkylin/ros:lyrical-ros-base@sha256:bc947b2d3766a55f000c032fde697b3d6ef60e7e2975d4929ed1a3046c3e4834
+
+FROM --platform=${TARGETPLATFORM} ${ROS_BASE_IMAGE} AS builder
+
+ARG ROS_DISTRO=lyrical
+ARG ROS_VARIANTS_REF=0.13.0
+ARG OROCOS_KDL_VERSION=1.5.1
+ARG PCL_REF=pcl-1.14.0
+ARG BUILD_JOBS=2
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PYTHONPATH=/opt/ros-python \
+    PATH=/opt/desktop-tools/bin:${PATH}
+
+# Install only the compiler and source-management tools here. Desktop's
+# external runtime and build dependencies are resolved separately below so
+# the runtime package set can be reproduced in the final stage.
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      printf '%s\n' \
+        'Package: python3-pkg-resources' \
+        'Pin: version 68.1.2-ok2' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/openkylin-python.pref; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        python3-dev \
+        python3-pip \
+        python3-venv \
+        python3-yaml \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv --system-site-packages /opt/desktop-tools \
+    && PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir --upgrade \
+        pip setuptools wheel \
+    && PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+        catkin-pkg \
+        colcon-common-extensions \
+        empy==4.2 \
+        lark \
+        rosdep \
+        rosinstall-generator \
+        vcstool
+
+WORKDIR /desktop_ws
+
+# Generate the released Lyrical dependency closure for desktop while excluding
+# every package already present in the ros_base underlay. This also covers
+# desktop repositories which are intentionally absent from ros2/ros2.repos,
+# including rqt_common_plugins and teleop_twist_keyboard.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && ros2 pkg list | sort -u > /tmp/base-packages.txt \
+    && /opt/desktop-tools/bin/rosinstall_generator desktop \
+        --rosdistro "${ROS_DISTRO}" \
+        --deps \
+        --deps-only \
+        --format repos \
+        --upstream \
+        --exclude $(cat /tmp/base-packages.txt) \
+        > /tmp/desktop.repos \
+    && mkdir -p src \
+    && /opt/desktop-tools/bin/vcs import --shallow src < /tmp/desktop.repos \
+    && git clone --depth 1 --branch "${ROS_VARIANTS_REF}" \
+        https://github.com/ros2/variants.git src/ros2/variants \
+    && rm -f /tmp/desktop.repos
+
+# openKylin provides the PyQt5 half of Ubuntu Noble's python3-qt-bindings
+# mapping but not PySide2. Install the equivalent supported provider directly.
+RUN if [ "${TARGETARCH}" != "amd64" ]; then \
+      printf '%s\n' \
+        'Package: libucx0' \
+        'Pin: version 1.16.0+ds-ok1' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/openkylin-ucx.pref; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        graphviz \
+        libgraphviz-dev \
+        libopencv-dev \
+        libqt5opengl5 \
+        libqt5opengl5-dev \
+        libqt5widgets5 \
+        pyqt5-dev \
+        python3-pyqt5 \
+        python3-pyqt5.qtsvg \
+        python3-pyqtbuild \
+        python3-pkg-resources=68.1.2-ok2 \
+        python3-setuptools=68.1.2-ok2 \
+        python3-sip-dev \
+        python3-sipbuild \
+        qtbase5-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p /opt/desktop-python \
+    && if [ "${TARGETARCH}" = "riscv64" ]; then \
+         graphviz_multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"; \
+         graphviz_libdir="/usr/lib/${graphviz_multiarch}/graphviz"; \
+         git clone --depth 1 --branch pygraphviz-2.0.1 \
+           https://github.com/pygraphviz/pygraphviz.git /tmp/pygraphviz; \
+         sed -i \
+           -e '/"gvplugin_neato_layout",/d' \
+           -e 's/libraries.append("gvplugin_gd")/pass/' \
+           -e '/libraries.append("gvplugin_pango")/d' \
+           /tmp/pygraphviz/setup.py; \
+         LDFLAGS="-L${graphviz_libdir} -Wl,-rpath,${graphviz_libdir}" \
+           PYTHONPATH= /opt/desktop-tools/bin/pip install -v --no-cache-dir \
+             --target /opt/desktop-python /tmp/pygraphviz \
+         && rm -rf /tmp/pygraphviz; \
+       else \
+         PYTHONPATH= /opt/desktop-tools/bin/pip install -v --no-cache-dir \
+           --target /opt/desktop-python pygraphviz; \
+       fi
+
+# openKylin 3.0 does not currently publish PCL packages. The Lyrical desktop
+# closure only needs PCL common and io, so build those portable components.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        libboost-filesystem-dev \
+        libboost-iostreams-dev \
+        libboost-system-dev \
+        libboost-thread-dev \
+        libeigen3-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN git clone --depth 1 --branch "${PCL_REF}" \
+        https://github.com/PointCloudLibrary/pcl.git /tmp/pcl-src \
+    && cmake -S /tmp/pcl-src -B /tmp/pcl-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/pcl \
+        -DPCL_ENABLE_AVX=OFF \
+        -DPCL_ENABLE_SSE=OFF \
+        -DBUILD_apps=OFF \
+        -DBUILD_common=ON \
+        -DBUILD_examples=OFF \
+        -DBUILD_global_tests=OFF \
+        -DBUILD_io=ON \
+        -DBUILD_tools=OFF \
+        -DBUILD_visualization=OFF \
+        -DWITH_CUDA=OFF \
+        -DWITH_OPENGL=OFF \
+        -DWITH_OPENNI=OFF \
+        -DWITH_OPENNI2=OFF \
+        -DWITH_PCAP=OFF \
+        -DWITH_QHULL=OFF \
+        -DWITH_VTK=OFF \
+    && cmake --build /tmp/pcl-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/pcl-build \
+    && rm -rf /tmp/pcl-src /tmp/pcl-build
+
+# The arm64/riscv64 libassimp-dev package in openKylin currently depends on
+# an unpublished libdraco8 binary. Build the same Assimp release portably so
+# mesh loading remains available on every target architecture.
+ARG ASSIMP_VERSION=6.0.4
+RUN git clone --depth 1 --branch "v${ASSIMP_VERSION}" \
+        https://github.com/assimp/assimp.git /tmp/assimp-src \
+    && cmake -S /tmp/assimp-src -B /tmp/assimp-build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/assimp \
+        -DBUILD_SHARED_LIBS=ON \
+        -DASSIMP_BUILD_ASSIMP_TOOLS=OFF \
+        -DASSIMP_BUILD_SAMPLES=OFF \
+        -DASSIMP_BUILD_TESTS=OFF \
+        -DASSIMP_WARNINGS_AS_ERRORS=OFF \
+    && cmake --build /tmp/assimp-build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/assimp-build \
+    && rm -rf /tmp/assimp-src /tmp/assimp-build
+
+# openKylin currently has no python3-matplotlib candidate on arm64/riscv64.
+# Keep the portable Python desktop stack in the existing overlay instead;
+# PyPI provides wheels where available and builds the small native modules on
+# architectures without wheels.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        python3-cycler \
+        python3-dateutil \
+        python3-pil \
+        python3-pyparsing \
+    && if [ "${TARGETARCH}" = "riscv64" ]; then \
+         apt-get install -y --no-install-recommends \
+           libfreetype-dev libpng-dev meson python3-mesonpy; \
+         PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+           certifi cppy meson-python packaging setuptools-scm; \
+         PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+           --ignore-installed pybind11; \
+         PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+           --no-deps --no-build-isolation --target /opt/desktop-python \
+           kiwisolver==1.4.9 contourpy==1.3.3; \
+         PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir \
+           --no-deps --no-build-isolation --target /opt/desktop-python \
+           fonttools pydantic==1.10.24; \
+         PYTHONPATH=/opt/desktop-python /opt/desktop-tools/bin/pip install --no-cache-dir \
+           --no-deps --no-build-isolation --target /opt/desktop-python \
+           matplotlib==3.9.4; \
+       else \
+         SKIP_CYTHON=1 PYTHONPATH= /opt/desktop-tools/bin/pip install --no-cache-dir --upgrade \
+           --target /opt/desktop-python \
+           fonttools matplotlib==3.8.4 pydantic==1.10.24; \
+       fi \
+    && rm -rf /var/lib/apt/lists/*
+
+# Resolve external execution dependencies first and record their top-level APT
+# packages. Installing that list in the runtime stage lets APT reconstruct the
+# complete shared-library dependency set without copying the compiler toolchain.
+RUN export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && mkdir -p /etc/ros/rosdep/sources.list.d \
+    && printf '%s\n' \
+        'libopencv-contrib-dev:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-core:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-core-dev:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-dev:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-highgui:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-imgcodecs:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-imgcodecs-dev:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-imgproc:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-imgproc-dev:' \
+        '  ubuntu: [libopencv-dev]' \
+        'libopencv-videoio:' \
+        '  ubuntu: [libopencv-dev]' \
+        > /etc/ros/rosdep/openkylin-desktop.yaml \
+    && printf '%s\n' \
+        'yaml file:///etc/ros/rosdep/openkylin-desktop.yaml' \
+        > /etc/ros/rosdep/sources.list.d/10-openkylin-desktop.list \
+    && if [ ! -e /etc/ros/rosdep/sources.list.d/20-default.list ]; then \
+         /opt/desktop-tools/bin/rosdep init; \
+       fi \
+    && /opt/desktop-tools/bin/rosdep update --rosdistro "${ROS_DISTRO}" \
+    && /opt/desktop-tools/bin/colcon list \
+        --packages-up-to desktop \
+        --paths-only \
+        | sort -u > /tmp/desktop-paths.txt \
+    && apt-mark showmanual | sort -u > /tmp/manual-before-exec.txt \
+    && apt-get update \
+    && xargs /opt/desktop-tools/bin/rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types exec \
+        --skip-keys "ament_uncrustify asio assimp assimp-dev benchmark bullet clang-format console_bridge cppcheck fmt fzf gmock libassimp-dev libbenchmark-dev libbullet-dev libconsole-bridge-dev libfmt-dev libgmock-dev liblttng-ust-dev liblz4-dev libopencv-core406t64 libopencv-imgcodecs406t64 libopencv-imgproc406t64 liborocos-kdl liborocos-kdl-dev liborocos-kdl1.5 libpcl-all-dev libpcl-common libpcl-common1.14 libpcl-io libpcl-io1.14 libqt5-concurrent libqt5-core libqt5-gui libqt5-network libqt5-opengl libqt5-opengl-dev libqt5-printsupport libqt5-sql libqt5-test libqt5-widgets libqt5-xml libqt5core5t64 libqt5gui5t64 libqt5network5t64 libqt5opengl5t64 libqt5printsupport5t64 libqt5sql5t64 libqt5test5t64 libqt5widgets5t64 libqt5xml5t64 libqtconcurrent libqtcore libqtgui libqtopengl libqtwidgets libspdlog-dev libxml2-utils lttng-tools lttng-ust pybind11 pybind11-dev pydocstyle spdlog uncrustify python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-colcon-common-extensions python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-import-order python3-flake8-quotes python3-lark-parser python3-lxml python3-matplotlib python3-mypy python3-osrf-pycommon python3-pycodestyle python3-pydantic python3-pydot python3-pyflakes python3-pygraphviz python3-pykdl python3-pytest python3-qt-bindings python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-typing-extensions python3-vcstool" \
+        -y < /tmp/desktop-paths.txt \
+    && apt-mark showmanual | sort -u > /tmp/manual-after-exec.txt \
+    && comm -13 /tmp/manual-before-exec.txt /tmp/manual-after-exec.txt \
+        > /tmp/desktop-runtime-packages.txt
+
+# Install build and build-export dependencies after the runtime package list
+# has been captured. Ubuntu Noble rosdep mappings match openKylin huanghe and
+# its anything3.0 repository for the desktop stack.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends libgtest-dev libyaml-cpp-dev \
+    && export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && xargs /opt/desktop-tools/bin/rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types build \
+        --dependency-types buildtool \
+        --dependency-types build_export \
+        --dependency-types buildtool_export \
+        --skip-keys "ament_uncrustify asio assimp assimp-dev benchmark bullet clang-format console_bridge cppcheck fmt fzf gmock libassimp-dev libbenchmark-dev libbullet-dev libconsole-bridge-dev libfmt-dev libgmock-dev liblttng-ust-dev liblz4-dev libopencv-core406t64 libopencv-imgcodecs406t64 libopencv-imgproc406t64 liborocos-kdl liborocos-kdl-dev liborocos-kdl1.5 libpcl-all-dev libpcl-common libpcl-common1.14 libpcl-io libpcl-io1.14 libqt5-concurrent libqt5-core libqt5-gui libqt5-network libqt5-opengl libqt5-opengl-dev libqt5-printsupport libqt5-sql libqt5-test libqt5-widgets libqt5-xml libqt5core5t64 libqt5gui5t64 libqt5network5t64 libqt5opengl5t64 libqt5printsupport5t64 libqt5sql5t64 libqt5test5t64 libqt5widgets5t64 libqt5xml5t64 libqtconcurrent libqtcore libqtgui libqtopengl libqtwidgets libspdlog-dev libxml2-utils lttng-tools lttng-ust pybind11 pybind11-dev pydocstyle spdlog uncrustify python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-colcon-common-extensions python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-import-order python3-flake8-quotes python3-lark-parser python3-lxml python3-matplotlib python3-mypy python3-osrf-pycommon python3-pycodestyle python3-pydantic python3-pydot python3-pyflakes python3-pygraphviz python3-pykdl python3-pytest python3-qt-bindings python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-typing-extensions python3-vcstool" \
+        -y < /tmp/desktop-paths.txt \
+    && git clone --depth 1 --branch "v${OROCOS_KDL_VERSION}" \
+        https://github.com/orocos/orocos_kinematics_dynamics.git \
+        /tmp/orocos-kdl \
+    && cmake -S /tmp/orocos-kdl/orocos_kdl \
+        -B /tmp/orocos-kdl/build -G Ninja \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_INSTALL_PREFIX=/opt/orocos-kdl \
+        -DBUILD_MODELS=OFF \
+        -DENABLE_TESTS=OFF \
+    && cmake --build /tmp/orocos-kdl/build --parallel "${BUILD_JOBS}" \
+    && cmake --install /tmp/orocos-kdl/build \
+    && rm -rf /tmp/orocos-kdl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Keep desktop as an overlay. Its generated setup file records the ros_base
+# underlay at /opt/ros/lyrical, which is identical in the final image.
+RUN . /opt/ros/${ROS_DISTRO}/setup.sh \
+    && export CMAKE_PREFIX_PATH="/opt/orocos-kdl:/opt/assimp:/opt/pcl:${CMAKE_PREFIX_PATH}" \
+    && export CPATH="/opt/orocos-kdl/include:${CPATH}" \
+    && export LD_LIBRARY_PATH="/opt/assimp/lib64:${LD_LIBRARY_PATH}" \
+    && export LDFLAGS="-Wl,-rpath-link,/opt/assimp/lib64 ${LDFLAGS}" \
+    && DISABLE_GROUPS_WORKAROUND=1 /opt/desktop-tools/bin/colcon build \
+        --merge-install \
+        --install-base /opt/ros-desktop/${ROS_DISTRO} \
+        --packages-up-to desktop \
+        --parallel-workers "${BUILD_JOBS}" \
+        --event-handlers console_direct+ \
+        --cmake-args \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DTRACETOOLS_DISABLED=ON \
+          -Dpybind11_DIR=/opt/ros-python/pybind11/share/cmake/pybind11 \
+    && rm -rf src build log
+
+
+# PyGraphviz 2.0 assumes that wheel builds bundle every Graphviz plugin. The
+# openKylin riscv64 Graphviz packages use the system plugin loader and omit the
+# optional neato/gd/pango plugin libraries, so build a system-context variant.
+# Keep this in a separate stage so the expensive ROS/PCL/Assimp layers remain
+# reusable when only this compatibility shim changes.
+FROM builder AS desktop_python
+
+ARG TARGETARCH
+
+RUN if [ "${TARGETARCH}" = "riscv64" ]; then \
+      graphviz_multiarch="$(dpkg-architecture -qDEB_HOST_MULTIARCH)"; \
+      graphviz_libdir="/usr/lib/${graphviz_multiarch}/graphviz"; \
+      git clone --depth 1 --branch pygraphviz-2.0.1 \
+        https://github.com/pygraphviz/pygraphviz.git /tmp/pygraphviz-fixed; \
+      sed -i \
+        -e '/"gvplugin_neato_layout",/d' \
+        -e 's/libraries.append("gvplugin_gd")/pass/' \
+        -e '/libraries.append("gvplugin_pango")/d' \
+        /tmp/pygraphviz-fixed/setup.py; \
+      for wrapper_source in \
+        /tmp/pygraphviz-fixed/pygraphviz/graphviz.i \
+        /tmp/pygraphviz-fixed/pygraphviz/graphviz_wrap.c; do \
+        if [ -f "${wrapper_source}" ]; then \
+          sed -i \
+            '/^GVC_t \*gvContextWithBuiltins(void) {$/,/^}$/c\GVC_t *gvContextWithBuiltins(void) {\n    return gvContext();\n}' \
+            "${wrapper_source}"; \
+        fi; \
+      done; \
+      rm -rf /opt/desktop-python-fixed; \
+      LDFLAGS="-L${graphviz_libdir} -Wl,-rpath,${graphviz_libdir}" \
+        PYTHONPATH= /opt/desktop-tools/bin/pip install -v --no-cache-dir \
+          --target /opt/desktop-python-fixed /tmp/pygraphviz-fixed; \
+      rm -rf /opt/desktop-python/pygraphviz \
+        /opt/desktop-python/pygraphviz-*.dist-info; \
+      cp -a /opt/desktop-python-fixed/. /opt/desktop-python/; \
+      rm -rf /opt/desktop-python-fixed /tmp/pygraphviz-fixed; \
+    fi
+
+
+FROM --platform=${TARGETPLATFORM} ${ROS_BASE_IMAGE} AS runtime
+
+ARG ROS_DISTRO=lyrical
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    ROS_VERSION=2 \
+    ROS_PYTHON_VERSION=3 \
+    PYTHONPATH=/opt/desktop-python:/opt/ros-python \
+    QT_X11_NO_MITSHM=1 \
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+COPY --from=builder /tmp/desktop-runtime-packages.txt /tmp/desktop-runtime-packages.txt
+
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      printf '%s\n' \
+        'Package: python3-pkg-resources' \
+        'Pin: version 68.1.2-ok2' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/openkylin-python.pref; \
+    else \
+      printf '%s\n' \
+        'Package: libucx0' \
+        'Pin: version 1.16.0+ds-ok1' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/openkylin-ucx.pref; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        graphviz \
+        libboost-filesystem-dev \
+        libboost-iostreams-dev \
+        libboost-system-dev \
+        libboost-thread-dev \
+        libeigen3-dev \
+        libgraphviz-dev \
+        libopencv-dev \
+        libqt5opengl5 \
+        libqt5opengl5-dev \
+        libqt5widgets5 \
+        libyaml-cpp-dev \
+        pyqt5-dev \
+        python3-cycler \
+        python3-dateutil \
+        python3-pil \
+        python3-pyqt5 \
+        python3-pyqt5.qtsvg \
+        python3-pyqtbuild \
+        python3-pyparsing \
+        python3-pkg-resources=68.1.2-ok2 \
+        python3-setuptools=68.1.2-ok2 \
+        python3-sip-dev \
+        python3-sipbuild \
+        qtbase5-dev \
+    && xargs -r apt-get install -y --no-install-recommends \
+        < /tmp/desktop-runtime-packages.txt \
+    && rm -rf /var/lib/apt/lists/* \
+        /tmp/desktop-runtime-packages.txt
+
+COPY --from=builder /opt/ros-desktop/${ROS_DISTRO} /opt/ros-desktop/${ROS_DISTRO}
+COPY --from=desktop_python /opt/desktop-python /opt/desktop-python
+COPY --from=builder /opt/assimp /opt/assimp
+COPY --from=builder /opt/orocos-kdl /opt/orocos-kdl
+COPY --from=builder /opt/pcl /opt/pcl
+COPY ros_entrypoint.sh /ros_entrypoint.sh
+
+RUN mkdir -p /opt/desktop-tools/bin \
+    && ln -s /usr/bin/python3 /opt/desktop-tools/bin/python3 \
+    && printf '%s\n' /opt/assimp/lib64 > /etc/ld.so.conf.d/assimp.conf \
+    && printf '%s\n' /opt/orocos-kdl/lib > /etc/ld.so.conf.d/orocos-kdl.conf \
+    && printf '%s\n' /opt/pcl/lib > /etc/ld.so.conf.d/pcl.conf \
+    && chmod 0755 /ros_entrypoint.sh \
+    && ldconfig
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

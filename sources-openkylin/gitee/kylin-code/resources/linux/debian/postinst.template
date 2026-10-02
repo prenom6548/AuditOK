@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+#
+# Copyright (c) Microsoft Corporation. All rights reserved.
+# Licensed under the MIT License. See License.txt in the project root for license information.
+
+# Symlink bin command to /usr/bin
+rm -f /usr/bin/@@NAME@@
+ln -s /opt/apps/@@NAME@@/bin/@@NAME@@ /usr/bin/@@NAME@@
+
+# Register code in the alternatives system
+# Priority of 0 should never make code the default editor in auto mode as most
+# developers would prefer a terminal editor as the default.
+update-alternatives --install /usr/bin/editor editor /usr/bin/@@NAME@@ 0
+
+# Install the desktop entry
+if hash update-desktop-database 2>/dev/null; then
+	update-desktop-database
+fi
+
+# Install the desktop icon
+function copy_install_to_desktop()
+{
+	if [ $# -ne 3 ] ; then
+		return;
+	fi
+	local curFileName=$1
+	local ideDesktopName=$2
+	local curUserName=$3
+	if [ -e "/usr/share/applications/${ideDesktopName}" ]; then
+		cp -f /usr/share/applications/${ideDesktopName} "${curFileName}/${gDesktopName}/${ideDesktopName}"
+		if test $? -eq 0; then
+			chmod +x "${curFileName}/${gDesktopName}/${ideDesktopName}"
+			chown ${curUserName} "${curFileName}/${gDesktopName}/${ideDesktopName}"
+		fi
+	fi
+
+}
+
+function deploy_ide_desktop_icon()
+{
+	if [ $# -ne 2 ] ; then
+		return;
+	fi
+	local curFileName=$1
+	local curUserName=$2
+    copy_install_to_desktop ${curFileName} @@NAME@@.desktop ${curUserName}
+}
+
+function ky_deploy_ide_desktop()
+{
+    gDesktopName=""
+	if [ -d "/root/桌面" ]; then
+		gDesktopName="桌面"
+	elif [ -d "/root/Desktop" ]; then
+		gDesktopName="Desktop"
+	fi
+
+    if [ ! -z "$gDesktopName" ]; then
+        rm -f /root/${gDesktopName}/@@NAME@@.desktop
+        if [ -d "/root/${gDesktopName}" ]; then
+            deploy_ide_desktop_icon "/root" "root"
+	    fi
+    fi
+
+
+    for FILENAME in /home/*; do
+        USERNAME="${FILENAME##*/}"
+        [ ! -d "${FILENAME}" ] && continue
+        getent passwd "${USERNAME}" >/dev/null 2>&1 || continue
+
+        if id -u `echo ${FILENAME} | awk '{print substr($FILENAME, 7, 32)}'` >/dev/null 2>&1; then
+            :
+        else
+            continue
+        fi
+
+        if [ -f "${FILENAME}/.config/user-dirs.dirs" ]; then
+            if [ ! $HOME ]; then
+                HOME=${FILENAME}
+            fi
+            source "${FILENAME}/.config/user-dirs.dirs"
+            if [ ! -d "${XDG_DESKTOP_DIR}" ]; then
+                mkdir -p "${XDG_DESKTOP_DIR}" >/dev/null 2>&1 || true
+            fi
+            gDesktopName="${XDG_DESKTOP_DIR//${HOME}\//}"
+        else
+            if [ -d "${FILENAME}/桌面" ]; then
+                gDesktopName="桌面"
+            elif [ -d "${FILENAME}/Desktop" ]; then
+                gDesktopName="Desktop"
+            fi
+        fi
+        curUserName=`echo ${FILENAME} | awk '{print substr($FILENAME, 7, 32)}'`
+        rm -f /home/${curUserName}/${gDesktopName}/@@NAME@@.desktop
+        deploy_ide_desktop_icon ${FILENAME} ${curUserName}
+    done
+}
+
+ky_deploy_ide_desktop

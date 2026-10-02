@@ -1,0 +1,246 @@
+# syntax=docker/dockerfile:1.7
+
+# Preserved source-build recipe for the published ros_core image.
+
+ARG OPENKYLIN_IMAGE=openkylin/openkylin:3.0
+
+FROM --platform=${TARGETPLATFORM} ${OPENKYLIN_IMAGE} AS builder-base
+
+ARG ROS_DISTRO=lyrical
+ARG ROS2_REPOS_REF=release-lyrical-20260522
+ARG ROS_VARIANTS_REF=0.13.0
+ARG FZF_VERSION=0.74.1
+ARG BUILD_JOBS=2
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PATH=/opt/ros-tools/bin:${PATH}
+
+# The published 3.0 image already contains a few core packages from
+# huanghe-proposed (notably the t64 ABI transition). Keep both repositories
+# enabled so apt can select a self-consistent dependency set. The amd64
+# proposed index currently advertises python3-pkg-resources 78 without its
+# python3-autocommand dependency, so pin the complete main-repository build.
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      printf '%s\n' \
+        'Package: python3-pkg-resources' \
+        'Pin: version 68.1.2-ok2' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/openkylin-python.pref; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        libacl1-dev \
+        libcurl4-openssl-dev \
+        libeigen3-dev \
+        libgtest-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        libtinyxml2-dev \
+        libyaml-cpp-dev \
+        libyaml-dev \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        python3-cryptography \
+        python3-dev \
+        python3-netifaces \
+        python3-numpy \
+        python3-pip \
+        python3-psutil \
+        python3-venv \
+        python3-yaml \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# openKylin 3.0 does not package the complete ROS development toolchain.
+# Keep build-only Python tools isolated from the runtime interpreter.
+RUN python3 -m venv --system-site-packages /opt/ros-tools \
+    && /opt/ros-tools/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+    && /opt/ros-tools/bin/pip install --no-cache-dir \
+        catkin-pkg \
+        colcon-common-extensions \
+        empy==4.2 \
+        lark \
+        rosdep \
+        vcstool
+
+# Standalone Asio is header-only. openKylin 3.0 does not publish libasio-dev
+# consistently across all targets, so install the upstream headers explicitly.
+RUN git clone --depth 1 --branch asio-1-30-2 \
+        https://github.com/chriskohlhoff/asio.git /tmp/asio \
+    && cp -a /tmp/asio/asio/include/. /usr/local/include/ \
+    && rm -rf /tmp/asio
+
+# ros2cli uses fzf for interactive selection. Install the matching official
+# binary for every target architecture and verify it before extraction.
+RUN case "${TARGETARCH}" in \
+        amd64) FZF_SHA256="df53438be5f51e151bb4044d78fda72bdfe209e3ecd2baecae48e8dea370c81b" ;; \
+        arm64) FZF_SHA256="f22204dd1a091d43e102268d062fd53b47133c8d8581671ee5eb225b75e31183" ;; \
+        riscv64) FZF_SHA256="a647e12d907c650d963b5a4b5887bcba0307578a68deb37917142903a1c217d6" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+      esac \
+    && curl -fsSL \
+        "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-linux_${TARGETARCH}.tar.gz" \
+        -o /tmp/fzf.tar.gz \
+    && echo "${FZF_SHA256}  /tmp/fzf.tar.gz" \
+        | sha256sum -c - \
+    && tar -xzf /tmp/fzf.tar.gz -C /usr/local/bin fzf \
+    && chmod 0755 /usr/local/bin/fzf \
+    && rm -f /tmp/fzf.tar.gz
+
+WORKDIR /ros2_ws
+
+# Use the source manifest attached to the first stable Lyrical release and add
+# the variant metapackage, which is not included in ros2.repos itself. Mimick,
+# performance_test_fixture, osrf_testing_tools_cpp, and the uncrustify wrappers
+# are referenced only by test/lint dependencies. Mimick has no RISC-V
+# trampoline implementation, while the vendor uncrustify configure binary can
+# also select instructions unavailable in the Buildx RISC-V emulator.
+RUN curl -fsSL \
+        "https://raw.githubusercontent.com/ros2/ros2/${ROS2_REPOS_REF}/ros2.repos" \
+        -o /tmp/ros2.repos \
+    && mkdir -p src \
+    && vcs import --shallow src < /tmp/ros2.repos \
+    && git clone --depth 1 --branch "${ROS_VARIANTS_REF}" \
+        https://github.com/ros2/variants.git src/ros2/variants \
+    && touch src/ros2/rmw_connextdds/COLCON_IGNORE \
+    && touch src/ros2/rmw_cyclonedds/COLCON_IGNORE \
+    && touch src/ros2/rmw_zenoh/COLCON_IGNORE \
+    && touch src/ros2/mimick_vendor/COLCON_IGNORE \
+    && touch src/ros2/performance_test_fixture/COLCON_IGNORE \
+    && touch src/osrf/osrf_testing_tools_cpp/COLCON_IGNORE \
+    && touch src/ament/ament_lint/ament_uncrustify/COLCON_IGNORE \
+    && touch src/ament/uncrustify_vendor/COLCON_IGNORE \
+    && rm -f /tmp/ros2.repos
+
+# rosdep is told to use Ubuntu Noble mappings because openKylin is not a
+# recognized rosdep OS. Most huanghe package names follow those mappings. The
+# skipped keys are either installed with pip, supplied above, or built by ROS
+# vendor packages from the imported source tree.
+RUN pip install --no-cache-dir \
+        flake8 \
+        flake8-blind-except \
+        flake8-builtins \
+        flake8-class-newline \
+        flake8-comprehensions \
+        flake8-deprecated \
+        flake8-import-order \
+        flake8-quotes \
+        lxml \
+        osrf-pycommon \
+        pybind11 \
+        pydocstyle \
+        pydot \
+        typing-extensions
+
+RUN export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && rosdep init \
+    && rosdep update --rosdistro "${ROS_DISTRO}" \
+    && CORE_PATHS="$(colcon list --packages-up-to ros_core --paths-only | tr '\n' ' ')" \
+    && rosdep install --from-paths ${CORE_PATHS} \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types build \
+        --dependency-types buildtool \
+        --dependency-types build_export \
+        --dependency-types buildtool_export \
+        --dependency-types exec \
+        --skip-keys "ament_uncrustify asio benchmark console_bridge cppcheck fmt fzf gmock libbenchmark-dev libconsole-bridge-dev libfmt-dev libgmock-dev liblttng-ust-dev libspdlog-dev libxml2-utils lttng-tools lttng-ust pybind11 pybind11-dev pydocstyle spdlog uncrustify python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-colcon-common-extensions python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-import-order python3-flake8-quotes python3-lark-parser python3-lxml python3-mypy python3-osrf-pycommon python3-pycodestyle python3-pydot python3-pyflakes python3-pytest python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-typing-extensions python3-vcstool" \
+        -y
+
+FROM builder-base AS builder
+
+ARG TARGETARCH
+
+# Build from clean stage-local directories. Persisting colcon's build/install
+# trees across BuildKit runs can leak removed packages into the final prefix.
+RUN DISABLE_GROUPS_WORKAROUND=1 colcon build \
+        --merge-install \
+        --install-base /opt/ros/${ROS_DISTRO} \
+        --packages-up-to ros_core \
+        --parallel-workers "${BUILD_JOBS}" \
+        --event-handlers console_direct+ \
+        --cmake-args \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DTRACETOOLS_DISABLED=ON \
+          -Dpybind11_DIR=/opt/ros-tools/lib/python3.12/site-packages/pybind11/share/cmake/pybind11 \
+    && mkdir -p /opt/ros-staged \
+    && cp -a /opt/ros/${ROS_DISTRO} /opt/ros-staged/${ROS_DISTRO} \
+    && rm -rf src
+
+
+FROM --platform=${TARGETPLATFORM} ${OPENKYLIN_IMAGE} AS runtime
+
+ARG ROS_DISTRO=lyrical
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    ROS_VERSION=2 \
+    ROS_PYTHON_VERSION=3 \
+    PYTHONPATH=/opt/ros-python \
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+RUN if [ "${TARGETARCH}" = "amd64" ]; then \
+      printf '%s\n' \
+        'Package: python3-pkg-resources' \
+        'Pin: version 68.1.2-ok2' \
+        'Pin-Priority: 1001' \
+        > /etc/apt/preferences.d/openkylin-python.pref; \
+    fi \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        libacl1 \
+        libcurl4t64 \
+        libgcc-s1 \
+        libpython3.12t64 \
+        libsqlite3-0 \
+        libssl3t64 \
+        libstdc++6 \
+        libtinyxml2-10 \
+        libyaml-0-2 \
+        libyaml-cpp0.8 \
+        python3 \
+        python3-cryptography \
+        python3-netifaces \
+        python3-numpy \
+        python3-packaging \
+        python3-psutil \
+        python3-yaml \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/ros-staged/${ROS_DISTRO} /opt/ros/${ROS_DISTRO}
+COPY --from=builder /opt/ros-tools/lib/python3.12/site-packages /opt/ros-python
+COPY sitecustomize.py /opt/ros-python/sitecustomize.py
+COPY --from=builder /usr/local/bin/fzf /usr/local/bin/fzf
+COPY ros_entrypoint.sh /ros_entrypoint.sh
+
+# Python console scripts generated during the source build retain the venv's
+# absolute shebang.  The runtime uses the ABI-compatible system Python, so keep
+# that build-time path as a lightweight compatibility link.
+RUN mkdir -p /opt/ros-tools/bin \
+    && ln -s /usr/bin/python3 /opt/ros-tools/bin/python3 \
+    && chmod 0755 /ros_entrypoint.sh
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

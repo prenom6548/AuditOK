@@ -1,0 +1,217 @@
+# syntax=docker/dockerfile:1.7
+
+ARG OPENKYLIN_IMAGE=openkylin/openkylin:2.0
+
+FROM --platform=${TARGETPLATFORM} ${OPENKYLIN_IMAGE} AS builder
+
+ARG ROS_DISTRO=jazzy
+ARG ROS2_REPOS_REF=release-jazzy-20260618
+ARG ROS_VARIANTS_COMMIT=70f5a409ae7a9baa44950bf8468742256de67c43
+ARG FZF_VERSION=0.74.1
+ARG BUILD_JOBS=16
+ARG TARGETARCH
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    CMAKE_POLICY_VERSION_MINIMUM=3.5 \
+    PIP_BREAK_SYSTEM_PACKAGES=1 \
+    PATH=/opt/jazzy-tools/bin:${PATH}
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        cmake \
+        curl \
+        git \
+        libacl1-dev \
+        libcurl4-openssl-dev \
+        libeigen3-dev \
+        libgtest-dev \
+        libsqlite3-dev \
+        libssl-dev \
+        libtinyxml2-dev \
+        libxml2-dev \
+        libxslt1-dev \
+        libyaml-cpp-dev \
+        libyaml-dev \
+        make \
+        ninja-build \
+        patch \
+        pkg-config \
+        python3 \
+        python3-cryptography \
+        python3-dev \
+        python3-netifaces \
+        python3-numpy \
+        python3-pip \
+        python3-psutil \
+        python3-venv \
+        python3-yaml \
+        unzip \
+        wget \
+    && rm -rf /var/lib/apt/lists/*
+
+# openKylin 2.0 does not package the complete ROS development toolchain.
+RUN python3 -m venv --system-site-packages /opt/jazzy-tools \
+    && /opt/jazzy-tools/bin/pip install --no-cache-dir --upgrade \
+        pip setuptools wheel \
+    && /opt/jazzy-tools/bin/pip install --no-cache-dir \
+        catkin-pkg \
+        colcon-common-extensions \
+        empy==3.3.4 \
+        flake8 \
+        flake8-blind-except \
+        flake8-builtins \
+        flake8-class-newline \
+        flake8-comprehensions \
+        flake8-deprecated \
+        flake8-docstrings \
+        flake8-import-order \
+        flake8-quotes \
+        lark==1.1.9 \
+        lxml \
+        osrf-pycommon \
+        pybind11==2.12.0 \
+        pydocstyle \
+        pydot \
+        rosdep \
+        typing-extensions \
+        vcstool
+
+# Fast DDS uses standalone Asio, which is not available consistently in nile.
+RUN git clone --depth 1 --branch asio-1-30-2 \
+        https://github.com/chriskohlhoff/asio.git /tmp/asio \
+    && cp -a /tmp/asio/asio/include/. /usr/local/include/ \
+    && rm -rf /tmp/asio
+
+# ros2cli uses fzf for interactive selection.
+RUN case "${TARGETARCH}" in \
+        amd64) FZF_SHA256="df53438be5f51e151bb4044d78fda72bdfe209e3ecd2baecae48e8dea370c81b" ;; \
+        arm64) FZF_SHA256="f22204dd1a091d43e102268d062fd53b47133c8d8581671ee5eb225b75e31183" ;; \
+        riscv64) FZF_SHA256="a647e12d907c650d963b5a4b5887bcba0307578a68deb37917142903a1c217d6" ;; \
+        *) echo "unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+      esac \
+    && curl -fsSL \
+        "https://github.com/junegunn/fzf/releases/download/v${FZF_VERSION}/fzf-${FZF_VERSION}-linux_${TARGETARCH}.tar.gz" \
+        -o /tmp/fzf.tar.gz \
+    && echo "${FZF_SHA256}  /tmp/fzf.tar.gz" | sha256sum -c - \
+    && tar -xzf /tmp/fzf.tar.gz -C /usr/local/bin fzf \
+    && chmod 0755 /usr/local/bin/fzf \
+    && rm -f /tmp/fzf.tar.gz
+
+WORKDIR /jazzy_ws
+
+RUN curl -fsSL \
+        "https://raw.githubusercontent.com/ros2/ros2/${ROS2_REPOS_REF}/ros2.repos" \
+        -o /tmp/ros2.repos \
+    && mkdir -p src \
+    && vcs import --shallow src < /tmp/ros2.repos \
+    && mkdir -p src/ros2/variants \
+    && git -C src/ros2/variants init \
+    && git -C src/ros2/variants remote add origin https://github.com/ros2/variants.git \
+    && git -C src/ros2/variants fetch --depth 1 origin "${ROS_VARIANTS_COMMIT}" \
+    && git -C src/ros2/variants checkout --detach FETCH_HEAD \
+    && for package_path in \
+         src/ros2/rmw_connextdds \
+         src/ros2/rmw_cyclonedds \
+         src/ros2/rmw_zenoh \
+         src/ros2/mimick_vendor \
+         src/ros2/performance_test_fixture \
+         src/osrf/osrf_testing_tools_cpp \
+         src/ament/ament_lint/ament_uncrustify \
+         src/ament/uncrustify_vendor; \
+       do \
+         if [ -d "${package_path}" ]; then touch "${package_path}/COLCON_IGNORE"; fi; \
+       done \
+    && rm -f /tmp/ros2.repos
+
+ARG ROSDEP_SKIP_KEYS="ament_uncrustify asio benchmark console_bridge cppcheck empy fmt fzf gmock libasio-dev libbenchmark-dev libconsole-bridge-dev libfmt-dev libgmock-dev liblttng-ust-dev libspdlog-dev libxml2-utils lttng-tools lttng-ust pybind11 pybind11-dev pydocstyle rmw_connextdds rmw_cyclonedds_cpp rmw_zenoh_cpp spdlog uncrustify python3-argcomplete python3-catkin-pkg python3-catkin-pkg-modules python3-colcon-common-extensions python3-empy python3-flake8 python3-flake8-blind-except python3-flake8-builtins python3-flake8-class-newline python3-flake8-comprehensions python3-flake8-deprecated python3-flake8-docstrings python3-flake8-import-order python3-flake8-quotes python3-lark python3-lark-parser python3-lxml python3-mypy python3-osrf-pycommon python3-pycodestyle python3-pydot python3-pyflakes python3-pytest python3-rosdep python3-rosdistro python3-rosdistro-modules python3-rospkg python3-rospkg-modules python3-setuptools python3-typing-extensions python3-vcstool"
+
+RUN export DISABLE_GROUPS_WORKAROUND=1 ROS_OS_OVERRIDE=ubuntu:noble \
+    && rosdep init \
+    && rosdep update --rosdistro "${ROS_DISTRO}" \
+    && colcon list --packages-up-to ros_core --paths-only \
+        | sort -u > /tmp/ros-core-paths.txt \
+    && apt-get update \
+    && xargs rosdep install \
+        --from-paths \
+        --ignore-src \
+        --rosdistro "${ROS_DISTRO}" \
+        --os=ubuntu:noble \
+        --dependency-types build \
+        --dependency-types buildtool \
+        --dependency-types build_export \
+        --dependency-types buildtool_export \
+        --dependency-types exec \
+        --skip-keys "${ROSDEP_SKIP_KEYS}" \
+        -y < /tmp/ros-core-paths.txt \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN DISABLE_GROUPS_WORKAROUND=1 colcon build \
+        --merge-install \
+        --install-base /opt/ros/${ROS_DISTRO} \
+        --packages-up-to ros_core \
+        --parallel-workers "${BUILD_JOBS}" \
+        --event-handlers console_direct+ \
+        --cmake-args \
+          -DBUILD_TESTING=OFF \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+          -DTRACETOOLS_DISABLED=ON \
+          -Dpybind11_DIR=/opt/jazzy-tools/lib/python3.12/site-packages/pybind11/share/cmake/pybind11 \
+    && mkdir -p /opt/ros-staged \
+    && cp -a /opt/ros/${ROS_DISTRO} /opt/ros-staged/${ROS_DISTRO} \
+    && rm -rf src build log
+
+FROM --platform=${TARGETPLATFORM} ${OPENKYLIN_IMAGE} AS runtime
+
+ARG ROS_DISTRO=jazzy
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8 \
+    ROS_DISTRO=${ROS_DISTRO} \
+    ROS_VERSION=2 \
+    ROS_PYTHON_VERSION=3 \
+    PYTHONPATH=/opt/jazzy-python \
+    RMW_IMPLEMENTATION=rmw_fastrtps_cpp
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        ca-certificates \
+        cmake \
+        libacl1 \
+        libatomic1 \
+        libcurl4 \
+        libgcc-s1 \
+        libpython3.12t64 \
+        libsqlite3-0 \
+        libssl3t64 \
+        libstdc++6 \
+        libtinyxml2-10 \
+        libyaml-0-2 \
+        libyaml-cpp0.8 \
+        python3 \
+        python3-cryptography \
+        python3-netifaces \
+        python3-numpy \
+        python3-packaging \
+        python3-psutil \
+        python3-yaml \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/ros-staged/${ROS_DISTRO} /opt/ros/${ROS_DISTRO}
+COPY --from=builder /opt/jazzy-tools/lib/python3.12/site-packages /opt/jazzy-python
+COPY sitecustomize.py /opt/jazzy-python/sitecustomize.py
+COPY --from=builder /usr/local/bin/fzf /usr/local/bin/fzf
+COPY ros_entrypoint.sh /ros_entrypoint.sh
+
+RUN mkdir -p /opt/jazzy-tools/bin \
+    && ln -s /usr/bin/python3 /opt/jazzy-tools/bin/python3 \
+    && chmod 0755 /ros_entrypoint.sh
+
+ENTRYPOINT ["/ros_entrypoint.sh"]
+CMD ["bash"]

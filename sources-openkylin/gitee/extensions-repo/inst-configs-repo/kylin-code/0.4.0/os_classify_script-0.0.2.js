@@ -1,0 +1,182 @@
+const os = require('os');
+const fs = require('fs');
+var os_arch; 
+var os_org;      
+var os_type;     
+var os_custom; 
+var pretty_name;
+var milestone;
+var dist_id;
+var pretty_name;
+var os_info;
+const kyinfoPath = '/etc/.kyinfo';
+const osReleasePath = '/etc/os-release';
+//检查系统架构
+function getArch() {
+  const arch = os.arch();
+  let res = '';
+  switch (arch) {
+    case 'x64':
+    case 'x86':
+    case "x86_64": res = 'x86'; break;
+    case 'arm':
+    case 'arm64':
+    case 'aarch64': res = 'arm'; break;
+    case 'loongarch': res = 'loongarch'; break;
+    default: res = arch;
+  }
+  return res;
+}
+
+function getoskey() {
+  if (os_arch == 'x86' && os_org == 'openkylin' && os_type == 'desktop') {
+    return "x86_openkylin_desktop";
+  }
+  return "undefined"
+}
+
+function getFileData() {
+  //1、架构
+  //2、是否是麒麟系统
+  //3、是桌面系统还是服务器系统
+  //4、是否是V10
+  //5、是否带sp，是sp几
+  //6、小版本号
+  //7、定制版字符
+  os_arch = getArch();
+  /*分类型进行处理
+  1.存在.kyinfo的系统 ，取值dist_id 中 架构之前的信息
+  2.不在.kyinfo的系统，但是存在os-release  的kylin系统
+  3.不是kylin的系统，但是存在os-release
+  */
+  let data;
+  let releasedata;
+  if (fs.existsSync(kyinfoPath) && fs.existsSync(osReleasePath)) {
+    os_org = "kylin";
+    try {
+      let version_id;
+      data = fs.readFileSync(kyinfoPath, 'utf8');
+      releasedata = fs.readFileSync(osReleasePath, 'utf8');
+      // 使用 split 方法将文件内容分割成行数组
+      const lines = data.split('\n');
+      // 遍历行数组 获取系统架构
+      lines.forEach((line) => {
+        line=line.replace(/ /g, "");
+        if (line.startsWith("milestone=")) {
+          milestone = line.slice(10).toLocaleLowerCase();
+        } else if (line.startsWith("dist_id=")) {
+          dist_id = line.slice(8).toLocaleLowerCase();
+        }
+      });//end lines
+
+      const releasedatalines = releasedata.split('\n');
+      releasedatalines.forEach((line) => {
+        if (line.startsWith("PRETTY_NAME=")) {
+          pretty_name = line.slice(12).toLocaleLowerCase().replace(/"/g, '');
+        } else if (line.startsWith("VERSION_ID=")) {
+          version_id = line.slice(11).toLocaleLowerCase().replace(/"/g, '');
+        }
+      });
+      if (version_id) {
+        os_version_id = version_id;
+      }
+      os_type = dist_id.includes('desktop') ? "desktop" : "server";
+      if (milestone.indexOf('release')) {
+        os_release = milestone.slice(milestone.indexOf('release') + 8);
+      }
+
+      if (dist_id.includes('edu')) {
+        os_custom = 'edu';
+      } else {
+        os_custom = 'gen';
+      }
+      if (dist_id.includes('hwe')) {
+        os_custom += 'hwe';
+      }
+      if (dist_id.includes('gfb')) {
+        os_custom += 'gfb'
+      }
+    } catch (err) {
+      os_info = "";
+      console.log(err);
+    }
+  } else 
+  if (fs.existsSync(osReleasePath)) {
+    try {
+      let version_id;
+      releasedata = fs.readFileSync(osReleasePath, 'utf8');
+      const releasedatalines = releasedata.split('\n');
+      releasedatalines.forEach((line) => {
+        if (line.startsWith("PRETTY_NAME=")) {
+          pretty_name = line.slice(12).toLocaleLowerCase().replace(/"/g, '');
+          pretty_name=pretty_name.replace(/ /g, "_")
+        } else if (line.startsWith("VERSION_ID=")) {
+          version_id = line.slice(11).toLocaleLowerCase().replace(/"/g, '');
+        } else if (line.startsWith("ID=")) {
+          os_org = line.slice(3).toLocaleLowerCase().replace(/"/g, '');
+        } else if (line.startsWith("VERSION_CODENAME=")) {
+          os_custom = line.slice(17).toLocaleLowerCase().replace(/"/g, '');
+        }else if(line.startsWith('NAME=')){
+          os_org=line.slice(5).toLocaleLowerCase().replace(/"/g, '')
+        }
+      });
+      if (version_id) {
+        os_version_id = version_id;
+      }
+      if (pretty_name.includes('openkylin'))
+        os_type = "desktop";
+        
+    } catch (err) {
+      os_info = "";
+    }
+  }
+ 
+}
+function getosinfo(){
+  os_info = getoskey();
+  return os_info;
+}
+
+function showosinfo() {
+  let osData = '';
+  if (fs.existsSync(kyinfoPath)) {
+    if (os_arch) { osData += os_arch; }
+    if (os_org) { osData += "_" + os_org; }
+    if (milestone) { osData += "_" + milestone; }
+    osData = osData.replace(/^_+|_+$/g, '');
+    osData = osData.replace("-release-", "-");
+    osData = osData.replace(/-/g, "_");
+    return osData;
+  } 
+  else {
+    //架构
+    if (os_arch) {osData += os_arch;}
+    //组织
+    if (os_org) {osData += "_" + os_org;}
+    //操作系统类型
+    if (os_type) {osData += "_" + os_type;}
+    if (pretty_name) {osData += "_" + pretty_name;}
+
+    if(os_custom){ osData += "_" + os_custom; }
+    osData = osData.replace(/^_+|_+$/g, '');
+    return osData;
+  }
+}
+
+function getsupportlist(){
+  let strArry=["X86 openkylin操作系统"
+              ];
+  return strArry;
+}
+
+function getoscontent(){
+  return [getosinfo(),showosinfo(),getsupportlist()]
+}
+getFileData();
+
+module.exports = { 
+  getosinfo ,
+  showosinfo,
+  getsupportlist,
+  getoscontent
+}

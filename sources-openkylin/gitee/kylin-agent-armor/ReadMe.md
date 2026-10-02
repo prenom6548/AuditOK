@@ -1,0 +1,1 @@
+kylin-agent-armor是一款基于kylin-agent智能体开发的安全增强插件，该插件能够在kylin-agent执行过程中对相关执行节点进行安全分析和阻断，对kylin-agent全生命周期进行风险防控。
