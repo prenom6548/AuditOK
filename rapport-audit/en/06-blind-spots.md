@@ -1,4 +1,4 @@
-# 06 — Audit blind spots (preliminary version, Phase 0.4)
+# 06 — Audit blind spots
 
 🇫🇷 [Version française (par défaut)](../06-angles-morts.md) · 🇬🇧 English (this page)
 
