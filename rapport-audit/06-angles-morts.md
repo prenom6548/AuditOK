@@ -1,4 +1,4 @@
-# 06 — Angles morts de l'audit (version préliminaire, Phase 0.4)
+# 06 — Angles morts de l'audit
 
 🇫🇷 Français (cette page) · 🇬🇧 [English version](en/06-blind-spots.md)
 

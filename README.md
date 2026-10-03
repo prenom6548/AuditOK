@@ -6,12 +6,42 @@
 > openKylin, à KylinSoft, ni à aucun de leurs partenaires. Il ne reflète aucune
 > position institutionnelle : il consigne des **faits vérifiables** et leurs limites.
 
-**État : audit en cours.** Phases 0, 1 (vagues 1-3) et 2 (18 forks critiques, binaires sans source,
-durcissement des binaires) terminées ; les 83 constats critiques et élevés ont été soumis à une vérification contradictoire ; la Phase 5 prend la forme d'un
-[**kit d'observation**](rapport-audit/phase5-kit/LISEZMOI.md) en lecture seule, tenu à jour à chaque vague,
-que chacun peut exécuter dans une machine virtuelle. Voir [`rapport-audit/00-synthese.md`](rapport-audit/00-synthese.md).
+**État : analyse statique terminée.** Phases 0, 1 (vagues 1-3) et 2 (18 forks critiques, binaires sans
+source, durcissement des binaires) menées à leur terme ; les 83 constats critiques et élevés ont été soumis à
+une vérification contradictoire (menée par l'IA — voir « Transparence ») ; la phase dynamique (5) prend la
+forme d'un [**kit d'observation**](rapport-audit/phase5-kit/LISEZMOI.md) en lecture seule, à exécuter sur une
+machine virtuelle ; les **angles morts connus** sont documentés. Voir
+[`rapport-audit/00-synthese.md`](rapport-audit/00-synthese.md).
 
 ---
+
+## Transparence : comment cet audit a été produit
+
+Cet audit a été **produit avec Claude Code**, un assistant d'intelligence artificielle d'Anthropic, **sous la
+direction d'une personne non spécialiste en sécurité** qui l'a orchestré et a décidé de le publier. Nous le
+disons d'emblée — l'historique Git le montre de toute façon.
+
+Deux précisions d'honnêteté, parce qu'elles comptent :
+
+- **Aucun expert humain indépendant n'a validé ce travail.** La vérification contradictoire citée plus bas a,
+  elle aussi, été menée par l'IA (un second passage sceptique chargé de réfuter chaque constat) : c'est mieux
+  qu'un seul regard, mais ce n'est pas une relecture humaine qualifiée.
+- **Une IA peut se tromper avec aplomb.** Un constat peut être plausible et pourtant faux — une ligne mal
+  interprétée, un garde-fou présent ailleurs. Lors de la vérification, une vingtaine de constats ont d'ailleurs
+  été nuancés ou restreints.
+
+C'est pourquoi ce dépôt est conçu pour **ne rien exiger qu'on le croie sur parole** — à l'opposé des rapports
+produits en masse par IA, vagues et invérifiables, qui épuisent les mainteneurs :
+
+- **Chaque constat est vérifiable** : dépôt + fichier + numéro de ligne + extrait.
+- **Tout est reproductible** : acquisition par chaîne signée, empreintes fournies, outils en lecture seule
+  (voir « Reproductibilité et vérification »).
+- **Aucun code d'exploitation**, et l'éditeur a été **prévenu avant publication**.
+- Les **limites et la couverture réelle** sont chiffrées et assumées (voir « Limites de l'audit »).
+
+**Ne nous croyez pas : vérifiez.** Prenez n'importe quel constat, ouvrez le fichier à la ligne indiquée, jugez
+par vous-même. La validation doit venir de personnes compétentes dans le code concerné — openKylin au premier
+chef. Toute erreur signalée et étayée est la bienvenue : une infirmation sur pièces vaut autant qu'un constat.
 
 ## Pourquoi ce dépôt
 
@@ -165,9 +195,10 @@ administrateurs, chercheur·se·s, et l'éditeur lui-même. Dans cet esprit :
   dynamiquement.
 - Ce travail ne fournit **aucun outil d'exploitation** clé en main : il décrit des
   chaînes de risque à des fins défensives et de vérification.
-- Toute personne qui confirme une faiblesse exploitable est libre d'en informer
-  openKylin par ses canaux de signalement. L'auteur de cet audit ne porte pas lui-même
-  cette coordination : elle est **ouverte à qui, dans la communauté, souhaite s'en saisir**.
+- **L'éditeur a été prévenu avant la publication de ce dépôt.** La coordination suivie
+  (relances, délai, suivi des correctifs) reste **ouverte à qui, dans la communauté, souhaite
+  s'en saisir** ; toute personne qui confirme une faiblesse peut aussi en informer openKylin
+  par ses canaux de signalement.
 
 ## Licence
 

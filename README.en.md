@@ -6,10 +6,11 @@
 > openKylin, KylinSoft, or any of their partners. It reflects no institutional position: it records
 > **verifiable facts** and their limits.
 
-**Status: audit in progress.** Phases 0, 1 (waves 1–3) and 2 (18 critical forks, source-less binaries, binary
-hardening) are complete; the 83 critical and high findings went through an adversarial verification; Phase 5 takes the form of a
-read-only [**observation kit**](rapport-audit/phase5-kit/LISEZMOI.en.md), kept up to date with each wave,
-that anyone can run in a virtual machine. See
+**Status: static analysis complete.** Phases 0, 1 (waves 1–3) and 2 (18 critical forks, source-less binaries,
+binary hardening) have been carried through; the 83 critical and high findings went through an adversarial
+verification (performed by the AI — see "Transparency"); the dynamic phase (5) takes the form of a read-only
+[**observation kit**](rapport-audit/phase5-kit/LISEZMOI.en.md), to be run in a virtual machine; the **known
+blind spots** are documented. See
 [`rapport-audit/en/00-synthesis.md`](rapport-audit/en/00-synthesis.md).
 
 > **Language note.** French is the primary language of this repository. The key documents are translated
@@ -19,6 +20,33 @@ that anyone can run in a virtual machine. See
 > language-independent. See the [terminology](#terminology) below to read them.
 
 ---
+
+## Transparency: how this audit was produced
+
+This audit was **produced with Claude Code**, an AI assistant by Anthropic, **under the direction of a
+maintainer who is not a security specialist** and who orchestrated it and chose to publish it. We say so
+upfront — the Git history shows it anyway.
+
+Two points of honesty, because they matter:
+
+- **No independent human expert has validated this work.** The adversarial verification mentioned below was
+  itself carried out by the AI (a second, skeptical pass tasked with refuting each finding): better than a
+  single look, but not a qualified human review.
+- **An AI can be confidently wrong.** A finding may be plausible yet false — a misread line, a safeguard
+  present elsewhere. During verification, about twenty findings were in fact qualified or narrowed.
+
+This is why the repository is built to **require nothing to be taken on trust** — the opposite of the
+mass-produced, vague, unverifiable AI reports that drain maintainers:
+
+- **Every finding is verifiable**: repository + file + line number + excerpt.
+- **Everything is reproducible**: signed acquisition chain, published fingerprints, read-only tools (see
+  "Reproducibility and verification").
+- **No exploit code**, and the vendor was **notified before publication**.
+- **Limits and real coverage** are quantified and owned (see "Limitations of the audit").
+
+**Don't trust us — verify.** Take any finding, open the file at the given line, judge for yourself. Validation
+must come from people competent in the code concerned — openKylin first and foremost. Any well-supported
+refutation is welcome: a correction from evidence is as valuable as a finding.
 
 ## Why this repository
 
@@ -193,9 +221,9 @@ itself. In that spirit:
   [ESTABLISHED] with proof, several remain to be confirmed dynamically.
 - This work provides **no ready-made exploitation tool**: it describes risk chains for defensive and
   verification purposes.
-- Anyone who confirms an exploitable weakness is free to inform openKylin through its reporting channels.
-  The author of this audit does not carry out that coordination themselves: it is **open to anyone in the
-  community who wishes to take it on**.
+- **The vendor was notified before this repository was published.** Ongoing coordination (reminders,
+  timeline, tracking of fixes) remains **open to anyone in the community who wishes to take it on**; anyone
+  who confirms a weakness may also inform openKylin through its reporting channels.
 
 ## Licence
 
